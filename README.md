@@ -1,0 +1,67 @@
+# seki
+
+A tiling window manager for [river](https://codeberg.org/river/river), written in Haskell — with xmonad's semantics and xmonad's configuration model.
+
+> **Status: design stage. There is no working code yet.**
+> The current design is ready for M0 validation (see [Roadmap](#roadmap)). Nothing here is usable yet.
+
+## What this is
+
+River 0.4 split the compositor from the window manager. The compositor handles DRM/KMS, rendering, input devices, and Xwayland, while delegating window-management policy to a separate process over the `river-window-management-v1` protocol. That process is an ordinary Wayland client and can be written in any language with suitable protocol bindings.
+
+seki is a Haskell implementation of that process, intended for xmonad users moving from X11:
+
+- **Your configuration is the window manager.** As in xmonad, there is no config file. You write a Haskell program that imports `Seki`; `def` is intended to provide a usable default configuration.
+- **The core is pure.** `StackSet`, the layout algebra (`|||`, `Mirror`, layout modifiers), and `ManageHook` are based on xmonad, with its semantics and QuickCheck properties retained where applicable. Layout is a pure function; only the reconciler touches IO.
+- **Workspaces use xmonad-style semantics.** They form a shared pool across outputs, with `greedyView` as the default. River itself has no workspace abstraction, so seki implements this policy in the window manager.
+
+```haskell
+import Seki
+
+main :: IO ()
+main = seki def
+  { modMask    = Mod4
+  , terminal   = "foot"
+  , workspaces = map show [1..9 :: Int]
+  , layoutHook = tall ||| Mirror tall ||| Full
+  , manageHook = composeAll
+      [ appId =? Just "org.pulseaudio.pavucontrol" --> doFloat
+      , isDialog                                   --> doFloat ]
+  , keys       = defaultKeys
+  }
+  where tall = Tall 1 (3/100) (1/2)
+```
+
+## Consequences of this architecture
+
+Splitting the WM from the compositor changes the behavior of restarts, failures, and input processing:
+
+- **The WM can restart without ending the session.** River keeps the session and windows alive during a restart. Window-to-workspace restoration is best-effort because the protocol does not provide stable window IDs across reconnects.
+- **A WM crash does not terminate the session.** Existing windows remain in river, and starting a window manager again restores active management.
+- **Ordinary client input remains compositor-side.** Keybinding matching also happens in the compositor, and pointer motion alone does not wake the WM. Actions handled by the WM can still be delayed by a GC pause, so pause duration remains an implementation concern.
+- **Types represent the protocol phases.** River separates window-management state from rendering state and rejects requests made in the wrong phase. `ManageM` and `RenderM` make many invalid phase-specific calls unrepresentable in the higher-level API.
+
+## Requirements
+
+- **river 0.4.5 or later** (0.4.5 added the modifier-watching requests we need)
+- GHC and cabal
+- No `libwayland` dependency: the Wayland wire protocol is implemented in Haskell, with a code generator for the protocol XML
+
+## Scope
+
+Delegated to river: rendering and compositing, DRM/KMS, input device plumbing, Xwayland, screen capture, session locking, and colour management.
+
+Non-goals for seki itself: animations and window effects, multi-seat (v1 is single-seat), decorations beyond borders.
+
+## Documentation
+
+- [`docs/spec.md`](docs/spec.md) — the design specification: pure core, protocol mapping, configuration model, risks, and milestones.
+
+## Related projects
+
+- [xmonad](https://xmonad.org/), whose StackSet and layout algebra this is a port of.
+- [river](https://codeberg.org/river/river) and its window-management protocol, without which this project would be a compositor instead.
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).
