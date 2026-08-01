@@ -44,8 +44,21 @@ Splitting the WM from the compositor changes the behavior of restarts, failures,
 ## Requirements
 
 - **river 0.4.5 or later** (0.4.5 added the modifier-watching requests we need)
-- GHC and cabal
+- GHC 9.6.6 and cabal-install 3.10 or later
 - No `libwayland` dependency: the Wayland wire protocol is implemented in Haskell, with a code generator for the protocol XML
+
+## Development
+
+The initial development toolchain is GHC 9.6.6, cabal-install 3.10 or later,
+and Haskell Language Server. Install those with your system package manager or
+[GHCup](https://www.haskell.org/ghcup/).
+
+Build and test the project with:
+
+```console
+cabal build all
+cabal test all
+```
 
 ## Scope
 

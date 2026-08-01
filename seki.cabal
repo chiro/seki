@@ -1,0 +1,52 @@
+cabal-version:      3.0
+name:               seki
+version:            0.1.0.0
+synopsis:           A tiling window manager for river
+description:
+  seki is a tiling window manager for river, with xmonad's semantics and
+  configuration model.
+homepage:            https://github.com/chiro/seki
+bug-reports:         https://github.com/chiro/seki/issues
+license:             MIT
+license-file:        LICENSE
+author:              chiro
+maintainer:          chiro
+category:            System
+build-type:          Simple
+tested-with:         GHC ==9.6.6
+extra-doc-files:
+  README.md
+  docs/spec.md
+
+common warnings
+  default-language: GHC2021
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Widentities
+    -Wincomplete-record-updates
+    -Wincomplete-uni-patterns
+    -Wmissing-export-lists
+    -Wmissing-home-modules
+    -Wpartial-fields
+    -Wredundant-constraints
+
+library
+  import:          warnings
+  hs-source-dirs:  src
+  exposed-modules: Seki
+  build-depends:
+    base >=4.18 && <4.19
+
+test-suite seki-test
+  import:         warnings
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        Main.hs
+  build-depends:
+    base >=4.18 && <4.19,
+    seki
+
+source-repository head
+  type:     git
+  location: https://github.com/chiro/seki.git

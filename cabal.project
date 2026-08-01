@@ -1,0 +1,13 @@
+packages: .
+
+with-compiler: ghc-9.6.6
+write-ghc-environment-files: never
+
+-- Arch's ghc-libs package ships dynamic libraries; keeping development builds
+-- dynamic avoids requiring the much larger ghc-static package.
+shared: true
+library-vanilla: false
+executable-dynamic: true
+
+tests: true
+benchmarks: true
