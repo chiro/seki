@@ -17,6 +17,7 @@ tested-with:         GHC ==9.6.6
 extra-doc-files:
   README.md
   docs/spec.md
+  docs/wire-protocol.md
 
 common warnings
   default-language: GHC2021
