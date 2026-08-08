@@ -60,6 +60,13 @@ cabal build all
 cabal test all
 ```
 
+Format and lint Haskell sources with:
+
+```console
+fourmolu --mode inplace src test
+hlint src test
+```
+
 ## Scope
 
 Delegated to river: rendering and compositing, DRM/KMS, input device plumbing, Xwayland, screen capture, session locking, and colour management.

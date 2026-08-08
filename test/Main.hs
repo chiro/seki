@@ -1,6 +1,7 @@
 module Main (main) where
 
-import Seki ()
+import Seki.Wire.CodecTest qualified as CodecTest
+import Test.Tasty (defaultMain, testGroup)
 
 main :: IO ()
-main = pure ()
+main = defaultMain (testGroup "seki" [CodecTest.tests])
