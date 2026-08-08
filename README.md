@@ -36,7 +36,7 @@ main = seki def
 
 Splitting the WM from the compositor changes the behavior of restarts, failures, and input processing:
 
-- **The WM can restart without ending the session.** River keeps the session and windows alive during a restart. Window-to-workspace restoration is best-effort because the protocol does not provide stable window IDs across reconnects.
+- **The WM can restart without ending the session.** River keeps the session and windows alive during a restart. The version 4 window identifier lets seki restore state for surviving windows across a WM reconnect; windows created during the handover use normal initial-placement rules.
 - **A WM crash does not terminate the session.** Existing windows remain in river, and starting a window manager again restores active management.
 - **Ordinary client input remains compositor-side.** Keybinding matching also happens in the compositor, and pointer motion alone does not wake the WM. Actions handled by the WM can still be delayed by a GC pause, so pause duration remains an implementation concern.
 - **Types represent the protocol phases.** River separates window-management state from rendering state and rejects requests made in the wrong phase. `ManageM` and `RenderM` make many invalid phase-specific calls unrepresentable in the higher-level API.
@@ -79,3 +79,6 @@ Non-goals for seki itself: animations and window effects, multi-seat (v1 is sing
 ## License
 
 MIT. See [`LICENSE`](LICENSE).
+
+Vendored protocol definitions retain their upstream MIT notices; see
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

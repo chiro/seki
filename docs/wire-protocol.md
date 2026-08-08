@@ -1,6 +1,6 @@
 # Wayland Wire Protocol and Binding Generator Design
 
-Status: **draft for review** / Last updated: 2026-08-01
+Status: **accepted — W0 source pinning** / Last updated: 2026-08-08
 
 This document refines the wire-protocol portion of `docs/spec.md` into an
 implementation design for M0. It covers the Wayland client transport, message
@@ -63,7 +63,7 @@ viewer or a distribution's currently installed files.
 
 | Source | Pin | Used in M0 |
 |---|---|---|
-| Wayland core `wayland.xml` | Wayland 1.25.0 tag, proposed | `wl_display`, `wl_registry`, `wl_callback` |
+| Wayland core `wayland.xml` | Wayland 1.25.0, commit `3e673a438b0a9749e3bdf5cac4befac86333024c` | `wl_display`, `wl_registry`, `wl_callback` |
 | river protocols | river `v0.4.5`, commit `f6d961773711dc29d3eb5b60bd14744a6a33894f` | window management and XKB bindings |
 
 The river release contains these interface versions:
@@ -77,7 +77,7 @@ The river release contains these interface versions:
 | `river-libinput-config-v1` | 1 |
 | `river-xkb-config-v1` | 1 |
 
-M0 initially vendors `wayland.xml`, `river-window-management-v1.xml`, and
+M0 vendors `wayland.xml`, `river-window-management-v1.xml`, and
 `river-xkb-bindings-v1.xml`. The other river XML files are added with the M2
 features that use them. Cross-protocol interface and enum references are
 resolved across all XML documents given to the scanner.
@@ -86,16 +86,16 @@ Each vendored source MUST have its upstream URL, tag or commit, SHA-256 digest,
 and license recorded in `protocol/SOURCES.md`. Copyright and license text in
 the XML MUST be retained.
 
-### 3.2 Review correction to the general specification
+### 3.2 Correction applied to the general specification
 
-`docs/spec.md` currently describes `river-window-management-v1` as version 3
-and `river-xkb-bindings-v1` as version 2. The river 0.4.5 release source exposes
-versions 4 and 3 respectively. The operation that establishes seki's minimum
-window-management protocol requirement, `set_content_clip_box`, is still a
-since-version-3 request.
+The earlier `docs/spec.md` described `river-window-management-v1` as version 3
+and `river-xkb-bindings-v1` as version 2. The pinned river 0.4.5 release exposes
+versions 4 and 3 respectively. It also adds the version 4 unique window
+identifier used for hot-swap restoration. The operation that establishes
+seki's minimum window-management protocol requirement, `set_content_clip_box`,
+remains a since-version-3 request.
 
-After this design is accepted, the general specification should be corrected
-to say:
+The general specification now records that:
 
 - seki requires `river_window_manager_v1` version 3 functionality;
 - river 0.4.5 advertises version 4;
@@ -677,17 +677,14 @@ adding wire-layer features.
 1. **Event delivery API:** typed per-object callbacks or a typed existential
    event stream. Prototype both only far enough to compare object creation and
    cleanup.
-2. **Wayland pin:** confirm Wayland 1.25.0 before vendoring. Core protocol
-   compatibility makes the exact recent tag low-risk, but provenance must be
-   deliberate.
-3. **XML parser dependency:** select a maintained parser after measuring the
+2. **XML parser dependency:** select a maintained parser after measuring the
    scanner dependency footprint. Do not write a bespoke XML parser.
-4. **C shim portability:** M0 is Linux-only. Decide whether the shim API should
+3. **C shim portability:** M0 is Linux-only. Decide whether the shim API should
    expose BSD `SO_NOSIGPIPE` immediately or keep only the Linux implementation
    until another target is supported.
-5. **Resource limits:** choose numeric byte, descriptor, and object-table limits
+4. **Resource limits:** choose numeric byte, descriptor, and object-table limits
    alongside tests rather than guessing them in this document.
-6. **Big-endian testing:** the codec must use native byte order, but CI access to
+5. **Big-endian testing:** the codec must use native byte order, but CI access to
    a big-endian Wayland environment is unresolved.
 
 ## 15. References

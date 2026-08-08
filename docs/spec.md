@@ -1,6 +1,6 @@
 # seki Specification — A river Window Manager in Haskell
 
-Status: **v1.0 design draft — ready for M0 validation** / Last updated: 2026-07-28
+Status: **v1.0 design draft — ready for M0 validation** / Last updated: 2026-08-08
 Legend: [DECIDED] = current design decision, [RESOLVED] = checked against the protocol or other available evidence
 
 ---
@@ -46,8 +46,8 @@ Legend: [DECIDED] = current design decision, [RESOLVED] = checked against the pr
 - river-window-management-v1 (core)
 - river-input-management-v1 / river-libinput-config-v1 / river-xkb-config-v1 (input configuration)
 - river-layer-shell-v1 (policy delegation for layer surfaces)
-- [RESOLVED] river-window-management-v1 is at version 3. v2 added set_clip_box / unreliable_pid / set_xcursor_theme / pointer_position; v3 added set_content_clip_box / pointer_warp. This WM **requires version 3** (the Crop implementation depends on set_content_clip_box).
-- Keybindings live in river-xkb-bindings-v1 (a separate protocol, v2). [RESOLVED] Read; reflected in 3.8.
+- [RESOLVED] river 0.4.5 ships river-window-management-v1 version 4. v2 added set_clip_box / unreliable_pid / set_xcursor_theme / pointer_position; v3 added set_content_clip_box / pointer_warp; v4 added, among other features, the unique window identifier used for state restoration. This WM **requires version 3 functionality** for Crop and uses version 4 functionality when available. The minimum supported river release advertises version 4.
+- Keybindings live in river-xkb-bindings-v1 (a separate protocol, version 3 in river 0.4.5). [RESOLVED] Read; reflected in 3.8.
 
 ### 2.2 Binding Strategy [DECIDED: Haskell wire implementation without libwayland]
 - Implement the Wayland wire protocol (unix domain socket + fd passing via SCM_RIGHTS) in Haskell without depending on libwayland. This avoids directly integrating libwayland's C event loop with the GHC runtime and follows the general approach used by Rust's wayland-rs.
@@ -84,7 +84,7 @@ data Stack a       = Stack { focus :: a, up :: [a], down :: [a] }
 
 - Pure operations such as `greedyView` / `view` / `shift` / `focusUp` / `focusDown` / `swapMaster` are ported from xmonad with their meaning unchanged. The QuickCheck properties are ported too.
 - [RESOLVED] A hidden workspace means **explicitly sending** river_window_v1.hide (rendering state; borders and decorations are hidden along with it). New windows are shown by default, so hide must always be sent when placing a window on a hidden workspace. Reconciler invariant: "visible in the StackSet ⇔ in the shown state".
-- [RESOLVED] Inputs available to ManageHook: app_id (**may be null**), title (**may be null**), parent (for dialog detection), decoration_hint, dimensions_hint (min/max, 0 = unspecified), unreliable_pid. These are guaranteed to arrive after the window event and before the next manage_start. Since app_id/title can be null for Xwayland windows, the core types are `Maybe Text`.
+- [RESOLVED] Inputs available to ManageHook: app_id (**may be null**), title (**may be null**), parent (for dialog detection), decoration_hint, dimensions_hint (min/max, 0 = unspecified), unreliable_pid, and the version 4 identifier (non-empty printable ASCII). These are guaranteed to arrive after the window event and before the next manage_start. Since app_id/title can be null for Xwayland windows, the core types are `Maybe Text`.
 - [RESOLVED] The parent event makes windows form a tree (the server guarantees there are no loops). The protocol recommends drawing child windows directly above their parent → fold this into the stacking-order computation in `plan`. This information was not directly available in xmonad's X11 model.
 
 ### 3.2 Multi-Monitor Semantics [DECIDED: xmonad standard]
@@ -157,14 +157,14 @@ class LayoutClass l where
 
 ### 3.7 State Persistence and Hot-Swap
 
-- On WM exit/restart (the equivalent of mod-q), serialize the window→(tag, floating state, position within the stack) mapping and restore it on reconnect.
-- [RESOLVED, NEGATIVELY] river-window-management-v1 (v3) has **no** stable window ID that survives a WM reconnect. unreliable_pid is explicitly documented as untrustworthy because PIDs are reused.
-  - Restoration strategy: best-effort matching on (app_id, title, unreliable_pid, re-enumeration order). Windows that scoring cannot disambiguate go to a configurable default workspace.
-  - A restart performed immediately after serialization is likely to see a nearly unchanged window set, but matching accuracy must be measured during implementation.
-  - Noted as an upstream issue: a protocol extension for stable IDs (or attaching WM-defined tags to windows) is worth proposing later.
+- On WM exit/restart (the equivalent of mod-q), serialize the window identifier→(tag, floating state, position within the stack) mapping and restore it on reconnect.
+- [RESOLVED] river-window-management-v1 version 4 sends each window a non-empty identifier that is unique and never reused. Use it to match surviving windows during a WM hot-swap instead of app_id/title/PID heuristics.
+  - Windows created during the handover have no serialized entry and follow the normal initial-placement rules. Serialized entries whose windows closed during the handover are ignored.
+  - A protocol-compatible compositor exposing only version 3 can run the core WM, but state restoration degrades to placing re-enumerated windows on the configurable default workspace. Do not guess identity from unreliable_pid, which is explicitly unsuitable for identity and security decisions.
+  - Validate identifier continuity across a real river WM reconnect during M2.
 - Layout internal state (master ratio, etc.) is also serialized via Read/Show (the same approach as xmonad).
 
-### 3.8 Keybinding Model and Submaps [RESOLVED: river-xkb-bindings-v1 (v2) read]
+### 3.8 Keybinding Model and Submaps [RESOLVED: river-xkb-bindings-v1 (v3) read]
 
 - Bindings are registered as individual objects via get_xkb_binding(seat, **keysym**, modifiers) — based on xkbcommon keysyms, not keycodes. Key events matching a binding are not delivered to the focused window.
 - Each binding can be enabled/disabled within a manage sequence. Implement **submaps as enable/disable switching of sets of bindings**:
@@ -174,7 +174,7 @@ class LayoutClass l where
 - Both pressed and released events arrive (released fires when the "main" key is released; releasing only modifiers does not fire it). Repeating an action while a key is held (volume keys, etc.) is **implemented with a WM-side timer**, stopped by the stop_repeat event (sent when another key is pressed). Note that set_repeat_info is the repeat configuration for ordinary keys delivered to clients — a different thing from binding repeat.
 - set_layout_override: pins the xkb layout used to interpret a binding. **When several layouts are in use (Japanese/US, etc.), registering bindings pinned to layout 0 makes "the same physical key triggers the binding regardless of the active layout" the default behaviour** (can be disabled in configuration).
 - Which binding receives the event when several match the same physical key is compositor policy (unspecified in the protocol). The library detects and warns about duplicate registrations of (keysym, mods, layout_override).
-- [RESOLVED] modifiers_watch / modifiers_update were confirmed to have been added in river 0.4.5 via the release notes (protocol: add xkb_binding_seat_v1.modifiers_{watch,update}). Watching modifier state makes alt-tab-style "commit on modifier release" UIs implementable. Since wayland.app's listing (v2) has not caught up, the exact version number and semantics will be taken from the XML in the repository at binding-generation time (resolved automatically during M0). **The target river version is 0.4.5 or later.**
+- [RESOLVED] modifiers_watch / modifiers_update are since-version-3 features in the river-xkb-bindings-v1 XML shipped by river 0.4.5. Watching modifier state makes alt-tab-style "commit on modifier release" UIs implementable. **The target river version is 0.4.5 or later.**
 
 ### 3.9 Input Device Configuration [RESOLVED: river-input-management-v1 (v1) read]
 
@@ -188,9 +188,9 @@ class LayoutClass l where
   - Binding implementation note: libinput's floating-point values are packed into Wayland array arguments as native-endian IEEE-754 doubles. Our own code generator (2.2) types this array as `Double`.
 - Keymaps are set per device through river-xkb-config-v1 by passing an fd (create_keymap). Layouts can be switched programmatically with set_layout_index / set_layout_name, and active_layout / capslock / numlock state events are available (usable for a layout indicator in the bar).
 
-## 4. Protocol Mapping (river-window-management-v1 v3, read)
+## 4. Protocol Mapping (river-window-management-v1 v4, read)
 
-Required version: river_window_manager_v1 **version 3** (depends on set_content_clip_box).
+Required functionality: river_window_manager_v1 **version 3** (depends on set_content_clip_box). River 0.4.5 advertises version 4, whose window identifier is used for hot-swap restoration.
 
 ### 4.1 xmonad Concept → Protocol
 
@@ -216,7 +216,7 @@ Required version: river_window_manager_v1 **version 3** (depends on set_content_
 
 | Event | Handling in the core |
 |---|---|
-| window (+app_id/title/parent/hints) | WindowCreated → ManageHook → insert / float / shift |
+| window (+app_id/title/parent/hints/identifier) | WindowCreated → ManageHook → insert / float / shift |
 | closed | WindowClosed → StackSet.delete |
 | dimensions | Update ActualState (reconciler only; does not affect the StackSet) |
 | dimensions_hint | A hint to the layout (honoured under Tolerate) |
@@ -241,7 +241,7 @@ Required version: river_window_manager_v1 **version 3** (depends on set_content_
 
 | Protocol | Reflected in |
 |---|---|
-| river-window-management-v1 (v3) | 3.1 / 3.2 / 3.3 / 3.5 / 3.6 / 3.7 / 4.1–4.3 |
+| river-window-management-v1 (v4; v3 functionality required) | 3.1 / 3.2 / 3.3 / 3.5 / 3.6 / 3.7 / 4.1–4.3 |
 | river-xkb-bindings-v1 | 3.8 (requires river 0.4.5+) |
 | river-layer-shell-v1 (v1) | 3.3 / 3.6 / 4.5 |
 | river-input-management-v1 (v1) / river-xkb-config-v1 | 3.9 |
@@ -326,9 +326,9 @@ instance Default (Config StdLayouts)  -- def supplies the standard configuration
 - Restart (the mod-q equivalent) flow:
   1. Run `cabal build` in a subprocess (the current WM keeps running throughout)
   2. Failure → the old binary continues; the error is sent to the bar over IPC and written in full to a log file
-  3. Success → serialize the state from 3.7 (window→tag / floating / stack order / layout state / submap) to a file → request stop → receive finished → exec the new binary
-  4. The new process reads the state file and matches it against the post-reconnect window enumeration using the heuristics in 3.7
-  - During the handover gap river keeps the session and windows alive. Restoration of workspace assignment and other WM-owned state remains best-effort because stable window IDs are unavailable (3.7).
+  3. Success → serialize the state from 3.7 (identifier→tag / floating / stack order / layout state / submap) to a file → request stop → receive finished → exec the new binary
+  4. The new process reads the state file and matches it against the post-reconnect window enumeration using the version 4 identifiers from 3.7
+  - During the handover gap river keeps the session and windows alive. Surviving windows recover their WM-owned state by identifier; newly created windows use initial-placement rules, and entries for windows closed during the gap are discarded.
 - CLI: `seki --recompile`, `--check` (type-check the configuration only), `--restore <file>` (specify a state file).
 - Experimenting with a switch to a different WM implementation (river's WM hot-swap) works through the same stop/exec path.
 
@@ -356,7 +356,7 @@ instance Default (Config StdLayouts)  -- def supplies the standard configuration
 | river's bus factor of 1 and funding difficulties | Development halt, maintenance stagnation | The protocol is stable and MIT-licensed. Investment on the WM side carries over to any protocol-compatible compositor (a future wlroots-based implementation, say). Most of this WM's code (the pure core) is protocol-independent |
 | Effort and low-level correctness of the Haskell wire implementation (fd passing via SCM_RIGHTS, message framing) | M0 delay, protocol bugs | The wire format is small and its specification is stable. Refer to prior implementations such as wayland-rs. Integration testing against real river is part of M0's acceptance criteria. hs-wayland-scanner + libwayland FFI is retained as a fallback. This approach avoids directly integrating libwayland's C event loop with the GHC runtime |
 | Disconnection on unresponsive (4.3) | Losing the WM mid-session | Only pure computation inside sequences; IO re-enters via manage_dirty (enforced at the API level in 5.1). GC pauses to be measured in M1, including evaluating the nonmoving GC |
-| No window identity across restarts (3.7) | Wrong workspace restoration on hot-swap | Heuristics plus a default workspace when ambiguous. Propose a stable-ID extension upstream |
+| Windows created or closed during WM handover (3.7) | Serialized and enumerated window sets differ | Match surviving windows by the version 4 identifier; apply normal placement to new windows and discard stale entries |
 | shm drawing ecosystem (bar, prompt) | M3 effort | Avoided for now by using an external bar (Waybar). A dmenu-family replacement lets us start using the prompt too |
 | river's IM (text-input / input-method) support level | Japanese input via fcitx5 | [RESOLVED, on paper] river implements zwp_input_method_v2, and fcitx5 release notes refer to upstream fixes for river compatibility. On-device confirmation remains part of M0 |
 | modifiers_watch version (3.8) | alt-tab-style UI | [RESOLVED] Confirmed as added in 0.4.5. Resolved by targeting river 0.4.5+ |
@@ -369,7 +369,7 @@ instance Default (Config StdLayouts)  -- def supplies the standard configuration
 | M1 Core | StackSet port + QuickCheck properties, Tall / Mirror / Full / `\|\|\|`, greedyView, focus movement, swapMaster, borders, non_exclusive_area, the two-phase monads (ManageM/RenderM) | Tiling operations follow the intended xmonad semantics. Measured GC pauses remain below the unresponsive threshold with a documented margin |
 | M2 Practical | Floating (mod+drag), ManageHook, fullscreen, submaps, hot-swap + state restoration, inputRules, Crop/Tolerate | The main parts of my own xmonad.hs can be ported |
 | M3 Daily use | Bar IPC + `sekictl`, scratchpad, urgent handling, documentation and configuration skeleton | **Full migration from xmonad; used for daily work** |
-| M4 onwards | Prompt (shell surface + shm drawing), the contrib-equivalent extension set, IndependentScreens, upstream proposal for stable IDs | — |
+| M4 onwards | Prompt (shell surface + shm drawing), the contrib-equivalent extension set, IndependentScreens, further protocol integrations | — |
 
 ### 6.3 Open Items and Verification Results
 

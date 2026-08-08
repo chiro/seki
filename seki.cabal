@@ -14,8 +14,15 @@ maintainer:          chiro
 category:            System
 build-type:          Simple
 tested-with:         GHC ==9.6.6
+extra-source-files:
+  protocol/SHA256SUMS
+  protocol/SOURCES.md
+  protocol/river/river-window-management-v1.xml
+  protocol/river/river-xkb-bindings-v1.xml
+  protocol/wayland/wayland.xml
 extra-doc-files:
   README.md
+  THIRD_PARTY_NOTICES.md
   docs/spec.md
   docs/wire-protocol.md
 
