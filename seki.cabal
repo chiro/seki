@@ -59,6 +59,7 @@ library seki-wire
   exposed-modules:
     Seki.Wire.Arguments
     Seki.Wire.Codec
+    Seki.Wire.Connection.Buffer
     Seki.Wire.Transport
     Seki.Wire.Types
   other-modules:
@@ -80,6 +81,7 @@ test-suite seki-test
   other-modules:
     Seki.Wire.ArgumentsTest
     Seki.Wire.CodecTest
+    Seki.Wire.Connection.BufferTest
     Seki.Wire.TransportTest
   build-depends:
     QuickCheck >=2.15 && <2.16,
