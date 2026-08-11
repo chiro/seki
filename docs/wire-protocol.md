@@ -355,11 +355,16 @@ For a server-created `new_id` event, the generated decoder supplies the new
 interface descriptor and version rule. The connection registers that object
 before dispatching any later frame.
 
-The lifecycle model distinguishes:
+The lifecycle model distinguishes client- and server-allocated ID namespaces.
+Client-created objects become inactive after either a destructor request or a
+destructor event, but their IDs remain tombstoned until
+`wl_display.delete_id` makes them reusable. Server-created IDs are removed
+immediately after their destructor request because the client never allocates
+from that namespace:
 
 ```text
-active -> destructor sent -> delete_id received -> reusable
-active -> destructor event -> removed
+client active -> destructor request/event -> retired -> delete_id -> reusable
+server active -> destructor request -> removed
 active -> connection failed -> closed
 ```
 
