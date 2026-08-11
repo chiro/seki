@@ -68,6 +68,7 @@ library seki-wire
     Seki.Wire.Connection.Event
     Seki.Wire.Connection.ObjectTable
     Seki.Wire.Connection.Request
+    Seki.Wire.Connection.Registry
     Seki.Wire.Transport
     Seki.Wire.Transport.Driver
     Seki.Wire.Types
@@ -125,6 +126,7 @@ test-suite seki-test
     Seki.Wire.Connection.EventTest
     Seki.Wire.Connection.ObjectTableTest
     Seki.Wire.Connection.RequestTest
+    Seki.Wire.Connection.RegistryTest
     Seki.Wire.Transport.DriverTest
     Seki.Wire.TransportTest
   build-depends:
