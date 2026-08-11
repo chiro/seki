@@ -51,13 +51,17 @@ library
 library seki-wire
   import:          warnings
   visibility:      private
-  hs-source-dirs:  src
+  hs-source-dirs:
+    src
+    src-generated
   include-dirs:    cbits
   includes:        seki_wayland_transport.h
   c-sources:       cbits/seki_wayland_transport.c
   cc-options:      -Wall -Wextra -Wpedantic
   exposed-modules:
+    Seki.Protocol.Wayland
     Seki.Wire.Arguments
+    Seki.Wire.Binding
     Seki.Wire.Codec
     Seki.Wire.Connection.Buffer
     Seki.Wire.Transport
@@ -79,6 +83,7 @@ library scanner
   visibility:      private
   hs-source-dirs:  tools/scanner
   exposed-modules:
+    Seki.Scanner.Generate
     Seki.Scanner.IR
     Seki.Scanner.Parse
   build-depends:
@@ -94,7 +99,10 @@ executable seki-scanner
   main-is:        Main.hs
   build-depends:
     base >=4.18 && <4.19,
-    seki:scanner
+    directory >=1.3.8 && <1.4,
+    filepath >=1.4.3 && <1.6,
+    seki:scanner,
+    text >=2.0.2 && <2.2
 
 test-suite seki-test
   import:         warnings
@@ -102,6 +110,7 @@ test-suite seki-test
   hs-source-dirs: test
   main-is:        Main.hs
   other-modules:
+    Seki.Scanner.GenerateTest
     Seki.Scanner.ParseTest
     Seki.Wire.ArgumentsTest
     Seki.Wire.CodecTest

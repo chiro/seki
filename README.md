@@ -67,6 +67,13 @@ fourmolu --mode inplace src test tools/scanner
 hlint src test tools/scanner
 ```
 
+Validate the pinned protocol set and regenerate the committed core binding with:
+
+```console
+cabal run seki-scanner -- validate protocol/wayland/wayland.xml protocol/river/river-window-management-v1.xml protocol/river/river-xkb-bindings-v1.xml
+cabal run seki-scanner -- generate Seki.Protocol.Wayland protocol/wayland/wayland.xml 'Wayland 1.25.0, commit 3e673a438b0a9749e3bdf5cac4befac86333024c' src-generated/Seki/Protocol/Wayland.hs protocol/wayland/wayland.xml
+```
+
 ## Scope
 
 Delegated to river: rendering and compositing, DRM/KMS, input device plumbing, Xwayland, screen capture, session locking, and colour management.
