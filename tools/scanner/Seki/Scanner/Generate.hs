@@ -200,7 +200,9 @@ renderRequest index currentProtocol interface message = do
   let signature = Text.intercalate " -> " (argumentTypes <> ["Binding.RequestEncoder fd"])
       definitionHead = Text.unwords (functionName : argumentNames) <> " ="
       constructor =
-        "  Binding.RequestEncoder (Wire.Opcode "
+        "  Binding.RequestEncoder "
+          <> haskellString (messageName message)
+          <> " (Wire.Opcode "
           <> showText (messageOpcode message)
           <> ") "
           <> showText (messageSince message)
@@ -270,6 +272,8 @@ renderEventDecoder index currentProtocol interface decoderName message = do
   pure
     [ decoderName <> " (Wire.Opcode " <> showText (messageOpcode message) <> ") ="
     , "  Just (Binding.EventDecoder "
+        <> haskellString (messageName message)
+        <> " "
         <> showText (messageSince message)
         <> " "
         <> boolText (messageDestructor message)

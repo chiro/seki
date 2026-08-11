@@ -51,7 +51,8 @@ getDynamicNewId = DynamicNewId <$> getString <*> getUint <*> getNewId
 
 -- | Pure argument encoding and metadata for one generated request.
 data RequestEncoder fd = RequestEncoder
-  { requestOpcode :: Opcode
+  { requestName :: Text
+  , requestOpcode :: Opcode
   , requestSince :: Word32
   , requestDestructor :: Bool
   , requestArguments :: ArgumentEncoder fd ()
@@ -59,7 +60,8 @@ data RequestEncoder fd = RequestEncoder
 
 -- | Pure argument decoding and version metadata for one generated event.
 data EventDecoder fd event = EventDecoder
-  { eventSince :: Word32
+  { eventName :: Text
+  , eventSince :: Word32
   , eventDestructor :: Bool
   , eventArguments :: ArgumentDecoder fd event
   }

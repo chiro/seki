@@ -69,6 +69,7 @@ testRequestEncoders = do
   callbackId <- requireObjectId 9
   let syncRequest = Wayland.encodeWlDisplaySync callbackId :: Binding.RequestEncoder ()
       expectedSync = runArgumentEncoder (putNewId callbackId)
+  assertEqual "sync name" "sync" (Binding.requestName syncRequest)
   assertEqual "sync opcode" (Opcode 0) (Binding.requestOpcode syncRequest)
   assertEqual "sync since" 1 (Binding.requestSince syncRequest)
   assertBool "sync is not a destructor" (not (Binding.requestDestructor syncRequest))
@@ -92,6 +93,7 @@ testEventDecoders = do
   registryDecoder <- case Wayland.decodeWlRegistryEvent (Opcode 0) of
     Nothing -> assertFailure "missing registry global decoder"
     Just decoder -> pure decoder
+  assertEqual "global name" "global" (Binding.eventName registryDecoder)
   assertEqual "global since" 1 (Binding.eventSince registryDecoder)
   assertBool "global is not a destructor" (not (Binding.eventDestructor registryDecoder))
   assertEqual

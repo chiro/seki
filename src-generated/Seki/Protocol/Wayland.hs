@@ -467,7 +467,7 @@ wlDisplayInterface = Binding.Interface "wl_display" 1
 -- @callbackValue@: callback object for the sync request
 encodeWlDisplaySync :: Wire.ObjectId -> Binding.RequestEncoder fd
 encodeWlDisplaySync callbackValue =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 False $ do
+  Binding.RequestEncoder "sync" (Wire.Opcode 0) 1 False $ do
     Arguments.putNewId callbackValue
 
 -- | get global registry object
@@ -485,7 +485,7 @@ encodeWlDisplaySync callbackValue =
 -- @registryValue@: global registry object
 encodeWlDisplayGetRegistry :: Wire.ObjectId -> Binding.RequestEncoder fd
 encodeWlDisplayGetRegistry registryValue =
-  Binding.RequestEncoder (Wire.Opcode 1) 1 False $ do
+  Binding.RequestEncoder "get_registry" (Wire.Opcode 1) 1 False $ do
     Arguments.putNewId registryValue
 
 -- | Events emitted by @wl_display@.
@@ -516,9 +516,9 @@ data WlDisplayEvent fd
 
 decodeWlDisplayEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlDisplayEvent fd))
 decodeWlDisplayEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder 1 False (WlDisplayError <$> (Arguments.getObject) <*> (Arguments.getUint) <*> (Arguments.getString)))
+  Just (Binding.EventDecoder "error" 1 False (WlDisplayError <$> (Arguments.getObject) <*> (Arguments.getUint) <*> (Arguments.getString)))
 decodeWlDisplayEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder 1 False (WlDisplayDeleteId <$> (Arguments.getUint)))
+  Just (Binding.EventDecoder "delete_id" 1 False (WlDisplayDeleteId <$> (Arguments.getUint)))
 decodeWlDisplayEvent _ = Nothing
 
 -- | global error values
@@ -583,7 +583,7 @@ wlRegistryInterface = Binding.Interface "wl_registry" 1
 -- @idValue@: bounded object
 encodeWlRegistryBind :: Word32 -> Binding.DynamicNewId -> Binding.RequestEncoder fd
 encodeWlRegistryBind nameValue idValue =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 False $ do
+  Binding.RequestEncoder "bind" (Wire.Opcode 0) 1 False $ do
     Arguments.putUint nameValue
     Binding.putDynamicNewId idValue
 
@@ -618,9 +618,9 @@ data WlRegistryEvent fd
 
 decodeWlRegistryEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlRegistryEvent fd))
 decodeWlRegistryEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder 1 False (WlRegistryGlobal <$> (Arguments.getUint) <*> (Arguments.getString) <*> (Arguments.getUint)))
+  Just (Binding.EventDecoder "global" 1 False (WlRegistryGlobal <$> (Arguments.getUint) <*> (Arguments.getString) <*> (Arguments.getUint)))
 decodeWlRegistryEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder 1 False (WlRegistryGlobalRemove <$> (Arguments.getUint)))
+  Just (Binding.EventDecoder "global_remove" 1 False (WlRegistryGlobalRemove <$> (Arguments.getUint)))
 decodeWlRegistryEvent _ = Nothing
 
 -- | callback object
@@ -647,7 +647,7 @@ data WlCallbackEvent fd
 
 decodeWlCallbackEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlCallbackEvent fd))
 decodeWlCallbackEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder 1 True (WlCallbackDone <$> (Arguments.getUint)))
+  Just (Binding.EventDecoder "done" 1 True (WlCallbackDone <$> (Arguments.getUint)))
 decodeWlCallbackEvent _ = Nothing
 
 -- | the compositor singleton
@@ -668,7 +668,7 @@ wlCompositorInterface = Binding.Interface "wl_compositor" 7
 -- @idValue@: the new surface
 encodeWlCompositorCreateSurface :: Wire.ObjectId -> Binding.RequestEncoder fd
 encodeWlCompositorCreateSurface idValue =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 False $ do
+  Binding.RequestEncoder "create_surface" (Wire.Opcode 0) 1 False $ do
     Arguments.putNewId idValue
 
 -- | create new region
@@ -678,7 +678,7 @@ encodeWlCompositorCreateSurface idValue =
 -- @idValue@: the new region
 encodeWlCompositorCreateRegion :: Wire.ObjectId -> Binding.RequestEncoder fd
 encodeWlCompositorCreateRegion idValue =
-  Binding.RequestEncoder (Wire.Opcode 1) 1 False $ do
+  Binding.RequestEncoder "create_region" (Wire.Opcode 1) 1 False $ do
     Arguments.putNewId idValue
 
 -- | destroy wl_compositor
@@ -686,7 +686,7 @@ encodeWlCompositorCreateRegion idValue =
 -- This request destroys the wl_compositor. This has no effect on any other objects.
 encodeWlCompositorRelease :: Binding.RequestEncoder fd
 encodeWlCompositorRelease =
-  Binding.RequestEncoder (Wire.Opcode 2) 7 True (pure ())
+  Binding.RequestEncoder "release" (Wire.Opcode 2) 7 True (pure ())
 
 -- | a shared memory pool
 --
@@ -725,7 +725,7 @@ wlShmPoolInterface = Binding.Interface "wl_shm_pool" 2
 -- @formatValue@: buffer pixel format
 encodeWlShmPoolCreateBuffer :: Wire.ObjectId -> Int32 -> Int32 -> Int32 -> Int32 -> WlShmFormatEnum -> Binding.RequestEncoder fd
 encodeWlShmPoolCreateBuffer idValue offsetValue widthValue heightValue strideValue formatValue =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 False $ do
+  Binding.RequestEncoder "create_buffer" (Wire.Opcode 0) 1 False $ do
     Arguments.putNewId idValue
     Arguments.putInt offsetValue
     Arguments.putInt widthValue
@@ -742,7 +742,7 @@ encodeWlShmPoolCreateBuffer idValue offsetValue widthValue heightValue strideVal
 --         are gone.
 encodeWlShmPoolDestroy :: Binding.RequestEncoder fd
 encodeWlShmPoolDestroy =
-  Binding.RequestEncoder (Wire.Opcode 1) 1 True (pure ())
+  Binding.RequestEncoder "destroy" (Wire.Opcode 1) 1 True (pure ())
 
 -- | change the size of the pool mapping
 --
@@ -760,7 +760,7 @@ encodeWlShmPoolDestroy =
 -- @sizeValue@: new size of the pool, in bytes
 encodeWlShmPoolResize :: Int32 -> Binding.RequestEncoder fd
 encodeWlShmPoolResize sizeValue =
-  Binding.RequestEncoder (Wire.Opcode 2) 1 False $ do
+  Binding.RequestEncoder "resize" (Wire.Opcode 2) 1 False $ do
     Arguments.putInt sizeValue
 
 -- | shared memory support
@@ -793,7 +793,7 @@ wlShmInterface = Binding.Interface "wl_shm" 2
 -- @sizeValue@: pool size, in bytes
 encodeWlShmCreatePool :: Wire.ObjectId -> fd -> Int32 -> Binding.RequestEncoder fd
 encodeWlShmCreatePool idValue fdValue sizeValue =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 False $ do
+  Binding.RequestEncoder "create_pool" (Wire.Opcode 0) 1 False $ do
     Arguments.putNewId idValue
     Arguments.putFd fdValue
     Arguments.putInt sizeValue
@@ -806,7 +806,7 @@ encodeWlShmCreatePool idValue fdValue sizeValue =
 --         Objects created via this interface remain unaffected.
 encodeWlShmRelease :: Binding.RequestEncoder fd
 encodeWlShmRelease =
-  Binding.RequestEncoder (Wire.Opcode 1) 2 True (pure ())
+  Binding.RequestEncoder "release" (Wire.Opcode 1) 2 True (pure ())
 
 -- | Events emitted by @wl_shm@.
 data WlShmEvent fd
@@ -825,7 +825,7 @@ data WlShmEvent fd
 
 decodeWlShmEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlShmEvent fd))
 decodeWlShmEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder 1 False (WlShmFormat <$> (WlShmFormatEnum <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "format" 1 False (WlShmFormat <$> (WlShmFormatEnum <$> Arguments.getUint)))
 decodeWlShmEvent _ = Nothing
 
 -- | wl_shm error values
@@ -1471,7 +1471,7 @@ wlBufferInterface = Binding.Interface "wl_buffer" 1
 --         For possible side-effects to a surface, see wl_surface.attach.
 encodeWlBufferDestroy :: Binding.RequestEncoder fd
 encodeWlBufferDestroy =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 True (pure ())
+  Binding.RequestEncoder "destroy" (Wire.Opcode 0) 1 True (pure ())
 
 -- | Events emitted by @wl_buffer@.
 data WlBufferEvent fd
@@ -1496,7 +1496,7 @@ data WlBufferEvent fd
 
 decodeWlBufferEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlBufferEvent fd))
 decodeWlBufferEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder 1 False (pure WlBufferRelease))
+  Just (Binding.EventDecoder "release" 1 False (pure WlBufferRelease))
 decodeWlBufferEvent _ = Nothing
 
 -- | offer to transfer data
@@ -1534,7 +1534,7 @@ wlDataOfferInterface = Binding.Interface "wl_data_offer" 4
 -- @mimeTypeValue@: mime type accepted by the client
 encodeWlDataOfferAccept :: Word32 -> (Maybe Text) -> Binding.RequestEncoder fd
 encodeWlDataOfferAccept serialValue mimeTypeValue =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 False $ do
+  Binding.RequestEncoder "accept" (Wire.Opcode 0) 1 False $ do
     Arguments.putUint serialValue
     Arguments.putNullableString mimeTypeValue
 
@@ -1560,7 +1560,7 @@ encodeWlDataOfferAccept serialValue mimeTypeValue =
 -- @fdValue@: file descriptor for data transfer
 encodeWlDataOfferReceive :: Text -> fd -> Binding.RequestEncoder fd
 encodeWlDataOfferReceive mimeTypeValue fdValue =
-  Binding.RequestEncoder (Wire.Opcode 1) 1 False $ do
+  Binding.RequestEncoder "receive" (Wire.Opcode 1) 1 False $ do
     Arguments.putString mimeTypeValue
     Arguments.putFd fdValue
 
@@ -1569,7 +1569,7 @@ encodeWlDataOfferReceive mimeTypeValue fdValue =
 -- Destroy the data offer.
 encodeWlDataOfferDestroy :: Binding.RequestEncoder fd
 encodeWlDataOfferDestroy =
-  Binding.RequestEncoder (Wire.Opcode 2) 1 True (pure ())
+  Binding.RequestEncoder "destroy" (Wire.Opcode 2) 1 True (pure ())
 
 -- | the offer will no longer be used
 --
@@ -1589,7 +1589,7 @@ encodeWlDataOfferDestroy =
 --         operation, the invalid_finish protocol error is raised.
 encodeWlDataOfferFinish :: Binding.RequestEncoder fd
 encodeWlDataOfferFinish =
-  Binding.RequestEncoder (Wire.Opcode 3) 3 False (pure ())
+  Binding.RequestEncoder "finish" (Wire.Opcode 3) 3 False (pure ())
 
 -- | set the available/preferred drag-and-drop actions
 --
@@ -1629,7 +1629,7 @@ encodeWlDataOfferFinish =
 -- @preferredActionValue@: action preferred by the destination client
 encodeWlDataOfferSetActions :: WlDataDeviceManagerDndActionFlags -> WlDataDeviceManagerDndActionFlags -> Binding.RequestEncoder fd
 encodeWlDataOfferSetActions dndActionsValue preferredActionValue =
-  Binding.RequestEncoder (Wire.Opcode 4) 3 False $ do
+  Binding.RequestEncoder "set_actions" (Wire.Opcode 4) 3 False $ do
     Arguments.putUint (wlDataDeviceManagerDndActionFlagsValue dndActionsValue)
     Arguments.putUint (wlDataDeviceManagerDndActionFlagsValue preferredActionValue)
 
@@ -1692,11 +1692,11 @@ data WlDataOfferEvent fd
 
 decodeWlDataOfferEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlDataOfferEvent fd))
 decodeWlDataOfferEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder 1 False (WlDataOfferOffer <$> (Arguments.getString)))
+  Just (Binding.EventDecoder "offer" 1 False (WlDataOfferOffer <$> (Arguments.getString)))
 decodeWlDataOfferEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder 3 False (WlDataOfferSourceActions <$> (WlDataDeviceManagerDndActionFlags <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "source_actions" 3 False (WlDataOfferSourceActions <$> (WlDataDeviceManagerDndActionFlags <$> Arguments.getUint)))
 decodeWlDataOfferEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder 3 False (WlDataOfferAction <$> (WlDataDeviceManagerDndActionFlags <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "action" 3 False (WlDataOfferAction <$> (WlDataDeviceManagerDndActionFlags <$> Arguments.getUint)))
 decodeWlDataOfferEvent _ = Nothing
 
 -- | Values of @wl_data_offer.error@.
@@ -1742,7 +1742,7 @@ wlDataSourceInterface = Binding.Interface "wl_data_source" 4
 -- @mimeTypeValue@: mime type offered by the data source
 encodeWlDataSourceOffer :: Text -> Binding.RequestEncoder fd
 encodeWlDataSourceOffer mimeTypeValue =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 False $ do
+  Binding.RequestEncoder "offer" (Wire.Opcode 0) 1 False $ do
     Arguments.putString mimeTypeValue
 
 -- | destroy the data source
@@ -1750,7 +1750,7 @@ encodeWlDataSourceOffer mimeTypeValue =
 -- Destroy the data source.
 encodeWlDataSourceDestroy :: Binding.RequestEncoder fd
 encodeWlDataSourceDestroy =
-  Binding.RequestEncoder (Wire.Opcode 1) 1 True (pure ())
+  Binding.RequestEncoder "destroy" (Wire.Opcode 1) 1 True (pure ())
 
 -- | set the available drag-and-drop actions
 --
@@ -1771,7 +1771,7 @@ encodeWlDataSourceDestroy =
 -- @dndActionsValue@: actions supported by the data source
 encodeWlDataSourceSetActions :: WlDataDeviceManagerDndActionFlags -> Binding.RequestEncoder fd
 encodeWlDataSourceSetActions dndActionsValue =
-  Binding.RequestEncoder (Wire.Opcode 2) 3 False $ do
+  Binding.RequestEncoder "set_actions" (Wire.Opcode 2) 3 False $ do
     Arguments.putUint (wlDataDeviceManagerDndActionFlagsValue dndActionsValue)
 
 -- | Events emitted by @wl_data_source@.
@@ -1869,17 +1869,17 @@ data WlDataSourceEvent fd
 
 decodeWlDataSourceEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlDataSourceEvent fd))
 decodeWlDataSourceEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder 1 False (WlDataSourceTarget <$> (Arguments.getNullableString)))
+  Just (Binding.EventDecoder "target" 1 False (WlDataSourceTarget <$> (Arguments.getNullableString)))
 decodeWlDataSourceEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder 1 False (WlDataSourceSend <$> (Arguments.getString) <*> (Arguments.getFd)))
+  Just (Binding.EventDecoder "send" 1 False (WlDataSourceSend <$> (Arguments.getString) <*> (Arguments.getFd)))
 decodeWlDataSourceEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder 1 False (pure WlDataSourceCancelled))
+  Just (Binding.EventDecoder "cancelled" 1 False (pure WlDataSourceCancelled))
 decodeWlDataSourceEvent (Wire.Opcode 3) =
-  Just (Binding.EventDecoder 3 False (pure WlDataSourceDndDropPerformed))
+  Just (Binding.EventDecoder "dnd_drop_performed" 3 False (pure WlDataSourceDndDropPerformed))
 decodeWlDataSourceEvent (Wire.Opcode 4) =
-  Just (Binding.EventDecoder 3 False (pure WlDataSourceDndFinished))
+  Just (Binding.EventDecoder "dnd_finished" 3 False (pure WlDataSourceDndFinished))
 decodeWlDataSourceEvent (Wire.Opcode 5) =
-  Just (Binding.EventDecoder 3 False (WlDataSourceAction <$> (WlDataDeviceManagerDndActionFlags <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "action" 3 False (WlDataSourceAction <$> (WlDataDeviceManagerDndActionFlags <$> Arguments.getUint)))
 decodeWlDataSourceEvent _ = Nothing
 
 -- | Values of @wl_data_source.error@.
@@ -1947,7 +1947,7 @@ wlDataDeviceInterface = Binding.Interface "wl_data_device" 4
 -- @serialValue@: serial number of the implicit grab on the origin
 encodeWlDataDeviceStartDrag :: (Maybe Wire.ObjectId) -> Wire.ObjectId -> (Maybe Wire.ObjectId) -> Word32 -> Binding.RequestEncoder fd
 encodeWlDataDeviceStartDrag sourceValue originValue iconValue serialValue =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 False $ do
+  Binding.RequestEncoder "start_drag" (Wire.Opcode 0) 1 False $ do
     Arguments.putNullableObject sourceValue
     Arguments.putObject originValue
     Arguments.putNullableObject iconValue
@@ -1968,7 +1968,7 @@ encodeWlDataDeviceStartDrag sourceValue originValue iconValue serialValue =
 -- @serialValue@: serial number of the event that triggered this request
 encodeWlDataDeviceSetSelection :: (Maybe Wire.ObjectId) -> Word32 -> Binding.RequestEncoder fd
 encodeWlDataDeviceSetSelection sourceValue serialValue =
-  Binding.RequestEncoder (Wire.Opcode 1) 1 False $ do
+  Binding.RequestEncoder "set_selection" (Wire.Opcode 1) 1 False $ do
     Arguments.putNullableObject sourceValue
     Arguments.putUint serialValue
 
@@ -1977,7 +1977,7 @@ encodeWlDataDeviceSetSelection sourceValue serialValue =
 -- This request destroys the data device.
 encodeWlDataDeviceRelease :: Binding.RequestEncoder fd
 encodeWlDataDeviceRelease =
-  Binding.RequestEncoder (Wire.Opcode 2) 2 True (pure ())
+  Binding.RequestEncoder "release" (Wire.Opcode 2) 2 True (pure ())
 
 -- | Events emitted by @wl_data_device@.
 data WlDataDeviceEvent fd
@@ -2056,17 +2056,17 @@ data WlDataDeviceEvent fd
 
 decodeWlDataDeviceEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlDataDeviceEvent fd))
 decodeWlDataDeviceEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder 1 False (WlDataDeviceDataOffer <$> (Arguments.getNewId)))
+  Just (Binding.EventDecoder "data_offer" 1 False (WlDataDeviceDataOffer <$> (Arguments.getNewId)))
 decodeWlDataDeviceEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder 1 False (WlDataDeviceEnter <$> (Arguments.getUint) <*> (Arguments.getObject) <*> (Arguments.getFixed) <*> (Arguments.getFixed) <*> (Arguments.getNullableObject)))
+  Just (Binding.EventDecoder "enter" 1 False (WlDataDeviceEnter <$> (Arguments.getUint) <*> (Arguments.getObject) <*> (Arguments.getFixed) <*> (Arguments.getFixed) <*> (Arguments.getNullableObject)))
 decodeWlDataDeviceEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder 1 False (pure WlDataDeviceLeave))
+  Just (Binding.EventDecoder "leave" 1 False (pure WlDataDeviceLeave))
 decodeWlDataDeviceEvent (Wire.Opcode 3) =
-  Just (Binding.EventDecoder 1 False (WlDataDeviceMotion <$> (Arguments.getUint) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
+  Just (Binding.EventDecoder "motion" 1 False (WlDataDeviceMotion <$> (Arguments.getUint) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
 decodeWlDataDeviceEvent (Wire.Opcode 4) =
-  Just (Binding.EventDecoder 1 False (pure WlDataDeviceDrop))
+  Just (Binding.EventDecoder "drop" 1 False (pure WlDataDeviceDrop))
 decodeWlDataDeviceEvent (Wire.Opcode 5) =
-  Just (Binding.EventDecoder 1 False (WlDataDeviceSelection <$> (Arguments.getNullableObject)))
+  Just (Binding.EventDecoder "selection" 1 False (WlDataDeviceSelection <$> (Arguments.getNullableObject)))
 decodeWlDataDeviceEvent _ = Nothing
 
 -- | Values of @wl_data_device.error@.
@@ -2108,7 +2108,7 @@ wlDataDeviceManagerInterface = Binding.Interface "wl_data_device_manager" 4
 -- @idValue@: data source to create
 encodeWlDataDeviceManagerCreateDataSource :: Wire.ObjectId -> Binding.RequestEncoder fd
 encodeWlDataDeviceManagerCreateDataSource idValue =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 False $ do
+  Binding.RequestEncoder "create_data_source" (Wire.Opcode 0) 1 False $ do
     Arguments.putNewId idValue
 
 -- | create a new data device
@@ -2119,7 +2119,7 @@ encodeWlDataDeviceManagerCreateDataSource idValue =
 -- @seatValue@: seat associated with the data device
 encodeWlDataDeviceManagerGetDataDevice :: Wire.ObjectId -> Wire.ObjectId -> Binding.RequestEncoder fd
 encodeWlDataDeviceManagerGetDataDevice idValue seatValue =
-  Binding.RequestEncoder (Wire.Opcode 1) 1 False $ do
+  Binding.RequestEncoder "get_data_device" (Wire.Opcode 1) 1 False $ do
     Arguments.putNewId idValue
     Arguments.putObject seatValue
 
@@ -2129,7 +2129,7 @@ encodeWlDataDeviceManagerGetDataDevice idValue seatValue =
 --         objects.
 encodeWlDataDeviceManagerRelease :: Binding.RequestEncoder fd
 encodeWlDataDeviceManagerRelease =
-  Binding.RequestEncoder (Wire.Opcode 2) 4 True (pure ())
+  Binding.RequestEncoder "release" (Wire.Opcode 2) 4 True (pure ())
 
 -- | drag and drop actions
 --
@@ -2206,7 +2206,7 @@ wlShellInterface = Binding.Interface "wl_shell" 1
 -- @surfaceValue@: surface to be given the shell surface role
 encodeWlShellGetShellSurface :: Wire.ObjectId -> Wire.ObjectId -> Binding.RequestEncoder fd
 encodeWlShellGetShellSurface idValue surfaceValue =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 False $ do
+  Binding.RequestEncoder "get_shell_surface" (Wire.Opcode 0) 1 False $ do
     Arguments.putNewId idValue
     Arguments.putObject surfaceValue
 
@@ -2247,7 +2247,7 @@ wlShellSurfaceInterface = Binding.Interface "wl_shell_surface" 1
 -- @serialValue@: serial number of the ping event
 encodeWlShellSurfacePong :: Word32 -> Binding.RequestEncoder fd
 encodeWlShellSurfacePong serialValue =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 False $ do
+  Binding.RequestEncoder "pong" (Wire.Opcode 0) 1 False $ do
     Arguments.putUint serialValue
 
 -- | start an interactive move
@@ -2262,7 +2262,7 @@ encodeWlShellSurfacePong serialValue =
 -- @serialValue@: serial number of the implicit grab on the pointer
 encodeWlShellSurfaceMove :: Wire.ObjectId -> Word32 -> Binding.RequestEncoder fd
 encodeWlShellSurfaceMove seatValue serialValue =
-  Binding.RequestEncoder (Wire.Opcode 1) 1 False $ do
+  Binding.RequestEncoder "move" (Wire.Opcode 1) 1 False $ do
     Arguments.putObject seatValue
     Arguments.putUint serialValue
 
@@ -2279,7 +2279,7 @@ encodeWlShellSurfaceMove seatValue serialValue =
 -- @edgesValue@: which edge or corner is being dragged
 encodeWlShellSurfaceResize :: Wire.ObjectId -> Word32 -> WlShellSurfaceResizeFlags -> Binding.RequestEncoder fd
 encodeWlShellSurfaceResize seatValue serialValue edgesValue =
-  Binding.RequestEncoder (Wire.Opcode 2) 1 False $ do
+  Binding.RequestEncoder "resize" (Wire.Opcode 2) 1 False $ do
     Arguments.putObject seatValue
     Arguments.putUint serialValue
     Arguments.putUint (wlShellSurfaceResizeFlagsValue edgesValue)
@@ -2291,7 +2291,7 @@ encodeWlShellSurfaceResize seatValue serialValue edgesValue =
 --         A toplevel surface is not fullscreen, maximized or transient.
 encodeWlShellSurfaceSetToplevel :: Binding.RequestEncoder fd
 encodeWlShellSurfaceSetToplevel =
-  Binding.RequestEncoder (Wire.Opcode 3) 1 False (pure ())
+  Binding.RequestEncoder "set_toplevel" (Wire.Opcode 3) 1 False (pure ())
 
 -- | make the surface a transient surface
 --
@@ -2309,7 +2309,7 @@ encodeWlShellSurfaceSetToplevel =
 -- @flagsValue@: transient surface behavior
 encodeWlShellSurfaceSetTransient :: Wire.ObjectId -> Int32 -> Int32 -> WlShellSurfaceTransientFlags -> Binding.RequestEncoder fd
 encodeWlShellSurfaceSetTransient parentValue xValue yValue flagsValue =
-  Binding.RequestEncoder (Wire.Opcode 4) 1 False $ do
+  Binding.RequestEncoder "set_transient" (Wire.Opcode 4) 1 False $ do
     Arguments.putObject parentValue
     Arguments.putInt xValue
     Arguments.putInt yValue
@@ -2356,7 +2356,7 @@ encodeWlShellSurfaceSetTransient parentValue xValue yValue flagsValue =
 -- @outputValue@: output on which the surface is to be fullscreen
 encodeWlShellSurfaceSetFullscreen :: WlShellSurfaceFullscreenMethodEnum -> Word32 -> (Maybe Wire.ObjectId) -> Binding.RequestEncoder fd
 encodeWlShellSurfaceSetFullscreen methodValue framerateValue outputValue =
-  Binding.RequestEncoder (Wire.Opcode 5) 1 False $ do
+  Binding.RequestEncoder "set_fullscreen" (Wire.Opcode 5) 1 False $ do
     Arguments.putUint (wlShellSurfaceFullscreenMethodEnumValue methodValue)
     Arguments.putUint framerateValue
     Arguments.putNullableObject outputValue
@@ -2391,7 +2391,7 @@ encodeWlShellSurfaceSetFullscreen methodValue framerateValue outputValue =
 -- @flagsValue@: transient surface behavior
 encodeWlShellSurfaceSetPopup :: Wire.ObjectId -> Word32 -> Wire.ObjectId -> Int32 -> Int32 -> WlShellSurfaceTransientFlags -> Binding.RequestEncoder fd
 encodeWlShellSurfaceSetPopup seatValue serialValue parentValue xValue yValue flagsValue =
-  Binding.RequestEncoder (Wire.Opcode 6) 1 False $ do
+  Binding.RequestEncoder "set_popup" (Wire.Opcode 6) 1 False $ do
     Arguments.putObject seatValue
     Arguments.putUint serialValue
     Arguments.putObject parentValue
@@ -2423,7 +2423,7 @@ encodeWlShellSurfaceSetPopup seatValue serialValue parentValue xValue yValue fla
 -- @outputValue@: output on which the surface is to be maximized
 encodeWlShellSurfaceSetMaximized :: (Maybe Wire.ObjectId) -> Binding.RequestEncoder fd
 encodeWlShellSurfaceSetMaximized outputValue =
-  Binding.RequestEncoder (Wire.Opcode 7) 1 False $ do
+  Binding.RequestEncoder "set_maximized" (Wire.Opcode 7) 1 False $ do
     Arguments.putNullableObject outputValue
 
 -- | set surface title
@@ -2439,7 +2439,7 @@ encodeWlShellSurfaceSetMaximized outputValue =
 -- @titleValue@: surface title
 encodeWlShellSurfaceSetTitle :: Text -> Binding.RequestEncoder fd
 encodeWlShellSurfaceSetTitle titleValue =
-  Binding.RequestEncoder (Wire.Opcode 8) 1 False $ do
+  Binding.RequestEncoder "set_title" (Wire.Opcode 8) 1 False $ do
     Arguments.putString titleValue
 
 -- | set surface class
@@ -2454,7 +2454,7 @@ encodeWlShellSurfaceSetTitle titleValue =
 -- @classValue@: surface class
 encodeWlShellSurfaceSetClass :: Text -> Binding.RequestEncoder fd
 encodeWlShellSurfaceSetClass classValue =
-  Binding.RequestEncoder (Wire.Opcode 9) 1 False $ do
+  Binding.RequestEncoder "set_class" (Wire.Opcode 9) 1 False $ do
     Arguments.putString classValue
 
 -- | Events emitted by @wl_shell_surface@.
@@ -2498,11 +2498,11 @@ data WlShellSurfaceEvent fd
 
 decodeWlShellSurfaceEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlShellSurfaceEvent fd))
 decodeWlShellSurfaceEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder 1 False (WlShellSurfacePing <$> (Arguments.getUint)))
+  Just (Binding.EventDecoder "ping" 1 False (WlShellSurfacePing <$> (Arguments.getUint)))
 decodeWlShellSurfaceEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder 1 False (WlShellSurfaceConfigure <$> (WlShellSurfaceResizeFlags <$> Arguments.getUint) <*> (Arguments.getInt) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "configure" 1 False (WlShellSurfaceConfigure <$> (WlShellSurfaceResizeFlags <$> Arguments.getUint) <*> (Arguments.getInt) <*> (Arguments.getInt)))
 decodeWlShellSurfaceEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder 1 False (pure WlShellSurfacePopupDone))
+  Just (Binding.EventDecoder "popup_done" 1 False (pure WlShellSurfacePopupDone))
 decodeWlShellSurfaceEvent _ = Nothing
 
 -- | edge values for resizing
@@ -2646,7 +2646,7 @@ wlSurfaceInterface = Binding.Interface "wl_surface" 7
 -- Deletes the surface and invalidates its object ID.
 encodeWlSurfaceDestroy :: Binding.RequestEncoder fd
 encodeWlSurfaceDestroy =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 True (pure ())
+  Binding.RequestEncoder "destroy" (Wire.Opcode 0) 1 True (pure ())
 
 -- | set the surface contents
 --
@@ -2723,7 +2723,7 @@ encodeWlSurfaceDestroy =
 -- @yValue@: surface-local y coordinate
 encodeWlSurfaceAttach :: (Maybe Wire.ObjectId) -> Int32 -> Int32 -> Binding.RequestEncoder fd
 encodeWlSurfaceAttach bufferValue xValue yValue =
-  Binding.RequestEncoder (Wire.Opcode 1) 1 False $ do
+  Binding.RequestEncoder "attach" (Wire.Opcode 1) 1 False $ do
     Arguments.putNullableObject bufferValue
     Arguments.putInt xValue
     Arguments.putInt yValue
@@ -2758,7 +2758,7 @@ encodeWlSurfaceAttach bufferValue xValue yValue =
 -- @heightValue@: height of damage rectangle
 encodeWlSurfaceDamage :: Int32 -> Int32 -> Int32 -> Int32 -> Binding.RequestEncoder fd
 encodeWlSurfaceDamage xValue yValue widthValue heightValue =
-  Binding.RequestEncoder (Wire.Opcode 2) 1 False $ do
+  Binding.RequestEncoder "damage" (Wire.Opcode 2) 1 False $ do
     Arguments.putInt xValue
     Arguments.putInt yValue
     Arguments.putInt widthValue
@@ -2802,7 +2802,7 @@ encodeWlSurfaceDamage xValue yValue widthValue heightValue =
 -- @callbackValue@: callback object for the frame request
 encodeWlSurfaceFrame :: Wire.ObjectId -> Binding.RequestEncoder fd
 encodeWlSurfaceFrame callbackValue =
-  Binding.RequestEncoder (Wire.Opcode 3) 1 False $ do
+  Binding.RequestEncoder "frame" (Wire.Opcode 3) 1 False $ do
     Arguments.putNewId callbackValue
 
 -- | set opaque region
@@ -2835,7 +2835,7 @@ encodeWlSurfaceFrame callbackValue =
 -- @regionValue@: opaque region of the surface
 encodeWlSurfaceSetOpaqueRegion :: (Maybe Wire.ObjectId) -> Binding.RequestEncoder fd
 encodeWlSurfaceSetOpaqueRegion regionValue =
-  Binding.RequestEncoder (Wire.Opcode 4) 1 False $ do
+  Binding.RequestEncoder "set_opaque_region" (Wire.Opcode 4) 1 False $ do
     Arguments.putNullableObject regionValue
 
 -- | set input region
@@ -2866,7 +2866,7 @@ encodeWlSurfaceSetOpaqueRegion regionValue =
 -- @regionValue@: input region of the surface
 encodeWlSurfaceSetInputRegion :: (Maybe Wire.ObjectId) -> Binding.RequestEncoder fd
 encodeWlSurfaceSetInputRegion regionValue =
-  Binding.RequestEncoder (Wire.Opcode 5) 1 False $ do
+  Binding.RequestEncoder "set_input_region" (Wire.Opcode 5) 1 False $ do
     Arguments.putNullableObject regionValue
 
 -- | commit pending surface state
@@ -2919,7 +2919,7 @@ encodeWlSurfaceSetInputRegion regionValue =
 --         the previous content update.
 encodeWlSurfaceCommit :: Binding.RequestEncoder fd
 encodeWlSurfaceCommit =
-  Binding.RequestEncoder (Wire.Opcode 6) 1 False (pure ())
+  Binding.RequestEncoder "commit" (Wire.Opcode 6) 1 False (pure ())
 
 -- | sets the buffer transformation
 --
@@ -2958,7 +2958,7 @@ encodeWlSurfaceCommit =
 -- @transformValue@: transform for interpreting buffer contents
 encodeWlSurfaceSetBufferTransform :: WlOutputTransformEnum -> Binding.RequestEncoder fd
 encodeWlSurfaceSetBufferTransform transformValue =
-  Binding.RequestEncoder (Wire.Opcode 7) 2 False $ do
+  Binding.RequestEncoder "set_buffer_transform" (Wire.Opcode 7) 2 False $ do
     Arguments.putInt (fromIntegral (wlOutputTransformEnumValue transformValue))
 
 -- | sets the buffer scaling factor
@@ -2990,7 +2990,7 @@ encodeWlSurfaceSetBufferTransform transformValue =
 -- @scaleValue@: scale for interpreting buffer contents
 encodeWlSurfaceSetBufferScale :: Int32 -> Binding.RequestEncoder fd
 encodeWlSurfaceSetBufferScale scaleValue =
-  Binding.RequestEncoder (Wire.Opcode 8) 3 False $ do
+  Binding.RequestEncoder "set_buffer_scale" (Wire.Opcode 8) 3 False $ do
     Arguments.putInt scaleValue
 
 -- | mark part of the surface damaged using buffer coordinates
@@ -3034,7 +3034,7 @@ encodeWlSurfaceSetBufferScale scaleValue =
 -- @heightValue@: height of damage rectangle
 encodeWlSurfaceDamageBuffer :: Int32 -> Int32 -> Int32 -> Int32 -> Binding.RequestEncoder fd
 encodeWlSurfaceDamageBuffer xValue yValue widthValue heightValue =
-  Binding.RequestEncoder (Wire.Opcode 9) 4 False $ do
+  Binding.RequestEncoder "damage_buffer" (Wire.Opcode 9) 4 False $ do
     Arguments.putInt xValue
     Arguments.putInt yValue
     Arguments.putInt widthValue
@@ -3062,7 +3062,7 @@ encodeWlSurfaceDamageBuffer xValue yValue widthValue heightValue =
 -- @yValue@: surface-local y coordinate
 encodeWlSurfaceOffset :: Int32 -> Int32 -> Binding.RequestEncoder fd
 encodeWlSurfaceOffset xValue yValue =
-  Binding.RequestEncoder (Wire.Opcode 10) 5 False $ do
+  Binding.RequestEncoder "offset" (Wire.Opcode 10) 5 False $ do
     Arguments.putInt xValue
     Arguments.putInt yValue
 
@@ -3090,7 +3090,7 @@ encodeWlSurfaceOffset xValue yValue =
 -- @callbackValue@: callback object for the release
 encodeWlSurfaceGetRelease :: Wire.ObjectId -> Binding.RequestEncoder fd
 encodeWlSurfaceGetRelease callbackValue =
-  Binding.RequestEncoder (Wire.Opcode 11) 7 False $ do
+  Binding.RequestEncoder "get_release" (Wire.Opcode 11) 7 False $ do
     Arguments.putNewId callbackValue
 
 -- | Events emitted by @wl_surface@.
@@ -3150,13 +3150,13 @@ data WlSurfaceEvent fd
 
 decodeWlSurfaceEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlSurfaceEvent fd))
 decodeWlSurfaceEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder 1 False (WlSurfaceEnter <$> (Arguments.getObject)))
+  Just (Binding.EventDecoder "enter" 1 False (WlSurfaceEnter <$> (Arguments.getObject)))
 decodeWlSurfaceEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder 1 False (WlSurfaceLeave <$> (Arguments.getObject)))
+  Just (Binding.EventDecoder "leave" 1 False (WlSurfaceLeave <$> (Arguments.getObject)))
 decodeWlSurfaceEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder 6 False (WlSurfacePreferredBufferScale <$> (Arguments.getInt)))
+  Just (Binding.EventDecoder "preferred_buffer_scale" 6 False (WlSurfacePreferredBufferScale <$> (Arguments.getInt)))
 decodeWlSurfaceEvent (Wire.Opcode 3) =
-  Just (Binding.EventDecoder 6 False (WlSurfacePreferredBufferTransform <$> (WlOutputTransformEnum <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "preferred_buffer_transform" 6 False (WlSurfacePreferredBufferTransform <$> (WlOutputTransformEnum <$> Arguments.getUint)))
 decodeWlSurfaceEvent _ = Nothing
 
 -- | wl_surface error values
@@ -3217,7 +3217,7 @@ wlSeatInterface = Binding.Interface "wl_seat" 10
 -- @idValue@: seat pointer
 encodeWlSeatGetPointer :: Wire.ObjectId -> Binding.RequestEncoder fd
 encodeWlSeatGetPointer idValue =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 False $ do
+  Binding.RequestEncoder "get_pointer" (Wire.Opcode 0) 1 False $ do
     Arguments.putNewId idValue
 
 -- | return keyboard object
@@ -3234,7 +3234,7 @@ encodeWlSeatGetPointer idValue =
 -- @idValue@: seat keyboard
 encodeWlSeatGetKeyboard :: Wire.ObjectId -> Binding.RequestEncoder fd
 encodeWlSeatGetKeyboard idValue =
-  Binding.RequestEncoder (Wire.Opcode 1) 1 False $ do
+  Binding.RequestEncoder "get_keyboard" (Wire.Opcode 1) 1 False $ do
     Arguments.putNewId idValue
 
 -- | return touch object
@@ -3251,7 +3251,7 @@ encodeWlSeatGetKeyboard idValue =
 -- @idValue@: seat touch interface
 encodeWlSeatGetTouch :: Wire.ObjectId -> Binding.RequestEncoder fd
 encodeWlSeatGetTouch idValue =
-  Binding.RequestEncoder (Wire.Opcode 2) 1 False $ do
+  Binding.RequestEncoder "get_touch" (Wire.Opcode 2) 1 False $ do
     Arguments.putNewId idValue
 
 -- | release the seat object
@@ -3260,7 +3260,7 @@ encodeWlSeatGetTouch idValue =
 --         use the seat object anymore.
 encodeWlSeatRelease :: Binding.RequestEncoder fd
 encodeWlSeatRelease =
-  Binding.RequestEncoder (Wire.Opcode 3) 5 True (pure ())
+  Binding.RequestEncoder "release" (Wire.Opcode 3) 5 True (pure ())
 
 -- | Events emitted by @wl_seat@.
 data WlSeatEvent fd
@@ -3317,9 +3317,9 @@ data WlSeatEvent fd
 
 decodeWlSeatEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlSeatEvent fd))
 decodeWlSeatEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder 1 False (WlSeatCapabilities <$> (WlSeatCapabilityFlags <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "capabilities" 1 False (WlSeatCapabilities <$> (WlSeatCapabilityFlags <$> Arguments.getUint)))
 decodeWlSeatEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder 2 False (WlSeatName <$> (Arguments.getString)))
+  Just (Binding.EventDecoder "name" 2 False (WlSeatName <$> (Arguments.getString)))
 decodeWlSeatEvent _ = Nothing
 
 -- | seat capability bitmask
@@ -3413,7 +3413,7 @@ wlPointerInterface = Binding.Interface "wl_pointer" 10
 -- @hotspotYValue@: surface-local y coordinate
 encodeWlPointerSetCursor :: Word32 -> (Maybe Wire.ObjectId) -> Int32 -> Int32 -> Binding.RequestEncoder fd
 encodeWlPointerSetCursor serialValue surfaceValue hotspotXValue hotspotYValue =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 False $ do
+  Binding.RequestEncoder "set_cursor" (Wire.Opcode 0) 1 False $ do
     Arguments.putUint serialValue
     Arguments.putNullableObject surfaceValue
     Arguments.putInt hotspotXValue
@@ -3428,7 +3428,7 @@ encodeWlPointerSetCursor serialValue surfaceValue hotspotXValue hotspotYValue =
 --         wl_pointer_destroy() after using this request.
 encodeWlPointerRelease :: Binding.RequestEncoder fd
 encodeWlPointerRelease =
-  Binding.RequestEncoder (Wire.Opcode 1) 3 True (pure ())
+  Binding.RequestEncoder "release" (Wire.Opcode 1) 3 True (pure ())
 
 -- | Events emitted by @wl_pointer@.
 data WlPointerEvent fd
@@ -3697,27 +3697,27 @@ data WlPointerEvent fd
 
 decodeWlPointerEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlPointerEvent fd))
 decodeWlPointerEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder 1 False (WlPointerEnter <$> (Arguments.getUint) <*> (Arguments.getObject) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
+  Just (Binding.EventDecoder "enter" 1 False (WlPointerEnter <$> (Arguments.getUint) <*> (Arguments.getObject) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
 decodeWlPointerEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder 1 False (WlPointerLeave <$> (Arguments.getUint) <*> (Arguments.getObject)))
+  Just (Binding.EventDecoder "leave" 1 False (WlPointerLeave <$> (Arguments.getUint) <*> (Arguments.getObject)))
 decodeWlPointerEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder 1 False (WlPointerMotion <$> (Arguments.getUint) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
+  Just (Binding.EventDecoder "motion" 1 False (WlPointerMotion <$> (Arguments.getUint) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
 decodeWlPointerEvent (Wire.Opcode 3) =
-  Just (Binding.EventDecoder 1 False (WlPointerButton <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint) <*> (WlPointerButtonStateEnum <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "button" 1 False (WlPointerButton <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint) <*> (WlPointerButtonStateEnum <$> Arguments.getUint)))
 decodeWlPointerEvent (Wire.Opcode 4) =
-  Just (Binding.EventDecoder 1 False (WlPointerAxis <$> (Arguments.getUint) <*> (WlPointerAxisEnum <$> Arguments.getUint) <*> (Arguments.getFixed)))
+  Just (Binding.EventDecoder "axis" 1 False (WlPointerAxis <$> (Arguments.getUint) <*> (WlPointerAxisEnum <$> Arguments.getUint) <*> (Arguments.getFixed)))
 decodeWlPointerEvent (Wire.Opcode 5) =
-  Just (Binding.EventDecoder 5 False (pure WlPointerFrame))
+  Just (Binding.EventDecoder "frame" 5 False (pure WlPointerFrame))
 decodeWlPointerEvent (Wire.Opcode 6) =
-  Just (Binding.EventDecoder 5 False (WlPointerAxisSource <$> (WlPointerAxisSourceEnum <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "axis_source" 5 False (WlPointerAxisSource <$> (WlPointerAxisSourceEnum <$> Arguments.getUint)))
 decodeWlPointerEvent (Wire.Opcode 7) =
-  Just (Binding.EventDecoder 5 False (WlPointerAxisStop <$> (Arguments.getUint) <*> (WlPointerAxisEnum <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "axis_stop" 5 False (WlPointerAxisStop <$> (Arguments.getUint) <*> (WlPointerAxisEnum <$> Arguments.getUint)))
 decodeWlPointerEvent (Wire.Opcode 8) =
-  Just (Binding.EventDecoder 5 False (WlPointerAxisDiscrete <$> (WlPointerAxisEnum <$> Arguments.getUint) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "axis_discrete" 5 False (WlPointerAxisDiscrete <$> (WlPointerAxisEnum <$> Arguments.getUint) <*> (Arguments.getInt)))
 decodeWlPointerEvent (Wire.Opcode 9) =
-  Just (Binding.EventDecoder 8 False (WlPointerAxisValue120 <$> (WlPointerAxisEnum <$> Arguments.getUint) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "axis_value120" 8 False (WlPointerAxisValue120 <$> (WlPointerAxisEnum <$> Arguments.getUint) <*> (Arguments.getInt)))
 decodeWlPointerEvent (Wire.Opcode 10) =
-  Just (Binding.EventDecoder 9 False (WlPointerAxisRelativeDirection <$> (WlPointerAxisEnum <$> Arguments.getUint) <*> (WlPointerAxisRelativeDirectionEnum <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "axis_relative_direction" 9 False (WlPointerAxisRelativeDirection <$> (WlPointerAxisEnum <$> Arguments.getUint) <*> (WlPointerAxisRelativeDirectionEnum <$> Arguments.getUint)))
 decodeWlPointerEvent _ = Nothing
 
 -- | Values of @wl_pointer.error@.
@@ -3842,7 +3842,7 @@ wlKeyboardInterface = Binding.Interface "wl_keyboard" 10
 -- | release the keyboard object
 encodeWlKeyboardRelease :: Binding.RequestEncoder fd
 encodeWlKeyboardRelease =
-  Binding.RequestEncoder (Wire.Opcode 0) 3 True (pure ())
+  Binding.RequestEncoder "release" (Wire.Opcode 0) 3 True (pure ())
 
 -- | Events emitted by @wl_keyboard@.
 data WlKeyboardEvent fd
@@ -3964,17 +3964,17 @@ data WlKeyboardEvent fd
 
 decodeWlKeyboardEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlKeyboardEvent fd))
 decodeWlKeyboardEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder 1 False (WlKeyboardKeymap <$> (WlKeyboardKeymapFormatEnum <$> Arguments.getUint) <*> (Arguments.getFd) <*> (Arguments.getUint)))
+  Just (Binding.EventDecoder "keymap" 1 False (WlKeyboardKeymap <$> (WlKeyboardKeymapFormatEnum <$> Arguments.getUint) <*> (Arguments.getFd) <*> (Arguments.getUint)))
 decodeWlKeyboardEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder 1 False (WlKeyboardEnter <$> (Arguments.getUint) <*> (Arguments.getObject) <*> (Arguments.getArray)))
+  Just (Binding.EventDecoder "enter" 1 False (WlKeyboardEnter <$> (Arguments.getUint) <*> (Arguments.getObject) <*> (Arguments.getArray)))
 decodeWlKeyboardEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder 1 False (WlKeyboardLeave <$> (Arguments.getUint) <*> (Arguments.getObject)))
+  Just (Binding.EventDecoder "leave" 1 False (WlKeyboardLeave <$> (Arguments.getUint) <*> (Arguments.getObject)))
 decodeWlKeyboardEvent (Wire.Opcode 3) =
-  Just (Binding.EventDecoder 1 False (WlKeyboardKey <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint) <*> (WlKeyboardKeyStateEnum <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "key" 1 False (WlKeyboardKey <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint) <*> (WlKeyboardKeyStateEnum <$> Arguments.getUint)))
 decodeWlKeyboardEvent (Wire.Opcode 4) =
-  Just (Binding.EventDecoder 1 False (WlKeyboardModifiers <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint)))
+  Just (Binding.EventDecoder "modifiers" 1 False (WlKeyboardModifiers <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint)))
 decodeWlKeyboardEvent (Wire.Opcode 5) =
-  Just (Binding.EventDecoder 4 False (WlKeyboardRepeatInfo <$> (Arguments.getInt) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "repeat_info" 4 False (WlKeyboardRepeatInfo <$> (Arguments.getInt) <*> (Arguments.getInt)))
 decodeWlKeyboardEvent _ = Nothing
 
 -- | keyboard mapping format
@@ -4041,7 +4041,7 @@ wlTouchInterface = Binding.Interface "wl_touch" 10
 -- | release the touch object
 encodeWlTouchRelease :: Binding.RequestEncoder fd
 encodeWlTouchRelease =
-  Binding.RequestEncoder (Wire.Opcode 0) 3 True (pure ())
+  Binding.RequestEncoder "release" (Wire.Opcode 0) 3 True (pure ())
 
 -- | Events emitted by @wl_touch@.
 data WlTouchEvent fd
@@ -4160,19 +4160,19 @@ data WlTouchEvent fd
 
 decodeWlTouchEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlTouchEvent fd))
 decodeWlTouchEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder 1 False (WlTouchDown <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getObject) <*> (Arguments.getInt) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
+  Just (Binding.EventDecoder "down" 1 False (WlTouchDown <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getObject) <*> (Arguments.getInt) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
 decodeWlTouchEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder 1 False (WlTouchUp <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "up" 1 False (WlTouchUp <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getInt)))
 decodeWlTouchEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder 1 False (WlTouchMotion <$> (Arguments.getUint) <*> (Arguments.getInt) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
+  Just (Binding.EventDecoder "motion" 1 False (WlTouchMotion <$> (Arguments.getUint) <*> (Arguments.getInt) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
 decodeWlTouchEvent (Wire.Opcode 3) =
-  Just (Binding.EventDecoder 1 False (pure WlTouchFrame))
+  Just (Binding.EventDecoder "frame" 1 False (pure WlTouchFrame))
 decodeWlTouchEvent (Wire.Opcode 4) =
-  Just (Binding.EventDecoder 1 False (pure WlTouchCancel))
+  Just (Binding.EventDecoder "cancel" 1 False (pure WlTouchCancel))
 decodeWlTouchEvent (Wire.Opcode 5) =
-  Just (Binding.EventDecoder 6 False (WlTouchShape <$> (Arguments.getInt) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
+  Just (Binding.EventDecoder "shape" 6 False (WlTouchShape <$> (Arguments.getInt) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
 decodeWlTouchEvent (Wire.Opcode 6) =
-  Just (Binding.EventDecoder 6 False (WlTouchOrientation <$> (Arguments.getInt) <*> (Arguments.getFixed)))
+  Just (Binding.EventDecoder "orientation" 6 False (WlTouchOrientation <$> (Arguments.getInt) <*> (Arguments.getFixed)))
 decodeWlTouchEvent _ = Nothing
 
 -- | compositor output region
@@ -4195,7 +4195,7 @@ wlOutputInterface = Binding.Interface "wl_output" 4
 --         use the output object anymore.
 encodeWlOutputRelease :: Binding.RequestEncoder fd
 encodeWlOutputRelease =
-  Binding.RequestEncoder (Wire.Opcode 0) 3 True (pure ())
+  Binding.RequestEncoder "release" (Wire.Opcode 0) 3 True (pure ())
 
 -- | Events emitted by @wl_output@.
 data WlOutputEvent fd
@@ -4354,17 +4354,17 @@ data WlOutputEvent fd
 
 decodeWlOutputEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlOutputEvent fd))
 decodeWlOutputEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder 1 False (WlOutputGeometry <$> (Arguments.getInt) <*> (Arguments.getInt) <*> (Arguments.getInt) <*> (Arguments.getInt) <*> (WlOutputSubpixelEnum . fromIntegral <$> Arguments.getInt) <*> (Arguments.getString) <*> (Arguments.getString) <*> (WlOutputTransformEnum . fromIntegral <$> Arguments.getInt)))
+  Just (Binding.EventDecoder "geometry" 1 False (WlOutputGeometry <$> (Arguments.getInt) <*> (Arguments.getInt) <*> (Arguments.getInt) <*> (Arguments.getInt) <*> (WlOutputSubpixelEnum . fromIntegral <$> Arguments.getInt) <*> (Arguments.getString) <*> (Arguments.getString) <*> (WlOutputTransformEnum . fromIntegral <$> Arguments.getInt)))
 decodeWlOutputEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder 1 False (WlOutputMode <$> (WlOutputModeFlags <$> Arguments.getUint) <*> (Arguments.getInt) <*> (Arguments.getInt) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "mode" 1 False (WlOutputMode <$> (WlOutputModeFlags <$> Arguments.getUint) <*> (Arguments.getInt) <*> (Arguments.getInt) <*> (Arguments.getInt)))
 decodeWlOutputEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder 2 False (pure WlOutputDone))
+  Just (Binding.EventDecoder "done" 2 False (pure WlOutputDone))
 decodeWlOutputEvent (Wire.Opcode 3) =
-  Just (Binding.EventDecoder 2 False (WlOutputScale <$> (Arguments.getInt)))
+  Just (Binding.EventDecoder "scale" 2 False (WlOutputScale <$> (Arguments.getInt)))
 decodeWlOutputEvent (Wire.Opcode 4) =
-  Just (Binding.EventDecoder 4 False (WlOutputName <$> (Arguments.getString)))
+  Just (Binding.EventDecoder "name" 4 False (WlOutputName <$> (Arguments.getString)))
 decodeWlOutputEvent (Wire.Opcode 5) =
-  Just (Binding.EventDecoder 4 False (WlOutputDescription <$> (Arguments.getString)))
+  Just (Binding.EventDecoder "description" 4 False (WlOutputDescription <$> (Arguments.getString)))
 decodeWlOutputEvent _ = Nothing
 
 -- | subpixel geometry information
@@ -4483,7 +4483,7 @@ wlRegionInterface = Binding.Interface "wl_region" 7
 -- Destroy the region.  This will invalidate the object ID.
 encodeWlRegionDestroy :: Binding.RequestEncoder fd
 encodeWlRegionDestroy =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 True (pure ())
+  Binding.RequestEncoder "destroy" (Wire.Opcode 0) 1 True (pure ())
 
 -- | add rectangle to region
 --
@@ -4495,7 +4495,7 @@ encodeWlRegionDestroy =
 -- @heightValue@: rectangle height
 encodeWlRegionAdd :: Int32 -> Int32 -> Int32 -> Int32 -> Binding.RequestEncoder fd
 encodeWlRegionAdd xValue yValue widthValue heightValue =
-  Binding.RequestEncoder (Wire.Opcode 1) 1 False $ do
+  Binding.RequestEncoder "add" (Wire.Opcode 1) 1 False $ do
     Arguments.putInt xValue
     Arguments.putInt yValue
     Arguments.putInt widthValue
@@ -4511,7 +4511,7 @@ encodeWlRegionAdd xValue yValue widthValue heightValue =
 -- @heightValue@: rectangle height
 encodeWlRegionSubtract :: Int32 -> Int32 -> Int32 -> Int32 -> Binding.RequestEncoder fd
 encodeWlRegionSubtract xValue yValue widthValue heightValue =
-  Binding.RequestEncoder (Wire.Opcode 2) 1 False $ do
+  Binding.RequestEncoder "subtract" (Wire.Opcode 2) 1 False $ do
     Arguments.putInt xValue
     Arguments.putInt yValue
     Arguments.putInt widthValue
@@ -4551,7 +4551,7 @@ wlSubcompositorInterface = Binding.Interface "wl_subcompositor" 1
 --         objects, wl_subsurface objects included.
 encodeWlSubcompositorDestroy :: Binding.RequestEncoder fd
 encodeWlSubcompositorDestroy =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 True (pure ())
+  Binding.RequestEncoder "destroy" (Wire.Opcode 0) 1 True (pure ())
 
 -- | give a surface the role sub-surface
 --
@@ -4580,7 +4580,7 @@ encodeWlSubcompositorDestroy =
 -- @parentValue@: the parent surface
 encodeWlSubcompositorGetSubsurface :: Wire.ObjectId -> Wire.ObjectId -> Wire.ObjectId -> Binding.RequestEncoder fd
 encodeWlSubcompositorGetSubsurface idValue surfaceValue parentValue =
-  Binding.RequestEncoder (Wire.Opcode 1) 1 False $ do
+  Binding.RequestEncoder "get_subsurface" (Wire.Opcode 1) 1 False $ do
     Arguments.putNewId idValue
     Arguments.putObject surfaceValue
     Arguments.putObject parentValue
@@ -4662,7 +4662,7 @@ wlSubsurfaceInterface = Binding.Interface "wl_subsurface" 1
 --         to the parent is deleted. The wl_surface is unmapped immediately.
 encodeWlSubsurfaceDestroy :: Binding.RequestEncoder fd
 encodeWlSubsurfaceDestroy =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 True (pure ())
+  Binding.RequestEncoder "destroy" (Wire.Opcode 0) 1 True (pure ())
 
 -- | reposition the sub-surface
 --
@@ -4683,7 +4683,7 @@ encodeWlSubsurfaceDestroy =
 -- @yValue@: y coordinate in the parent surface
 encodeWlSubsurfaceSetPosition :: Int32 -> Int32 -> Binding.RequestEncoder fd
 encodeWlSubsurfaceSetPosition xValue yValue =
-  Binding.RequestEncoder (Wire.Opcode 1) 1 False $ do
+  Binding.RequestEncoder "set_position" (Wire.Opcode 1) 1 False $ do
     Arguments.putInt xValue
     Arguments.putInt yValue
 
@@ -4704,7 +4704,7 @@ encodeWlSubsurfaceSetPosition xValue yValue =
 -- @siblingValue@: the reference surface
 encodeWlSubsurfacePlaceAbove :: Wire.ObjectId -> Binding.RequestEncoder fd
 encodeWlSubsurfacePlaceAbove siblingValue =
-  Binding.RequestEncoder (Wire.Opcode 2) 1 False $ do
+  Binding.RequestEncoder "place_above" (Wire.Opcode 2) 1 False $ do
     Arguments.putObject siblingValue
 
 -- | restack the sub-surface
@@ -4716,7 +4716,7 @@ encodeWlSubsurfacePlaceAbove siblingValue =
 -- @siblingValue@: the reference surface
 encodeWlSubsurfacePlaceBelow :: Wire.ObjectId -> Binding.RequestEncoder fd
 encodeWlSubsurfacePlaceBelow siblingValue =
-  Binding.RequestEncoder (Wire.Opcode 3) 1 False $ do
+  Binding.RequestEncoder "place_below" (Wire.Opcode 3) 1 False $ do
     Arguments.putObject siblingValue
 
 -- | set sub-surface to synchronized mode
@@ -4727,7 +4727,7 @@ encodeWlSubsurfacePlaceBelow siblingValue =
 --         See wl_subsurface and wl_surface.commit for more information.
 encodeWlSubsurfaceSetSync :: Binding.RequestEncoder fd
 encodeWlSubsurfaceSetSync =
-  Binding.RequestEncoder (Wire.Opcode 4) 1 False (pure ())
+  Binding.RequestEncoder "set_sync" (Wire.Opcode 4) 1 False (pure ())
 
 -- | set sub-surface to desynchronized mode
 --
@@ -4737,7 +4737,7 @@ encodeWlSubsurfaceSetSync =
 --         See wl_subsurface and wl_surface.commit for more information.
 encodeWlSubsurfaceSetDesync :: Binding.RequestEncoder fd
 encodeWlSubsurfaceSetDesync =
-  Binding.RequestEncoder (Wire.Opcode 5) 1 False (pure ())
+  Binding.RequestEncoder "set_desync" (Wire.Opcode 5) 1 False (pure ())
 
 -- | Values of @wl_subsurface.error@.
 newtype WlSubsurfaceErrorEnum = WlSubsurfaceErrorEnum
@@ -4762,7 +4762,7 @@ wlFixesInterface = Binding.Interface "wl_fixes" 1
 -- | destroys this object
 encodeWlFixesDestroy :: Binding.RequestEncoder fd
 encodeWlFixesDestroy =
-  Binding.RequestEncoder (Wire.Opcode 0) 1 True (pure ())
+  Binding.RequestEncoder "destroy" (Wire.Opcode 0) 1 True (pure ())
 
 -- | destroy a wl_registry
 --
@@ -4779,6 +4779,6 @@ encodeWlFixesDestroy =
 -- @registryValue@: the registry to destroy
 encodeWlFixesDestroyRegistry :: Wire.ObjectId -> Binding.RequestEncoder fd
 encodeWlFixesDestroyRegistry registryValue =
-  Binding.RequestEncoder (Wire.Opcode 1) 1 False $ do
+  Binding.RequestEncoder "destroy_registry" (Wire.Opcode 1) 1 False $ do
     Arguments.putObject registryValue
 

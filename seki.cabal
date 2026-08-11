@@ -65,6 +65,7 @@ library seki-wire
     Seki.Wire.Codec
     Seki.Wire.Connection.Buffer
     Seki.Wire.Connection.ObjectTable
+    Seki.Wire.Connection.Request
     Seki.Wire.Transport
     Seki.Wire.Transport.Driver
     Seki.Wire.Types
@@ -118,6 +119,7 @@ test-suite seki-test
     Seki.Wire.CodecTest
     Seki.Wire.Connection.BufferTest
     Seki.Wire.Connection.ObjectTableTest
+    Seki.Wire.Connection.RequestTest
     Seki.Wire.Transport.DriverTest
     Seki.Wire.TransportTest
   build-depends:
