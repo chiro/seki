@@ -67,11 +67,13 @@ fourmolu --mode inplace src test tools/scanner
 hlint src test tools/scanner
 ```
 
-Validate the pinned protocol set and regenerate the committed core binding with:
+Validate the pinned protocol set and regenerate the committed bindings with:
 
 ```console
 cabal run seki-scanner -- validate protocol/wayland/wayland.xml protocol/river/river-window-management-v1.xml protocol/river/river-xkb-bindings-v1.xml
 cabal run seki-scanner -- generate Seki.Protocol.Wayland protocol/wayland/wayland.xml 'Wayland 1.25.0, commit 3e673a438b0a9749e3bdf5cac4befac86333024c' src-generated/Seki/Protocol/Wayland.hs protocol/wayland/wayland.xml
+cabal run seki-scanner -- generate Seki.Protocol.RiverWindowManagementV1 protocol/river/river-window-management-v1.xml 'river v0.4.5, commit f6d961773711dc29d3eb5b60bd14744a6a33894f' src-generated/Seki/Protocol/RiverWindowManagementV1.hs protocol/river/river-window-management-v1.xml protocol/wayland/wayland.xml protocol/river/river-xkb-bindings-v1.xml
+cabal run seki-scanner -- generate Seki.Protocol.RiverXkbBindingsV1 protocol/river/river-xkb-bindings-v1.xml 'river v0.4.5, commit f6d961773711dc29d3eb5b60bd14744a6a33894f' src-generated/Seki/Protocol/RiverXkbBindingsV1.hs protocol/river/river-xkb-bindings-v1.xml protocol/wayland/wayland.xml protocol/river/river-window-management-v1.xml
 ```
 
 ## Scope

@@ -6,6 +6,8 @@ import Data.ByteString qualified as ByteString
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as TextIO
+import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Protocol.RiverXkbBindingsV1 qualified as RiverXkb
 import Seki.Protocol.Wayland qualified as Wayland
 import Seki.Scanner.Generate (GenerationConfig (..), generateProtocolModule)
 import Seki.Scanner.IR (Protocol)
@@ -14,6 +16,7 @@ import Seki.Wire.Arguments (
   ArgumentEncoder,
   DecodeResult (..),
   putNewId,
+  putObject,
   putString,
   putUint,
   runArgumentEncoder,
@@ -29,10 +32,12 @@ tests =
   testGroup
     "Wayland binding generator"
     [ testCase "matches the committed Wayland binding" testGeneratedBindingFreshness
+    , testCase "matches the committed river bindings" testGeneratedRiverBindingsFreshness
     , testCase "produces identical output on repeated runs" testDeterministicGeneration
     , testCase "resolves cross-protocol enums to qualified modules" testCrossProtocolEnum
     , testCase "encodes static and dynamic new IDs" testRequestEncoders
     , testCase "decodes typed registry events and lifecycle metadata" testEventDecoders
+    , testCase "compiles representative cross-protocol river bindings" testRiverBindings
     ]
 
 testGeneratedBindingFreshness :: Assertion
@@ -40,6 +45,15 @@ testGeneratedBindingFreshness = do
   generated <- generateWayland
   committed <- TextIO.readFile generatedWaylandPath
   assertEqual "generated Wayland module" committed generated
+
+testGeneratedRiverBindingsFreshness :: Assertion
+testGeneratedRiverBindingsFreshness = do
+  generatedWindow <- generateRiverWindow
+  committedWindow <- TextIO.readFile generatedRiverWindowPath
+  assertEqual "generated river window-management module" committedWindow generatedWindow
+  generatedXkb <- generateRiverXkb
+  committedXkb <- TextIO.readFile generatedRiverXkbPath
+  assertEqual "generated river XKB module" committedXkb generatedXkb
 
 testDeterministicGeneration :: Assertion
 testDeterministicGeneration = do
@@ -107,10 +121,52 @@ testEventDecoders = do
   assertBool "callback done destroys its object" (Binding.eventDestructor callbackDecoder)
   assertBool "unknown opcode is rejected" (case Wayland.decodeWlRegistryEvent (Opcode 2) of Nothing -> True; Just _ -> False)
 
+testRiverBindings :: Assertion
+testRiverBindings = do
+  assertEqual "window manager maximum" 4 (Binding.interfaceMaximumVersion River.riverWindowManagerV1Interface)
+  assertEqual "XKB global maximum" 3 (Binding.interfaceMaximumVersion RiverXkb.riverXkbBindingsV1Interface)
+  seatId <- requireObjectId 21
+  bindingId <- requireObjectId 22
+  let request =
+        RiverXkb.encodeRiverXkbBindingsV1GetXkbBinding
+          seatId
+          bindingId
+          0x41
+          River.RiverSeatV1ModifiersFlagsShift ::
+          Binding.RequestEncoder ()
+      expected = runArgumentEncoder $ do
+        putObject seatId
+        putNewId bindingId
+        putUint 0x41
+        putUint 1
+  assertEqual "cross-protocol request name" "get_xkb_binding" (Binding.requestName request)
+  assertEqual "cross-protocol enum encoding" expected (runArgumentEncoder (Binding.requestArguments request))
+  managerDecoder <- case River.decodeRiverWindowManagerV1Event (Opcode 2) of
+    Nothing -> assertFailure "missing manage_start decoder"
+    Just decoder -> pure decoder
+  assertEqual
+    "typed manage_start event"
+    (Done River.RiverWindowManagerV1ManageStart ByteString.empty [])
+    (runCompleteArgumentDecoder (Binding.eventArguments managerDecoder) ByteString.empty ([] :: [()]))
+
 generateWayland :: IO Text
 generateWayland = do
   protocol <- expectProtocolFile waylandProtocolPath
   expectGenerated waylandConfig [protocol] protocol
+
+generateRiverWindow :: IO Text
+generateRiverWindow = do
+  wayland <- expectProtocolFile waylandProtocolPath
+  windowManagement <- expectProtocolFile riverWindowProtocolPath
+  xkbBindings <- expectProtocolFile riverXkbProtocolPath
+  expectGenerated riverWindowConfig [windowManagement, wayland, xkbBindings] windowManagement
+
+generateRiverXkb :: IO Text
+generateRiverXkb = do
+  wayland <- expectProtocolFile waylandProtocolPath
+  windowManagement <- expectProtocolFile riverWindowProtocolPath
+  xkbBindings <- expectProtocolFile riverXkbProtocolPath
+  expectGenerated riverXkbConfig [xkbBindings, wayland, windowManagement] xkbBindings
 
 expectGenerated :: GenerationConfig -> [Protocol] -> Protocol -> IO Text
 expectGenerated config protocols target = case generateProtocolModule config protocols target of
@@ -150,8 +206,19 @@ riverXkbConfig =
   GenerationConfig
     { generationModuleName = "Seki.Protocol.RiverXkbBindingsV1"
     , generationSourcePath = "protocol/river/river-xkb-bindings-v1.xml"
-    , generationSourcePin = "river v0.4.5"
+    , generationSourcePin = riverSourcePin
     }
+
+riverWindowConfig :: GenerationConfig
+riverWindowConfig =
+  GenerationConfig
+    { generationModuleName = "Seki.Protocol.RiverWindowManagementV1"
+    , generationSourcePath = Text.pack riverWindowProtocolPath
+    , generationSourcePin = riverSourcePin
+    }
+
+riverSourcePin :: Text
+riverSourcePin = "river v0.4.5, commit f6d961773711dc29d3eb5b60bd14744a6a33894f"
 
 waylandProtocolPath :: FilePath
 waylandProtocolPath = "protocol/wayland/wayland.xml"
@@ -159,9 +226,21 @@ waylandProtocolPath = "protocol/wayland/wayland.xml"
 generatedWaylandPath :: FilePath
 generatedWaylandPath = "src-generated/Seki/Protocol/Wayland.hs"
 
+generatedRiverWindowPath :: FilePath
+generatedRiverWindowPath = "src-generated/Seki/Protocol/RiverWindowManagementV1.hs"
+
+generatedRiverXkbPath :: FilePath
+generatedRiverXkbPath = "src-generated/Seki/Protocol/RiverXkbBindingsV1.hs"
+
+riverWindowProtocolPath :: FilePath
+riverWindowProtocolPath = "protocol/river/river-window-management-v1.xml"
+
+riverXkbProtocolPath :: FilePath
+riverXkbProtocolPath = "protocol/river/river-xkb-bindings-v1.xml"
+
 protocolPaths :: [FilePath]
 protocolPaths =
   [ waylandProtocolPath
-  , "protocol/river/river-window-management-v1.xml"
-  , "protocol/river/river-xkb-bindings-v1.xml"
+  , riverWindowProtocolPath
+  , riverXkbProtocolPath
   ]

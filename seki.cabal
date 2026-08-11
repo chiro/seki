@@ -59,6 +59,8 @@ library seki-wire
   c-sources:       cbits/seki_wayland_transport.c
   cc-options:      -Wall -Wextra -Wpedantic
   exposed-modules:
+    Seki.Protocol.RiverWindowManagementV1
+    Seki.Protocol.RiverXkbBindingsV1
     Seki.Protocol.Wayland
     Seki.Wire.Arguments
     Seki.Wire.Binding
