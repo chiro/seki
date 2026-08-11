@@ -74,12 +74,35 @@ library seki-wire
     text >=2.0.2 && <2.2,
     unix >=2.8.4 && <2.9
 
+library scanner
+  import:          warnings
+  visibility:      private
+  hs-source-dirs:  tools/scanner
+  exposed-modules:
+    Seki.Scanner.IR
+    Seki.Scanner.Parse
+  build-depends:
+    base >=4.18 && <4.19,
+    bytestring >=0.11.5 && <0.12,
+    containers >=0.6.7 && <0.8,
+    text >=2.0.2 && <2.2,
+    xeno >=0.6 && <0.7
+
+executable seki-scanner
+  import:         warnings
+  hs-source-dirs: tools/scanner/app
+  main-is:        Main.hs
+  build-depends:
+    base >=4.18 && <4.19,
+    seki:scanner
+
 test-suite seki-test
   import:         warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: test
   main-is:        Main.hs
   other-modules:
+    Seki.Scanner.ParseTest
     Seki.Wire.ArgumentsTest
     Seki.Wire.CodecTest
     Seki.Wire.Connection.BufferTest
@@ -91,6 +114,7 @@ test-suite seki-test
     binary >=0.8.9 && <0.9,
     bytestring >=0.11.5 && <0.12,
     network >=3.1.4 && <3.3,
+    seki:scanner,
     seki:seki-wire,
     tasty >=1.5 && <1.6,
     tasty-hunit >=0.10 && <0.11,

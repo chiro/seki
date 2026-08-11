@@ -63,8 +63,8 @@ cabal test all
 Format and lint Haskell sources with:
 
 ```console
-fourmolu --mode inplace src test
-hlint src test
+fourmolu --mode inplace src test tools/scanner
+hlint src test tools/scanner
 ```
 
 ## Scope
