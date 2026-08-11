@@ -121,6 +121,7 @@ test-suite seki-test
     Seki.Wire.CodecTest
     Seki.Wire.ConnectionTest
     Seki.Wire.Connection.BufferTest
+    Seki.Wire.Connection.DispatchTest
     Seki.Wire.Connection.EventTest
     Seki.Wire.Connection.ObjectTableTest
     Seki.Wire.Connection.RequestTest
