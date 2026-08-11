@@ -61,6 +61,7 @@ library seki-wire
     Seki.Wire.Codec
     Seki.Wire.Connection.Buffer
     Seki.Wire.Transport
+    Seki.Wire.Transport.Driver
     Seki.Wire.Types
   other-modules:
     Seki.Wire.Transport.Syscall
@@ -82,6 +83,7 @@ test-suite seki-test
     Seki.Wire.ArgumentsTest
     Seki.Wire.CodecTest
     Seki.Wire.Connection.BufferTest
+    Seki.Wire.Transport.DriverTest
     Seki.Wire.TransportTest
   build-depends:
     QuickCheck >=2.15 && <2.16,

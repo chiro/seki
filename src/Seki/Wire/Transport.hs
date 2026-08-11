@@ -37,7 +37,6 @@ import Control.Monad (void)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.Char (isDigit)
-import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
@@ -59,6 +58,13 @@ import Network.Socket (
   setNonBlockIfNeeded,
   socket,
   withFdSocket,
+ )
+import Seki.Wire.Transport.Driver (
+  ReceiveAttempt (..),
+  SendAttempt (..),
+  SendDriverError (..),
+  driveReceive,
+  driveSend,
  )
 import Seki.Wire.Transport.Syscall (
   RawReceiveError (..),
@@ -231,6 +237,7 @@ data TransportError
   | TransportEmptyPayloadWithDescriptors
   | TransportInvalidReceiveCapacity Int
   | TransportNoProgress
+  | TransportInvalidSendProgress Int Int
   | TransportSystemError TransportOperation CInt
   | TransportReceiveRejected AncillaryError
   deriving (Eq, Show)
@@ -301,7 +308,7 @@ remaining bytes are sent without ancillary data.
 sendMessage :: Transport -> ByteString -> [OwnedFd] -> IO (Either TransportError ())
 sendMessage transport@(Transport _ writeLock) bytes ownedDescriptors =
   withMVar writeLock $ \() ->
-    mask $ \restore -> do
+    mask_ $ do
       let validation = validateOutgoing bytes ownedDescriptors
       case validation of
         Left errorValue -> do
@@ -312,12 +319,14 @@ sendMessage transport@(Transport _ writeLock) bytes ownedDescriptors =
           case claimed of
             Left errorValue -> pure (Left errorValue)
             Right descriptors -> do
-              pending <- newIORef (Just descriptors)
-              let cleanup = closePendingDescriptors pending
-              result <- restore (sendAll transport bytes descriptors cleanup) `onException` cleanup
-              case result of
-                Left errorValue -> cleanup >> pure (Left errorValue)
-                Right () -> pure (Right ())
+              result <-
+                driveSend
+                  bytes
+                  descriptors
+                  (sendAttempt transport)
+                  (waitForWrite transport)
+                  closeRawDescriptors
+              pure (firstSendError result)
 
 validateOutgoing :: ByteString -> [OwnedFd] -> Either TransportError ()
 validateOutgoing bytes descriptors
@@ -339,62 +348,53 @@ claimDescriptors = go []
         pure (Left TransportDescriptorAlreadyReleased)
       Right descriptor -> go (descriptor : claimed) rest
 
-sendAll :: Transport -> ByteString -> [Fd] -> IO () -> IO (Either TransportError ())
-sendAll transport bytes descriptors descriptorsTransferred
-  | ByteString.null bytes = descriptorsTransferred >> pure (Right ())
-  | null descriptors = sendRemaining transport bytes
-  | otherwise = do
-      sent <- sendOnceWaiting transport bytes descriptors
-      case sent of
-        Left errorValue -> pure (Left errorValue)
-        Right 0 -> pure (Left TransportNoProgress)
-        Right byteCount -> do
-          descriptorsTransferred
-          sendRemaining transport (ByteString.drop byteCount bytes)
-
-sendRemaining :: Transport -> ByteString -> IO (Either TransportError ())
-sendRemaining _ bytes | ByteString.null bytes = pure (Right ())
-sendRemaining transport bytes = do
-  sent <- sendOnceWaiting transport bytes []
-  case sent of
-    Left errorValue -> pure (Left errorValue)
-    Right 0 -> pure (Left TransportNoProgress)
-    Right byteCount -> sendRemaining transport (ByteString.drop byteCount bytes)
-
-sendOnceWaiting :: Transport -> ByteString -> [Fd] -> IO (Either TransportError Int)
-sendOnceWaiting transport bytes descriptors = do
+sendAttempt :: Transport -> ByteString -> [Fd] -> IO (SendAttempt CInt)
+sendAttempt transport bytes descriptors = do
   result <- withTransportFd transport $ \descriptor -> sendRaw descriptor bytes descriptors
   case result of
     Left errorNumber
-      | errorNumber == errnoCode eINTR -> sendOnceWaiting transport bytes descriptors
-      | wouldBlock errorNumber -> waitForWrite transport >> sendOnceWaiting transport bytes descriptors
-      | otherwise -> pure (Left (TransportSystemError SendOperation errorNumber))
-    Right byteCount -> pure (Right byteCount)
+      | errorNumber == errnoCode eINTR -> pure SendInterrupted
+      | wouldBlock errorNumber -> pure SendWouldBlock
+      | otherwise -> pure (SendFailed errorNumber)
+    Right byteCount -> pure (SendProgress byteCount)
+
+firstSendError :: Either (SendDriverError CInt) () -> Either TransportError ()
+firstSendError result = case result of
+  Left SendDescriptorsWithoutBytes -> Left TransportEmptyPayloadWithDescriptors
+  Left SendNoProgress -> Left TransportNoProgress
+  Left (SendInvalidProgress progress available) -> Left (TransportInvalidSendProgress progress available)
+  Left (SendDriverFailed errorNumber) -> Left (TransportSystemError SendOperation errorNumber)
+  Right () -> Right ()
 
 -- | Receive one stream chunk, waiting through interruption and backpressure.
 receiveChunk :: Transport -> Int -> IO (Either TransportError (Maybe ReceivedChunk))
 receiveChunk transport byteCapacity
   | byteCapacity <= 0 = pure (Left (TransportInvalidReceiveCapacity byteCapacity))
-  | otherwise = mask $ \restore -> receiveWaiting restore
- where
-  receiveWaiting restore = do
-    result <-
-      withTransportFd transport $ \descriptor ->
-        receiveRaw descriptor byteCapacity maxDescriptorsPerMessage
-    case result of
-      RawReceiveSystemError errorNumber
-        | errorNumber == errnoCode eINTR -> receiveWaiting restore
-        | wouldBlock errorNumber -> restore (waitForRead transport) >> receiveWaiting restore
-        | otherwise -> pure (Left (TransportSystemError ReceiveOperation errorNumber))
-      RawReceiveRejected errorValue -> pure (Left (TransportReceiveRejected (ancillaryError errorValue)))
-      RawReceived bytes descriptors
-        | ByteString.null bytes && null descriptors -> pure (Right Nothing)
-        | ByteString.null bytes -> do
-            closeRawDescriptors descriptors
-            pure (Left (TransportReceiveRejected DescriptorsWithoutBytes))
-        | otherwise -> do
-            owned <- mapM ownReceivedFd descriptors `onException` closeRawDescriptors descriptors
-            pure (Right (Just (ReceivedChunk bytes owned)))
+  | otherwise = mask $ \restore -> do
+      result <- driveReceive (receiveAttempt transport byteCapacity) (restore (waitForRead transport))
+      case result of
+        Left errorValue -> pure (Left errorValue)
+        Right (bytes, descriptors)
+          | ByteString.null bytes && null descriptors -> pure (Right Nothing)
+          | ByteString.null bytes -> do
+              closeRawDescriptors descriptors
+              pure (Left (TransportReceiveRejected DescriptorsWithoutBytes))
+          | otherwise -> do
+              owned <- mapM ownReceivedFd descriptors `onException` closeRawDescriptors descriptors
+              pure (Right (Just (ReceivedChunk bytes owned)))
+
+receiveAttempt :: Transport -> Int -> IO (ReceiveAttempt (ByteString, [Fd]) TransportError)
+receiveAttempt transport byteCapacity = do
+  result <-
+    withTransportFd transport $ \descriptor ->
+      receiveRaw descriptor byteCapacity maxDescriptorsPerMessage
+  pure $ case result of
+    RawReceiveSystemError errorNumber
+      | errorNumber == errnoCode eINTR -> ReceiveInterrupted
+      | wouldBlock errorNumber -> ReceiveWouldBlock
+      | otherwise -> ReceiveFailed (TransportSystemError ReceiveOperation errorNumber)
+    RawReceiveRejected errorValue -> ReceiveFailed (TransportReceiveRejected (ancillaryError errorValue))
+    RawReceived bytes descriptors -> ReceiveProgress (bytes, descriptors)
 
 ownReceivedFd :: Fd -> IO OwnedFd
 ownReceivedFd descriptor = OwnedFd <$> newMVar (Just descriptor)
@@ -420,11 +420,6 @@ closeOwnedDescriptors = mapM_ (try @IOException . closeOwnedFd)
 
 closeRawDescriptors :: [Fd] -> IO ()
 closeRawDescriptors = mapM_ closeIgnoringErrors
-
-closePendingDescriptors :: IORef (Maybe [Fd]) -> IO ()
-closePendingDescriptors pending = do
-  descriptors <- atomicModifyIORef' pending (Nothing,)
-  maybe (pure ()) closeRawDescriptors descriptors
 
 closeIgnoringErrors :: Fd -> IO ()
 closeIgnoringErrors descriptor = void (try @IOException (closeFd descriptor))
