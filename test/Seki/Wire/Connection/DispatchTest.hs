@@ -25,6 +25,7 @@ import Seki.Wire.Connection (
   newConnection,
   registerEventRoute,
   submitNewObjectRequest,
+  submitNewObjectRequestWithRoute,
   submitRequest,
   wlDisplayEventRoute,
  )
@@ -57,6 +58,8 @@ tests =
   testGroup
     "Wayland connection dispatch"
     [ testCase "dispatches a typed callback and retires its sender" testCallbackDispatch
+    , testCase "publishes a new object and route atomically" testAtomicRoute
+    , testCase "does not publish a route after preparation failure" testRouteRollback
     , testCase "handles delete_id and reuses the released ID" testDeleteIdDispatch
     , testCase "makes wl_display.error terminal" testDisplayError
     , testCase "rejects an event without a registered route" testMissingRoute
@@ -64,6 +67,7 @@ tests =
     , testCase "transfers an incoming descriptor to its handler" testIncomingDescriptor
     , testCase "allows a handler to submit a follow-up request" testHandlerSubmission
     , testCase "reports clean EOF idempotently" testCleanEof
+    , testCase "completes a mock registry synchronization" testRegistrySync
     ]
 
 testCallbackDispatch :: Assertion
@@ -93,6 +97,44 @@ testCallbackDispatch =
         Wayland.wlCallbackInterface
         callback
         (RequestEncoder "invalid" (Opcode 0) 1 False (pure ()))
+
+testAtomicRoute :: Assertion
+testAtomicRoute =
+  withConnectionPair $ \connection display peer -> do
+    handled <- newEmptyMVar
+    callback <-
+      expectRight
+        =<< submitNewObjectRequestWithRoute
+          connection
+          Wayland.wlDisplayInterface
+          display
+          Wayland.wlCallbackInterface
+          1
+          (Wayland.encodeWlDisplaySync . objectId)
+          (eventRoute Wayland.decodeWlCallbackEvent (\_ event -> putMVar handled event))
+    drainClientFrame peer 12
+    sendEvent peer (objectId callback) (Opcode 0) (putUint 9) []
+    expectDispatched =<< dispatchNextEvent connection
+    assertEqual "atomic route handler" (Wayland.WlCallbackDone 9) =<< takeMVar handled
+
+testRouteRollback :: Assertion
+testRouteRollback =
+  withConnectionPair $ \connection display peer -> do
+    let route = eventRoute Wayland.decodeWlCallbackEvent (\_ _ -> pure ())
+    assertEqual
+      "preparation failure"
+      (Left (ConnectionRequestError (UnsupportedRequestVersion "wl_display" "future_sync" 2 1)))
+      =<< submitNewObjectRequestWithRoute
+        connection
+        Wayland.wlDisplayInterface
+        display
+        Wayland.wlCallbackInterface
+        1
+        (RequestEncoder "future_sync" (Opcode 0) 2 False . putNewId . objectId)
+        route
+    callback <- createCallback connection display peer
+    assertEqual "failed route was not installed" (Right ()) =<< registerEventRoute connection Wayland.wlCallbackInterface callback route
+    assertEqual "failed transaction did not consume ID" 2 (objectIdValue (objectId callback))
 
 testDeleteIdDispatch :: Assertion
 testDeleteIdDispatch =
@@ -263,6 +305,48 @@ testCleanEof =
         Wayland.wlDisplayInterface
         display
         (RequestEncoder "after_eof" (Opcode 0) 1 False (pure ()))
+
+testRegistrySync :: Assertion
+testRegistrySync =
+  withConnectionPair $ \connection display peer -> do
+    globals <- newIORef []
+    syncDone <- newEmptyMVar
+    registry <-
+      expectRight
+        =<< submitNewObjectRequestWithRoute
+          connection
+          Wayland.wlDisplayInterface
+          display
+          Wayland.wlRegistryInterface
+          1
+          (Wayland.encodeWlDisplayGetRegistry . objectId)
+          (eventRoute Wayland.decodeWlRegistryEvent (\_ event -> modifyIORef' globals (<> [event])))
+    drainClientFrame peer 12
+    callback <-
+      expectRight
+        =<< submitNewObjectRequestWithRoute
+          connection
+          Wayland.wlDisplayInterface
+          display
+          Wayland.wlCallbackInterface
+          1
+          (Wayland.encodeWlDisplaySync . objectId)
+          (eventRoute Wayland.decodeWlCallbackEvent (\_ event -> putMVar syncDone event))
+    drainClientFrame peer 12
+    firstGlobal <- encodedFrame (objectId registry) (Opcode 0) (putUint 4 >> putString "wl_compositor" >> putUint 6)
+    secondGlobal <- encodedFrame (objectId registry) (Opcode 0) (putUint 8 >> putString "wl_seat" >> putUint 9)
+    barrier <- encodedFrame (objectId callback) (Opcode 0) (putUint 73)
+    assertEqual "send registry burst" (Right ()) =<< sendMessage peer (firstGlobal <> secondGlobal <> barrier) []
+    expectDispatched =<< dispatchNextEvent connection
+    expectDispatched =<< dispatchNextEvent connection
+    expectDispatched =<< dispatchNextEvent connection
+    assertEqual
+      "registry catalog"
+      [ Wayland.WlRegistryGlobal 4 "wl_compositor" 6
+      , Wayland.WlRegistryGlobal 8 "wl_seat" 9
+      ]
+      =<< readIORef globals
+    assertEqual "sync barrier" (Wayland.WlCallbackDone 73) =<< takeMVar syncDone
 
 createCallback :: Connection -> Object Wayland.WlDisplay -> Transport -> IO (Object Wayland.WlCallback)
 createCallback connection display peer = do

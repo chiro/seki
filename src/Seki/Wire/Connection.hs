@@ -24,7 +24,9 @@ module Seki.Wire.Connection (
   dispatchNextEvent,
   submitRequest,
   submitNewObjectRequest,
+  submitNewObjectRequestWithRoute,
   submitInheritedObjectRequest,
+  submitInheritedObjectRequestWithRoute,
 )
 where
 
@@ -233,6 +235,14 @@ registerEventRoute connection interface object (EventRoute decoder finalize hand
  where
   rawId = objectIdValue (objectId object)
 
+registerRoute :: Interface interface -> Object interface -> EventRoute interface -> RegisteredEventRoute
+registerRoute interface object (EventRoute decoder finalize handler) =
+  RegisteredEventRoute interface object decoder finalize handler
+
+installRoute :: Map Word32 RegisteredEventRoute -> RegisteredEventRoute -> Map Word32 RegisteredEventRoute
+installRoute routes registered@(RegisteredEventRoute _ object _ _ _) =
+  Map.insert (objectIdValue (objectId object)) registered routes
+
 -- | Receive, decode, finalize, and handle the next event in stream order.
 dispatchNextEvent :: Connection -> IO (Either ConnectionError DispatchResult)
 dispatchNextEvent connection =
@@ -257,7 +267,7 @@ submitRequest ::
 submitRequest connection interface sender request =
   submitPrepared connection $ \table -> do
     (nextTable, prepared) <- prepareRequest interface sender request table
-    pure (nextTable, prepared, ())
+    pure (nextTable, prepared, [], ())
 
 {- | Allocate a client object and publish it only after its creating request
 has been sent successfully.
@@ -271,10 +281,37 @@ submitNewObjectRequest ::
   (Object child -> RequestEncoder OwnedFd) ->
   IO (Either ConnectionError (Object child))
 submitNewObjectRequest connection parentInterface parent childInterface childVersion makeRequest =
+  submitNewObjectRequestInternal connection parentInterface parent childInterface childVersion makeRequest Nothing
+
+{- | Allocate a client object and install its event route in the same
+successful-send transaction.
+-}
+submitNewObjectRequestWithRoute ::
+  Connection ->
+  Interface parent ->
+  Object parent ->
+  Interface child ->
+  Word32 ->
+  (Object child -> RequestEncoder OwnedFd) ->
+  EventRoute child ->
+  IO (Either ConnectionError (Object child))
+submitNewObjectRequestWithRoute connection parentInterface parent childInterface childVersion makeRequest route =
+  submitNewObjectRequestInternal connection parentInterface parent childInterface childVersion makeRequest (Just route)
+
+submitNewObjectRequestInternal ::
+  Connection ->
+  Interface parent ->
+  Object parent ->
+  Interface child ->
+  Word32 ->
+  (Object child -> RequestEncoder OwnedFd) ->
+  Maybe (EventRoute child) ->
+  IO (Either ConnectionError (Object child))
+submitNewObjectRequestInternal connection parentInterface parent childInterface childVersion makeRequest route =
   submitPrepared connection $ \table -> do
     (nextTable, child, prepared) <-
       prepareNewObjectRequest parentInterface parent childInterface childVersion makeRequest table
-    pure (nextTable, prepared, child)
+    pure (nextTable, prepared, maybe [] (pure . registerRoute childInterface child) route, child)
 
 -- | Submit an object-creating request with the parent-inherited child version.
 submitInheritedObjectRequest ::
@@ -285,14 +322,39 @@ submitInheritedObjectRequest ::
   (Object child -> RequestEncoder OwnedFd) ->
   IO (Either ConnectionError (Object child))
 submitInheritedObjectRequest connection parentInterface parent childInterface makeRequest =
+  submitInheritedObjectRequestInternal connection parentInterface parent childInterface makeRequest Nothing
+
+{- | Submit an inherited-version object-creating request and atomically install
+the child's event route.
+-}
+submitInheritedObjectRequestWithRoute ::
+  Connection ->
+  Interface parent ->
+  Object parent ->
+  Interface child ->
+  (Object child -> RequestEncoder OwnedFd) ->
+  EventRoute child ->
+  IO (Either ConnectionError (Object child))
+submitInheritedObjectRequestWithRoute connection parentInterface parent childInterface makeRequest route =
+  submitInheritedObjectRequestInternal connection parentInterface parent childInterface makeRequest (Just route)
+
+submitInheritedObjectRequestInternal ::
+  Connection ->
+  Interface parent ->
+  Object parent ->
+  Interface child ->
+  (Object child -> RequestEncoder OwnedFd) ->
+  Maybe (EventRoute child) ->
+  IO (Either ConnectionError (Object child))
+submitInheritedObjectRequestInternal connection parentInterface parent childInterface makeRequest route =
   submitPrepared connection $ \table -> do
     (nextTable, child, prepared) <-
       prepareInheritedObjectRequest parentInterface parent childInterface makeRequest table
-    pure (nextTable, prepared, child)
+    pure (nextTable, prepared, maybe [] (pure . registerRoute childInterface child) route, child)
 
 submitPrepared ::
   Connection ->
-  (ObjectTable -> Either RequestPreparationError (ObjectTable, PreparedRequest OwnedFd, value)) ->
+  (ObjectTable -> Either RequestPreparationError (ObjectTable, PreparedRequest OwnedFd, [RegisteredEventRoute], value)) ->
   IO (Either ConnectionError value)
 submitPrepared connection prepare =
   mask $ \restore -> do
@@ -304,7 +366,7 @@ submitPrepared connection prepare =
         open@(ConnectionOpen connectionData) -> case prepare (connectionObjects connectionData) of
           Left errorValue ->
             pure (open, SubmissionReturned (Left (ConnectionRequestError errorValue)))
-          Right (nextTable, prepared, value) -> do
+          Right (nextTable, prepared, newRoutes, value) -> do
             attempted <-
               try @SomeException
                 ( restore
@@ -327,7 +389,7 @@ submitPrepared connection prepare =
                 let nextData =
                       connectionData
                         { connectionObjects = nextTable
-                        , connectionEventRoutes = pruneRoutes nextTable (connectionEventRoutes connectionData)
+                        , connectionEventRoutes = foldl installRoute (pruneRoutes nextTable (connectionEventRoutes connectionData)) newRoutes
                         }
                  in pure (ConnectionOpen nextData, SubmissionReturned (Right value))
     case outcome of
