@@ -63,6 +63,7 @@ library seki-wire
     Seki.Wire.Arguments
     Seki.Wire.Binding
     Seki.Wire.Codec
+    Seki.Wire.Connection
     Seki.Wire.Connection.Buffer
     Seki.Wire.Connection.ObjectTable
     Seki.Wire.Connection.Request
@@ -117,6 +118,7 @@ test-suite seki-test
     Seki.Scanner.ParseTest
     Seki.Wire.ArgumentsTest
     Seki.Wire.CodecTest
+    Seki.Wire.ConnectionTest
     Seki.Wire.Connection.BufferTest
     Seki.Wire.Connection.ObjectTableTest
     Seki.Wire.Connection.RequestTest
