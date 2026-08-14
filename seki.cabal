@@ -69,6 +69,7 @@ library seki-wire
     Seki.Run.Runtime
     Seki.Run.Sequence
     Seki.Run.Startup
+    Seki.Run.Xkb
     Seki.Wire.Arguments
     Seki.Wire.Binding
     Seki.Wire.Codec

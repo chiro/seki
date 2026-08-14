@@ -19,6 +19,12 @@ import Seki.Run.River (
   riverWindowManagerRequiredVersion,
   selectRiverWindowManagerGlobal,
  )
+import Seki.Run.Xkb (
+  RiverXkbBootstrapError (..),
+  bindRiverXkbBindings,
+  riverXkbBindingsRequiredVersion,
+  selectRiverXkbBindingsGlobal,
+ )
 import Seki.Wire.Arguments (
   ArgumentEncoder,
   DecodeResult (..),
@@ -70,6 +76,8 @@ tests =
     [ testCase "selects the unique manager at the generated maximum" testManagerSelection
     , testCase "rejects missing, ambiguous, and obsolete manager globals" testManagerSelectionErrors
     , testCase "binds and routes manager-created windows, outputs, and seats" testManagerBinding
+    , testCase "selects and binds the unique XKB bindings global" testXkbBinding
+    , testCase "rejects missing, ambiguous, and obsolete XKB globals" testXkbSelectionErrors
     ]
 
 testManagerSelection :: Assertion
@@ -175,6 +183,60 @@ testManagerBinding =
     sendEvent peer seatId (Opcode 8) (putInt 30 >> putInt 40)
     expectDispatched =<< dispatchNextEvent connection
     assertEqual "seat route" (River.RiverSeatV1PointerPosition 30 40) =<< takeMVar seatEvent
+
+testXkbBinding :: Assertion
+testXkbBinding =
+  withConnectionPair $ \connection display peer -> do
+    registry <-
+      expectRight
+        =<< submitNewObjectRequest
+          connection
+          Wayland.wlDisplayInterface
+          display
+          Wayland.wlRegistryInterface
+          1
+          (Wayland.encodeWlDisplayGetRegistry . objectId)
+    _ <- receiveFrame peer
+    catalog <- catalogWith [(22, "river_xkb_bindings_v1", 9)]
+    selected <- expectRight (selectRiverXkbBindingsGlobal catalog)
+    assertEqual "generated version cap" 3 (globalVersion selected)
+    assertEqual "required feature version" 3 riverXkbBindingsRequiredVersion
+
+    bindings <- expectRight =<< bindRiverXkbBindings connection registry catalog
+    bindFrame <- receiveFrame peer
+    assertEqual "registry bind sender" (objectId registry) (rawFrameSender bindFrame)
+    assertEqual "registry bind opcode" (Opcode 0) (rawFrameOpcode bindFrame)
+    case runCompleteArgumentDecoder ((,) <$> getUint <*> getDynamicNewId) (rawFramePayload bindFrame) ([] :: [()]) of
+      Done (name, dynamicId) remaining [] -> do
+        assertEqual "XKB global name" 22 name
+        assertEqual
+          "typed XKB bind"
+          DynamicNewId
+            { dynamicNewIdInterface = "river_xkb_bindings_v1"
+            , dynamicNewIdVersion = 3
+            , dynamicNewIdObject = objectId bindings
+            }
+          dynamicId
+        assertEqual "complete bind payload" ByteString.empty remaining
+      result -> assertFailure ("unexpected XKB bind payload: " <> show result)
+
+testXkbSelectionErrors :: Assertion
+testXkbSelectionErrors = do
+  expectLeft RiverXkbBindingsGlobalMissing (selectRiverXkbBindingsGlobal emptyGlobalCatalog)
+  obsolete <- catalogWith [(4, "river_xkb_bindings_v1", 2)]
+  expectLeft
+    (RiverXkbBindingsVersionTooLow 3 2)
+    (selectRiverXkbBindingsGlobal obsolete)
+  ambiguous <-
+    catalogWith
+      [ (8, "river_xkb_bindings_v1", 3)
+      , (3, "river_xkb_bindings_v1", 3)
+      ]
+  expectLeft
+    ( RiverXkbBindingsGlobalsAmbiguous
+        [globalNameFromWord 3, globalNameFromWord 8]
+    )
+    (selectRiverXkbBindingsGlobal ambiguous)
 
 catalogWith :: [(Word32, Text, Word32)] -> IO GlobalCatalog
 catalogWith = go emptyGlobalCatalog

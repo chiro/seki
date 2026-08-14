@@ -510,7 +510,19 @@ visible after output removal. A window missing its node is also kept hidden as
 a defensive fallback, although the owned runtime normally attaches every node
 before a sequence can observe the window.
 
-### 7.10 Fatal display errors
+### 7.10 XKB bindings bootstrap
+
+`Seki.Run.Xkb` selects and binds the unique `river_xkb_bindings_v1` global.
+The bootstrap negotiates the generated maximum version and requires version 3,
+matching the M0 target release and retaining modifier-watch support for the
+configured binding model. Missing, duplicate, obsolete, and request-failure
+cases remain distinct structured errors.
+
+Binding the global is kept separate from creating seat-specific key binding
+objects. The owned runtime will compose those steps after it has both the bound
+global and the manager-created `river_seat_v1` object.
+
+### 7.11 Fatal display errors
 
 `wl_display.error` is decoded even when the referenced object is already being
 destroyed. Its object ID, numeric error code, interface when known, and message
