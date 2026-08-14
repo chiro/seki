@@ -9,7 +9,7 @@ import Control.Exception (SomeException, bracket, onException, try)
 import Control.Monad (void)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import Data.Word (Word32)
 import Network.Socket (Family (AF_UNIX), Socket, SocketType (Stream), close, defaultProtocol, socketPair, withFdSocket)
@@ -22,6 +22,11 @@ import Seki.Run.Runtime (
   riverWaylandSession,
   riverWindowManager,
   runRiverSession,
+ )
+import Seki.Run.Sequence (
+  RiverSequenceError (..),
+  RiverSequenceOperation (..),
+  RiverSequencePhase (..),
  )
 import Seki.Run.Startup (waylandConnection)
 import Seki.Wire.Arguments (
@@ -60,6 +65,7 @@ tests =
   testGroup
     "river runtime"
     [ testCase "opens, binds, dispatches, and closes an owned runtime" testOwnedRuntime
+    , testCase "rejects an out-of-order manager sequence event" testSequenceOrderError
     , testCase "closes startup when the manager global is missing" testMissingManager
     , testCase "promotes live registry failures from the event loop" testLiveRegistryFailure
     ]
@@ -67,7 +73,7 @@ tests =
 testOwnedRuntime :: Assertion
 testOwnedRuntime =
   withRuntimePair $ \target peer -> do
-    managerEvent <- newEmptyMVar
+    managerEvents <- newIORef []
     mockDone <- runMock $ do
       reader <- newFrameReader
       (registryId, callbackId) <- receiveStartupRequests reader peer
@@ -78,6 +84,15 @@ testOwnedRuntime =
         ]
       managerId <- receiveManagerBind reader peer
       sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 2)
+      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 4)
+      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 4)
+      sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 2)
+      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 4)
       closeTransport peer
       pure managerId
     session <-
@@ -85,11 +100,19 @@ testOwnedRuntime =
         =<< openRiverSessionAt
           target
           defaultObjectLimit
-          (runtimeHandlers (putMVar managerEvent))
+          (runtimeHandlers (\event -> modifyIORef' managerEvents (<> [event])))
+    assertEqual "clean event-loop EOF" (Right ()) =<< runRiverSession session
     managerId <- expectMockSuccess mockDone
     assertEqual "bound manager object" managerId (objectId (riverWindowManager session))
-    assertEqual "clean event-loop EOF" (Right ()) =<< runRiverSession session
-    assertEqual "typed manager event" River.RiverWindowManagerV1ManageStart =<< takeMVar managerEvent
+    assertEqual
+      "typed manager events"
+      [ River.RiverWindowManagerV1ManageStart
+      , River.RiverWindowManagerV1RenderStart
+      , River.RiverWindowManagerV1RenderStart
+      , River.RiverWindowManagerV1ManageStart
+      , River.RiverWindowManagerV1RenderStart
+      ]
+      =<< readIORef managerEvents
     assertEqual
       "runtime owns session close"
       (Left ConnectionClosed)
@@ -99,6 +122,40 @@ testOwnedRuntime =
       (Left RiverRuntimeEventLoopAlreadyOwned)
       =<< runRiverSession session
     closeRiverSession session
+
+testSequenceOrderError :: Assertion
+testSequenceOrderError =
+  withRuntimePair $ \target peer -> do
+    managerEvents <- newIORef (0 :: Int)
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , callbackDoneFrame callbackId 92
+        ]
+      managerId <- receiveManagerBind reader peer
+      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+    session <-
+      expectRight
+        =<< openRiverSessionAt
+          target
+          defaultObjectLimit
+          (runtimeHandlers (\_ -> modifyIORef' managerEvents (+ 1)))
+    expectMockSuccess mockDone
+    assertEqual
+      "sequence-order error"
+      ( Left
+          ( RiverRuntimeSequenceError
+              ( InvalidRiverSequenceTransition
+                  AwaitingInitialManage
+                  StartRenderSequence
+              )
+          )
+      )
+      =<< runRiverSession session
+    assertEqual "invalid event is not delivered" 0 =<< readIORef managerEvents
 
 testMissingManager :: Assertion
 testMissingManager =
@@ -206,6 +263,13 @@ receiveManagerBind reader peer = do
           assertEqual "manager version" 4 (dynamicNewIdVersion dynamicId)
           pure (dynamicNewIdObject dynamicId)
     result -> assertFailure ("unexpected manager bind payload: " <> show result)
+
+receiveSequenceCompletion :: FrameReader -> Transport -> ObjectId -> Opcode -> IO ()
+receiveSequenceCompletion reader peer managerId opcode = do
+  frame <- receiveFrame reader peer
+  assertEqual "sequence completion sender" managerId (rawFrameSender frame)
+  assertEqual "sequence completion opcode" opcode (rawFrameOpcode frame)
+  assertEqual "empty sequence completion payload" ByteString.empty (rawFramePayload frame)
 
 registryGlobalFrame :: ObjectId -> Word32 -> Text -> Word32 -> IO ByteString
 registryGlobalFrame registryId name interfaceName version =

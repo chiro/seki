@@ -423,9 +423,7 @@ result retains typed access to both the underlying session and the bound
 or concurrent runner is rejected. It continues until clean EOF, promotes
 connection and live-registry failures to structured runtime errors, and closes
 the entire session on every exit path. Handler exceptions remain exceptions,
-but resource cleanup still runs before they are rethrown. This boundary gives
-the next river phase-state layer one ordered event stream and one place to
-enforce manage/render completion.
+but resource cleanup still runs before they are rethrown.
 
 ### 7.6 River sequence ordering
 
@@ -441,6 +439,14 @@ phase capabilities needed by the later `ManageM` and `RenderM` APIs:
 management changes are legal only during manage, while rendering changes are
 legal during manage or render. Keeping the transition pure lets the runtime
 submit the returned completion request before publishing the next state.
+
+The owned runtime applies these transitions around the manager callback. For a
+valid `manage_start` or `render_start`, it publishes the active phase, invokes
+the callback, submits the matching finish request, and only then publishes the
+next inactive phase. The runtime therefore owns sequence completion; callbacks
+must not send finish requests themselves. Invalid boundary events are withheld
+from the callback and returned from `runRiverSession` as structured sequence
+errors. Completion submission failures remain structured connection errors.
 
 ### 7.7 Fatal display errors
 
