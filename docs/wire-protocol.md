@@ -448,7 +448,24 @@ must not send finish requests themselves. Invalid boundary events are withheld
 from the callback and returned from `runRiverSession` as structured sequence
 errors. Completion submission failures remain structured connection errors.
 
-### 7.7 Fatal display errors
+### 7.7 Phase-safe request plans
+
+`Seki.Run.Phase` provides distinct `ManageM` and `RenderM` plan types. The M0
+management surface includes closing, dimension proposals, decoration and tiled
+state, capabilities, and keyboard focus. The rendering surface includes
+visibility, borders and clipping, node position, and stacking. Each operation
+is available only in the phase type allowed by the pinned river XML; finish
+requests are deliberately absent because the runtime owns completion.
+
+These plans are pure ordered request lists, not general IO transformers. They
+have `Functor`, `Applicative`, and `Monad` instances for composition but no
+operation for lifting arbitrary IO, keeping blocking work outside river's
+response deadline. The private runtime execution hooks submit requests in plan
+order and stop at the first structured connection failure. The next integration
+step will supply these plans from reconciler callbacks inside the checked
+sequence boundary.
+
+### 7.8 Fatal display errors
 
 `wl_display.error` is decoded even when the referenced object is already being
 destroyed. Its object ID, numeric error code, interface when known, and message
