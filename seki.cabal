@@ -62,6 +62,7 @@ library seki-wire
     Seki.Protocol.RiverWindowManagementV1
     Seki.Protocol.RiverXkbBindingsV1
     Seki.Protocol.Wayland
+    Seki.Run.River
     Seki.Wire.Arguments
     Seki.Wire.Binding
     Seki.Wire.Codec
@@ -120,6 +121,7 @@ test-suite seki-test
   other-modules:
     Seki.Scanner.GenerateTest
     Seki.Scanner.ParseTest
+    Seki.Run.RiverTest
     Seki.Wire.ArgumentsTest
     Seki.Wire.CodecTest
     Seki.Wire.ConnectionTest

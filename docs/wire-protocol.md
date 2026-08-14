@@ -1,6 +1,6 @@
 # Wayland Wire Protocol and Binding Generator Design
 
-Status: **accepted — W0 source pinning** / Last updated: 2026-08-08
+Status: **accepted — W4 river bootstrap** / Last updated: 2026-08-14
 
 This document refines the wire-protocol portion of `docs/spec.md` into an
 implementation design for M0. It covers the Wayland client transport, message
@@ -382,7 +382,22 @@ active -> connection failed -> closed
 Generated object constructors are not exported, preventing callers from
 inventing IDs or assigning the wrong interface to an ID.
 
-### 7.3 Fatal display errors
+### 7.3 River manager bootstrap
+
+`Seki.Run.River` is the first river-specific layer above the generic
+connection. It selects exactly one `river_window_manager_v1` global, caps the
+negotiated version at the generated maximum, and rejects versions below 3,
+which is the feature baseline required by seki. Binding installs the manager
+route atomically with the registry request.
+
+The bootstrap caller supplies typed handlers for manager, window, output, and
+seat events plus creation callbacks for the three child types. The manager
+route converts each generated `NewObject` token into the corresponding child
+route. This keeps interface selection and river's required version out of the
+generic Wayland connection while giving later sequence-state code a complete,
+typed event tree.
+
+### 7.4 Fatal display errors
 
 `wl_display.error` is decoded even when the referenced object is already being
 destroyed. Its object ID, numeric error code, interface when known, and message
