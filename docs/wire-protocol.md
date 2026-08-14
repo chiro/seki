@@ -472,7 +472,22 @@ partially applied sequence completed successfully. Plan preparation exceptions
 remain handler exceptions and close the session through the normal runtime
 cleanup path.
 
-### 7.8 Fatal display errors
+### 7.8 River object inventory
+
+`Seki.Run.Inventory` is the pure state model fed by the routed window and output
+callbacks. It retains typed object handles and persistent window metadata,
+actual dimensions, output global names, positions, and dimensions. Transient
+policy requests such as maximize are deliberately not persisted. Closed windows
+and removed outputs leave the live inventory immediately.
+
+Updates require the exact tracked object handle, including its generation, so a
+stale handle cannot modify a reused object ID. IDs are unique across all tracked
+river object kinds. The model validates positive dimensions, ordered non-negative
+dimension hints, once-only PID/output-name/identifier events, and river v4's
+printable-ASCII identifier rule. Complete output position and size state is
+exposed as a rectangle for the upcoming Full placement planner.
+
+### 7.9 Fatal display errors
 
 `wl_display.error` is decoded even when the referenced object is already being
 destroyed. Its object ID, numeric error code, interface when known, and message
