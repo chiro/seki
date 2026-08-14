@@ -64,6 +64,7 @@ library seki-wire
     Seki.Protocol.Wayland
     Seki.Run.Full
     Seki.Run.Inventory
+    Seki.Run.M0
     Seki.Run.Phase
     Seki.Run.River
     Seki.Run.Runtime
@@ -91,6 +92,7 @@ library seki-wire
     containers >=0.6.7 && <0.8,
     filepath >=1.4.3 && <1.6,
     network >=3.1.4 && <3.3,
+    process >=1.6.18 && <1.7,
     text >=2.0.2 && <2.2,
     unix >=2.8.4 && <2.9
 
@@ -139,6 +141,7 @@ test-suite seki-test
     Seki.Scanner.ParseTest
     Seki.Run.FullTest
     Seki.Run.InventoryTest
+    Seki.Run.M0Test
     Seki.Run.PhaseTest
     Seki.Run.RiverTest
     Seki.Run.RuntimeTest

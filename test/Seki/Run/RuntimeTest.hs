@@ -26,6 +26,7 @@ import Seki.Run.Inventory (
   riverInventoryWindows,
   riverOutputRectangle,
  )
+import Seki.Run.M0 (M0Config (..), defaultM0Config, m0RuntimeHandlers)
 import Seki.Run.Phase (disableKeyBinding, setWindowDimensionBounds)
 import Seki.Run.River (RiverBootstrapError (..), RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (
@@ -92,6 +93,7 @@ tests =
     [ testCase "opens, binds, dispatches, and closes an owned runtime" testOwnedRuntime
     , testCase "executes phase plans before sequence completion" testPhasePlans
     , testCase "Full placement hides windows without an output" testFullWithoutOutput
+    , testCase "runs the concrete M0 focus and close policy" testM0Policy
     , testCase "tracks the window selected by seat interaction" testSeatInteractionFocus
     , testCase "retires removed inventory objects and their nodes" testInventoryRemoval
     , testCase "does not finish a sequence after a phase-plan failure" testPhasePlanFailure
@@ -252,6 +254,63 @@ testFullWithoutOutput =
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
     assertEqual "headless Full lifecycle" (Right ()) =<< runRiverSession session
+    expectMockSuccess mockDone
+
+testM0Policy :: Assertion
+testM0Policy =
+  withRuntimePair $ \target peer -> do
+    let config = defaultM0Config{m0TerminalProcess = pure ()}
+        terminalBinding = m0TerminalBinding config
+        closeBinding = m0CloseBinding config
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , callbackDoneFrame callbackId 100
+        ]
+      (managerId, xkbBindingsId) <- receiveRuntimeBinds reader peer
+      windowId <- requireObjectId 0xff000010
+      outputId <- requireObjectId 0xff000011
+      seatId <- requireObjectId 0xff000012
+      sendFrames
+        peer
+        [ encodedFrame managerId (Opcode 6) (putNewId windowId)
+        , encodedFrame managerId (Opcode 7) (putNewId outputId)
+        , encodedFrame outputId (Opcode 2) (putInt 40 >> putInt 20)
+        , encodedFrame outputId (Opcode 3) (putInt 1600 >> putInt 900)
+        , encodedFrame managerId (Opcode 8) (putNewId seatId)
+        ]
+      nodeId <- receiveNewIdRequest reader peer windowId (Opcode 2)
+      terminalId <- receiveKeyBindingRequest reader peer xkbBindingsId seatId terminalBinding
+      closeId <- receiveKeyBindingRequest reader peer xkbBindingsId seatId closeBinding
+      sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
+      receiveExpectedRequest reader peer terminalId (Opcode 1) (putUint 0)
+      receiveExpectedRequest reader peer terminalId (Opcode 2) (pure ())
+      receiveExpectedRequest reader peer closeId (Opcode 1) (putUint 0)
+      receiveExpectedRequest reader peer closeId (Opcode 2) (pure ())
+      receiveExpectedRequest reader peer windowId (Opcode 3) (putInt 1600 >> putInt 900)
+      receiveExpectedRequest reader peer seatId (Opcode 1) (putObject windowId)
+      receiveSequenceCompletion reader peer managerId (Opcode 2)
+      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+      receiveExpectedRequest reader peer nodeId (Opcode 1) (putInt 40 >> putInt 20)
+      receiveExpectedRequest reader peer windowId (Opcode 5) (pure ())
+      receiveSequenceCompletion reader peer managerId (Opcode 4)
+      sendFrames
+        peer
+        [ encodedFrame closeId (Opcode 0) (pure ())
+        , encodedFrame managerId (Opcode 2) (pure ())
+        ]
+      receiveExpectedRequest reader peer windowId (Opcode 1) (pure ())
+      receiveExpectedRequest reader peer windowId (Opcode 3) (putInt 1600 >> putInt 900)
+      receiveExpectedRequest reader peer seatId (Opcode 1) (putObject windowId)
+      receiveSequenceCompletion reader peer managerId (Opcode 2)
+      closeTransport peer
+    handlers <- expectRight (m0RuntimeHandlers config)
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
+    assertEqual "M0 policy lifecycle" (Right ()) =<< runRiverSession session
     expectMockSuccess mockDone
 
 testSeatInteractionFocus :: Assertion
