@@ -427,7 +427,22 @@ but resource cleanup still runs before they are rethrown. This boundary gives
 the next river phase-state layer one ordered event stream and one place to
 enforce manage/render completion.
 
-### 7.6 Fatal display errors
+### 7.6 River sequence ordering
+
+`Seki.Run.Sequence` models the protocol ordering independently from IO. Its
+opaque state begins by requiring `manage_start`; completing that manage
+sequence produces a `manage_finish` decision and requires at least one
+`render_start`. Completing a render sequence produces `render_finish`, after
+which river may start another render sequence or a new manage sequence.
+
+The transition layer rejects overlapping, repeated, and out-of-order starts or
+completions with the current phase and attempted operation. It also exposes the
+phase capabilities needed by the later `ManageM` and `RenderM` APIs:
+management changes are legal only during manage, while rendering changes are
+legal during manage or render. Keeping the transition pure lets the runtime
+submit the returned completion request before publishing the next state.
+
+### 7.7 Fatal display errors
 
 `wl_display.error` is decoded even when the referenced object is already being
 destroyed. Its object ID, numeric error code, interface when known, and message
