@@ -63,6 +63,7 @@ library seki-wire
     Seki.Protocol.RiverXkbBindingsV1
     Seki.Protocol.Wayland
     Seki.Run.River
+    Seki.Run.Startup
     Seki.Wire.Arguments
     Seki.Wire.Binding
     Seki.Wire.Codec
@@ -113,6 +114,15 @@ executable seki-scanner
     seki:scanner,
     text >=2.0.2 && <2.2
 
+executable seki-registry-smoke
+  import:         warnings
+  hs-source-dirs: tools/registry-smoke/app
+  main-is:        Main.hs
+  build-depends:
+    base >=4.18 && <4.19,
+    seki:seki-wire,
+    text >=2.0.2 && <2.2
+
 test-suite seki-test
   import:         warnings
   type:           exitcode-stdio-1.0
@@ -122,6 +132,7 @@ test-suite seki-test
     Seki.Scanner.GenerateTest
     Seki.Scanner.ParseTest
     Seki.Run.RiverTest
+    Seki.Run.StartupTest
     Seki.Wire.ArgumentsTest
     Seki.Wire.CodecTest
     Seki.Wire.ConnectionTest

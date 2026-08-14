@@ -382,7 +382,21 @@ active -> connection failed -> closed
 Generated object constructors are not exported, preventing callers from
 inventing IDs or assigning the wrong interface to an ID.
 
-### 7.3 River manager bootstrap
+### 7.3 Wayland session startup
+
+`Seki.Run.Startup` discovers or accepts an explicit Wayland connection target,
+opens the transport, installs the display route, and creates the registry and
+sync callback with their routes atomically. It dispatches events until the
+`wl_display.sync` callback fires, so the initial catalog is complete when the
+session is returned. EOF, connection failures, and invalid registry events
+before that barrier fail startup and close all acquired resources.
+
+The session retains the registry route and a synchronized live catalog rather
+than only returning the initial snapshot. Later event-loop dispatch therefore
+keeps global additions and removals visible through
+`readWaylandGlobalCatalog`. Session close is idempotent.
+
+### 7.4 River manager bootstrap
 
 `Seki.Run.River` is the first river-specific layer above the generic
 connection. It selects exactly one `river_window_manager_v1` global, caps the
@@ -397,7 +411,7 @@ route. This keeps interface selection and river's required version out of the
 generic Wayland connection while giving later sequence-state code a complete,
 typed event tree.
 
-### 7.4 Fatal display errors
+### 7.5 Fatal display errors
 
 `wl_display.error` is decoded even when the referenced object is already being
 destroyed. Its object ID, numeric error code, interface when known, and message

@@ -63,8 +63,14 @@ cabal test all
 Format and lint Haskell sources with:
 
 ```console
-fourmolu --mode inplace src test tools/scanner
-hlint src test tools/scanner
+fourmolu --mode inplace src test tools
+hlint src test tools
+```
+
+With a Wayland compositor running, print the synchronized global registry with:
+
+```console
+cabal run seki-registry-smoke
 ```
 
 Validate the pinned protocol set and regenerate the committed bindings with:
