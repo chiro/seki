@@ -4,7 +4,7 @@
 module Seki.Run.RuntimeTest (tests) where
 
 import Control.Concurrent (forkIO)
-import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar, takeMVar)
 import Control.Exception (SomeException, bracket, onException, try)
 import Control.Monad (void)
 import Data.ByteString (ByteString)
@@ -14,9 +14,11 @@ import Data.Text (Text)
 import Data.Word (Word32)
 import Network.Socket (Family (AF_UNIX), Socket, SocketType (Stream), close, defaultProtocol, socketPair, withFdSocket)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Run.Phase (proposeWindowDimensions, setWindowDimensionBounds, showWindow)
 import Seki.Run.River (RiverBootstrapError (..), RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (
   RiverRuntimeError (..),
+  RiverRuntimeHandlers (..),
   closeRiverSession,
   openRiverSessionAt,
   riverWaylandSession,
@@ -34,6 +36,8 @@ import Seki.Wire.Arguments (
   DecodeResult (..),
   getNewId,
   getUint,
+  putInt,
+  putNewId,
   putString,
   putUint,
   runArgumentEncoder,
@@ -54,7 +58,7 @@ import Seki.Wire.Transport (
   receiveChunk,
   sendMessage,
  )
-import Seki.Wire.Types (FrameDecode (..), ObjectId, Opcode (..), RawFrame (..))
+import Seki.Wire.Types (FrameDecode (..), ObjectId, Opcode (..), RawFrame (..), mkObjectId)
 import System.Posix.IO (closeFd, dup)
 import System.Posix.Types (Fd (..))
 import Test.Tasty (TestTree, testGroup)
@@ -65,6 +69,8 @@ tests =
   testGroup
     "river runtime"
     [ testCase "opens, binds, dispatches, and closes an owned runtime" testOwnedRuntime
+    , testCase "executes phase plans before sequence completion" testPhasePlans
+    , testCase "does not finish a sequence after a phase-plan failure" testPhasePlanFailure
     , testCase "rejects an out-of-order manager sequence event" testSequenceOrderError
     , testCase "closes startup when the manager global is missing" testMissingManager
     , testCase "promotes live registry failures from the event loop" testLiveRegistryFailure
@@ -122,6 +128,89 @@ testOwnedRuntime =
       (Left RiverRuntimeEventLoopAlreadyOwned)
       =<< runRiverSession session
     closeRiverSession session
+
+testPhasePlans :: Assertion
+testPhasePlans =
+  withRuntimePair $ \target peer -> do
+    createdWindow <- newEmptyMVar
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , callbackDoneFrame callbackId 93
+        ]
+      managerId <- receiveManagerBind reader peer
+      windowId <- requireObjectId 0xff000001
+      sendFrames
+        peer
+        [ encodedFrame managerId (Opcode 6) (putNewId windowId)
+        , encodedFrame managerId (Opcode 2) (pure ())
+        ]
+      receiveExpectedRequest reader peer windowId (Opcode 3) (putInt 1280 >> putInt 720)
+      receiveExpectedRequest reader peer managerId (Opcode 2) (pure ())
+      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+      receiveExpectedRequest reader peer windowId (Opcode 5) (pure ())
+      receiveExpectedRequest reader peer managerId (Opcode 4) (pure ())
+      closeTransport peer
+    let handlers =
+          RiverRuntimeHandlers
+            { riverProtocolHandlers =
+                (protocolHandlers (\_ -> pure ()))
+                  { handleRiverWindowCreated = putMVar createdWindow
+                  }
+            , prepareRiverManagePlan = do
+                window <- readMVar createdWindow
+                pure (proposeWindowDimensions window 1280 720)
+            , prepareRiverRenderPlan = do
+                window <- readMVar createdWindow
+                pure (showWindow window)
+            }
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
+    assertEqual "phase-plan lifecycle" (Right ()) =<< runRiverSession session
+    expectMockSuccess mockDone
+
+testPhasePlanFailure :: Assertion
+testPhasePlanFailure =
+  withRuntimePair $ \target peer -> do
+    createdWindow <- newEmptyMVar
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 3
+        , callbackDoneFrame callbackId 94
+        ]
+      managerId <- receiveManagerBindAtVersion reader peer 3
+      windowId <- requireObjectId 0xff000002
+      sendFrames
+        peer
+        [ encodedFrame managerId (Opcode 6) (putNewId windowId)
+        , encodedFrame managerId (Opcode 2) (pure ())
+        ]
+      receiveChunk peer 8 >>= \case
+        Right Nothing -> pure ()
+        _ -> do
+          closeTransport peer
+          assertFailure "sequence finish was sent after a failed phase plan"
+    let handlers =
+          RiverRuntimeHandlers
+            { riverProtocolHandlers =
+                (protocolHandlers (\_ -> pure ()))
+                  { handleRiverWindowCreated = putMVar createdWindow
+                  }
+            , prepareRiverManagePlan = do
+                window <- readMVar createdWindow
+                pure (setWindowDimensionBounds window 1920 1080)
+            , prepareRiverRenderPlan = pure (pure ())
+            }
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
+    runRiverSession session >>= \case
+      Left (RiverRuntimeConnectionError _) -> pure ()
+      result -> assertFailure ("expected phase-plan connection error, got: " <> show result)
+    expectMockSuccess mockDone
 
 testSequenceOrderError :: Assertion
 testSequenceOrderError =
@@ -205,8 +294,18 @@ testLiveRegistryFailure =
 
 runtimeHandlers ::
   (River.RiverWindowManagerV1Event OwnedFd -> IO ()) ->
-  RiverWindowManagerHandlers
+  RiverRuntimeHandlers
 runtimeHandlers managerHandler =
+  RiverRuntimeHandlers
+    { riverProtocolHandlers = protocolHandlers managerHandler
+    , prepareRiverManagePlan = pure (pure ())
+    , prepareRiverRenderPlan = pure (pure ())
+    }
+
+protocolHandlers ::
+  (River.RiverWindowManagerV1Event OwnedFd -> IO ()) ->
+  RiverWindowManagerHandlers
+protocolHandlers managerHandler =
   RiverWindowManagerHandlers
     { handleRiverWindowManagerEvent = \_ event -> managerHandler event
     , handleRiverWindowCreated = \_ -> pure ()
@@ -252,7 +351,10 @@ decodeNewId frame = case runCompleteArgumentDecoder getNewId (rawFramePayload fr
   result -> assertFailure ("unexpected new_id payload: " <> show result)
 
 receiveManagerBind :: FrameReader -> Transport -> IO ObjectId
-receiveManagerBind reader peer = do
+receiveManagerBind reader peer = receiveManagerBindAtVersion reader peer 4
+
+receiveManagerBindAtVersion :: FrameReader -> Transport -> Word32 -> IO ObjectId
+receiveManagerBindAtVersion reader peer expectedVersion = do
   frame <- receiveFrame reader peer
   assertEqual "manager bind opcode" (Opcode 0) (rawFrameOpcode frame)
   case runCompleteArgumentDecoder ((,) <$> getUint <*> getDynamicNewId) (rawFramePayload frame) ([] :: [()]) of
@@ -260,16 +362,27 @@ receiveManagerBind reader peer = do
       | ByteString.null remaining -> do
           assertEqual "manager global name" 7 name
           assertEqual "manager interface" "river_window_manager_v1" (dynamicNewIdInterface dynamicId)
-          assertEqual "manager version" 4 (dynamicNewIdVersion dynamicId)
+          assertEqual "manager version" expectedVersion (dynamicNewIdVersion dynamicId)
           pure (dynamicNewIdObject dynamicId)
     result -> assertFailure ("unexpected manager bind payload: " <> show result)
 
 receiveSequenceCompletion :: FrameReader -> Transport -> ObjectId -> Opcode -> IO ()
 receiveSequenceCompletion reader peer managerId opcode = do
+  receiveExpectedRequest reader peer managerId opcode (pure ())
+
+receiveExpectedRequest ::
+  FrameReader ->
+  Transport ->
+  ObjectId ->
+  Opcode ->
+  ArgumentEncoder () () ->
+  Assertion
+receiveExpectedRequest reader peer sender opcode arguments = do
   frame <- receiveFrame reader peer
-  assertEqual "sequence completion sender" managerId (rawFrameSender frame)
-  assertEqual "sequence completion opcode" opcode (rawFrameOpcode frame)
-  assertEqual "empty sequence completion payload" ByteString.empty (rawFramePayload frame)
+  assertEqual "request sender" sender (rawFrameSender frame)
+  assertEqual "request opcode" opcode (rawFrameOpcode frame)
+  payload <- encodedPayload arguments
+  assertEqual "request payload" payload (rawFramePayload frame)
 
 registryGlobalFrame :: ObjectId -> Word32 -> Text -> Word32 -> IO ByteString
 registryGlobalFrame registryId name interfaceName version =
@@ -324,6 +437,9 @@ openRuntimePair = do
 
 duplicateSocket :: Socket -> IO Fd
 duplicateSocket connection = withFdSocket connection (dup . Fd)
+
+requireObjectId :: Word32 -> IO ObjectId
+requireObjectId rawId = maybe (assertFailure ("invalid object ID: " <> show rawId)) pure (mkObjectId rawId)
 
 expectTransport :: (Show errorValue) => Either errorValue value -> IO value
 expectTransport = either (assertFailure . ("unexpected transport error: " <>) . show) pure

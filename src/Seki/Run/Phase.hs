@@ -13,6 +13,7 @@ module Seki.Run.Phase (
   useWindowSsd,
   setWindowTiled,
   setWindowCapabilities,
+  setWindowDimensionBounds,
   focusWindow,
   clearFocus,
   hideWindow,
@@ -138,6 +139,13 @@ setWindowCapabilities window capabilities =
     River.riverWindowV1Interface
     window
     (River.encodeRiverWindowV1SetCapabilities capabilities)
+
+setWindowDimensionBounds :: Object River.RiverWindowV1 -> Int32 -> Int32 -> ManageM ()
+setWindowDimensionBounds window maximumWidth maximumHeight =
+  phaseRequest
+    River.riverWindowV1Interface
+    window
+    (River.encodeRiverWindowV1SetDimensionBounds maximumWidth maximumHeight)
 
 focusWindow :: Object River.RiverSeatV1 -> Object River.RiverWindowV1 -> ManageM ()
 focusWindow seat window =

@@ -460,10 +460,17 @@ requests are deliberately absent because the runtime owns completion.
 These plans are pure ordered request lists, not general IO transformers. They
 have `Functor`, `Applicative`, and `Monad` instances for composition but no
 operation for lifting arbitrary IO, keeping blocking work outside river's
-response deadline. The private runtime execution hooks submit requests in plan
-order and stop at the first structured connection failure. The next integration
-step will supply these plans from reconciler callbacks inside the checked
-sequence boundary.
+response deadline. `RiverRuntimeHandlers` pairs the low-level object/event
+handlers with lightweight computations that snapshot current state and prepare
+the next manage and render plans.
+
+At a valid boundary the runtime delivers the boundary callback, prepares and
+submits the corresponding plan in request order, and only then submits the
+finish request. It stops at the first structured connection failure. A failed
+plan is never followed by a finish request, so the runtime cannot claim that a
+partially applied sequence completed successfully. Plan preparation exceptions
+remain handler exceptions and close the session through the normal runtime
+cleanup path.
 
 ### 7.8 Fatal display errors
 

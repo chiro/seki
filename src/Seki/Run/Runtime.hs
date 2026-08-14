@@ -5,6 +5,7 @@ module Seki.Run.Runtime (
   RiverSession,
   riverWaylandSession,
   riverWindowManager,
+  RiverRuntimeHandlers (..),
   RiverRuntimeError (..),
   openRiverSession,
   openRiverSessionAt,
@@ -17,6 +18,7 @@ import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
 import Control.Exception (finally, mask, onException)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Run.Phase (ManageM, RenderM, runManageM, runRenderM)
 import Seki.Run.River (
   RiverBootstrapError,
   RiverWindowManagerHandlers (..),
@@ -60,6 +62,18 @@ data RiverSession = RiverSession
   , riverSequenceStatus :: IORef (Either RiverRuntimeError RiverSequenceState)
   }
 
+{- | Low-level river event handlers plus phase-safe plans prepared at each
+sequence boundary.
+
+Plan preparation may snapshot application state but should not perform
+blocking work. The returned plans themselves cannot lift arbitrary IO.
+-}
+data RiverRuntimeHandlers = RiverRuntimeHandlers
+  { riverProtocolHandlers :: RiverWindowManagerHandlers
+  , prepareRiverManagePlan :: IO (ManageM ())
+  , prepareRiverRenderPlan :: IO (RenderM ())
+  }
+
 data RiverRuntimeError
   = RiverRuntimeStartupError WaylandStartupError
   | RiverRuntimeBootstrapError RiverBootstrapError
@@ -71,7 +85,7 @@ data RiverRuntimeError
 
 -- | Discover Wayland, synchronize globals, and bind the river manager.
 openRiverSession ::
-  RiverWindowManagerHandlers ->
+  RiverRuntimeHandlers ->
   IO (Either RiverRuntimeError RiverSession)
 openRiverSession = openRiverSessionWith openWaylandSession
 
@@ -79,22 +93,22 @@ openRiverSession = openRiverSessionWith openWaylandSession
 openRiverSessionAt ::
   ConnectionTarget ->
   ObjectLimit ->
-  RiverWindowManagerHandlers ->
+  RiverRuntimeHandlers ->
   IO (Either RiverRuntimeError RiverSession)
 openRiverSessionAt target limit =
   openRiverSessionWith (openWaylandSessionAt target limit)
 
 openRiverSessionWith ::
   IO (Either WaylandStartupError WaylandSession) ->
-  RiverWindowManagerHandlers ->
+  RiverRuntimeHandlers ->
   IO (Either RiverRuntimeError RiverSession)
-openRiverSessionWith openWayland handlers =
+openRiverSessionWith openWayland runtimeHandlers =
   mask $ \restore -> do
     restore openWayland >>= \case
       Left errorValue -> pure (Left (RiverRuntimeStartupError errorValue))
       Right wayland -> do
         sequenceStatus <- newIORef (Right initialRiverSequenceState)
-        let checkedHandlers = sequenceCheckedHandlers wayland sequenceStatus handlers
+        let checkedHandlers = sequenceCheckedHandlers wayland sequenceStatus runtimeHandlers
         result <- restore (bindManager wayland checkedHandlers) `onException` closeWaylandSession wayland
         case result of
           Left errorValue -> closeWaylandSession wayland >> pure (Left errorValue)
@@ -151,9 +165,9 @@ closeRiverSession = closeWaylandSession . riverWaylandSession
 sequenceCheckedHandlers ::
   WaylandSession ->
   IORef (Either RiverRuntimeError RiverSequenceState) ->
-  RiverWindowManagerHandlers ->
+  RiverRuntimeHandlers ->
   RiverWindowManagerHandlers
-sequenceCheckedHandlers wayland sequenceStatus handlers =
+sequenceCheckedHandlers wayland sequenceStatus runtimeHandlers =
   handlers
     { handleRiverWindowManagerEvent = handleManagerEvent
     }
@@ -167,6 +181,7 @@ sequenceCheckedHandlers wayland sequenceStatus handlers =
         manager
         event
         startManageSequence
+        (prepareRiverManagePlan runtimeHandlers >>= runManageM connection)
     River.RiverWindowManagerV1RenderStart ->
       runSequence
         (waylandConnection wayland)
@@ -175,7 +190,10 @@ sequenceCheckedHandlers wayland sequenceStatus handlers =
         manager
         event
         startRenderSequence
+        (prepareRiverRenderPlan runtimeHandlers >>= runRenderM connection)
     _ -> handleRiverWindowManagerEvent handlers manager event
+  handlers = riverProtocolHandlers runtimeHandlers
+  connection = waylandConnection wayland
 
 runSequence ::
   Connection ->
@@ -184,8 +202,9 @@ runSequence ::
   Object River.RiverWindowManagerV1 ->
   River.RiverWindowManagerV1Event OwnedFd ->
   (RiverSequenceState -> Either RiverSequenceError RiverSequenceState) ->
+  IO (Either ConnectionError ()) ->
   IO ()
-runSequence connection sequenceStatus handlers manager event startSequence = do
+runSequence connection sequenceStatus handlers manager event startSequence runPlan = do
   started <-
     atomicModifyIORef' sequenceStatus $ \current -> case current of
       Left errorValue -> (current, Left errorValue)
@@ -198,14 +217,18 @@ runSequence connection sequenceStatus handlers manager event startSequence = do
     Left _ -> pure ()
     Right active -> do
       handleRiverWindowManagerEvent handlers manager event
-      case completeRiverSequence active of
+      runPlan >>= \case
         Left errorValue ->
-          writeIORef sequenceStatus (Left (RiverRuntimeSequenceError errorValue))
-        Right (completion, next) ->
-          submitSequenceCompletion connection manager completion >>= \case
+          writeIORef sequenceStatus (Left (RiverRuntimeConnectionError errorValue))
+        Right () ->
+          case completeRiverSequence active of
             Left errorValue ->
-              writeIORef sequenceStatus (Left (RiverRuntimeConnectionError errorValue))
-            Right () -> writeIORef sequenceStatus (Right next)
+              writeIORef sequenceStatus (Left (RiverRuntimeSequenceError errorValue))
+            Right (completion, next) ->
+              submitSequenceCompletion connection manager completion >>= \case
+                Left errorValue ->
+                  writeIORef sequenceStatus (Left (RiverRuntimeConnectionError errorValue))
+                Right () -> writeIORef sequenceStatus (Right next)
 
 submitSequenceCompletion ::
   Connection ->
