@@ -454,16 +454,17 @@ errors. Completion submission failures remain structured connection errors.
 management surface includes closing, dimension proposals, decoration and tiled
 state, capabilities, keyboard focus, and XKB binding configuration. The
 rendering surface includes visibility, borders and clipping, node position, and
-stacking. Each operation
-is available only in the phase type allowed by the pinned river XML; finish
+stacking. Each operation is available only in the phase type allowed by the
+pinned river XML; finish
 requests are deliberately absent because the runtime owns completion.
 
 These plans are pure ordered request lists, not general IO transformers. They
 have `Functor`, `Applicative`, and `Monad` instances for composition but no
 operation for lifting arbitrary IO, keeping blocking work outside river's
 response deadline. `RiverRuntimeHandlers` pairs the low-level object/event
-handlers with pure functions from the runtime-owned inventory to the next
-manage and render plans.
+handlers with pure functions from a `RiverRuntimeSnapshot` to the next manage
+and render plans. The snapshot combines the window/output inventory with live
+seat and binding handles without exposing mutable runtime state.
 
 At a valid boundary the runtime delivers the boundary callback, prepares and
 submits the corresponding plan in request order, and only then submits the
@@ -485,6 +486,13 @@ river object kinds. The model validates positive dimensions, ordered non-negativ
 dimension hints, once-only PID/output-name/identifier events, and river v4's
 printable-ASCII identifier rule. Complete output position and size state is
 exposed as a rectangle for placement planning.
+
+For the M0 focus policy, a newly created window becomes active and a
+`river_seat_v1.window_interaction` event activates its referenced live window.
+Closing the active window chooses the remaining window with the highest object
+ID, giving a deterministic fallback; closing any other window preserves the
+active choice. This is desired policy state rather than a claim about current
+compositor keyboard focus. The later StackSet core replaces the fallback rule.
 
 The runtime applies inventory transitions before delivering creation or event
 callbacks, and returns validation failures as structured runtime errors without
@@ -554,17 +562,17 @@ for later submap support.
 A typed binding callback runs when an XKB event is dispatched. It may start
 non-blocking IO immediately, such as launching a child process, and returns a
 `RiverManageAction` for any protocol state change. The action is a pure function
-from the inventory snapshot at the following manage boundary to a `ManageM`
-plan, so it does not retain a window handle that may close between the key event
-and the sequence.
+from the runtime snapshot at the following manage boundary to a `ManageM` plan,
+so it does not retain a window or seat handle that may disappear between the key
+event and the sequence.
 
 The runtime queues actions in event order. At `manage_start` it runs pending
-binding initialization, queued actions evaluated against one inventory
-snapshot, and the configured user plan, in that order. The queue is cleared
+binding initialization, queued actions evaluated against one runtime snapshot,
+and the configured user plan, in that order. The queue is cleared
 only when the combined plan succeeds. This keeps management requests inside the
 protocol phase while allowing process launch and other non-protocol work to stay
-outside it. Focused-window selection remains policy for the M0 action assembly
-and later StackSet core.
+outside it. The active-window policy above supplies the M0 close/focus target;
+the later StackSet core owns the full focus model.
 
 ### 7.13 Fatal display errors
 

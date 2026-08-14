@@ -13,12 +13,14 @@ module Seki.Run.Inventory (
   emptyRiverInventory,
   riverInventoryWindows,
   riverInventoryOutputs,
+  riverInventoryActiveWindow,
   lookupRiverWindow,
   lookupRiverOutput,
   riverOutputRectangle,
   addRiverWindow,
   addRiverOutput,
   attachRiverWindowNode,
+  activateRiverWindow,
   applyRiverWindowEvent,
   applyRiverOutputEvent,
 )
@@ -88,6 +90,7 @@ data RiverOutputState = RiverOutputState
 data RiverInventory = RiverInventory
   { inventoryWindows :: Map ObjectId RiverWindowState
   , inventoryOutputs :: Map ObjectId RiverOutputState
+  , inventoryActiveWindow :: Maybe ObjectId
   }
   deriving (Eq, Show)
 
@@ -108,13 +111,17 @@ data RiverInventoryError
   deriving (Eq, Show)
 
 emptyRiverInventory :: RiverInventory
-emptyRiverInventory = RiverInventory Map.empty Map.empty
+emptyRiverInventory = RiverInventory Map.empty Map.empty Nothing
 
 riverInventoryWindows :: RiverInventory -> [RiverWindowState]
 riverInventoryWindows = Map.elems . inventoryWindows
 
 riverInventoryOutputs :: RiverInventory -> [RiverOutputState]
 riverInventoryOutputs = Map.elems . inventoryOutputs
+
+riverInventoryActiveWindow :: RiverInventory -> Maybe RiverWindowState
+riverInventoryActiveWindow inventory =
+  inventoryActiveWindow inventory >>= (`Map.lookup` inventoryWindows inventory)
 
 lookupRiverWindow :: ObjectId -> RiverInventory -> Maybe RiverWindowState
 lookupRiverWindow identifier = Map.lookup identifier . inventoryWindows
@@ -151,7 +158,17 @@ addRiverWindow window inventory = do
   pure
     inventory
       { inventoryWindows = Map.insert (objectId window) state (inventoryWindows inventory)
+      , inventoryActiveWindow = Just (objectId window)
       }
+
+activateRiverWindow ::
+  ObjectId ->
+  RiverInventory ->
+  Either RiverInventoryError RiverInventory
+activateRiverWindow identifier inventory =
+  case Map.lookup identifier (inventoryWindows inventory) of
+    Nothing -> Left (RiverInventoryWindowNotTracked identifier)
+    Just _ -> Right inventory{inventoryActiveWindow = Just identifier}
 
 addRiverOutput ::
   Object River.RiverOutputV1 ->
@@ -201,7 +218,15 @@ applyRiverWindowEvent window event inventory = do
   current <- requireWindow window inventory
   case event of
     River.RiverWindowV1Closed ->
-      pure inventory{inventoryWindows = Map.delete identifier (inventoryWindows inventory)}
+      let remaining = Map.delete identifier (inventoryWindows inventory)
+          nextActive
+            | inventoryActiveWindow inventory == Just identifier = fst <$> Map.lookupMax remaining
+            | otherwise = inventoryActiveWindow inventory
+       in pure
+            inventory
+              { inventoryWindows = remaining
+              , inventoryActiveWindow = nextActive
+              }
     River.RiverWindowV1DimensionsHint minimumWidth minimumHeight maximumWidth maximumHeight -> do
       let hint = RiverDimensionsHint minimumWidth minimumHeight maximumWidth maximumHeight
       if validDimensionsHint hint
