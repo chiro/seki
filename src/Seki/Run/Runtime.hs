@@ -10,6 +10,8 @@ module Seki.Run.Runtime (
   RiverKeyBindingState (..),
   RiverSeatBindings (..),
   readRiverSeatBindings,
+  RiverManageAction (..),
+  noRiverManageAction,
   RiverRuntimeHandlers (..),
   RiverRuntimeError (..),
   openRiverSession,
@@ -116,6 +118,14 @@ data RiverSeatBindings = RiverSeatBindings
   }
   deriving (Eq, Show)
 
+-- | A deferred management action evaluated against the next inventory snapshot.
+newtype RiverManageAction = RiverManageAction
+  { prepareRiverManageAction :: RiverInventory -> ManageM ()
+  }
+
+noRiverManageAction :: RiverManageAction
+noRiverManageAction = RiverManageAction (const (pure ()))
+
 {- | Low-level river event handlers plus phase-safe plans prepared at each
 sequence boundary.
 
@@ -125,7 +135,7 @@ returned plans cannot lift arbitrary IO.
 data RiverRuntimeHandlers = RiverRuntimeHandlers
   { riverProtocolHandlers :: RiverWindowManagerHandlers
   , riverKeyBindings :: [RiverKeyBinding]
-  , handleRiverKeyBindingEvent :: RiverKeyBinding -> Object Xkb.RiverXkbBindingV1 -> Xkb.RiverXkbBindingV1Event OwnedFd -> IO ()
+  , handleRiverKeyBindingEvent :: RiverKeyBinding -> Object Xkb.RiverXkbBindingV1 -> Xkb.RiverXkbBindingV1Event OwnedFd -> IO RiverManageAction
   , prepareRiverManagePlan :: RiverInventory -> ManageM ()
   , prepareRiverRenderPlan :: RiverInventory -> RenderM ()
   }
@@ -173,6 +183,7 @@ openRiverSessionWith openWayland runtimeHandlers =
         inventoryState <- newIORef emptyRiverInventory
         xkbGlobalState <- newIORef Nothing
         seatBindingsState <- newIORef Map.empty
+        manageActionsState <- newIORef []
         let checkedHandlers =
               sequenceCheckedHandlers
                 wayland
@@ -180,6 +191,7 @@ openRiverSessionWith openWayland runtimeHandlers =
                 inventoryState
                 xkbGlobalState
                 seatBindingsState
+                manageActionsState
                 runtimeHandlers
         result <- restore (bindRuntimeGlobals wayland checkedHandlers) `onException` closeWaylandSession wayland
         case result of
@@ -274,9 +286,10 @@ sequenceCheckedHandlers ::
   IORef RiverInventory ->
   IORef (Maybe (Object Xkb.RiverXkbBindingsV1)) ->
   IORef (Map ObjectId RiverSeatBindings) ->
+  IORef [RiverManageAction] ->
   RiverRuntimeHandlers ->
   RiverWindowManagerHandlers
-sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState seatBindingsState runtimeHandlers =
+sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState seatBindingsState manageActionsState runtimeHandlers =
   handlers
     { handleRiverWindowManagerEvent = handleManagerEvent
     , handleRiverWindowCreated = handleWindowCreated
@@ -421,7 +434,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState sea
       xkbBindings
       seat
       definition
-      (handleRiverKeyBindingEvent runtimeHandlers definition)
+      (handleBindingEvent definition)
       >>= \case
         Left errorValue -> do
           recordRuntimeError sequenceStatus (RiverRuntimeConnectionError errorValue)
@@ -441,9 +454,14 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState sea
             , ()
             )
           createBindings xkbBindings seat rest
+  handleBindingEvent definition binding event = do
+    action <- handleRiverKeyBindingEvent runtimeHandlers definition binding event
+    atomicModifyIORef' manageActionsState $ \actions ->
+      (actions <> [action], ())
   runManagePlans = do
     inventory <- readIORef inventoryState
     seats <- readIORef seatBindingsState
+    actions <- readIORef manageActionsState
     let pending =
           [ bindingState
           | seatState <- Map.elems seats
@@ -452,11 +470,13 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState sea
           ]
         plan = do
           mapM_ prepareKeyBinding pending
+          mapM_ (\action -> prepareRiverManageAction action inventory) actions
           prepareRiverManagePlan runtimeHandlers inventory
     runManageM connection plan >>= \case
       Left errorValue -> pure (Left errorValue)
       Right () -> do
         markKeyBindingsInitialized
+        writeIORef manageActionsState []
         pure (Right ())
   prepareKeyBinding bindingState = do
     let definition = riverKeyBindingDefinition bindingState

@@ -549,7 +549,24 @@ succeeds, and later manage sequences do not repeat its initial configuration.
 The phase API also exposes typed layout-override, enable, and disable operations
 for later submap support.
 
-### 7.12 Fatal display errors
+### 7.12 Deferred binding actions
+
+A typed binding callback runs when an XKB event is dispatched. It may start
+non-blocking IO immediately, such as launching a child process, and returns a
+`RiverManageAction` for any protocol state change. The action is a pure function
+from the inventory snapshot at the following manage boundary to a `ManageM`
+plan, so it does not retain a window handle that may close between the key event
+and the sequence.
+
+The runtime queues actions in event order. At `manage_start` it runs pending
+binding initialization, queued actions evaluated against one inventory
+snapshot, and the configured user plan, in that order. The queue is cleared
+only when the combined plan succeeds. This keeps management requests inside the
+protocol phase while allowing process launch and other non-protocol work to stay
+outside it. Focused-window selection remains policy for the M0 action assembly
+and later StackSet core.
+
+### 7.13 Fatal display errors
 
 `wl_display.error` is decoded even when the referenced object is already being
 destroyed. Its object ID, numeric error code, interface when known, and message

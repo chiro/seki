@@ -25,12 +25,14 @@ import Seki.Run.Inventory (
   riverInventoryWindows,
   riverOutputRectangle,
  )
-import Seki.Run.Phase (setWindowDimensionBounds)
+import Seki.Run.Phase (disableKeyBinding, setWindowDimensionBounds)
 import Seki.Run.River (RiverBootstrapError (..), RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (
+  RiverManageAction (..),
   RiverRuntimeError (..),
   RiverRuntimeHandlers (..),
   closeRiverSession,
+  noRiverManageAction,
   openRiverSessionAt,
   readRiverInventory,
   readRiverSeatBindings,
@@ -188,7 +190,7 @@ testPhasePlans =
           RiverRuntimeHandlers
             { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
             , riverKeyBindings = []
-            , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
+            , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
             , prepareRiverManagePlan = prepareFullManagePlan
             , prepareRiverRenderPlan = prepareFullRenderPlan
             }
@@ -236,7 +238,7 @@ testFullWithoutOutput =
           RiverRuntimeHandlers
             { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
             , riverKeyBindings = []
-            , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
+            , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
             , prepareRiverManagePlan = prepareFullManagePlan
             , prepareRiverRenderPlan = prepareFullRenderPlan
             }
@@ -291,7 +293,7 @@ testInventoryRemoval =
                         _ -> pure ()
                   }
             , riverKeyBindings = []
-            , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
+            , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
             , prepareRiverManagePlan = \_ -> pure ()
             , prepareRiverRenderPlan = \_ -> pure ()
             }
@@ -332,7 +334,7 @@ testPhasePlanFailure =
           RiverRuntimeHandlers
             { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
             , riverKeyBindings = []
-            , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
+            , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
             , prepareRiverManagePlan = \inventory ->
                 case riverInventoryWindows inventory of
                   window : _ -> setWindowDimensionBounds (riverWindowObject window) 1920 1080
@@ -376,7 +378,7 @@ testInventoryFailure =
                       \_ _ -> modifyIORef' deliveredWindowEvents (+ 1)
                   }
             , riverKeyBindings = []
-            , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
+            , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
             , prepareRiverManagePlan = \_ -> pure ()
             , prepareRiverRenderPlan = \_ -> pure ()
             }
@@ -422,7 +424,7 @@ testNodeAcquisitionFailure =
                       \_ -> modifyIORef' deliveredCreations (+ 1)
                   }
             , riverKeyBindings = []
-            , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
+            , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
             , prepareRiverManagePlan = \_ -> pure ()
             , prepareRiverRenderPlan = \_ -> pure ()
             }
@@ -478,7 +480,15 @@ testSeatBindingLifecycle =
       sendFrames
         peer
         [ encodedFrame terminalId (Opcode 0) (pure ())
-        , encodedFrame seatId (Opcode 0) (pure ())
+        , encodedFrame managerId (Opcode 2) (pure ())
+        ]
+      receiveExpectedRequest reader peer terminalId (Opcode 3) (pure ())
+      receiveSequenceCompletion reader peer managerId (Opcode 2)
+      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 4)
+      sendFrames
+        peer
+        [ encodedFrame seatId (Opcode 0) (pure ())
         , encodedFrame managerId (Opcode 2) (pure ())
         ]
       receiveExpectedRequest reader peer terminalId (Opcode 0) (pure ())
@@ -498,9 +508,11 @@ testSeatBindingLifecycle =
                   }
             , riverKeyBindings = [terminalBinding, closeBinding]
             , handleRiverKeyBindingEvent =
-                \definition _ event -> case event of
-                  Xkb.RiverXkbBindingV1Pressed -> modifyIORef' bindingPresses (<> [definition])
-                  _ -> pure ()
+                \definition binding event -> case event of
+                  Xkb.RiverXkbBindingV1Pressed -> do
+                    modifyIORef' bindingPresses (<> [definition])
+                    pure (RiverManageAction (\_ -> disableKeyBinding binding))
+                  _ -> pure noRiverManageAction
             , prepareRiverManagePlan = \_ -> pure ()
             , prepareRiverRenderPlan = \_ -> pure ()
             }
@@ -619,7 +631,7 @@ runtimeHandlers managerHandler =
   RiverRuntimeHandlers
     { riverProtocolHandlers = protocolHandlers managerHandler
     , riverKeyBindings = []
-    , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
+    , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
     , prepareRiverManagePlan = \_ -> pure ()
     , prepareRiverRenderPlan = \_ -> pure ()
     }
