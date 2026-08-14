@@ -461,16 +461,14 @@ These plans are pure ordered request lists, not general IO transformers. They
 have `Functor`, `Applicative`, and `Monad` instances for composition but no
 operation for lifting arbitrary IO, keeping blocking work outside river's
 response deadline. `RiverRuntimeHandlers` pairs the low-level object/event
-handlers with lightweight computations that snapshot current state and prepare
-the next manage and render plans.
+handlers with pure functions from the runtime-owned inventory to the next
+manage and render plans.
 
 At a valid boundary the runtime delivers the boundary callback, prepares and
 submits the corresponding plan in request order, and only then submits the
 finish request. It stops at the first structured connection failure. A failed
 plan is never followed by a finish request, so the runtime cannot claim that a
-partially applied sequence completed successfully. Plan preparation exceptions
-remain handler exceptions and close the session through the normal runtime
-cleanup path.
+partially applied sequence completed successfully.
 
 ### 7.8 River object inventory
 
@@ -486,6 +484,17 @@ river object kinds. The model validates positive dimensions, ordered non-negativ
 dimension hints, once-only PID/output-name/identifier events, and river v4's
 printable-ASCII identifier rule. Complete output position and size state is
 exposed as a rectangle for the upcoming Full placement planner.
+
+The runtime applies inventory transitions before delivering creation or event
+callbacks, and returns validation failures as structured runtime errors without
+delivering the invalid event. On each window creation it also makes exactly one
+`get_node` request, stores the resulting typed `river_node_v1` handle with the
+window, and only then delivers the creation callback. Node-allocation failures
+likewise stop dispatch before exposing a partially initialized window. The
+latest snapshot remains readable from `RiverSession`, including after shutdown
+for diagnostics and tests. On closure/removal, callbacks run once and the
+runtime destroys the window's node before its window object, or the removed
+output object, so long-running sessions do not accumulate protocol objects.
 
 ### 7.9 Fatal display errors
 

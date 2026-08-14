@@ -4,7 +4,7 @@
 module Seki.Run.RuntimeTest (tests) where
 
 import Control.Concurrent (forkIO)
-import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar, takeMVar)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (SomeException, bracket, onException, try)
 import Control.Monad (void)
 import Data.ByteString (ByteString)
@@ -14,13 +14,24 @@ import Data.Text (Text)
 import Data.Word (Word32)
 import Network.Socket (Family (AF_UNIX), Socket, SocketType (Stream), close, defaultProtocol, socketPair, withFdSocket)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
-import Seki.Run.Phase (proposeWindowDimensions, setWindowDimensionBounds, showWindow)
+import Seki.Run.Inventory (
+  RiverInventory,
+  RiverInventoryError (..),
+  RiverRectangle (..),
+  RiverSize (..),
+  RiverWindowState (..),
+  riverInventoryOutputs,
+  riverInventoryWindows,
+  riverOutputRectangle,
+ )
+import Seki.Run.Phase (ManageM, RenderM, proposeWindowDimensions, setNodePosition, setWindowDimensionBounds)
 import Seki.Run.River (RiverBootstrapError (..), RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (
   RiverRuntimeError (..),
   RiverRuntimeHandlers (..),
   closeRiverSession,
   openRiverSessionAt,
+  readRiverInventory,
   riverWaylandSession,
   riverWindowManager,
   runRiverSession,
@@ -46,7 +57,7 @@ import Seki.Wire.Arguments (
 import Seki.Wire.Binding (DynamicNewId (..), getDynamicNewId)
 import Seki.Wire.Codec (decodeFrame, encodeFrame)
 import Seki.Wire.Connection (ConnectionError (..), dispatchNextEvent)
-import Seki.Wire.Connection.ObjectTable (defaultObjectLimit, objectId)
+import Seki.Wire.Connection.ObjectTable (defaultObjectLimit, makeObjectLimit, objectId)
 import Seki.Wire.Connection.Registry (RegistryError (..), globalNameFromWord)
 import Seki.Wire.Transport (
   ConnectionTarget (InheritedSocket),
@@ -70,7 +81,10 @@ tests =
     "river runtime"
     [ testCase "opens, binds, dispatches, and closes an owned runtime" testOwnedRuntime
     , testCase "executes phase plans before sequence completion" testPhasePlans
+    , testCase "retires removed inventory objects and their nodes" testInventoryRemoval
     , testCase "does not finish a sequence after a phase-plan failure" testPhasePlanFailure
+    , testCase "promotes inventory failures before user event delivery" testInventoryFailure
+    , testCase "promotes window-node acquisition failures" testNodeAcquisitionFailure
     , testCase "rejects an out-of-order manager sequence event" testSequenceOrderError
     , testCase "closes startup when the manager global is missing" testMissingManager
     , testCase "promotes live registry failures from the event loop" testLiveRegistryFailure
@@ -132,7 +146,6 @@ testOwnedRuntime =
 testPhasePlans :: Assertion
 testPhasePlans =
   withRuntimePair $ \target peer -> do
-    createdWindow <- newEmptyMVar
     mockDone <- runMock $ do
       reader <- newFrameReader
       (registryId, callbackId) <- receiveStartupRequests reader peer
@@ -143,38 +156,102 @@ testPhasePlans =
         ]
       managerId <- receiveManagerBind reader peer
       windowId <- requireObjectId 0xff000001
+      outputId <- requireObjectId 0xff000002
       sendFrames
         peer
         [ encodedFrame managerId (Opcode 6) (putNewId windowId)
+        , encodedFrame managerId (Opcode 7) (putNewId outputId)
+        , encodedFrame outputId (Opcode 2) (putInt (-1920) >> putInt 30)
+        , encodedFrame outputId (Opcode 3) (putInt 1280 >> putInt 720)
         , encodedFrame managerId (Opcode 2) (pure ())
         ]
+      nodeId <- receiveNewIdRequest reader peer windowId (Opcode 2)
       receiveExpectedRequest reader peer windowId (Opcode 3) (putInt 1280 >> putInt 720)
       receiveExpectedRequest reader peer managerId (Opcode 2) (pure ())
       sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
-      receiveExpectedRequest reader peer windowId (Opcode 5) (pure ())
+      receiveExpectedRequest reader peer nodeId (Opcode 1) (putInt (-1920) >> putInt 30)
       receiveExpectedRequest reader peer managerId (Opcode 4) (pure ())
+      closeTransport peer
+    let handlers =
+          RiverRuntimeHandlers
+            { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
+            , prepareRiverManagePlan = prepareFullManagePlan
+            , prepareRiverRenderPlan = prepareFullRenderPlan
+            }
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
+    assertEqual "phase-plan lifecycle" (Right ()) =<< runRiverSession session
+    expectMockSuccess mockDone
+    inventory <- readRiverInventory session
+    case (riverInventoryWindows inventory, riverInventoryOutputs inventory) of
+      ([window], [output]) -> do
+        case riverWindowNode window of
+          Nothing -> assertFailure "window node missing"
+          Just _ -> pure ()
+        assertEqual
+          "tracked output rectangle"
+          (Just (RiverRectangle (-1920) 30 1280 720))
+          (riverOutputRectangle output)
+      _ -> assertFailure "unexpected runtime inventory"
+
+testInventoryRemoval :: Assertion
+testInventoryRemoval =
+  withRuntimePair $ \target peer -> do
+    deliveredRemovals <- newIORef (0 :: Int)
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , callbackDoneFrame callbackId 97
+        ]
+      managerId <- receiveManagerBind reader peer
+      windowId <- requireObjectId 0xff000005
+      outputId <- requireObjectId 0xff000006
+      sendFrames
+        peer
+        [ encodedFrame managerId (Opcode 6) (putNewId windowId)
+        , encodedFrame managerId (Opcode 7) (putNewId outputId)
+        ]
+      nodeId <- receiveNewIdRequest reader peer windowId (Opcode 2)
+      sendFrames
+        peer
+        [ encodedFrame windowId (Opcode 0) (pure ())
+        , encodedFrame outputId (Opcode 0) (pure ())
+        , encodedFrame managerId (Opcode 2) (pure ())
+        ]
+      receiveExpectedRequest reader peer nodeId (Opcode 0) (pure ())
+      receiveExpectedRequest reader peer windowId (Opcode 0) (pure ())
+      receiveExpectedRequest reader peer outputId (Opcode 0) (pure ())
+      receiveExpectedRequest reader peer managerId (Opcode 2) (pure ())
       closeTransport peer
     let handlers =
           RiverRuntimeHandlers
             { riverProtocolHandlers =
                 (protocolHandlers (\_ -> pure ()))
-                  { handleRiverWindowCreated = putMVar createdWindow
+                  { handleRiverWindowEvent =
+                      \_ event -> case event of
+                        River.RiverWindowV1Closed -> modifyIORef' deliveredRemovals (+ 1)
+                        _ -> pure ()
+                  , handleRiverOutputEvent =
+                      \_ event -> case event of
+                        River.RiverOutputV1Removed -> modifyIORef' deliveredRemovals (+ 1)
+                        _ -> pure ()
                   }
-            , prepareRiverManagePlan = do
-                window <- readMVar createdWindow
-                pure (proposeWindowDimensions window 1280 720)
-            , prepareRiverRenderPlan = do
-                window <- readMVar createdWindow
-                pure (showWindow window)
+            , prepareRiverManagePlan = \_ -> pure ()
+            , prepareRiverRenderPlan = \_ -> pure ()
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
-    assertEqual "phase-plan lifecycle" (Right ()) =<< runRiverSession session
+    assertEqual "removal lifecycle" (Right ()) =<< runRiverSession session
     expectMockSuccess mockDone
+    assertEqual "removal callbacks" 2 =<< readIORef deliveredRemovals
+    inventory <- readRiverInventory session
+    assertEqual "no live windows" [] (riverInventoryWindows inventory)
+    assertEqual "no live outputs" [] (riverInventoryOutputs inventory)
 
 testPhasePlanFailure :: Assertion
 testPhasePlanFailure =
   withRuntimePair $ \target peer -> do
-    createdWindow <- newEmptyMVar
     mockDone <- runMock $ do
       reader <- newFrameReader
       (registryId, callbackId) <- receiveStartupRequests reader peer
@@ -190,6 +267,7 @@ testPhasePlanFailure =
         [ encodedFrame managerId (Opcode 6) (putNewId windowId)
         , encodedFrame managerId (Opcode 2) (pure ())
         ]
+      _ <- receiveNewIdRequest reader peer windowId (Opcode 2)
       receiveChunk peer 8 >>= \case
         Right Nothing -> pure ()
         _ -> do
@@ -197,19 +275,99 @@ testPhasePlanFailure =
           assertFailure "sequence finish was sent after a failed phase plan"
     let handlers =
           RiverRuntimeHandlers
-            { riverProtocolHandlers =
-                (protocolHandlers (\_ -> pure ()))
-                  { handleRiverWindowCreated = putMVar createdWindow
-                  }
-            , prepareRiverManagePlan = do
-                window <- readMVar createdWindow
-                pure (setWindowDimensionBounds window 1920 1080)
-            , prepareRiverRenderPlan = pure (pure ())
+            { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
+            , prepareRiverManagePlan = \inventory ->
+                case riverInventoryWindows inventory of
+                  window : _ -> setWindowDimensionBounds (riverWindowObject window) 1920 1080
+                  [] -> pure ()
+            , prepareRiverRenderPlan = \_ -> pure ()
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
     runRiverSession session >>= \case
       Left (RiverRuntimeConnectionError _) -> pure ()
       result -> assertFailure ("expected phase-plan connection error, got: " <> show result)
+    expectMockSuccess mockDone
+
+testInventoryFailure :: Assertion
+testInventoryFailure =
+  withRuntimePair $ \target peer -> do
+    deliveredWindowEvents <- newIORef (0 :: Int)
+    windowId <- requireObjectId 0xff000003
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , callbackDoneFrame callbackId 95
+        ]
+      managerId <- receiveManagerBind reader peer
+      sendFrames peer [encodedFrame managerId (Opcode 6) (putNewId windowId)]
+      _ <- receiveNewIdRequest reader peer windowId (Opcode 2)
+      sendFrames peer [encodedFrame windowId (Opcode 2) (putInt 0 >> putInt 100)]
+      receiveChunk peer 8 >>= \case
+        Right Nothing -> pure ()
+        _ -> do
+          closeTransport peer
+          assertFailure "runtime remained open after an inventory failure"
+    let handlers =
+          RiverRuntimeHandlers
+            { riverProtocolHandlers =
+                (protocolHandlers (\_ -> pure ()))
+                  { handleRiverWindowEvent =
+                      \_ _ -> modifyIORef' deliveredWindowEvents (+ 1)
+                  }
+            , prepareRiverManagePlan = \_ -> pure ()
+            , prepareRiverRenderPlan = \_ -> pure ()
+            }
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
+    assertEqual
+      "inventory error"
+      ( Left
+          ( RiverRuntimeInventoryError
+              (RiverInventoryInvalidWindowDimensions windowId (RiverSize 0 100))
+          )
+      )
+      =<< runRiverSession session
+    assertEqual "invalid event withheld" 0 =<< readIORef deliveredWindowEvents
+    expectMockSuccess mockDone
+
+testNodeAcquisitionFailure :: Assertion
+testNodeAcquisitionFailure =
+  withRuntimePair $ \target peer -> do
+    deliveredCreations <- newIORef (0 :: Int)
+    limit <- expectRight (makeObjectLimit 5)
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , callbackDoneFrame callbackId 96
+        ]
+      managerId <- receiveManagerBind reader peer
+      windowId <- requireObjectId 0xff000004
+      sendFrames peer [encodedFrame managerId (Opcode 6) (putNewId windowId)]
+      receiveChunk peer 8 >>= \case
+        Right Nothing -> pure ()
+        _ -> do
+          closeTransport peer
+          assertFailure "node request was sent despite the object limit"
+    let handlers =
+          RiverRuntimeHandlers
+            { riverProtocolHandlers =
+                (protocolHandlers (\_ -> pure ()))
+                  { handleRiverWindowCreated =
+                      \_ -> modifyIORef' deliveredCreations (+ 1)
+                  }
+            , prepareRiverManagePlan = \_ -> pure ()
+            , prepareRiverRenderPlan = \_ -> pure ()
+            }
+    session <- expectRight =<< openRiverSessionAt target limit handlers
+    runRiverSession session >>= \case
+      Left (RiverRuntimeConnectionError _) -> pure ()
+      result -> assertFailure ("expected node-acquisition error, got: " <> show result)
+    assertEqual "failed creation withheld" 0 =<< readIORef deliveredCreations
     expectMockSuccess mockDone
 
 testSequenceOrderError :: Assertion
@@ -298,9 +456,45 @@ runtimeHandlers ::
 runtimeHandlers managerHandler =
   RiverRuntimeHandlers
     { riverProtocolHandlers = protocolHandlers managerHandler
-    , prepareRiverManagePlan = pure (pure ())
-    , prepareRiverRenderPlan = pure (pure ())
+    , prepareRiverManagePlan = \_ -> pure ()
+    , prepareRiverRenderPlan = \_ -> pure ()
     }
+
+prepareFullManagePlan :: RiverInventory -> ManageM ()
+prepareFullManagePlan inventory =
+  case firstOutputRectangle inventory of
+    Nothing -> pure ()
+    Just rectangle ->
+      mapM_
+        ( \window ->
+            proposeWindowDimensions
+              (riverWindowObject window)
+              (riverRectangleWidth rectangle)
+              (riverRectangleHeight rectangle)
+        )
+        (riverInventoryWindows inventory)
+
+prepareFullRenderPlan :: RiverInventory -> RenderM ()
+prepareFullRenderPlan inventory =
+  case firstOutputRectangle inventory of
+    Nothing -> pure ()
+    Just rectangle ->
+      mapM_
+        ( \window -> case riverWindowNode window of
+            Nothing -> pure ()
+            Just node ->
+              setNodePosition
+                node
+                (riverRectangleX rectangle)
+                (riverRectangleY rectangle)
+        )
+        (riverInventoryWindows inventory)
+
+firstOutputRectangle :: RiverInventory -> Maybe RiverRectangle
+firstOutputRectangle inventory =
+  case [rectangle | output <- riverInventoryOutputs inventory, Just rectangle <- [riverOutputRectangle output]] of
+    [] -> Nothing
+    rectangle : _ -> Just rectangle
 
 protocolHandlers ::
   (River.RiverWindowManagerV1Event OwnedFd -> IO ()) ->
@@ -383,6 +577,13 @@ receiveExpectedRequest reader peer sender opcode arguments = do
   assertEqual "request opcode" opcode (rawFrameOpcode frame)
   payload <- encodedPayload arguments
   assertEqual "request payload" payload (rawFramePayload frame)
+
+receiveNewIdRequest :: FrameReader -> Transport -> ObjectId -> Opcode -> IO ObjectId
+receiveNewIdRequest reader peer sender opcode = do
+  frame <- receiveFrame reader peer
+  assertEqual "new-ID request sender" sender (rawFrameSender frame)
+  assertEqual "new-ID request opcode" opcode (rawFrameOpcode frame)
+  decodeNewId frame
 
 registryGlobalFrame :: ObjectId -> Word32 -> Text -> Word32 -> IO ByteString
 registryGlobalFrame registryId name interfaceName version =

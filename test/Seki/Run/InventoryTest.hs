@@ -19,6 +19,7 @@ import Seki.Run.Inventory (
   addRiverWindow,
   applyRiverOutputEvent,
   applyRiverWindowEvent,
+  attachRiverWindowNode,
   emptyRiverInventory,
   lookupRiverOutput,
   lookupRiverWindow,
@@ -116,6 +117,7 @@ testObjectIdentity = do
   window <- makeServerObject River.riverWindowV1Interface 0xff000020 False
   staleWindow <- makeServerObject River.riverWindowV1Interface 0xff000020 True
   outputWithSameId <- makeServerObject River.riverOutputV1Interface 0xff000020 False
+  node <- makeClientObject River.riverNodeV1Interface
   inventory <- expectRight (addRiverWindow window emptyRiverInventory)
   expectLeft
     (RiverInventoryObjectAlreadyTracked (objectId window))
@@ -123,6 +125,11 @@ testObjectIdentity = do
   expectLeft
     (RiverInventoryWindowHandleMismatch (objectId window))
     (applyRiverWindowEvent staleWindow (River.RiverWindowV1Title (Just "stale")) inventory)
+  attached <- expectRight (attachRiverWindowNode window node inventory)
+  assertEqual "attached node" (Just node) (riverWindowNode =<< lookupRiverWindow (objectId window) attached)
+  expectLeft
+    (RiverInventoryWindowNodeAlreadyAttached (objectId window))
+    (attachRiverWindowNode window node attached)
 
 testInvalidState :: Assertion
 testInvalidState = do
@@ -192,6 +199,14 @@ makeServerObject interface rawIdentifier bumpGeneration = do
   (_, object) <-
     expectRight
       (registerServerObject identifier interface (interfaceMaximumVersion interface) table)
+  pure object
+
+makeClientObject :: Interface interface -> IO (Object interface)
+makeClientObject interface = do
+  (initialTable, _) <- expectRight (newObjectTable defaultObjectLimit Wayland.wlDisplayInterface)
+  (_, object) <-
+    expectRight
+      (allocateClientObject interface (interfaceMaximumVersion interface) initialTable)
   pure object
 
 requireObjectId :: Word32 -> IO ObjectId

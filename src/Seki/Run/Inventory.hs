@@ -18,6 +18,7 @@ module Seki.Run.Inventory (
   riverOutputRectangle,
   addRiverWindow,
   addRiverOutput,
+  attachRiverWindowNode,
   applyRiverWindowEvent,
   applyRiverOutputEvent,
 )
@@ -63,6 +64,7 @@ data RiverDimensionsHint = RiverDimensionsHint
 
 data RiverWindowState = RiverWindowState
   { riverWindowObject :: Object River.RiverWindowV1
+  , riverWindowNode :: Maybe (Object River.RiverNodeV1)
   , riverWindowDimensionsHint :: Maybe RiverDimensionsHint
   , riverWindowDimensions :: Maybe RiverSize
   , riverWindowAppId :: Maybe Text
@@ -102,6 +104,7 @@ data RiverInventoryError
   | RiverInventoryInvalidWindowIdentifier ObjectId Text
   | RiverInventoryRepeatedWindowIdentifier ObjectId
   | RiverInventoryRepeatedOutputName ObjectId
+  | RiverInventoryWindowNodeAlreadyAttached ObjectId
   deriving (Eq, Show)
 
 emptyRiverInventory :: RiverInventory
@@ -134,6 +137,7 @@ addRiverWindow window inventory = do
   let state =
         RiverWindowState
           { riverWindowObject = window
+          , riverWindowNode = Nothing
           , riverWindowDimensionsHint = Nothing
           , riverWindowDimensions = Nothing
           , riverWindowAppId = Nothing
@@ -166,6 +170,27 @@ addRiverOutput output inventory = do
     inventory
       { inventoryOutputs = Map.insert (objectId output) state (inventoryOutputs inventory)
       }
+
+attachRiverWindowNode ::
+  Object River.RiverWindowV1 ->
+  Object River.RiverNodeV1 ->
+  RiverInventory ->
+  Either RiverInventoryError RiverInventory
+attachRiverWindowNode window node inventory = do
+  current <- requireWindow window inventory
+  case riverWindowNode current of
+    Just _ -> Left (RiverInventoryWindowNodeAlreadyAttached identifier)
+    Nothing ->
+      Right
+        inventory
+          { inventoryWindows =
+              Map.insert
+                identifier
+                current{riverWindowNode = Just node}
+                (inventoryWindows inventory)
+          }
+ where
+  identifier = objectId window
 
 applyRiverWindowEvent ::
   Object River.RiverWindowV1 ->
