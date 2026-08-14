@@ -411,7 +411,23 @@ route. This keeps interface selection and river's required version out of the
 generic Wayland connection while giving later sequence-state code a complete,
 typed event tree.
 
-### 7.5 Fatal display errors
+### 7.5 Owned river runtime
+
+`Seki.Run.Runtime` composes synchronized Wayland startup with manager binding.
+Opening is all-or-nothing: if global selection or binding fails, it closes the
+Wayland session rather than returning a partially initialized runtime. The
+result retains typed access to both the underlying session and the bound
+`river_window_manager_v1` object.
+
+`runRiverSession` claims single, one-shot ownership of event dispatch; a second
+or concurrent runner is rejected. It continues until clean EOF, promotes
+connection and live-registry failures to structured runtime errors, and closes
+the entire session on every exit path. Handler exceptions remain exceptions,
+but resource cleanup still runs before they are rethrown. This boundary gives
+the next river phase-state layer one ordered event stream and one place to
+enforce manage/render completion.
+
+### 7.6 Fatal display errors
 
 `wl_display.error` is decoded even when the referenced object is already being
 destroyed. Its object ID, numeric error code, interface when known, and message

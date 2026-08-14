@@ -63,6 +63,7 @@ library seki-wire
     Seki.Protocol.RiverXkbBindingsV1
     Seki.Protocol.Wayland
     Seki.Run.River
+    Seki.Run.Runtime
     Seki.Run.Startup
     Seki.Wire.Arguments
     Seki.Wire.Binding
@@ -132,6 +133,7 @@ test-suite seki-test
     Seki.Scanner.GenerateTest
     Seki.Scanner.ParseTest
     Seki.Run.RiverTest
+    Seki.Run.RuntimeTest
     Seki.Run.StartupTest
     Seki.Wire.ArgumentsTest
     Seki.Wire.CodecTest
