@@ -2,8 +2,8 @@
 
 A tiling window manager for [river](https://codeberg.org/river/river), written in Haskell — with xmonad's semantics and xmonad's configuration model.
 
-> **Status: design stage. There is no working code yet.**
-> The current design is ready for M0 validation (see [Roadmap](#roadmap)). Nothing here is usable yet.
+> **Status: M0 implementation, ready for nested-river validation.**
+> This is not ready for daily use; see [Roadmap](#roadmap).
 
 ## What this is
 
@@ -72,6 +72,16 @@ With a Wayland compositor running, print the synchronized global registry with:
 ```console
 cabal run seki-registry-smoke
 ```
+
+Run the current Full-layout policy against the display selected by the standard
+`WAYLAND_DISPLAY`/`XDG_RUNTIME_DIR` environment variables with:
+
+```console
+cabal run seki
+```
+
+The current defaults use Mod4-Shift-Return to launch `foot` and Mod4-Shift-c to
+close the active window.
 
 Validate the pinned protocol set and regenerate the committed bindings with:
 

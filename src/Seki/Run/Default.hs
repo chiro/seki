@@ -1,15 +1,17 @@
 {-# LANGUAGE LambdaCase #-}
 
--- | Concrete Full-layout policy used by the M0 validation executable.
-module Seki.Run.M0 (
-  M0Config (..),
-  M0ConfigError (..),
-  defaultM0Config,
-  m0RuntimeHandlers,
-  prepareM0ManagePlan,
-  prepareM0RenderPlan,
-  m0FocusTarget,
-  m0CloseTarget,
+-- | Concrete Full-layout policy used by the default executable.
+module Seki.Run.Default (
+  DefaultConfig (..),
+  DefaultConfigError (..),
+  DefaultRunError (..),
+  defaultConfig,
+  defaultRuntimeHandlers,
+  runDefault,
+  prepareDefaultManagePlan,
+  prepareDefaultRenderPlan,
+  defaultFocusTarget,
+  defaultCloseTarget,
 )
 where
 
@@ -27,35 +29,43 @@ import Seki.Run.Phase (ManageM, RenderM, closeWindow, focusWindow)
 import Seki.Run.River (RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (
   RiverManageAction (..),
+  RiverRuntimeError,
   RiverRuntimeHandlers (..),
   RiverRuntimeSnapshot (..),
   RiverSeatBindings (..),
   noRiverManageAction,
+  openRiverSession,
+  runRiverSession,
  )
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable (Object)
 import System.IO (hPutStrLn, stderr)
 import System.Process (callProcess)
 
-data M0Config = M0Config
-  { m0TerminalBinding :: RiverKeyBinding
-  , m0CloseBinding :: RiverKeyBinding
-  , m0TerminalProcess :: IO ()
+data DefaultConfig = DefaultConfig
+  { defaultTerminalBinding :: RiverKeyBinding
+  , defaultCloseBinding :: RiverKeyBinding
+  , defaultTerminalProcess :: IO ()
   }
 
-data M0ConfigError
-  = M0BindingsConflict RiverKeyBinding
+newtype DefaultConfigError
+  = DefaultBindingsConflict RiverKeyBinding
+  deriving (Eq, Show)
+
+data DefaultRunError
+  = DefaultRunConfigError DefaultConfigError
+  | DefaultRunRuntimeError RiverRuntimeError
   deriving (Eq, Show)
 
 {- | xmonad-style defaults: Mod4-Shift-Return launches @foot@ and
 Mod4-Shift-c closes the active window.
 -}
-defaultM0Config :: M0Config
-defaultM0Config =
-  M0Config
-    { m0TerminalBinding = keyBinding 0xff0d
-    , m0CloseBinding = keyBinding 0x63
-    , m0TerminalProcess = callProcess "foot" []
+defaultConfig :: DefaultConfig
+defaultConfig =
+  DefaultConfig
+    { defaultTerminalBinding = keyBinding 0xff0d
+    , defaultCloseBinding = keyBinding 0x63
+    , defaultTerminalProcess = callProcess "foot" []
     }
  where
   keyBinding keysym =
@@ -65,57 +75,68 @@ defaultM0Config =
       , riverKeyBindingLayoutOverride = Just 0
       }
 
--- | Assemble the complete M0 runtime policy after validating binding identity.
-m0RuntimeHandlers :: M0Config -> Either M0ConfigError RiverRuntimeHandlers
-m0RuntimeHandlers config
-  | m0TerminalBinding config == m0CloseBinding config =
-      Left (M0BindingsConflict (m0TerminalBinding config))
+-- | Assemble the default runtime policy after validating binding identity.
+defaultRuntimeHandlers :: DefaultConfig -> Either DefaultConfigError RiverRuntimeHandlers
+defaultRuntimeHandlers config
+  | defaultTerminalBinding config == defaultCloseBinding config =
+      Left (DefaultBindingsConflict (defaultTerminalBinding config))
   | otherwise =
       Right
         RiverRuntimeHandlers
           { riverProtocolHandlers = noOpProtocolHandlers
-          , riverKeyBindings = [m0TerminalBinding config, m0CloseBinding config]
+          , riverKeyBindings = [defaultTerminalBinding config, defaultCloseBinding config]
           , handleRiverKeyBindingEvent = handleBindingEvent
-          , prepareRiverManagePlan = prepareM0ManagePlan
-          , prepareRiverRenderPlan = prepareM0RenderPlan
+          , prepareRiverManagePlan = prepareDefaultManagePlan
+          , prepareRiverRenderPlan = prepareDefaultRenderPlan
           }
  where
   handleBindingEvent definition _ = \case
     Xkb.RiverXkbBindingV1Pressed
-      | definition == m0TerminalBinding config -> do
-          launchAsync (m0TerminalProcess config)
+      | definition == defaultTerminalBinding config -> do
+          launchAsync (defaultTerminalProcess config)
           pure noRiverManageAction
-      | definition == m0CloseBinding config ->
+      | definition == defaultCloseBinding config ->
           pure (RiverManageAction prepareClosePlan)
     _ -> pure noRiverManageAction
 
+-- | Open the default Wayland display and run the policy until shutdown.
+runDefault :: DefaultConfig -> IO (Either DefaultRunError ())
+runDefault config =
+  case defaultRuntimeHandlers config of
+    Left errorValue -> pure (Left (DefaultRunConfigError errorValue))
+    Right handlers ->
+      openRiverSession handlers >>= \case
+        Left errorValue -> pure (Left (DefaultRunRuntimeError errorValue))
+        Right session ->
+          either (Left . DefaultRunRuntimeError) Right <$> runRiverSession session
+
 -- | Full placement plus keyboard focus for the active window on the first seat.
-prepareM0ManagePlan :: RiverRuntimeSnapshot -> ManageM ()
-prepareM0ManagePlan snapshot = do
+prepareDefaultManagePlan :: RiverRuntimeSnapshot -> ManageM ()
+prepareDefaultManagePlan snapshot = do
   prepareFullManagePlan (riverRuntimeInventory snapshot)
-  case m0FocusTarget snapshot of
+  case defaultFocusTarget snapshot of
     Nothing -> pure ()
     Just (seat, window) -> focusWindow seat (riverWindowObject window)
 
-prepareM0RenderPlan :: RiverRuntimeSnapshot -> RenderM ()
-prepareM0RenderPlan = prepareFullRenderPlan . riverRuntimeInventory
+prepareDefaultRenderPlan :: RiverRuntimeSnapshot -> RenderM ()
+prepareDefaultRenderPlan = prepareFullRenderPlan . riverRuntimeInventory
 
-m0FocusTarget ::
+defaultFocusTarget ::
   RiverRuntimeSnapshot ->
   Maybe (Object River.RiverSeatV1, RiverWindowState)
-m0FocusTarget snapshot = do
+defaultFocusTarget snapshot = do
   seatState <- case riverRuntimeSeatBindings snapshot of
     [] -> Nothing
     first : _ -> Just first
-  window <- m0CloseTarget snapshot
+  window <- defaultCloseTarget snapshot
   pure (riverBindingsSeat seatState, window)
 
-m0CloseTarget :: RiverRuntimeSnapshot -> Maybe RiverWindowState
-m0CloseTarget = riverInventoryActiveWindow . riverRuntimeInventory
+defaultCloseTarget :: RiverRuntimeSnapshot -> Maybe RiverWindowState
+defaultCloseTarget = riverInventoryActiveWindow . riverRuntimeInventory
 
 prepareClosePlan :: RiverRuntimeSnapshot -> ManageM ()
 prepareClosePlan snapshot =
-  case m0CloseTarget snapshot of
+  case defaultCloseTarget snapshot of
     Nothing -> pure ()
     Just window -> closeWindow (riverWindowObject window)
 

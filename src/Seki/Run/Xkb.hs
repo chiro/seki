@@ -34,10 +34,10 @@ import Seki.Wire.Connection.Registry (
  )
 import Seki.Wire.Transport (OwnedFd)
 
-{- | Lowest version supported by the M0 target release.
+{- | Lowest version supported by the initial target release.
 
 Version 3 provides modifier watches needed by the configured binding model,
-while the M0 terminal and close bindings use the version 1 request surface.
+while the default terminal and close bindings use the version 1 request surface.
 -}
 riverXkbBindingsRequiredVersion :: Word32
 riverXkbBindingsRequiredVersion = 3

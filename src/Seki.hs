@@ -1,5 +1,6 @@
 {- | The public entry point for seki.
 
-The implementation will be introduced during M0 and later milestones.
+The public API will grow around the default runtime as configuration support is
+introduced.
 -}
 module Seki () where

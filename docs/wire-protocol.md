@@ -574,9 +574,9 @@ protocol phase while allowing process launch and other non-protocol work to stay
 outside it. The active-window policy above supplies the M0 close/focus target;
 the later StackSet core owns the full focus model.
 
-### 7.13 Concrete M0 policy
+### 7.13 Concrete default policy
 
-`Seki.Run.M0` assembles the first usable policy from the pieces above. Its
+`Seki.Run.Default` assembles the first usable policy from the pieces above. Its
 xmonad-style defaults bind Mod4-Shift-Return to launching `foot` and
 Mod4-Shift-c to closing the active window, with both bindings pinned to XKB
 layout 0. Identical terminal and close definitions are rejected before runtime
@@ -584,16 +584,23 @@ startup.
 
 The terminal process action runs on a worker thread and waits for the child
 there, keeping process creation and reaping outside river's manage/render
-sequences. `M0Config` makes this action injectable for validation and later
+sequences. `DefaultConfig` makes this action injectable for validation and later
 configuration work. Launch failures are reported to standard error without
 terminating the Wayland event loop.
 
-The M0 manage plan applies Full dimensions and asks the first live seat to focus
+The default manage plan applies Full dimensions and asks the first live seat to focus
 the active window. Its render plan positions and shows Full windows. A close
 press returns a deferred action that re-resolves the active window from the next
 runtime snapshot and submits `river_window_v1.close` during manage. Mock
 integration covers the complete binding initialization, focus, Full placement,
 render, and close request order.
+
+`runDefault` validates configuration before touching Wayland, opens the default
+display, and owns the session through shutdown. The `seki` executable runs
+this entry point with the default policy, prints any structured configuration,
+startup, connection, inventory, or sequence error to standard error, and exits
+nonzero. This executable is the base for later configuration work; its current
+behavior is the target for nested-river M0 validation.
 
 ### 7.14 Fatal display errors
 

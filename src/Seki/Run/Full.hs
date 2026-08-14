@@ -1,4 +1,4 @@
--- | Minimal Full layout plans for the M0 river window-manager slice.
+-- | Minimal Full layout plans for the default river window-manager policy.
 module Seki.Run.Full (
   selectFullOutputRectangle,
   prepareFullManagePlan,

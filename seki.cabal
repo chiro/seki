@@ -64,7 +64,7 @@ library seki-wire
     Seki.Protocol.Wayland
     Seki.Run.Full
     Seki.Run.Inventory
-    Seki.Run.M0
+    Seki.Run.Default
     Seki.Run.Phase
     Seki.Run.River
     Seki.Run.Runtime
@@ -131,6 +131,14 @@ executable seki-registry-smoke
     seki:seki-wire,
     text >=2.0.2 && <2.2
 
+executable seki
+  import:         warnings
+  hs-source-dirs: tools/seki/app
+  main-is:        Main.hs
+  build-depends:
+    base >=4.18 && <4.19,
+    seki:seki-wire
+
 test-suite seki-test
   import:         warnings
   type:           exitcode-stdio-1.0
@@ -141,7 +149,7 @@ test-suite seki-test
     Seki.Scanner.ParseTest
     Seki.Run.FullTest
     Seki.Run.InventoryTest
-    Seki.Run.M0Test
+    Seki.Run.DefaultTest
     Seki.Run.PhaseTest
     Seki.Run.RiverTest
     Seki.Run.RuntimeTest

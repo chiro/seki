@@ -1,25 +1,25 @@
-{-# LANGUAGE PatternSynonyms #-}
-
-module Seki.Run.M0Test (tests) where
+module Seki.Run.DefaultTest (tests) where
 
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Data.Word (Word32)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Protocol.Wayland qualified as Wayland
+import Seki.Run.Default (
+  DefaultConfig (..),
+  DefaultConfigError (..),
+  DefaultRunError (..),
+  defaultCloseTarget,
+  defaultConfig,
+  defaultFocusTarget,
+  defaultRuntimeHandlers,
+  runDefault,
+ )
 import Seki.Run.Inventory (
   RiverWindowState (..),
   activateRiverWindow,
   addRiverWindow,
   emptyRiverInventory,
- )
-import Seki.Run.M0 (
-  M0Config (..),
-  M0ConfigError (..),
-  defaultM0Config,
-  m0CloseTarget,
-  m0FocusTarget,
-  m0RuntimeHandlers,
  )
 import Seki.Run.Runtime (
   RiverRuntimeHandlers (..),
@@ -43,17 +43,18 @@ import Test.Tasty.HUnit (Assertion, assertEqual, assertFailure, testCase)
 tests :: TestTree
 tests =
   testGroup
-    "M0 policy"
+    "default policy"
     [ testCase "uses xmonad-style default bindings" testDefaultBindings
     , testCase "rejects conflicting bindings" testBindingConflict
+    , testCase "rejects invalid configuration before Wayland startup" testRunConfigFailure
     , testCase "selects the active window and first seat" testTargets
     , testCase "launches the terminal action asynchronously" testTerminalAction
     ]
 
 testDefaultBindings :: Assertion
 testDefaultBindings = do
-  let terminal = m0TerminalBinding defaultM0Config
-      close = m0CloseBinding defaultM0Config
+  let terminal = defaultTerminalBinding defaultConfig
+      close = defaultCloseBinding defaultConfig
   assertEqual "terminal keysym" 0xff0d (riverKeyBindingKeysym terminal)
   assertEqual "close keysym" 0x63 (riverKeyBindingKeysym close)
   assertEqual "terminal modifiers" (River.RiverSeatV1ModifiersFlags 65) (riverKeyBindingModifiers terminal)
@@ -63,11 +64,20 @@ testDefaultBindings = do
 
 testBindingConflict :: Assertion
 testBindingConflict = do
-  let binding = m0TerminalBinding defaultM0Config
-      config = defaultM0Config{m0CloseBinding = binding}
-  case m0RuntimeHandlers config of
-    Left errorValue -> assertEqual "configuration error" (M0BindingsConflict binding) errorValue
+  let binding = defaultTerminalBinding defaultConfig
+      config = defaultConfig{defaultCloseBinding = binding}
+  case defaultRuntimeHandlers config of
+    Left errorValue -> assertEqual "configuration error" (DefaultBindingsConflict binding) errorValue
     Right _ -> assertFailure "expected conflicting bindings to fail"
+
+testRunConfigFailure :: Assertion
+testRunConfigFailure = do
+  let binding = defaultTerminalBinding defaultConfig
+      config = defaultConfig{defaultCloseBinding = binding}
+  assertEqual
+    "run error"
+    (Left (DefaultRunConfigError (DefaultBindingsConflict binding)))
+    =<< runDefault config
 
 testTargets :: Assertion
 testTargets = do
@@ -81,24 +91,24 @@ testTargets = do
           >>= activateRiverWindow (objectId first)
       )
   let snapshot = RiverRuntimeSnapshot inventory [RiverSeatBindings seat []]
-  assertEqual "close target" (Just (objectId first)) (objectId . riverWindowObject <$> m0CloseTarget snapshot)
+  assertEqual "close target" (Just (objectId first)) (objectId . riverWindowObject <$> defaultCloseTarget snapshot)
   assertEqual
     "focus target"
     (Just (objectId seat, objectId first))
-    ((\(targetSeat, window) -> (objectId targetSeat, objectId (riverWindowObject window))) <$> m0FocusTarget snapshot)
+    ((\(targetSeat, window) -> (objectId targetSeat, objectId (riverWindowObject window))) <$> defaultFocusTarget snapshot)
 
 testTerminalAction :: Assertion
 testTerminalAction = do
   launched <- newEmptyMVar
   bindingObject <- makeClientObject Xkb.riverXkbBindingV1Interface
-  let config = defaultM0Config{m0TerminalProcess = putMVar launched ()}
-  handlers <- case m0RuntimeHandlers config of
+  let config = defaultConfig{defaultTerminalProcess = putMVar launched ()}
+  handlers <- case defaultRuntimeHandlers config of
     Left errorValue -> assertFailure ("unexpected configuration error: " <> show errorValue)
     Right value -> pure value
   _ <-
     handleRiverKeyBindingEvent
       handlers
-      (m0TerminalBinding config)
+      (defaultTerminalBinding config)
       bindingObject
       Xkb.RiverXkbBindingV1Pressed
   takeMVar launched

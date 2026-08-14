@@ -15,6 +15,7 @@ import Data.Word (Word32)
 import Network.Socket (Family (AF_UNIX), Socket, SocketType (Stream), close, defaultProtocol, socketPair, withFdSocket)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
+import Seki.Run.Default (DefaultConfig (..), defaultConfig, defaultRuntimeHandlers)
 import Seki.Run.Full (prepareFullManagePlan, prepareFullRenderPlan)
 import Seki.Run.Inventory (
   RiverInventoryError (..),
@@ -26,7 +27,6 @@ import Seki.Run.Inventory (
   riverInventoryWindows,
   riverOutputRectangle,
  )
-import Seki.Run.M0 (M0Config (..), defaultM0Config, m0RuntimeHandlers)
 import Seki.Run.Phase (disableKeyBinding, setWindowDimensionBounds)
 import Seki.Run.River (RiverBootstrapError (..), RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (
@@ -93,7 +93,7 @@ tests =
     [ testCase "opens, binds, dispatches, and closes an owned runtime" testOwnedRuntime
     , testCase "executes phase plans before sequence completion" testPhasePlans
     , testCase "Full placement hides windows without an output" testFullWithoutOutput
-    , testCase "runs the concrete M0 focus and close policy" testM0Policy
+    , testCase "runs the default focus and close policy" testDefaultPolicy
     , testCase "tracks the window selected by seat interaction" testSeatInteractionFocus
     , testCase "retires removed inventory objects and their nodes" testInventoryRemoval
     , testCase "does not finish a sequence after a phase-plan failure" testPhasePlanFailure
@@ -256,12 +256,12 @@ testFullWithoutOutput =
     assertEqual "headless Full lifecycle" (Right ()) =<< runRiverSession session
     expectMockSuccess mockDone
 
-testM0Policy :: Assertion
-testM0Policy =
+testDefaultPolicy :: Assertion
+testDefaultPolicy =
   withRuntimePair $ \target peer -> do
-    let config = defaultM0Config{m0TerminalProcess = pure ()}
-        terminalBinding = m0TerminalBinding config
-        closeBinding = m0CloseBinding config
+    let config = defaultConfig{defaultTerminalProcess = pure ()}
+        terminalBinding = defaultTerminalBinding config
+        closeBinding = defaultCloseBinding config
     mockDone <- runMock $ do
       reader <- newFrameReader
       (registryId, callbackId) <- receiveStartupRequests reader peer
@@ -308,9 +308,9 @@ testM0Policy =
       receiveExpectedRequest reader peer seatId (Opcode 1) (putObject windowId)
       receiveSequenceCompletion reader peer managerId (Opcode 2)
       closeTransport peer
-    handlers <- expectRight (m0RuntimeHandlers config)
+    handlers <- expectRight (defaultRuntimeHandlers config)
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
-    assertEqual "M0 policy lifecycle" (Right ()) =<< runRiverSession session
+    assertEqual "default policy lifecycle" (Right ()) =<< runRiverSession session
     expectMockSuccess mockDone
 
 testSeatInteractionFocus :: Assertion
