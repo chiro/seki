@@ -14,6 +14,7 @@ import Data.Text (Text)
 import Data.Word (Word32)
 import Network.Socket (Family (AF_UNIX), Socket, SocketType (Stream), close, defaultProtocol, socketPair, withFdSocket)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Run.Full (prepareFullManagePlan, prepareFullRenderPlan)
 import Seki.Run.Inventory (
   RiverInventoryError (..),
@@ -32,6 +33,7 @@ import Seki.Run.Runtime (
   closeRiverSession,
   openRiverSessionAt,
   readRiverInventory,
+  readRiverSeatBindings,
   riverWaylandSession,
   riverWindowManager,
   riverXkbBindings,
@@ -43,11 +45,12 @@ import Seki.Run.Sequence (
   RiverSequencePhase (..),
  )
 import Seki.Run.Startup (waylandConnection)
-import Seki.Run.Xkb (RiverXkbBootstrapError (..))
+import Seki.Run.Xkb (RiverKeyBinding (..), RiverXkbBootstrapError (..))
 import Seki.Wire.Arguments (
   ArgumentEncoder,
   DecodeResult (..),
   getNewId,
+  getObject,
   getUint,
   putInt,
   putNewId,
@@ -88,6 +91,7 @@ tests =
     , testCase "does not finish a sequence after a phase-plan failure" testPhasePlanFailure
     , testCase "promotes inventory failures before user event delivery" testInventoryFailure
     , testCase "promotes window-node acquisition failures" testNodeAcquisitionFailure
+    , testCase "owns per-seat XKB binding objects" testSeatBindingLifecycle
     , testCase "rejects an out-of-order manager sequence event" testSequenceOrderError
     , testCase "closes startup when the manager global is missing" testMissingManager
     , testCase "closes startup when the XKB bindings global is missing" testMissingXkb
@@ -183,6 +187,8 @@ testPhasePlans =
     let handlers =
           RiverRuntimeHandlers
             { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
+            , riverKeyBindings = []
+            , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , prepareRiverManagePlan = prepareFullManagePlan
             , prepareRiverRenderPlan = prepareFullRenderPlan
             }
@@ -229,6 +235,8 @@ testFullWithoutOutput =
     let handlers =
           RiverRuntimeHandlers
             { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
+            , riverKeyBindings = []
+            , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , prepareRiverManagePlan = prepareFullManagePlan
             , prepareRiverRenderPlan = prepareFullRenderPlan
             }
@@ -282,6 +290,8 @@ testInventoryRemoval =
                         River.RiverOutputV1Removed -> modifyIORef' deliveredRemovals (+ 1)
                         _ -> pure ()
                   }
+            , riverKeyBindings = []
+            , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , prepareRiverManagePlan = \_ -> pure ()
             , prepareRiverRenderPlan = \_ -> pure ()
             }
@@ -321,6 +331,8 @@ testPhasePlanFailure =
     let handlers =
           RiverRuntimeHandlers
             { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
+            , riverKeyBindings = []
+            , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , prepareRiverManagePlan = \inventory ->
                 case riverInventoryWindows inventory of
                   window : _ -> setWindowDimensionBounds (riverWindowObject window) 1920 1080
@@ -363,6 +375,8 @@ testInventoryFailure =
                   { handleRiverWindowEvent =
                       \_ _ -> modifyIORef' deliveredWindowEvents (+ 1)
                   }
+            , riverKeyBindings = []
+            , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , prepareRiverManagePlan = \_ -> pure ()
             , prepareRiverRenderPlan = \_ -> pure ()
             }
@@ -407,6 +421,8 @@ testNodeAcquisitionFailure =
                   { handleRiverWindowCreated =
                       \_ -> modifyIORef' deliveredCreations (+ 1)
                   }
+            , riverKeyBindings = []
+            , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , prepareRiverManagePlan = \_ -> pure ()
             , prepareRiverRenderPlan = \_ -> pure ()
             }
@@ -416,6 +432,71 @@ testNodeAcquisitionFailure =
       result -> assertFailure ("expected node-acquisition error, got: " <> show result)
     assertEqual "failed creation withheld" 0 =<< readIORef deliveredCreations
     expectMockSuccess mockDone
+
+testSeatBindingLifecycle :: Assertion
+testSeatBindingLifecycle =
+  withRuntimePair $ \target peer -> do
+    seatCallbacks <- newIORef (0 :: Int)
+    bindingPresses <- newIORef []
+    let terminalBinding =
+          RiverKeyBinding
+            { riverKeyBindingKeysym = 0xff0d
+            , riverKeyBindingModifiers = River.RiverSeatV1ModifiersFlags 64
+            , riverKeyBindingLayoutOverride = Just 0
+            }
+        closeBinding =
+          RiverKeyBinding
+            { riverKeyBindingKeysym = 0x71
+            , riverKeyBindingModifiers = River.RiverSeatV1ModifiersFlags 64
+            , riverKeyBindingLayoutOverride = Just 0
+            }
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , callbackDoneFrame callbackId 98
+        ]
+      (managerId, xkbBindingsId) <- receiveRuntimeBinds reader peer
+      seatId <- requireObjectId 0xff000007
+      sendFrames peer [encodedFrame managerId (Opcode 8) (putNewId seatId)]
+      terminalId <- receiveKeyBindingRequest reader peer xkbBindingsId seatId terminalBinding
+      closeId <- receiveKeyBindingRequest reader peer xkbBindingsId seatId closeBinding
+      sendFrames
+        peer
+        [ encodedFrame terminalId (Opcode 0) (pure ())
+        , encodedFrame seatId (Opcode 0) (pure ())
+        ]
+      receiveExpectedRequest reader peer terminalId (Opcode 0) (pure ())
+      receiveExpectedRequest reader peer closeId (Opcode 0) (pure ())
+      receiveExpectedRequest reader peer seatId (Opcode 0) (pure ())
+      closeTransport peer
+    let handlers =
+          RiverRuntimeHandlers
+            { riverProtocolHandlers =
+                (protocolHandlers (\_ -> pure ()))
+                  { handleRiverSeatCreated = \_ -> modifyIORef' seatCallbacks (+ 1)
+                  , handleRiverSeatEvent =
+                      \_ event -> case event of
+                        River.RiverSeatV1Removed -> modifyIORef' seatCallbacks (+ 1)
+                        _ -> pure ()
+                  }
+            , riverKeyBindings = [terminalBinding, closeBinding]
+            , handleRiverKeyBindingEvent =
+                \definition _ event -> case event of
+                  Xkb.RiverXkbBindingV1Pressed -> modifyIORef' bindingPresses (<> [definition])
+                  _ -> pure ()
+            , prepareRiverManagePlan = \_ -> pure ()
+            , prepareRiverRenderPlan = \_ -> pure ()
+            }
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
+    assertEqual "seat binding lifecycle" (Right ()) =<< runRiverSession session
+    expectMockSuccess mockDone
+    assertEqual "seat creation and removal callbacks" 2 =<< readIORef seatCallbacks
+    assertEqual "routed binding press" [terminalBinding] =<< readIORef bindingPresses
+    assertEqual "removed seat bindings" [] =<< readRiverSeatBindings session
 
 testSequenceOrderError :: Assertion
 testSequenceOrderError =
@@ -524,6 +605,8 @@ runtimeHandlers ::
 runtimeHandlers managerHandler =
   RiverRuntimeHandlers
     { riverProtocolHandlers = protocolHandlers managerHandler
+    , riverKeyBindings = []
+    , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
     , prepareRiverManagePlan = \_ -> pure ()
     , prepareRiverRenderPlan = \_ -> pure ()
     }
@@ -623,6 +706,34 @@ receiveGlobalBind reader peer label expectedName expectedInterface expectedVersi
           assertEqual (label <> " version") expectedVersion (dynamicNewIdVersion dynamicId)
           pure (dynamicNewIdObject dynamicId)
     result -> assertFailure ("unexpected " <> label <> " bind payload: " <> show result)
+
+receiveKeyBindingRequest ::
+  FrameReader ->
+  Transport ->
+  ObjectId ->
+  ObjectId ->
+  RiverKeyBinding ->
+  IO ObjectId
+receiveKeyBindingRequest reader peer xkbBindingsId seatId definition = do
+  frame <- receiveFrame reader peer
+  assertEqual "binding request sender" xkbBindingsId (rawFrameSender frame)
+  assertEqual "get_xkb_binding opcode" (Opcode 1) (rawFrameOpcode frame)
+  let decoded =
+        runCompleteArgumentDecoder
+          ((,,,) <$> getObject <*> getNewId <*> getUint <*> getUint)
+          (rawFramePayload frame)
+          ([] :: [()])
+  case decoded of
+    Done (actualSeatId, bindingId, keysym, modifiers) remaining []
+      | ByteString.null remaining -> do
+          assertEqual "binding seat" seatId actualSeatId
+          assertEqual "binding keysym" (riverKeyBindingKeysym definition) keysym
+          assertEqual
+            "binding modifiers"
+            (River.riverSeatV1ModifiersFlagsValue (riverKeyBindingModifiers definition))
+            modifiers
+          pure bindingId
+    result -> assertFailure ("unexpected key binding request: " <> show result)
 
 expectNoBootstrapBind :: Transport -> Assertion
 expectNoBootstrapBind peer =

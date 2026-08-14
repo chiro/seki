@@ -7,6 +7,9 @@ module Seki.Run.Runtime (
   riverWindowManager,
   riverXkbBindings,
   readRiverInventory,
+  RiverKeyBindingState (..),
+  RiverSeatBindings (..),
+  readRiverSeatBindings,
   RiverRuntimeHandlers (..),
   RiverRuntimeError (..),
   openRiverSession,
@@ -20,6 +23,8 @@ import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
 import Control.Exception (finally, mask, onException)
 import Control.Monad (when)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Run.Inventory (
@@ -61,8 +66,10 @@ import Seki.Run.Startup (
   waylandRegistry,
  )
 import Seki.Run.Xkb (
+  RiverKeyBinding,
   RiverXkbBootstrapError,
   bindRiverXkbBindings,
+  createRiverKeyBinding,
   selectRiverXkbBindingsGlobal,
  )
 import Seki.Wire.Connection (
@@ -76,6 +83,7 @@ import Seki.Wire.Connection (
 import Seki.Wire.Connection.ObjectTable (Object, ObjectLimit, objectId)
 import Seki.Wire.Connection.Registry (RegistryError)
 import Seki.Wire.Transport (ConnectionTarget, OwnedFd)
+import Seki.Wire.Types (ObjectId)
 
 -- | A synchronized Wayland session with its required river globals bound.
 data RiverSession = RiverSession
@@ -85,7 +93,20 @@ data RiverSession = RiverSession
   , riverEventLoopClaim :: MVar Bool
   , riverSequenceStatus :: IORef (Either RiverRuntimeError RiverSequenceState)
   , riverInventoryState :: IORef RiverInventory
+  , riverSeatBindingsState :: IORef (Map ObjectId RiverSeatBindings)
   }
+
+data RiverKeyBindingState = RiverKeyBindingState
+  { riverKeyBindingDefinition :: RiverKeyBinding
+  , riverKeyBindingObject :: Object Xkb.RiverXkbBindingV1
+  }
+  deriving (Eq, Show)
+
+data RiverSeatBindings = RiverSeatBindings
+  { riverBindingsSeat :: Object River.RiverSeatV1
+  , riverSeatKeyBindings :: [RiverKeyBindingState]
+  }
+  deriving (Eq, Show)
 
 {- | Low-level river event handlers plus phase-safe plans prepared at each
 sequence boundary.
@@ -95,6 +116,8 @@ returned plans cannot lift arbitrary IO.
 -}
 data RiverRuntimeHandlers = RiverRuntimeHandlers
   { riverProtocolHandlers :: RiverWindowManagerHandlers
+  , riverKeyBindings :: [RiverKeyBinding]
+  , handleRiverKeyBindingEvent :: RiverKeyBinding -> Object Xkb.RiverXkbBindingV1 -> Xkb.RiverXkbBindingV1Event OwnedFd -> IO ()
   , prepareRiverManagePlan :: RiverInventory -> ManageM ()
   , prepareRiverRenderPlan :: RiverInventory -> RenderM ()
   }
@@ -106,6 +129,10 @@ data RiverRuntimeError
   | RiverRuntimeConnectionError ConnectionError
   | RiverRuntimeRegistryError RegistryError
   | RiverRuntimeInventoryError RiverInventoryError
+  | RiverRuntimeSeatAlreadyTracked ObjectId
+  | RiverRuntimeSeatNotTracked ObjectId
+  | RiverRuntimeSeatHandleMismatch ObjectId
+  | RiverRuntimeXkbGlobalUnavailable
   | RiverRuntimeSequenceError RiverSequenceError
   | RiverRuntimeEventLoopAlreadyOwned
   deriving (Eq, Show)
@@ -136,11 +163,21 @@ openRiverSessionWith openWayland runtimeHandlers =
       Right wayland -> do
         sequenceStatus <- newIORef (Right initialRiverSequenceState)
         inventoryState <- newIORef emptyRiverInventory
-        let checkedHandlers = sequenceCheckedHandlers wayland sequenceStatus inventoryState runtimeHandlers
+        xkbGlobalState <- newIORef Nothing
+        seatBindingsState <- newIORef Map.empty
+        let checkedHandlers =
+              sequenceCheckedHandlers
+                wayland
+                sequenceStatus
+                inventoryState
+                xkbGlobalState
+                seatBindingsState
+                runtimeHandlers
         result <- restore (bindRuntimeGlobals wayland checkedHandlers) `onException` closeWaylandSession wayland
         case result of
           Left errorValue -> closeWaylandSession wayland >> pure (Left errorValue)
           Right (manager, xkbBindings) -> do
+            writeIORef xkbGlobalState (Just xkbBindings)
             eventLoopClaim <- newMVar False
             pure
               ( Right
@@ -151,6 +188,7 @@ openRiverSessionWith openWayland runtimeHandlers =
                       eventLoopClaim
                       sequenceStatus
                       inventoryState
+                      seatBindingsState
                   )
               )
 
@@ -217,19 +255,28 @@ closeRiverSession = closeWaylandSession . riverWaylandSession
 readRiverInventory :: RiverSession -> IO RiverInventory
 readRiverInventory = readIORef . riverInventoryState
 
+-- | Read the live seats and their initially configured key binding objects.
+readRiverSeatBindings :: RiverSession -> IO [RiverSeatBindings]
+readRiverSeatBindings session =
+  Map.elems <$> readIORef (riverSeatBindingsState session)
+
 sequenceCheckedHandlers ::
   WaylandSession ->
   IORef (Either RiverRuntimeError RiverSequenceState) ->
   IORef RiverInventory ->
+  IORef (Maybe (Object Xkb.RiverXkbBindingsV1)) ->
+  IORef (Map ObjectId RiverSeatBindings) ->
   RiverRuntimeHandlers ->
   RiverWindowManagerHandlers
-sequenceCheckedHandlers wayland sequenceStatus inventoryState runtimeHandlers =
+sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState seatBindingsState runtimeHandlers =
   handlers
     { handleRiverWindowManagerEvent = handleManagerEvent
     , handleRiverWindowCreated = handleWindowCreated
     , handleRiverWindowEvent = handleWindowEvent
     , handleRiverOutputCreated = handleOutputCreated
     , handleRiverOutputEvent = handleOutputEvent
+    , handleRiverSeatCreated = handleSeatCreated
+    , handleRiverSeatEvent = handleSeatEvent
     }
  where
   handleManagerEvent manager event = case event of
@@ -306,6 +353,108 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState runtimeHandlers =
             River.encodeRiverOutputV1Destroy
             >>= recordConnectionResult
         _ -> pure ()
+  handleSeatCreated seat = do
+    reserved <- reserveSeat seat
+    when reserved $
+      readIORef xkbGlobalState >>= \case
+        Nothing ->
+          recordRuntimeError sequenceStatus RiverRuntimeXkbGlobalUnavailable
+        Just xkbBindings -> do
+          created <- createBindings xkbBindings seat (riverKeyBindings runtimeHandlers)
+          when created (handleRiverSeatCreated handlers seat)
+  handleSeatEvent seat event = do
+    tracked <- requireSeat seat
+    when tracked $ do
+      previous <- Map.lookup (objectId seat) <$> readIORef seatBindingsState
+      case event of
+        River.RiverSeatV1Removed -> do
+          removed <- removeSeat seat
+          when removed $ do
+            handleRiverSeatEvent handlers seat event
+            case previous of
+              Nothing -> pure ()
+              Just state -> destroySeat state
+        _ -> handleRiverSeatEvent handlers seat event
+  reserveSeat seat = do
+    result <-
+      atomicModifyIORef' seatBindingsState $ \seats ->
+        if Map.member (objectId seat) seats
+          then (seats, Left (RiverRuntimeSeatAlreadyTracked (objectId seat)))
+          else
+            ( Map.insert (objectId seat) (RiverSeatBindings seat []) seats
+            , Right ()
+            )
+    recordStateResult result
+  requireSeat seat = do
+    seats <- readIORef seatBindingsState
+    recordStateResult $ case Map.lookup (objectId seat) seats of
+      Nothing -> Left (RiverRuntimeSeatNotTracked (objectId seat))
+      Just state
+        | riverBindingsSeat state /= seat ->
+            Left (RiverRuntimeSeatHandleMismatch (objectId seat))
+        | otherwise -> Right ()
+  removeSeat seat = do
+    result <-
+      atomicModifyIORef' seatBindingsState $ \seats ->
+        case Map.lookup (objectId seat) seats of
+          Nothing -> (seats, Left (RiverRuntimeSeatNotTracked (objectId seat)))
+          Just state
+            | riverBindingsSeat state /= seat ->
+                (seats, Left (RiverRuntimeSeatHandleMismatch (objectId seat)))
+            | otherwise -> (Map.delete (objectId seat) seats, Right ())
+    recordStateResult result
+  recordStateResult = \case
+    Left errorValue -> recordRuntimeError sequenceStatus errorValue >> pure False
+    Right () -> pure True
+  createBindings _ _ [] = pure True
+  createBindings xkbBindings seat (definition : rest) =
+    createRiverKeyBinding
+      connection
+      xkbBindings
+      seat
+      definition
+      (handleRiverKeyBindingEvent runtimeHandlers definition)
+      >>= \case
+        Left errorValue -> do
+          recordRuntimeError sequenceStatus (RiverRuntimeConnectionError errorValue)
+          pure False
+        Right binding -> do
+          atomicModifyIORef' seatBindingsState $ \seats ->
+            ( Map.adjust
+                ( \state ->
+                    state
+                      { riverSeatKeyBindings =
+                          riverSeatKeyBindings state
+                            <> [RiverKeyBindingState definition binding]
+                      }
+                )
+                (objectId seat)
+                seats
+            , ()
+            )
+          createBindings xkbBindings seat rest
+  destroySeat state =
+    destroyBindings (riverSeatKeyBindings state) >>= \case
+      False -> pure ()
+      True ->
+        submitRequest
+          connection
+          River.riverSeatV1Interface
+          (riverBindingsSeat state)
+          River.encodeRiverSeatV1Destroy
+          >>= recordConnectionResult
+  destroyBindings [] = pure True
+  destroyBindings (bindingState : rest) =
+    submitRequest
+      connection
+      Xkb.riverXkbBindingV1Interface
+      (riverKeyBindingObject bindingState)
+      Xkb.encodeRiverXkbBindingV1Destroy
+      >>= \case
+        Left errorValue -> do
+          recordRuntimeError sequenceStatus (RiverRuntimeConnectionError errorValue)
+          pure False
+        Right () -> destroyBindings rest
   destroyWindow state =
     destroyNode >>= \case
       False -> pure ()

@@ -521,10 +521,30 @@ cases remain distinct structured errors.
 The owned runtime preflights both required river globals before submitting any
 bind request, then binds the window manager followed by the XKB bindings global.
 Either failure closes the partially opened Wayland session. `RiverSession`
-retains and exposes both typed handles. Creating seat-specific key binding
-objects remains a separate step for manager-created `river_seat_v1` objects.
+retains and exposes both typed handles.
 
-### 7.11 Fatal display errors
+### 7.11 XKB seat and binding lifecycle
+
+`RiverKeyBinding` describes a keysym, modifier mask, and optional layout
+override independently from an action. When the manager announces a
+`river_seat_v1`, the runtime creates an initially disabled
+`river_xkb_binding_v1` object for every configured definition and installs its
+typed event route atomically with the creation request. The seat creation
+callback is withheld until every binding object exists; a partial creation
+failure becomes the session's structured connection error.
+
+The runtime retains the seat, definitions, and typed binding handles in a
+snapshot readable from `RiverSession`. Binding events are delivered with their
+definition so the action layer does not need to recover identity from an object
+ID. On `river_seat_v1.removed`, the seat leaves the snapshot before callbacks
+run, then every binding is destroyed in definition order before the seat itself.
+Unknown, duplicate, and stale seat handles are fatal structured runtime errors.
+
+Bindings remain disabled in this slice. Applying the optional layout override
+and enabling each new object are management-state changes and therefore belong
+to the following phase-safe manage-plan integration.
+
+### 7.12 Fatal display errors
 
 `wl_display.error` is decoded even when the referenced object is already being
 destroyed. Its object ID, numeric error code, interface when known, and message
