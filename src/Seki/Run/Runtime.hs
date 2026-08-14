@@ -5,6 +5,7 @@ module Seki.Run.Runtime (
   RiverSession,
   riverWaylandSession,
   riverWindowManager,
+  riverXkbBindings,
   readRiverInventory,
   RiverRuntimeHandlers (..),
   RiverRuntimeError (..),
@@ -20,6 +21,7 @@ import Control.Exception (finally, mask, onException)
 import Control.Monad (when)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Run.Inventory (
   RiverInventory,
   RiverInventoryError,
@@ -37,6 +39,7 @@ import Seki.Run.River (
   RiverBootstrapError,
   RiverWindowManagerHandlers (..),
   bindRiverWindowManager,
+  selectRiverWindowManagerGlobal,
  )
 import Seki.Run.Sequence (
   RiverSequenceCompletion (..),
@@ -57,6 +60,11 @@ import Seki.Run.Startup (
   waylandConnection,
   waylandRegistry,
  )
+import Seki.Run.Xkb (
+  RiverXkbBootstrapError,
+  bindRiverXkbBindings,
+  selectRiverXkbBindingsGlobal,
+ )
 import Seki.Wire.Connection (
   Connection,
   ConnectionError,
@@ -69,10 +77,11 @@ import Seki.Wire.Connection.ObjectTable (Object, ObjectLimit, objectId)
 import Seki.Wire.Connection.Registry (RegistryError)
 import Seki.Wire.Transport (ConnectionTarget, OwnedFd)
 
--- | A synchronized Wayland session with the river manager bound and routed.
+-- | A synchronized Wayland session with its required river globals bound.
 data RiverSession = RiverSession
   { riverWaylandSession :: WaylandSession
   , riverWindowManager :: Object River.RiverWindowManagerV1
+  , riverXkbBindings :: Object Xkb.RiverXkbBindingsV1
   , riverEventLoopClaim :: MVar Bool
   , riverSequenceStatus :: IORef (Either RiverRuntimeError RiverSequenceState)
   , riverInventoryState :: IORef RiverInventory
@@ -93,6 +102,7 @@ data RiverRuntimeHandlers = RiverRuntimeHandlers
 data RiverRuntimeError
   = RiverRuntimeStartupError WaylandStartupError
   | RiverRuntimeBootstrapError RiverBootstrapError
+  | RiverRuntimeXkbBootstrapError RiverXkbBootstrapError
   | RiverRuntimeConnectionError ConnectionError
   | RiverRuntimeRegistryError RegistryError
   | RiverRuntimeInventoryError RiverInventoryError
@@ -100,13 +110,13 @@ data RiverRuntimeError
   | RiverRuntimeEventLoopAlreadyOwned
   deriving (Eq, Show)
 
--- | Discover Wayland, synchronize globals, and bind the river manager.
+-- | Discover Wayland, synchronize globals, and bind required river globals.
 openRiverSession ::
   RiverRuntimeHandlers ->
   IO (Either RiverRuntimeError RiverSession)
 openRiverSession = openRiverSessionWith openWaylandSession
 
--- | Open an explicit Wayland target and bind its river manager.
+-- | Open an explicit Wayland target and bind required river globals.
 openRiverSessionAt ::
   ConnectionTarget ->
   ObjectLimit ->
@@ -127,27 +137,50 @@ openRiverSessionWith openWayland runtimeHandlers =
         sequenceStatus <- newIORef (Right initialRiverSequenceState)
         inventoryState <- newIORef emptyRiverInventory
         let checkedHandlers = sequenceCheckedHandlers wayland sequenceStatus inventoryState runtimeHandlers
-        result <- restore (bindManager wayland checkedHandlers) `onException` closeWaylandSession wayland
+        result <- restore (bindRuntimeGlobals wayland checkedHandlers) `onException` closeWaylandSession wayland
         case result of
           Left errorValue -> closeWaylandSession wayland >> pure (Left errorValue)
-          Right manager -> do
+          Right (manager, xkbBindings) -> do
             eventLoopClaim <- newMVar False
-            pure (Right (RiverSession wayland manager eventLoopClaim sequenceStatus inventoryState))
+            pure
+              ( Right
+                  ( RiverSession
+                      wayland
+                      manager
+                      xkbBindings
+                      eventLoopClaim
+                      sequenceStatus
+                      inventoryState
+                  )
+              )
 
-bindManager ::
+bindRuntimeGlobals ::
   WaylandSession ->
   RiverWindowManagerHandlers ->
-  IO (Either RiverRuntimeError (Object River.RiverWindowManagerV1))
-bindManager wayland handlers =
+  IO
+    ( Either
+        RiverRuntimeError
+        ( Object River.RiverWindowManagerV1
+        , Object Xkb.RiverXkbBindingsV1
+        )
+    )
+bindRuntimeGlobals wayland handlers =
   readWaylandGlobalCatalog wayland >>= \case
     Left errorValue -> pure (Left (RiverRuntimeRegistryError errorValue))
-    Right catalog ->
-      either (Left . RiverRuntimeBootstrapError) Right
-        <$> bindRiverWindowManager
-          (waylandConnection wayland)
-          (waylandRegistry wayland)
-          catalog
-          handlers
+    Right catalog -> case selectRiverWindowManagerGlobal catalog of
+      Left errorValue -> pure (Left (RiverRuntimeBootstrapError errorValue))
+      Right _ -> case selectRiverXkbBindingsGlobal catalog of
+        Left errorValue -> pure (Left (RiverRuntimeXkbBootstrapError errorValue))
+        Right _ ->
+          bindRiverWindowManager connection registry catalog handlers >>= \case
+            Left errorValue -> pure (Left (RiverRuntimeBootstrapError errorValue))
+            Right manager ->
+              bindRiverXkbBindings connection registry catalog >>= \case
+                Left errorValue -> pure (Left (RiverRuntimeXkbBootstrapError errorValue))
+                Right xkbBindings -> pure (Right (manager, xkbBindings))
+ where
+  connection = waylandConnection wayland
+  registry = waylandRegistry wayland
 
 {- | Own the event loop until clean EOF or failure, then close the session.
 

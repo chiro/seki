@@ -34,6 +34,7 @@ import Seki.Run.Runtime (
   readRiverInventory,
   riverWaylandSession,
   riverWindowManager,
+  riverXkbBindings,
   runRiverSession,
  )
 import Seki.Run.Sequence (
@@ -42,6 +43,7 @@ import Seki.Run.Sequence (
   RiverSequencePhase (..),
  )
 import Seki.Run.Startup (waylandConnection)
+import Seki.Run.Xkb (RiverXkbBootstrapError (..))
 import Seki.Wire.Arguments (
   ArgumentEncoder,
   DecodeResult (..),
@@ -88,6 +90,7 @@ tests =
     , testCase "promotes window-node acquisition failures" testNodeAcquisitionFailure
     , testCase "rejects an out-of-order manager sequence event" testSequenceOrderError
     , testCase "closes startup when the manager global is missing" testMissingManager
+    , testCase "closes startup when the XKB bindings global is missing" testMissingXkb
     , testCase "promotes live registry failures from the event loop" testLiveRegistryFailure
     ]
 
@@ -101,9 +104,10 @@ testOwnedRuntime =
       sendFrames
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
         , callbackDoneFrame callbackId 91
         ]
-      managerId <- receiveManagerBind reader peer
+      (managerId, xkbBindingsId) <- receiveRuntimeBinds reader peer
       sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
       receiveSequenceCompletion reader peer managerId (Opcode 2)
       sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
@@ -115,7 +119,7 @@ testOwnedRuntime =
       sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
       receiveSequenceCompletion reader peer managerId (Opcode 4)
       closeTransport peer
-      pure managerId
+      pure (managerId, xkbBindingsId)
     session <-
       expectRight
         =<< openRiverSessionAt
@@ -123,8 +127,9 @@ testOwnedRuntime =
           defaultObjectLimit
           (runtimeHandlers (\event -> modifyIORef' managerEvents (<> [event])))
     assertEqual "clean event-loop EOF" (Right ()) =<< runRiverSession session
-    managerId <- expectMockSuccess mockDone
+    (managerId, xkbBindingsId) <- expectMockSuccess mockDone
     assertEqual "bound manager object" managerId (objectId (riverWindowManager session))
+    assertEqual "bound XKB object" xkbBindingsId (objectId (riverXkbBindings session))
     assertEqual
       "typed manager events"
       [ River.RiverWindowManagerV1ManageStart
@@ -153,9 +158,10 @@ testPhasePlans =
       sendFrames
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
         , callbackDoneFrame callbackId 93
         ]
-      managerId <- receiveManagerBind reader peer
+      (managerId, _) <- receiveRuntimeBinds reader peer
       windowId <- requireObjectId 0xff000001
       outputId <- requireObjectId 0xff000002
       sendFrames
@@ -204,9 +210,10 @@ testFullWithoutOutput =
       sendFrames
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
         , callbackDoneFrame callbackId 95
         ]
-      managerId <- receiveManagerBind reader peer
+      (managerId, _) <- receiveRuntimeBinds reader peer
       windowId <- requireObjectId 0xff000004
       sendFrames
         peer
@@ -239,9 +246,10 @@ testInventoryRemoval =
       sendFrames
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
         , callbackDoneFrame callbackId 97
         ]
-      managerId <- receiveManagerBind reader peer
+      (managerId, _) <- receiveRuntimeBinds reader peer
       windowId <- requireObjectId 0xff000005
       outputId <- requireObjectId 0xff000006
       sendFrames
@@ -294,9 +302,10 @@ testPhasePlanFailure =
       sendFrames
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 3
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
         , callbackDoneFrame callbackId 94
         ]
-      managerId <- receiveManagerBindAtVersion reader peer 3
+      (managerId, _) <- receiveRuntimeBindsAtManagerVersion reader peer 3
       windowId <- requireObjectId 0xff000002
       sendFrames
         peer
@@ -335,9 +344,10 @@ testInventoryFailure =
       sendFrames
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
         , callbackDoneFrame callbackId 95
         ]
-      managerId <- receiveManagerBind reader peer
+      (managerId, _) <- receiveRuntimeBinds reader peer
       sendFrames peer [encodedFrame managerId (Opcode 6) (putNewId windowId)]
       _ <- receiveNewIdRequest reader peer windowId (Opcode 2)
       sendFrames peer [encodedFrame windowId (Opcode 2) (putInt 0 >> putInt 100)]
@@ -372,16 +382,17 @@ testNodeAcquisitionFailure :: Assertion
 testNodeAcquisitionFailure =
   withRuntimePair $ \target peer -> do
     deliveredCreations <- newIORef (0 :: Int)
-    limit <- expectRight (makeObjectLimit 5)
+    limit <- expectRight (makeObjectLimit 6)
     mockDone <- runMock $ do
       reader <- newFrameReader
       (registryId, callbackId) <- receiveStartupRequests reader peer
       sendFrames
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
         , callbackDoneFrame callbackId 96
         ]
-      managerId <- receiveManagerBind reader peer
+      (managerId, _) <- receiveRuntimeBinds reader peer
       windowId <- requireObjectId 0xff000004
       sendFrames peer [encodedFrame managerId (Opcode 6) (putNewId windowId)]
       receiveChunk peer 8 >>= \case
@@ -416,9 +427,10 @@ testSequenceOrderError =
       sendFrames
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
         , callbackDoneFrame callbackId 92
         ]
-      managerId <- receiveManagerBind reader peer
+      (managerId, _) <- receiveRuntimeBinds reader peer
       sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
     session <-
       expectRight
@@ -449,10 +461,29 @@ testMissingManager =
       sendFrames
         peer
         [ registryGlobalFrame registryId 3 "wl_output" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
         , callbackDoneFrame callbackId 1
         ]
+      expectNoBootstrapBind peer
     expectRuntimeLeft
       (RiverRuntimeBootstrapError RiverWindowManagerGlobalMissing)
+      =<< openRiverSessionAt target defaultObjectLimit (runtimeHandlers (\_ -> pure ()))
+    expectMockSuccess mockDone
+
+testMissingXkb :: Assertion
+testMissingXkb =
+  withRuntimePair $ \target peer -> do
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , callbackDoneFrame callbackId 1
+        ]
+      expectNoBootstrapBind peer
+    expectRuntimeLeft
+      (RiverRuntimeXkbBootstrapError RiverXkbBindingsGlobalMissing)
       =<< openRiverSessionAt target defaultObjectLimit (runtimeHandlers (\_ -> pure ()))
     expectMockSuccess mockDone
 
@@ -465,9 +496,10 @@ testLiveRegistryFailure =
       sendFrames
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
         , callbackDoneFrame callbackId 2
         ]
-      _ <- receiveManagerBind reader peer
+      _ <- receiveRuntimeBinds reader peer
       sendFrames peer [registryGlobalFrame registryId 7 "river_window_manager_v1" 4]
     session <-
       expectRight
@@ -544,21 +576,60 @@ decodeNewId frame = case runCompleteArgumentDecoder getNewId (rawFramePayload fr
     | ByteString.null remaining -> pure identifier
   result -> assertFailure ("unexpected new_id payload: " <> show result)
 
-receiveManagerBind :: FrameReader -> Transport -> IO ObjectId
-receiveManagerBind reader peer = receiveManagerBindAtVersion reader peer 4
+receiveRuntimeBinds :: FrameReader -> Transport -> IO (ObjectId, ObjectId)
+receiveRuntimeBinds reader peer =
+  receiveRuntimeBindsAtManagerVersion reader peer 4
 
-receiveManagerBindAtVersion :: FrameReader -> Transport -> Word32 -> IO ObjectId
-receiveManagerBindAtVersion reader peer expectedVersion = do
+receiveRuntimeBindsAtManagerVersion ::
+  FrameReader ->
+  Transport ->
+  Word32 ->
+  IO (ObjectId, ObjectId)
+receiveRuntimeBindsAtManagerVersion reader peer managerVersion = do
+  managerId <-
+    receiveGlobalBind
+      reader
+      peer
+      "manager"
+      7
+      "river_window_manager_v1"
+      managerVersion
+  xkbBindingsId <-
+    receiveGlobalBind
+      reader
+      peer
+      "XKB"
+      8
+      "river_xkb_bindings_v1"
+      3
+  pure (managerId, xkbBindingsId)
+
+receiveGlobalBind ::
+  FrameReader ->
+  Transport ->
+  String ->
+  Word32 ->
+  Text ->
+  Word32 ->
+  IO ObjectId
+receiveGlobalBind reader peer label expectedName expectedInterface expectedVersion = do
   frame <- receiveFrame reader peer
-  assertEqual "manager bind opcode" (Opcode 0) (rawFrameOpcode frame)
+  assertEqual (label <> " bind opcode") (Opcode 0) (rawFrameOpcode frame)
   case runCompleteArgumentDecoder ((,) <$> getUint <*> getDynamicNewId) (rawFramePayload frame) ([] :: [()]) of
     Done (name, dynamicId) remaining []
       | ByteString.null remaining -> do
-          assertEqual "manager global name" 7 name
-          assertEqual "manager interface" "river_window_manager_v1" (dynamicNewIdInterface dynamicId)
-          assertEqual "manager version" expectedVersion (dynamicNewIdVersion dynamicId)
+          assertEqual (label <> " global name") expectedName name
+          assertEqual (label <> " interface") expectedInterface (dynamicNewIdInterface dynamicId)
+          assertEqual (label <> " version") expectedVersion (dynamicNewIdVersion dynamicId)
           pure (dynamicNewIdObject dynamicId)
-    result -> assertFailure ("unexpected manager bind payload: " <> show result)
+    result -> assertFailure ("unexpected " <> label <> " bind payload: " <> show result)
+
+expectNoBootstrapBind :: Transport -> Assertion
+expectNoBootstrapBind peer =
+  receiveChunk peer 8 >>= \case
+    Right Nothing -> pure ()
+    Right (Just _) -> assertFailure "unexpected bind before bootstrap validation"
+    Left errorValue -> assertFailure ("unexpected mock receive error: " <> show errorValue)
 
 receiveSequenceCompletion :: FrameReader -> Transport -> ObjectId -> Opcode -> IO ()
 receiveSequenceCompletion reader peer managerId opcode = do

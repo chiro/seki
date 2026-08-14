@@ -518,9 +518,11 @@ matching the M0 target release and retaining modifier-watch support for the
 configured binding model. Missing, duplicate, obsolete, and request-failure
 cases remain distinct structured errors.
 
-Binding the global is kept separate from creating seat-specific key binding
-objects. The owned runtime will compose those steps after it has both the bound
-global and the manager-created `river_seat_v1` object.
+The owned runtime preflights both required river globals before submitting any
+bind request, then binds the window manager followed by the XKB bindings global.
+Either failure closes the partially opened Wayland session. `RiverSession`
+retains and exposes both typed handles. Creating seat-specific key binding
+objects remains a separate step for manager-created `river_seat_v1` objects.
 
 ### 7.11 Fatal display errors
 
