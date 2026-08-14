@@ -9,8 +9,11 @@ import Data.ByteString qualified as ByteString
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Network.Socket (Family (AF_UNIX), Socket, SocketType (Stream), close, defaultProtocol, socketPair, withFdSocket)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Run.Phase (
   closeWindow,
+  disableKeyBinding,
+  enableKeyBinding,
   hideWindow,
   placeNodeAbove,
   placeNodeBelow,
@@ -19,6 +22,7 @@ import Seki.Run.Phase (
   proposeWindowDimensions,
   runManageM,
   runRenderM,
+  setKeyBindingLayoutOverride,
   setNodePosition,
   setWindowBorders,
   setWindowCapabilities,
@@ -51,6 +55,7 @@ tests =
   testGroup
     "river phase plans"
     [ testCase "submits manage requests in plan order" testManagePlan
+    , testCase "submits XKB binding configuration in plan order" testKeyBindingManagePlan
     , testCase "submits window render requests in plan order" testWindowRenderPlan
     , testCase "submits node render requests in plan order" testNodeRenderPlan
     , testCase "stops a plan at the first request failure" testPlanFailure
@@ -74,6 +79,20 @@ testManagePlan =
     expectRequest reader peer window (Opcode 9) (putUint 15)
     expectRequest reader peer window (Opcode 14) (putUint 4)
     expectRequest reader peer window (Opcode 1) (pure ())
+
+testKeyBindingManagePlan :: Assertion
+testKeyBindingManagePlan =
+  withInterfaceConnection Xkb.riverXkbBindingV1Interface $ \connection binding peer -> do
+    result <-
+      runManageM connection $ do
+        setKeyBindingLayoutOverride binding 0
+        enableKeyBinding binding
+        disableKeyBinding binding
+    assertEqual "binding plan" (Right ()) result
+    reader <- newFrameReader
+    expectRequest reader peer binding (Opcode 1) (putUint 0)
+    expectRequest reader peer binding (Opcode 2) (pure ())
+    expectRequest reader peer binding (Opcode 3) (pure ())
 
 testWindowRenderPlan :: Assertion
 testWindowRenderPlan =

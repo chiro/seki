@@ -14,6 +14,9 @@ module Seki.Run.Phase (
   setWindowTiled,
   setWindowCapabilities,
   setWindowDimensionBounds,
+  setKeyBindingLayoutOverride,
+  enableKeyBinding,
+  disableKeyBinding,
   focusWindow,
   clearFocus,
   hideWindow,
@@ -34,6 +37,7 @@ import Data.Sequence (Seq, (><))
 import Data.Sequence qualified as Seq
 import Data.Word (Word32)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Wire.Binding (Interface, RequestEncoder)
 import Seki.Wire.Connection (Connection, ConnectionError, submitRequest)
 import Seki.Wire.Connection.ObjectTable (Object, objectId)
@@ -146,6 +150,30 @@ setWindowDimensionBounds window maximumWidth maximumHeight =
     River.riverWindowV1Interface
     window
     (River.encodeRiverWindowV1SetDimensionBounds maximumWidth maximumHeight)
+
+-- | Pin a binding to an XKB layout index.
+setKeyBindingLayoutOverride :: Object Xkb.RiverXkbBindingV1 -> Word32 -> ManageM ()
+setKeyBindingLayoutOverride binding layout =
+  phaseRequest
+    Xkb.riverXkbBindingV1Interface
+    binding
+    (Xkb.encodeRiverXkbBindingV1SetLayoutOverride layout)
+
+-- | Enable a configured XKB binding.
+enableKeyBinding :: Object Xkb.RiverXkbBindingV1 -> ManageM ()
+enableKeyBinding binding =
+  phaseRequest
+    Xkb.riverXkbBindingV1Interface
+    binding
+    Xkb.encodeRiverXkbBindingV1Enable
+
+-- | Disable an XKB binding without destroying it.
+disableKeyBinding :: Object Xkb.RiverXkbBindingV1 -> ManageM ()
+disableKeyBinding binding =
+  phaseRequest
+    Xkb.riverXkbBindingV1Interface
+    binding
+    Xkb.encodeRiverXkbBindingV1Disable
 
 focusWindow :: Object River.RiverSeatV1 -> Object River.RiverWindowV1 -> ManageM ()
 focusWindow seat window =

@@ -39,7 +39,14 @@ import Seki.Run.Inventory (
   emptyRiverInventory,
   lookupRiverWindow,
  )
-import Seki.Run.Phase (ManageM, RenderM, runManageM, runRenderM)
+import Seki.Run.Phase (
+  ManageM,
+  RenderM,
+  enableKeyBinding,
+  runManageM,
+  runRenderM,
+  setKeyBindingLayoutOverride,
+ )
 import Seki.Run.River (
   RiverBootstrapError,
   RiverWindowManagerHandlers (..),
@@ -66,7 +73,7 @@ import Seki.Run.Startup (
   waylandRegistry,
  )
 import Seki.Run.Xkb (
-  RiverKeyBinding,
+  RiverKeyBinding (..),
   RiverXkbBootstrapError,
   bindRiverXkbBindings,
   createRiverKeyBinding,
@@ -99,6 +106,7 @@ data RiverSession = RiverSession
 data RiverKeyBindingState = RiverKeyBindingState
   { riverKeyBindingDefinition :: RiverKeyBinding
   , riverKeyBindingObject :: Object Xkb.RiverXkbBindingV1
+  , riverKeyBindingInitialized :: Bool
   }
   deriving (Eq, Show)
 
@@ -288,7 +296,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState sea
         manager
         event
         startManageSequence
-        (readIORef inventoryState >>= runManageM connection . prepareRiverManagePlan runtimeHandlers)
+        runManagePlans
     River.RiverWindowManagerV1RenderStart ->
       runSequence
         (waylandConnection wayland)
@@ -425,7 +433,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState sea
                     state
                       { riverSeatKeyBindings =
                           riverSeatKeyBindings state
-                            <> [RiverKeyBindingState definition binding]
+                            <> [RiverKeyBindingState definition binding False]
                       }
                 )
                 (objectId seat)
@@ -433,6 +441,44 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState sea
             , ()
             )
           createBindings xkbBindings seat rest
+  runManagePlans = do
+    inventory <- readIORef inventoryState
+    seats <- readIORef seatBindingsState
+    let pending =
+          [ bindingState
+          | seatState <- Map.elems seats
+          , bindingState <- riverSeatKeyBindings seatState
+          , not (riverKeyBindingInitialized bindingState)
+          ]
+        plan = do
+          mapM_ prepareKeyBinding pending
+          prepareRiverManagePlan runtimeHandlers inventory
+    runManageM connection plan >>= \case
+      Left errorValue -> pure (Left errorValue)
+      Right () -> do
+        markKeyBindingsInitialized
+        pure (Right ())
+  prepareKeyBinding bindingState = do
+    let definition = riverKeyBindingDefinition bindingState
+        binding = riverKeyBindingObject bindingState
+    case riverKeyBindingLayoutOverride definition of
+      Nothing -> pure ()
+      Just layout -> setKeyBindingLayoutOverride binding layout
+    enableKeyBinding binding
+  markKeyBindingsInitialized =
+    atomicModifyIORef' seatBindingsState $ \seats ->
+      ( fmap
+          ( \seatState ->
+              seatState
+                { riverSeatKeyBindings =
+                    map
+                      (\bindingState -> bindingState{riverKeyBindingInitialized = True})
+                      (riverSeatKeyBindings seatState)
+                }
+          )
+          seats
+      , ()
+      )
   destroySeat state =
     destroyBindings (riverSeatKeyBindings state) >>= \case
       False -> pure ()

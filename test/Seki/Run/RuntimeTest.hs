@@ -448,7 +448,7 @@ testSeatBindingLifecycle =
           RiverKeyBinding
             { riverKeyBindingKeysym = 0x71
             , riverKeyBindingModifiers = River.RiverSeatV1ModifiersFlags 64
-            , riverKeyBindingLayoutOverride = Just 0
+            , riverKeyBindingLayoutOverride = Nothing
             }
     mockDone <- runMock $ do
       reader <- newFrameReader
@@ -464,14 +464,27 @@ testSeatBindingLifecycle =
       sendFrames peer [encodedFrame managerId (Opcode 8) (putNewId seatId)]
       terminalId <- receiveKeyBindingRequest reader peer xkbBindingsId seatId terminalBinding
       closeId <- receiveKeyBindingRequest reader peer xkbBindingsId seatId closeBinding
+      sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
+      receiveExpectedRequest reader peer terminalId (Opcode 1) (putUint 0)
+      receiveExpectedRequest reader peer terminalId (Opcode 2) (pure ())
+      receiveExpectedRequest reader peer closeId (Opcode 2) (pure ())
+      receiveSequenceCompletion reader peer managerId (Opcode 2)
+      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 4)
+      sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 2)
+      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 4)
       sendFrames
         peer
         [ encodedFrame terminalId (Opcode 0) (pure ())
         , encodedFrame seatId (Opcode 0) (pure ())
+        , encodedFrame managerId (Opcode 2) (pure ())
         ]
       receiveExpectedRequest reader peer terminalId (Opcode 0) (pure ())
       receiveExpectedRequest reader peer closeId (Opcode 0) (pure ())
       receiveExpectedRequest reader peer seatId (Opcode 0) (pure ())
+      receiveSequenceCompletion reader peer managerId (Opcode 2)
       closeTransport peer
     let handlers =
           RiverRuntimeHandlers

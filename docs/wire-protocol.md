@@ -452,8 +452,9 @@ errors. Completion submission failures remain structured connection errors.
 
 `Seki.Run.Phase` provides distinct `ManageM` and `RenderM` plan types. The M0
 management surface includes closing, dimension proposals, decoration and tiled
-state, capabilities, and keyboard focus. The rendering surface includes
-visibility, borders and clipping, node position, and stacking. Each operation
+state, capabilities, keyboard focus, and XKB binding configuration. The
+rendering surface includes visibility, borders and clipping, node position, and
+stacking. Each operation
 is available only in the phase type allowed by the pinned river XML; finish
 requests are deliberately absent because the runtime owns completion.
 
@@ -540,9 +541,13 @@ ID. On `river_seat_v1.removed`, the seat leaves the snapshot before callbacks
 run, then every binding is destroyed in definition order before the seat itself.
 Unknown, duplicate, and stale seat handles are fatal structured runtime errors.
 
-Bindings remain disabled in this slice. Applying the optional layout override
-and enabling each new object are management-state changes and therefore belong
-to the following phase-safe manage-plan integration.
+Binding objects begin disabled. At the next manage boundary, the runtime
+prepends an internal plan that applies each optional layout override and then
+enables every pending binding, in seat/object order, before the user manage
+plan. A binding is marked initialized only after the entire combined plan
+succeeds, and later manage sequences do not repeat its initial configuration.
+The phase API also exposes typed layout-override, enable, and disable operations
+for later submap support.
 
 ### 7.12 Fatal display errors
 
