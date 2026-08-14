@@ -43,6 +43,7 @@ data GenerationError
   = GenerationValidationFailed [ScannerError]
   | GenerationTargetNotIncluded Text
   | GenerationUnknownEnumReference Text
+  | GenerationUnknownInterfaceReference Text
   | GenerationInvalidHaskellName Text
   | GenerationNameCollision Text
   deriving (Eq, Show)
@@ -56,6 +57,10 @@ data EnumTarget = EnumTarget
   , targetInterface :: Interface
   , targetEnum :: EnumDefinition
   }
+
+data ArgumentDirection
+  = RequestArgument
+  | EventArgument
 
 generateProtocolModule :: GenerationConfig -> [Protocol] -> Protocol -> Either GenerationError Text
 generateProtocolModule config protocols target = do
@@ -194,7 +199,7 @@ renderInterface index currentProtocol interface = do
 renderRequest :: ProtocolIndex -> Protocol -> Interface -> Message -> Either GenerationError [Text]
 renderRequest index currentProtocol interface message = do
   functionName <- requestFunctionName interface message
-  argumentTypes <- mapM (renderArgumentType index currentProtocol interface) (messageArguments message)
+  argumentTypes <- mapM (renderArgumentType index currentProtocol interface RequestArgument) (messageArguments message)
   argumentNames <- mapM argumentValueName (messageArguments message)
   encoders <- zipWithM (renderArgumentEncoder index currentProtocol interface) (messageArguments message) argumentNames
   let signature = Text.intercalate " -> " (argumentTypes <> ["Binding.RequestEncoder fd"])
@@ -252,7 +257,7 @@ renderEventConstructor ::
   Either GenerationError ([Text], [Text])
 renderEventConstructor index currentProtocol interface message = do
   constructor <- eventConstructorName interface message
-  argumentTypes <- mapM (renderArgumentType index currentProtocol interface) (messageArguments message)
+  argumentTypes <- mapM (renderArgumentType index currentProtocol interface EventArgument) (messageArguments message)
   let documentation = renderDescriptionAsConstructor ("Event @" <> messageName message <> "@.") (messageDescription message)
   pure (documentation, constructor : map ("  " <>) argumentTypes)
 
@@ -266,6 +271,7 @@ renderEventDecoder ::
 renderEventDecoder index currentProtocol interface decoderName message = do
   constructor <- eventConstructorName interface message
   decoders <- mapM (renderArgumentDecoder index currentProtocol interface) (messageArguments message)
+  newIdExtractor <- renderEventNewIdExtractor constructor (messageArguments message)
   let expression = case decoders of
         [] -> "pure " <> constructor
         firstDecoder : rest -> constructor <> " <$> " <> parenthesize firstDecoder <> foldMap ((" <*> " <>) . parenthesize) rest
@@ -279,8 +285,31 @@ renderEventDecoder index currentProtocol interface decoderName message = do
         <> boolText (messageDestructor message)
         <> " ("
         <> expression
+        <> ") ("
+        <> newIdExtractor
         <> "))"
     ]
+
+renderEventNewIdExtractor :: Text -> [Argument] -> Either GenerationError Text
+renderEventNewIdExtractor constructor arguments = do
+  names <- mapM argumentValueName arguments
+  let bindings = zipWith newIdBinding arguments names
+      newIds = [newIdExpression argument name | (argument, name) <- zip arguments names, argumentType argument == ArgumentNewId]
+  pure $ case newIds of
+    [] -> "const []"
+    _ ->
+      "\\eventValue -> case eventValue of "
+        <> Text.unwords (constructor : bindings)
+        <> " -> ["
+        <> Text.intercalate ", " newIds
+        <> "]; _ -> []"
+ where
+  newIdBinding argument name
+    | argumentType argument == ArgumentNewId = name
+    | otherwise = "_"
+  newIdExpression argument name
+    | isNothing (argumentInterface argument) = "Binding.dynamicNewIdObject " <> name
+    | otherwise = "Binding.newObjectId " <> name
 
 renderEnum :: Interface -> EnumDefinition -> Either GenerationError [Text]
 renderEnum interface enumDefinition = do
@@ -309,23 +338,27 @@ renderEnumEntry interface enumDefinition enumType entry = do
          , ""
          ]
 
-renderArgumentType :: ProtocolIndex -> Protocol -> Interface -> Argument -> Either GenerationError Text
-renderArgumentType index currentProtocol currentInterface argument = case argumentEnum argument of
+renderArgumentType :: ProtocolIndex -> Protocol -> Interface -> ArgumentDirection -> Argument -> Either GenerationError Text
+renderArgumentType index currentProtocol currentInterface direction argument = case argumentEnum argument of
   Just reference -> enumReferenceType index currentProtocol currentInterface reference
-  Nothing -> Right (rawArgumentType argument)
+  Nothing -> rawArgumentType index currentProtocol direction argument
 
-rawArgumentType :: Argument -> Text
-rawArgumentType argument = case argumentType argument of
-  ArgumentInt -> "Int32"
-  ArgumentUint -> "Word32"
-  ArgumentFixed -> "Arguments.Fixed"
-  ArgumentString -> nullableType "Text"
-  ArgumentObject -> nullableType "Wire.ObjectId"
+rawArgumentType :: ProtocolIndex -> Protocol -> ArgumentDirection -> Argument -> Either GenerationError Text
+rawArgumentType index currentProtocol direction argument = case argumentType argument of
+  ArgumentInt -> Right "Int32"
+  ArgumentUint -> Right "Word32"
+  ArgumentFixed -> Right "Arguments.Fixed"
+  ArgumentString -> Right (nullableType "Text")
+  ArgumentObject -> Right (nullableType "Wire.ObjectId")
   ArgumentNewId
-    | isNothing (argumentInterface argument) -> "Binding.DynamicNewId"
-    | otherwise -> "Wire.ObjectId"
-  ArgumentArray -> "ByteString"
-  ArgumentFd -> "fd"
+    | isNothing (argumentInterface argument) -> Right "Binding.DynamicNewId"
+    | RequestArgument <- direction -> Right "Wire.ObjectId"
+    | Just reference <- argumentInterface argument ->
+        (\interfaceType -> "(Binding.NewObject " <> interfaceType <> ")")
+          <$> interfaceReferenceType index currentProtocol reference
+    | otherwise -> Right "Wire.ObjectId"
+  ArgumentArray -> Right "ByteString"
+  ArgumentFd -> Right "fd"
  where
   nullableType value
     | argumentNullable argument = "(Maybe " <> value <> ")"
@@ -381,7 +414,7 @@ renderArgumentDecoder index currentProtocol currentInterface argument = case arg
       | otherwise -> "Arguments.getObject"
     ArgumentNewId
       | isNothing (argumentInterface argument) -> "Binding.getDynamicNewId"
-      | otherwise -> "Arguments.getNewId"
+      | otherwise -> "Binding.getNewObject"
     ArgumentArray -> "Arguments.getArray"
     ArgumentFd -> "Arguments.getFd"
 
@@ -394,6 +427,20 @@ enumReferenceType index currentProtocol currentInterface reference = do
     else do
       moduleName <- conventionalModuleName (targetProtocol target)
       pure (moduleName <> "." <> name)
+
+interfaceReferenceType :: ProtocolIndex -> Protocol -> Text -> Either GenerationError Text
+interfaceReferenceType index currentProtocol reference = do
+  (targetProtocolValue, targetInterfaceValue) <- resolveInterfaceReference index reference
+  name <- pascalName (interfaceName targetInterfaceValue)
+  if protocolName targetProtocolValue == protocolName currentProtocol
+    then Right name
+    else do
+      moduleName <- conventionalModuleName targetProtocolValue
+      pure (moduleName <> "." <> name)
+
+resolveInterfaceReference :: ProtocolIndex -> Text -> Either GenerationError (Protocol, Interface)
+resolveInterfaceReference index reference =
+  maybe (Left (GenerationUnknownInterfaceReference reference)) Right (Map.lookup reference (indexedInterfaces index))
 
 resolveMessageEnums :: ProtocolIndex -> Protocol -> Interface -> Message -> Either GenerationError ()
 resolveMessageEnums index currentProtocol currentInterface message =
@@ -418,22 +465,38 @@ resolveEnum index currentInterface reference = case Text.splitOn "." reference o
       Just (protocol, _) -> Right (EnumTarget protocol interface enumDefinition)
 
 referencedModules :: ProtocolIndex -> Protocol -> Either GenerationError (Set Text)
-referencedModules index currentProtocol =
-  foldM addReference Set.empty references
+referencedModules index currentProtocol = do
+  enumModules <- foldM addEnumReference Set.empty enumReferences
+  foldM addInterfaceReference enumModules interfaceReferences
  where
-  references =
+  enumReferences =
     [ (interface, reference)
     | interface <- protocolInterfaces currentProtocol
     , message <- interfaceRequests interface <> interfaceEvents interface
     , argument <- messageArguments message
     , Just reference <- [argumentEnum argument]
     ]
-  addReference modules (interface, reference) = do
+  interfaceReferences =
+    [ reference
+    | interface <- protocolInterfaces currentProtocol
+    , message <- interfaceEvents interface
+    , argument <- messageArguments message
+    , argumentType argument == ArgumentNewId
+    , Just reference <- [argumentInterface argument]
+    ]
+  addEnumReference modules (interface, reference) = do
     target <- resolveEnum index interface reference
     if protocolName (targetProtocol target) == protocolName currentProtocol
       then Right modules
       else do
         moduleName <- conventionalModuleName (targetProtocol target)
+        Right (Set.insert moduleName modules)
+  addInterfaceReference modules reference = do
+    (targetProtocolValue, _) <- resolveInterfaceReference index reference
+    if protocolName targetProtocolValue == protocolName currentProtocol
+      then Right modules
+      else do
+        moduleName <- conventionalModuleName targetProtocolValue
         Right (Set.insert moduleName modules)
 
 eventConstructorName :: Interface -> Message -> Either GenerationError Text

@@ -427,7 +427,7 @@ data RiverWindowManagerV1Event fd
     --         This event will be followed by a manage_start event after all other new
     --         state has been sent by the server.
     RiverWindowManagerV1Window
-      Wire.ObjectId
+      (Binding.NewObject RiverWindowV1)
   | -- | new output
     --
     -- A new logical output has been created, perhaps due to a new physical
@@ -437,7 +437,7 @@ data RiverWindowManagerV1Event fd
     --         events as well as a manage_start event after all other new state has
     --         been sent by the server.
     RiverWindowManagerV1Output
-      Wire.ObjectId
+      (Binding.NewObject RiverOutputV1)
   | -- | new seat
     --
     -- A new seat has been created.
@@ -445,28 +445,28 @@ data RiverWindowManagerV1Event fd
     --         This event will be followed by a manage_start event after all other new
     --         state has been sent by the server.
     RiverWindowManagerV1Seat
-      Wire.ObjectId
+      (Binding.NewObject RiverSeatV1)
   deriving (Eq, Show)
 
 decodeRiverWindowManagerV1Event :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (RiverWindowManagerV1Event fd))
 decodeRiverWindowManagerV1Event (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "unavailable" 1 False (pure RiverWindowManagerV1Unavailable))
+  Just (Binding.EventDecoder "unavailable" 1 False (pure RiverWindowManagerV1Unavailable) (const []))
 decodeRiverWindowManagerV1Event (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "finished" 1 False (pure RiverWindowManagerV1Finished))
+  Just (Binding.EventDecoder "finished" 1 False (pure RiverWindowManagerV1Finished) (const []))
 decodeRiverWindowManagerV1Event (Wire.Opcode 2) =
-  Just (Binding.EventDecoder "manage_start" 1 False (pure RiverWindowManagerV1ManageStart))
+  Just (Binding.EventDecoder "manage_start" 1 False (pure RiverWindowManagerV1ManageStart) (const []))
 decodeRiverWindowManagerV1Event (Wire.Opcode 3) =
-  Just (Binding.EventDecoder "render_start" 1 False (pure RiverWindowManagerV1RenderStart))
+  Just (Binding.EventDecoder "render_start" 1 False (pure RiverWindowManagerV1RenderStart) (const []))
 decodeRiverWindowManagerV1Event (Wire.Opcode 4) =
-  Just (Binding.EventDecoder "session_locked" 1 False (pure RiverWindowManagerV1SessionLocked))
+  Just (Binding.EventDecoder "session_locked" 1 False (pure RiverWindowManagerV1SessionLocked) (const []))
 decodeRiverWindowManagerV1Event (Wire.Opcode 5) =
-  Just (Binding.EventDecoder "session_unlocked" 1 False (pure RiverWindowManagerV1SessionUnlocked))
+  Just (Binding.EventDecoder "session_unlocked" 1 False (pure RiverWindowManagerV1SessionUnlocked) (const []))
 decodeRiverWindowManagerV1Event (Wire.Opcode 6) =
-  Just (Binding.EventDecoder "window" 1 False (RiverWindowManagerV1Window <$> (Arguments.getNewId)))
+  Just (Binding.EventDecoder "window" 1 False (RiverWindowManagerV1Window <$> (Binding.getNewObject)) (\eventValue -> case eventValue of RiverWindowManagerV1Window idValue -> [Binding.newObjectId idValue]; _ -> []))
 decodeRiverWindowManagerV1Event (Wire.Opcode 7) =
-  Just (Binding.EventDecoder "output" 1 False (RiverWindowManagerV1Output <$> (Arguments.getNewId)))
+  Just (Binding.EventDecoder "output" 1 False (RiverWindowManagerV1Output <$> (Binding.getNewObject)) (\eventValue -> case eventValue of RiverWindowManagerV1Output idValue -> [Binding.newObjectId idValue]; _ -> []))
 decodeRiverWindowManagerV1Event (Wire.Opcode 8) =
-  Just (Binding.EventDecoder "seat" 1 False (RiverWindowManagerV1Seat <$> (Arguments.getNewId)))
+  Just (Binding.EventDecoder "seat" 1 False (RiverWindowManagerV1Seat <$> (Binding.getNewObject)) (\eventValue -> case eventValue of RiverWindowManagerV1Seat idValue -> [Binding.newObjectId idValue]; _ -> []))
 decodeRiverWindowManagerV1Event _ = Nothing
 
 -- | Values of @river_window_manager_v1.error@.
@@ -1270,41 +1270,41 @@ data RiverWindowV1Event fd
 
 decodeRiverWindowV1Event :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (RiverWindowV1Event fd))
 decodeRiverWindowV1Event (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "closed" 1 False (pure RiverWindowV1Closed))
+  Just (Binding.EventDecoder "closed" 1 False (pure RiverWindowV1Closed) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "dimensions_hint" 1 False (RiverWindowV1DimensionsHint <$> (Arguments.getInt) <*> (Arguments.getInt) <*> (Arguments.getInt) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "dimensions_hint" 1 False (RiverWindowV1DimensionsHint <$> (Arguments.getInt) <*> (Arguments.getInt) <*> (Arguments.getInt) <*> (Arguments.getInt)) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 2) =
-  Just (Binding.EventDecoder "dimensions" 1 False (RiverWindowV1Dimensions <$> (Arguments.getInt) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "dimensions" 1 False (RiverWindowV1Dimensions <$> (Arguments.getInt) <*> (Arguments.getInt)) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 3) =
-  Just (Binding.EventDecoder "app_id" 1 False (RiverWindowV1AppId <$> (Arguments.getNullableString)))
+  Just (Binding.EventDecoder "app_id" 1 False (RiverWindowV1AppId <$> (Arguments.getNullableString)) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 4) =
-  Just (Binding.EventDecoder "title" 1 False (RiverWindowV1Title <$> (Arguments.getNullableString)))
+  Just (Binding.EventDecoder "title" 1 False (RiverWindowV1Title <$> (Arguments.getNullableString)) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 5) =
-  Just (Binding.EventDecoder "parent" 1 False (RiverWindowV1Parent <$> (Arguments.getNullableObject)))
+  Just (Binding.EventDecoder "parent" 1 False (RiverWindowV1Parent <$> (Arguments.getNullableObject)) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 6) =
-  Just (Binding.EventDecoder "decoration_hint" 1 False (RiverWindowV1DecorationHint <$> (RiverWindowV1DecorationHintEnum <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "decoration_hint" 1 False (RiverWindowV1DecorationHint <$> (RiverWindowV1DecorationHintEnum <$> Arguments.getUint)) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 7) =
-  Just (Binding.EventDecoder "pointer_move_requested" 1 False (RiverWindowV1PointerMoveRequested <$> (Arguments.getObject)))
+  Just (Binding.EventDecoder "pointer_move_requested" 1 False (RiverWindowV1PointerMoveRequested <$> (Arguments.getObject)) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 8) =
-  Just (Binding.EventDecoder "pointer_resize_requested" 1 False (RiverWindowV1PointerResizeRequested <$> (Arguments.getObject) <*> (RiverWindowV1EdgesFlags <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "pointer_resize_requested" 1 False (RiverWindowV1PointerResizeRequested <$> (Arguments.getObject) <*> (RiverWindowV1EdgesFlags <$> Arguments.getUint)) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 9) =
-  Just (Binding.EventDecoder "show_window_menu_requested" 1 False (RiverWindowV1ShowWindowMenuRequested <$> (Arguments.getInt) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "show_window_menu_requested" 1 False (RiverWindowV1ShowWindowMenuRequested <$> (Arguments.getInt) <*> (Arguments.getInt)) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 10) =
-  Just (Binding.EventDecoder "maximize_requested" 1 False (pure RiverWindowV1MaximizeRequested))
+  Just (Binding.EventDecoder "maximize_requested" 1 False (pure RiverWindowV1MaximizeRequested) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 11) =
-  Just (Binding.EventDecoder "unmaximize_requested" 1 False (pure RiverWindowV1UnmaximizeRequested))
+  Just (Binding.EventDecoder "unmaximize_requested" 1 False (pure RiverWindowV1UnmaximizeRequested) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 12) =
-  Just (Binding.EventDecoder "fullscreen_requested" 1 False (RiverWindowV1FullscreenRequested <$> (Arguments.getNullableObject)))
+  Just (Binding.EventDecoder "fullscreen_requested" 1 False (RiverWindowV1FullscreenRequested <$> (Arguments.getNullableObject)) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 13) =
-  Just (Binding.EventDecoder "exit_fullscreen_requested" 1 False (pure RiverWindowV1ExitFullscreenRequested))
+  Just (Binding.EventDecoder "exit_fullscreen_requested" 1 False (pure RiverWindowV1ExitFullscreenRequested) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 14) =
-  Just (Binding.EventDecoder "minimize_requested" 1 False (pure RiverWindowV1MinimizeRequested))
+  Just (Binding.EventDecoder "minimize_requested" 1 False (pure RiverWindowV1MinimizeRequested) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 15) =
-  Just (Binding.EventDecoder "unreliable_pid" 2 False (RiverWindowV1UnreliablePid <$> (Arguments.getInt)))
+  Just (Binding.EventDecoder "unreliable_pid" 2 False (RiverWindowV1UnreliablePid <$> (Arguments.getInt)) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 16) =
-  Just (Binding.EventDecoder "presentation_hint" 4 False (RiverWindowV1PresentationHint <$> (RiverOutputV1PresentationModeEnum <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "presentation_hint" 4 False (RiverWindowV1PresentationHint <$> (RiverOutputV1PresentationModeEnum <$> Arguments.getUint)) (const []))
 decodeRiverWindowV1Event (Wire.Opcode 17) =
-  Just (Binding.EventDecoder "identifier" 4 False (RiverWindowV1Identifier <$> (Arguments.getString)))
+  Just (Binding.EventDecoder "identifier" 4 False (RiverWindowV1Identifier <$> (Arguments.getString)) (const []))
 decodeRiverWindowV1Event _ = Nothing
 
 -- | Values of @river_window_v1.error@.
@@ -1751,13 +1751,13 @@ data RiverOutputV1Event fd
 
 decodeRiverOutputV1Event :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (RiverOutputV1Event fd))
 decodeRiverOutputV1Event (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "removed" 1 False (pure RiverOutputV1Removed))
+  Just (Binding.EventDecoder "removed" 1 False (pure RiverOutputV1Removed) (const []))
 decodeRiverOutputV1Event (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "wl_output" 1 False (RiverOutputV1WlOutput <$> (Arguments.getUint)))
+  Just (Binding.EventDecoder "wl_output" 1 False (RiverOutputV1WlOutput <$> (Arguments.getUint)) (const []))
 decodeRiverOutputV1Event (Wire.Opcode 2) =
-  Just (Binding.EventDecoder "position" 1 False (RiverOutputV1Position <$> (Arguments.getInt) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "position" 1 False (RiverOutputV1Position <$> (Arguments.getInt) <*> (Arguments.getInt)) (const []))
 decodeRiverOutputV1Event (Wire.Opcode 3) =
-  Just (Binding.EventDecoder "dimensions" 1 False (RiverOutputV1Dimensions <$> (Arguments.getInt) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "dimensions" 1 False (RiverOutputV1Dimensions <$> (Arguments.getInt) <*> (Arguments.getInt)) (const []))
 decodeRiverOutputV1Event _ = Nothing
 
 -- | Values of @river_output_v1.error@.
@@ -2102,23 +2102,23 @@ data RiverSeatV1Event fd
 
 decodeRiverSeatV1Event :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (RiverSeatV1Event fd))
 decodeRiverSeatV1Event (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "removed" 1 False (pure RiverSeatV1Removed))
+  Just (Binding.EventDecoder "removed" 1 False (pure RiverSeatV1Removed) (const []))
 decodeRiverSeatV1Event (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "wl_seat" 1 False (RiverSeatV1WlSeat <$> (Arguments.getUint)))
+  Just (Binding.EventDecoder "wl_seat" 1 False (RiverSeatV1WlSeat <$> (Arguments.getUint)) (const []))
 decodeRiverSeatV1Event (Wire.Opcode 2) =
-  Just (Binding.EventDecoder "pointer_enter" 1 False (RiverSeatV1PointerEnter <$> (Arguments.getObject)))
+  Just (Binding.EventDecoder "pointer_enter" 1 False (RiverSeatV1PointerEnter <$> (Arguments.getObject)) (const []))
 decodeRiverSeatV1Event (Wire.Opcode 3) =
-  Just (Binding.EventDecoder "pointer_leave" 1 False (pure RiverSeatV1PointerLeave))
+  Just (Binding.EventDecoder "pointer_leave" 1 False (pure RiverSeatV1PointerLeave) (const []))
 decodeRiverSeatV1Event (Wire.Opcode 4) =
-  Just (Binding.EventDecoder "window_interaction" 1 False (RiverSeatV1WindowInteraction <$> (Arguments.getObject)))
+  Just (Binding.EventDecoder "window_interaction" 1 False (RiverSeatV1WindowInteraction <$> (Arguments.getObject)) (const []))
 decodeRiverSeatV1Event (Wire.Opcode 5) =
-  Just (Binding.EventDecoder "shell_surface_interaction" 1 False (RiverSeatV1ShellSurfaceInteraction <$> (Arguments.getObject)))
+  Just (Binding.EventDecoder "shell_surface_interaction" 1 False (RiverSeatV1ShellSurfaceInteraction <$> (Arguments.getObject)) (const []))
 decodeRiverSeatV1Event (Wire.Opcode 6) =
-  Just (Binding.EventDecoder "op_delta" 1 False (RiverSeatV1OpDelta <$> (Arguments.getInt) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "op_delta" 1 False (RiverSeatV1OpDelta <$> (Arguments.getInt) <*> (Arguments.getInt)) (const []))
 decodeRiverSeatV1Event (Wire.Opcode 7) =
-  Just (Binding.EventDecoder "op_release" 1 False (pure RiverSeatV1OpRelease))
+  Just (Binding.EventDecoder "op_release" 1 False (pure RiverSeatV1OpRelease) (const []))
 decodeRiverSeatV1Event (Wire.Opcode 8) =
-  Just (Binding.EventDecoder "pointer_position" 2 False (RiverSeatV1PointerPosition <$> (Arguments.getInt) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "pointer_position" 2 False (RiverSeatV1PointerPosition <$> (Arguments.getInt) <*> (Arguments.getInt)) (const []))
 decodeRiverSeatV1Event _ = Nothing
 
 -- | a set of keyboard modifiers
@@ -2256,8 +2256,8 @@ data RiverPointerBindingV1Event fd
 
 decodeRiverPointerBindingV1Event :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (RiverPointerBindingV1Event fd))
 decodeRiverPointerBindingV1Event (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "pressed" 1 False (pure RiverPointerBindingV1Pressed))
+  Just (Binding.EventDecoder "pressed" 1 False (pure RiverPointerBindingV1Pressed) (const []))
 decodeRiverPointerBindingV1Event (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "released" 1 False (pure RiverPointerBindingV1Released))
+  Just (Binding.EventDecoder "released" 1 False (pure RiverPointerBindingV1Released) (const []))
 decodeRiverPointerBindingV1Event _ = Nothing
 

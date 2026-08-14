@@ -1,6 +1,9 @@
 -- | Runtime-neutral metadata and codecs shared by generated protocol bindings.
 module Seki.Wire.Binding (
   Interface (..),
+  NewObject,
+  newObjectId,
+  getNewObject,
   DynamicNewId (..),
   putDynamicNewId,
   getDynamicNewId,
@@ -29,6 +32,16 @@ data Interface interface = Interface
   , interfaceMaximumVersion :: Word32
   }
   deriving (Eq, Show)
+
+-- | A typed object ID introduced by a server-side @new_id@ event.
+newtype NewObject interface = NewObject
+  { newObjectId :: ObjectId
+  }
+  deriving (Eq, Show)
+
+-- | Decode a statically typed object ID introduced by an event.
+getNewObject :: ArgumentDecoder fd (NewObject interface)
+getNewObject = NewObject <$> getNewId
 
 -- | The expanded wire form of a @new_id@ with no static interface.
 data DynamicNewId = DynamicNewId
@@ -64,4 +77,5 @@ data EventDecoder fd event = EventDecoder
   , eventSince :: Word32
   , eventDestructor :: Bool
   , eventArguments :: ArgumentDecoder fd event
+  , eventNewIds :: event -> [ObjectId]
   }

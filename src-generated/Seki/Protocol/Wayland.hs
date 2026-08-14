@@ -516,9 +516,9 @@ data WlDisplayEvent fd
 
 decodeWlDisplayEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlDisplayEvent fd))
 decodeWlDisplayEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "error" 1 False (WlDisplayError <$> (Arguments.getObject) <*> (Arguments.getUint) <*> (Arguments.getString)))
+  Just (Binding.EventDecoder "error" 1 False (WlDisplayError <$> (Arguments.getObject) <*> (Arguments.getUint) <*> (Arguments.getString)) (const []))
 decodeWlDisplayEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "delete_id" 1 False (WlDisplayDeleteId <$> (Arguments.getUint)))
+  Just (Binding.EventDecoder "delete_id" 1 False (WlDisplayDeleteId <$> (Arguments.getUint)) (const []))
 decodeWlDisplayEvent _ = Nothing
 
 -- | global error values
@@ -618,9 +618,9 @@ data WlRegistryEvent fd
 
 decodeWlRegistryEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlRegistryEvent fd))
 decodeWlRegistryEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "global" 1 False (WlRegistryGlobal <$> (Arguments.getUint) <*> (Arguments.getString) <*> (Arguments.getUint)))
+  Just (Binding.EventDecoder "global" 1 False (WlRegistryGlobal <$> (Arguments.getUint) <*> (Arguments.getString) <*> (Arguments.getUint)) (const []))
 decodeWlRegistryEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "global_remove" 1 False (WlRegistryGlobalRemove <$> (Arguments.getUint)))
+  Just (Binding.EventDecoder "global_remove" 1 False (WlRegistryGlobalRemove <$> (Arguments.getUint)) (const []))
 decodeWlRegistryEvent _ = Nothing
 
 -- | callback object
@@ -647,7 +647,7 @@ data WlCallbackEvent fd
 
 decodeWlCallbackEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlCallbackEvent fd))
 decodeWlCallbackEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "done" 1 True (WlCallbackDone <$> (Arguments.getUint)))
+  Just (Binding.EventDecoder "done" 1 True (WlCallbackDone <$> (Arguments.getUint)) (const []))
 decodeWlCallbackEvent _ = Nothing
 
 -- | the compositor singleton
@@ -825,7 +825,7 @@ data WlShmEvent fd
 
 decodeWlShmEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlShmEvent fd))
 decodeWlShmEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "format" 1 False (WlShmFormat <$> (WlShmFormatEnum <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "format" 1 False (WlShmFormat <$> (WlShmFormatEnum <$> Arguments.getUint)) (const []))
 decodeWlShmEvent _ = Nothing
 
 -- | wl_shm error values
@@ -1496,7 +1496,7 @@ data WlBufferEvent fd
 
 decodeWlBufferEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlBufferEvent fd))
 decodeWlBufferEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "release" 1 False (pure WlBufferRelease))
+  Just (Binding.EventDecoder "release" 1 False (pure WlBufferRelease) (const []))
 decodeWlBufferEvent _ = Nothing
 
 -- | offer to transfer data
@@ -1692,11 +1692,11 @@ data WlDataOfferEvent fd
 
 decodeWlDataOfferEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlDataOfferEvent fd))
 decodeWlDataOfferEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "offer" 1 False (WlDataOfferOffer <$> (Arguments.getString)))
+  Just (Binding.EventDecoder "offer" 1 False (WlDataOfferOffer <$> (Arguments.getString)) (const []))
 decodeWlDataOfferEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "source_actions" 3 False (WlDataOfferSourceActions <$> (WlDataDeviceManagerDndActionFlags <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "source_actions" 3 False (WlDataOfferSourceActions <$> (WlDataDeviceManagerDndActionFlags <$> Arguments.getUint)) (const []))
 decodeWlDataOfferEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder "action" 3 False (WlDataOfferAction <$> (WlDataDeviceManagerDndActionFlags <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "action" 3 False (WlDataOfferAction <$> (WlDataDeviceManagerDndActionFlags <$> Arguments.getUint)) (const []))
 decodeWlDataOfferEvent _ = Nothing
 
 -- | Values of @wl_data_offer.error@.
@@ -1869,17 +1869,17 @@ data WlDataSourceEvent fd
 
 decodeWlDataSourceEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlDataSourceEvent fd))
 decodeWlDataSourceEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "target" 1 False (WlDataSourceTarget <$> (Arguments.getNullableString)))
+  Just (Binding.EventDecoder "target" 1 False (WlDataSourceTarget <$> (Arguments.getNullableString)) (const []))
 decodeWlDataSourceEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "send" 1 False (WlDataSourceSend <$> (Arguments.getString) <*> (Arguments.getFd)))
+  Just (Binding.EventDecoder "send" 1 False (WlDataSourceSend <$> (Arguments.getString) <*> (Arguments.getFd)) (const []))
 decodeWlDataSourceEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder "cancelled" 1 False (pure WlDataSourceCancelled))
+  Just (Binding.EventDecoder "cancelled" 1 False (pure WlDataSourceCancelled) (const []))
 decodeWlDataSourceEvent (Wire.Opcode 3) =
-  Just (Binding.EventDecoder "dnd_drop_performed" 3 False (pure WlDataSourceDndDropPerformed))
+  Just (Binding.EventDecoder "dnd_drop_performed" 3 False (pure WlDataSourceDndDropPerformed) (const []))
 decodeWlDataSourceEvent (Wire.Opcode 4) =
-  Just (Binding.EventDecoder "dnd_finished" 3 False (pure WlDataSourceDndFinished))
+  Just (Binding.EventDecoder "dnd_finished" 3 False (pure WlDataSourceDndFinished) (const []))
 decodeWlDataSourceEvent (Wire.Opcode 5) =
-  Just (Binding.EventDecoder "action" 3 False (WlDataSourceAction <$> (WlDataDeviceManagerDndActionFlags <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "action" 3 False (WlDataSourceAction <$> (WlDataDeviceManagerDndActionFlags <$> Arguments.getUint)) (const []))
 decodeWlDataSourceEvent _ = Nothing
 
 -- | Values of @wl_data_source.error@.
@@ -1991,7 +1991,7 @@ data WlDataDeviceEvent fd
     --         object will send out data_offer.offer events to describe the
     --         mime types it offers.
     WlDataDeviceDataOffer
-      Wire.ObjectId
+      (Binding.NewObject WlDataOffer)
   | -- | initiate drag-and-drop session
     --
     -- This event is sent when an active drag-and-drop pointer enters
@@ -2056,17 +2056,17 @@ data WlDataDeviceEvent fd
 
 decodeWlDataDeviceEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlDataDeviceEvent fd))
 decodeWlDataDeviceEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "data_offer" 1 False (WlDataDeviceDataOffer <$> (Arguments.getNewId)))
+  Just (Binding.EventDecoder "data_offer" 1 False (WlDataDeviceDataOffer <$> (Binding.getNewObject)) (\eventValue -> case eventValue of WlDataDeviceDataOffer idValue -> [Binding.newObjectId idValue]; _ -> []))
 decodeWlDataDeviceEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "enter" 1 False (WlDataDeviceEnter <$> (Arguments.getUint) <*> (Arguments.getObject) <*> (Arguments.getFixed) <*> (Arguments.getFixed) <*> (Arguments.getNullableObject)))
+  Just (Binding.EventDecoder "enter" 1 False (WlDataDeviceEnter <$> (Arguments.getUint) <*> (Arguments.getObject) <*> (Arguments.getFixed) <*> (Arguments.getFixed) <*> (Arguments.getNullableObject)) (const []))
 decodeWlDataDeviceEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder "leave" 1 False (pure WlDataDeviceLeave))
+  Just (Binding.EventDecoder "leave" 1 False (pure WlDataDeviceLeave) (const []))
 decodeWlDataDeviceEvent (Wire.Opcode 3) =
-  Just (Binding.EventDecoder "motion" 1 False (WlDataDeviceMotion <$> (Arguments.getUint) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
+  Just (Binding.EventDecoder "motion" 1 False (WlDataDeviceMotion <$> (Arguments.getUint) <*> (Arguments.getFixed) <*> (Arguments.getFixed)) (const []))
 decodeWlDataDeviceEvent (Wire.Opcode 4) =
-  Just (Binding.EventDecoder "drop" 1 False (pure WlDataDeviceDrop))
+  Just (Binding.EventDecoder "drop" 1 False (pure WlDataDeviceDrop) (const []))
 decodeWlDataDeviceEvent (Wire.Opcode 5) =
-  Just (Binding.EventDecoder "selection" 1 False (WlDataDeviceSelection <$> (Arguments.getNullableObject)))
+  Just (Binding.EventDecoder "selection" 1 False (WlDataDeviceSelection <$> (Arguments.getNullableObject)) (const []))
 decodeWlDataDeviceEvent _ = Nothing
 
 -- | Values of @wl_data_device.error@.
@@ -2498,11 +2498,11 @@ data WlShellSurfaceEvent fd
 
 decodeWlShellSurfaceEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlShellSurfaceEvent fd))
 decodeWlShellSurfaceEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "ping" 1 False (WlShellSurfacePing <$> (Arguments.getUint)))
+  Just (Binding.EventDecoder "ping" 1 False (WlShellSurfacePing <$> (Arguments.getUint)) (const []))
 decodeWlShellSurfaceEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "configure" 1 False (WlShellSurfaceConfigure <$> (WlShellSurfaceResizeFlags <$> Arguments.getUint) <*> (Arguments.getInt) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "configure" 1 False (WlShellSurfaceConfigure <$> (WlShellSurfaceResizeFlags <$> Arguments.getUint) <*> (Arguments.getInt) <*> (Arguments.getInt)) (const []))
 decodeWlShellSurfaceEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder "popup_done" 1 False (pure WlShellSurfacePopupDone))
+  Just (Binding.EventDecoder "popup_done" 1 False (pure WlShellSurfacePopupDone) (const []))
 decodeWlShellSurfaceEvent _ = Nothing
 
 -- | edge values for resizing
@@ -3150,13 +3150,13 @@ data WlSurfaceEvent fd
 
 decodeWlSurfaceEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlSurfaceEvent fd))
 decodeWlSurfaceEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "enter" 1 False (WlSurfaceEnter <$> (Arguments.getObject)))
+  Just (Binding.EventDecoder "enter" 1 False (WlSurfaceEnter <$> (Arguments.getObject)) (const []))
 decodeWlSurfaceEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "leave" 1 False (WlSurfaceLeave <$> (Arguments.getObject)))
+  Just (Binding.EventDecoder "leave" 1 False (WlSurfaceLeave <$> (Arguments.getObject)) (const []))
 decodeWlSurfaceEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder "preferred_buffer_scale" 6 False (WlSurfacePreferredBufferScale <$> (Arguments.getInt)))
+  Just (Binding.EventDecoder "preferred_buffer_scale" 6 False (WlSurfacePreferredBufferScale <$> (Arguments.getInt)) (const []))
 decodeWlSurfaceEvent (Wire.Opcode 3) =
-  Just (Binding.EventDecoder "preferred_buffer_transform" 6 False (WlSurfacePreferredBufferTransform <$> (WlOutputTransformEnum <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "preferred_buffer_transform" 6 False (WlSurfacePreferredBufferTransform <$> (WlOutputTransformEnum <$> Arguments.getUint)) (const []))
 decodeWlSurfaceEvent _ = Nothing
 
 -- | wl_surface error values
@@ -3317,9 +3317,9 @@ data WlSeatEvent fd
 
 decodeWlSeatEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlSeatEvent fd))
 decodeWlSeatEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "capabilities" 1 False (WlSeatCapabilities <$> (WlSeatCapabilityFlags <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "capabilities" 1 False (WlSeatCapabilities <$> (WlSeatCapabilityFlags <$> Arguments.getUint)) (const []))
 decodeWlSeatEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "name" 2 False (WlSeatName <$> (Arguments.getString)))
+  Just (Binding.EventDecoder "name" 2 False (WlSeatName <$> (Arguments.getString)) (const []))
 decodeWlSeatEvent _ = Nothing
 
 -- | seat capability bitmask
@@ -3697,27 +3697,27 @@ data WlPointerEvent fd
 
 decodeWlPointerEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlPointerEvent fd))
 decodeWlPointerEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "enter" 1 False (WlPointerEnter <$> (Arguments.getUint) <*> (Arguments.getObject) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
+  Just (Binding.EventDecoder "enter" 1 False (WlPointerEnter <$> (Arguments.getUint) <*> (Arguments.getObject) <*> (Arguments.getFixed) <*> (Arguments.getFixed)) (const []))
 decodeWlPointerEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "leave" 1 False (WlPointerLeave <$> (Arguments.getUint) <*> (Arguments.getObject)))
+  Just (Binding.EventDecoder "leave" 1 False (WlPointerLeave <$> (Arguments.getUint) <*> (Arguments.getObject)) (const []))
 decodeWlPointerEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder "motion" 1 False (WlPointerMotion <$> (Arguments.getUint) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
+  Just (Binding.EventDecoder "motion" 1 False (WlPointerMotion <$> (Arguments.getUint) <*> (Arguments.getFixed) <*> (Arguments.getFixed)) (const []))
 decodeWlPointerEvent (Wire.Opcode 3) =
-  Just (Binding.EventDecoder "button" 1 False (WlPointerButton <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint) <*> (WlPointerButtonStateEnum <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "button" 1 False (WlPointerButton <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint) <*> (WlPointerButtonStateEnum <$> Arguments.getUint)) (const []))
 decodeWlPointerEvent (Wire.Opcode 4) =
-  Just (Binding.EventDecoder "axis" 1 False (WlPointerAxis <$> (Arguments.getUint) <*> (WlPointerAxisEnum <$> Arguments.getUint) <*> (Arguments.getFixed)))
+  Just (Binding.EventDecoder "axis" 1 False (WlPointerAxis <$> (Arguments.getUint) <*> (WlPointerAxisEnum <$> Arguments.getUint) <*> (Arguments.getFixed)) (const []))
 decodeWlPointerEvent (Wire.Opcode 5) =
-  Just (Binding.EventDecoder "frame" 5 False (pure WlPointerFrame))
+  Just (Binding.EventDecoder "frame" 5 False (pure WlPointerFrame) (const []))
 decodeWlPointerEvent (Wire.Opcode 6) =
-  Just (Binding.EventDecoder "axis_source" 5 False (WlPointerAxisSource <$> (WlPointerAxisSourceEnum <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "axis_source" 5 False (WlPointerAxisSource <$> (WlPointerAxisSourceEnum <$> Arguments.getUint)) (const []))
 decodeWlPointerEvent (Wire.Opcode 7) =
-  Just (Binding.EventDecoder "axis_stop" 5 False (WlPointerAxisStop <$> (Arguments.getUint) <*> (WlPointerAxisEnum <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "axis_stop" 5 False (WlPointerAxisStop <$> (Arguments.getUint) <*> (WlPointerAxisEnum <$> Arguments.getUint)) (const []))
 decodeWlPointerEvent (Wire.Opcode 8) =
-  Just (Binding.EventDecoder "axis_discrete" 5 False (WlPointerAxisDiscrete <$> (WlPointerAxisEnum <$> Arguments.getUint) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "axis_discrete" 5 False (WlPointerAxisDiscrete <$> (WlPointerAxisEnum <$> Arguments.getUint) <*> (Arguments.getInt)) (const []))
 decodeWlPointerEvent (Wire.Opcode 9) =
-  Just (Binding.EventDecoder "axis_value120" 8 False (WlPointerAxisValue120 <$> (WlPointerAxisEnum <$> Arguments.getUint) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "axis_value120" 8 False (WlPointerAxisValue120 <$> (WlPointerAxisEnum <$> Arguments.getUint) <*> (Arguments.getInt)) (const []))
 decodeWlPointerEvent (Wire.Opcode 10) =
-  Just (Binding.EventDecoder "axis_relative_direction" 9 False (WlPointerAxisRelativeDirection <$> (WlPointerAxisEnum <$> Arguments.getUint) <*> (WlPointerAxisRelativeDirectionEnum <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "axis_relative_direction" 9 False (WlPointerAxisRelativeDirection <$> (WlPointerAxisEnum <$> Arguments.getUint) <*> (WlPointerAxisRelativeDirectionEnum <$> Arguments.getUint)) (const []))
 decodeWlPointerEvent _ = Nothing
 
 -- | Values of @wl_pointer.error@.
@@ -3964,17 +3964,17 @@ data WlKeyboardEvent fd
 
 decodeWlKeyboardEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlKeyboardEvent fd))
 decodeWlKeyboardEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "keymap" 1 False (WlKeyboardKeymap <$> (WlKeyboardKeymapFormatEnum <$> Arguments.getUint) <*> (Arguments.getFd) <*> (Arguments.getUint)))
+  Just (Binding.EventDecoder "keymap" 1 False (WlKeyboardKeymap <$> (WlKeyboardKeymapFormatEnum <$> Arguments.getUint) <*> (Arguments.getFd) <*> (Arguments.getUint)) (const []))
 decodeWlKeyboardEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "enter" 1 False (WlKeyboardEnter <$> (Arguments.getUint) <*> (Arguments.getObject) <*> (Arguments.getArray)))
+  Just (Binding.EventDecoder "enter" 1 False (WlKeyboardEnter <$> (Arguments.getUint) <*> (Arguments.getObject) <*> (Arguments.getArray)) (const []))
 decodeWlKeyboardEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder "leave" 1 False (WlKeyboardLeave <$> (Arguments.getUint) <*> (Arguments.getObject)))
+  Just (Binding.EventDecoder "leave" 1 False (WlKeyboardLeave <$> (Arguments.getUint) <*> (Arguments.getObject)) (const []))
 decodeWlKeyboardEvent (Wire.Opcode 3) =
-  Just (Binding.EventDecoder "key" 1 False (WlKeyboardKey <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint) <*> (WlKeyboardKeyStateEnum <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "key" 1 False (WlKeyboardKey <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint) <*> (WlKeyboardKeyStateEnum <$> Arguments.getUint)) (const []))
 decodeWlKeyboardEvent (Wire.Opcode 4) =
-  Just (Binding.EventDecoder "modifiers" 1 False (WlKeyboardModifiers <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint)))
+  Just (Binding.EventDecoder "modifiers" 1 False (WlKeyboardModifiers <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getUint)) (const []))
 decodeWlKeyboardEvent (Wire.Opcode 5) =
-  Just (Binding.EventDecoder "repeat_info" 4 False (WlKeyboardRepeatInfo <$> (Arguments.getInt) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "repeat_info" 4 False (WlKeyboardRepeatInfo <$> (Arguments.getInt) <*> (Arguments.getInt)) (const []))
 decodeWlKeyboardEvent _ = Nothing
 
 -- | keyboard mapping format
@@ -4160,19 +4160,19 @@ data WlTouchEvent fd
 
 decodeWlTouchEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlTouchEvent fd))
 decodeWlTouchEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "down" 1 False (WlTouchDown <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getObject) <*> (Arguments.getInt) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
+  Just (Binding.EventDecoder "down" 1 False (WlTouchDown <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getObject) <*> (Arguments.getInt) <*> (Arguments.getFixed) <*> (Arguments.getFixed)) (const []))
 decodeWlTouchEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "up" 1 False (WlTouchUp <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "up" 1 False (WlTouchUp <$> (Arguments.getUint) <*> (Arguments.getUint) <*> (Arguments.getInt)) (const []))
 decodeWlTouchEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder "motion" 1 False (WlTouchMotion <$> (Arguments.getUint) <*> (Arguments.getInt) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
+  Just (Binding.EventDecoder "motion" 1 False (WlTouchMotion <$> (Arguments.getUint) <*> (Arguments.getInt) <*> (Arguments.getFixed) <*> (Arguments.getFixed)) (const []))
 decodeWlTouchEvent (Wire.Opcode 3) =
-  Just (Binding.EventDecoder "frame" 1 False (pure WlTouchFrame))
+  Just (Binding.EventDecoder "frame" 1 False (pure WlTouchFrame) (const []))
 decodeWlTouchEvent (Wire.Opcode 4) =
-  Just (Binding.EventDecoder "cancel" 1 False (pure WlTouchCancel))
+  Just (Binding.EventDecoder "cancel" 1 False (pure WlTouchCancel) (const []))
 decodeWlTouchEvent (Wire.Opcode 5) =
-  Just (Binding.EventDecoder "shape" 6 False (WlTouchShape <$> (Arguments.getInt) <*> (Arguments.getFixed) <*> (Arguments.getFixed)))
+  Just (Binding.EventDecoder "shape" 6 False (WlTouchShape <$> (Arguments.getInt) <*> (Arguments.getFixed) <*> (Arguments.getFixed)) (const []))
 decodeWlTouchEvent (Wire.Opcode 6) =
-  Just (Binding.EventDecoder "orientation" 6 False (WlTouchOrientation <$> (Arguments.getInt) <*> (Arguments.getFixed)))
+  Just (Binding.EventDecoder "orientation" 6 False (WlTouchOrientation <$> (Arguments.getInt) <*> (Arguments.getFixed)) (const []))
 decodeWlTouchEvent _ = Nothing
 
 -- | compositor output region
@@ -4354,17 +4354,17 @@ data WlOutputEvent fd
 
 decodeWlOutputEvent :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (WlOutputEvent fd))
 decodeWlOutputEvent (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "geometry" 1 False (WlOutputGeometry <$> (Arguments.getInt) <*> (Arguments.getInt) <*> (Arguments.getInt) <*> (Arguments.getInt) <*> (WlOutputSubpixelEnum . fromIntegral <$> Arguments.getInt) <*> (Arguments.getString) <*> (Arguments.getString) <*> (WlOutputTransformEnum . fromIntegral <$> Arguments.getInt)))
+  Just (Binding.EventDecoder "geometry" 1 False (WlOutputGeometry <$> (Arguments.getInt) <*> (Arguments.getInt) <*> (Arguments.getInt) <*> (Arguments.getInt) <*> (WlOutputSubpixelEnum . fromIntegral <$> Arguments.getInt) <*> (Arguments.getString) <*> (Arguments.getString) <*> (WlOutputTransformEnum . fromIntegral <$> Arguments.getInt)) (const []))
 decodeWlOutputEvent (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "mode" 1 False (WlOutputMode <$> (WlOutputModeFlags <$> Arguments.getUint) <*> (Arguments.getInt) <*> (Arguments.getInt) <*> (Arguments.getInt)))
+  Just (Binding.EventDecoder "mode" 1 False (WlOutputMode <$> (WlOutputModeFlags <$> Arguments.getUint) <*> (Arguments.getInt) <*> (Arguments.getInt) <*> (Arguments.getInt)) (const []))
 decodeWlOutputEvent (Wire.Opcode 2) =
-  Just (Binding.EventDecoder "done" 2 False (pure WlOutputDone))
+  Just (Binding.EventDecoder "done" 2 False (pure WlOutputDone) (const []))
 decodeWlOutputEvent (Wire.Opcode 3) =
-  Just (Binding.EventDecoder "scale" 2 False (WlOutputScale <$> (Arguments.getInt)))
+  Just (Binding.EventDecoder "scale" 2 False (WlOutputScale <$> (Arguments.getInt)) (const []))
 decodeWlOutputEvent (Wire.Opcode 4) =
-  Just (Binding.EventDecoder "name" 4 False (WlOutputName <$> (Arguments.getString)))
+  Just (Binding.EventDecoder "name" 4 False (WlOutputName <$> (Arguments.getString)) (const []))
 decodeWlOutputEvent (Wire.Opcode 5) =
-  Just (Binding.EventDecoder "description" 4 False (WlOutputDescription <$> (Arguments.getString)))
+  Just (Binding.EventDecoder "description" 4 False (WlOutputDescription <$> (Arguments.getString)) (const []))
 decodeWlOutputEvent _ = Nothing
 
 -- | subpixel geometry information

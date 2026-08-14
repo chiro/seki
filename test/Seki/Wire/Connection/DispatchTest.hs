@@ -9,7 +9,9 @@ import Control.Monad (void)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
+import Data.Word (Word32)
 import Network.Socket (Family (AF_UNIX), Socket, SocketType (Stream), close, defaultProtocol, socketPair, withFdSocket)
+import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.Wayland qualified as Wayland
 import Seki.Wire.Arguments (ArgumentEncoder, getFd, putNewId, putObject, putString, putUint, runArgumentEncoder)
 import Seki.Wire.Binding (EventDecoder (..), Interface (..), RequestEncoder (..))
@@ -22,8 +24,10 @@ import Seki.Wire.Connection (
   closeConnection,
   dispatchNextEvent,
   eventRoute,
+  eventRouteWithServerObjects,
   newConnection,
   registerEventRoute,
+  serverObjectRoute,
   submitNewObjectRequest,
   submitNewObjectRequestWithRoute,
   submitRequest,
@@ -44,7 +48,7 @@ import Seki.Wire.Transport (
   sendMessage,
   withOwnedFd,
  )
-import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..), objectIdValue)
+import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..), mkObjectId, objectIdValue)
 import System.Posix.IO (closeFd, createPipe, dup)
 import System.Posix.IO.ByteString (fdRead, fdWrite)
 import System.Posix.Types (Fd (..))
@@ -66,6 +70,8 @@ tests =
     , testCase "drains coalesced events in stream order" testCoalescedEvents
     , testCase "transfers an incoming descriptor to its handler" testIncomingDescriptor
     , testCase "allows a handler to submit a follow-up request" testHandlerSubmission
+    , testCase "registers and routes a server-created object atomically" testServerObjectRoute
+    , testCase "rejects an unhandled server-created object" testMissingServerObjectRoute
     , testCase "reports clean EOF idempotently" testCleanEof
     , testCase "completes a mock registry synchronization" testRegistrySync
     ]
@@ -291,6 +297,79 @@ testHandlerSubmission =
     assertEqual "handler submission" (Right ()) =<< takeMVar submitted
     drainClientFrame peer 8
 
+testServerObjectRoute :: Assertion
+testServerObjectRoute =
+  withConnectionPair $ \connection display peer -> do
+    creationOrder <- newIORef ([] :: [String])
+    createdWindow <- newEmptyMVar
+    windowEvent <- newEmptyMVar
+    let windowRoute =
+          eventRoute
+            River.decodeRiverWindowV1Event
+            (\_ event -> modifyIORef' creationOrder (<> ["window"]) >> putMVar windowEvent event)
+        selectRoutes event = case event of
+          River.RiverWindowManagerV1Window newWindow ->
+            [ serverObjectRoute
+                newWindow
+                River.riverWindowV1Interface
+                windowRoute
+                (\window -> modifyIORef' creationOrder (<> ["created"]) >> putMVar createdWindow window)
+            ]
+          _ -> []
+        managerRoute =
+          eventRouteWithServerObjects
+            River.decodeRiverWindowManagerV1Event
+            selectRoutes
+            (\_ _ -> modifyIORef' creationOrder (<> ["manager"]))
+    manager <-
+      expectRight
+        =<< submitNewObjectRequestWithRoute
+          connection
+          Wayland.wlDisplayInterface
+          display
+          River.riverWindowManagerV1Interface
+          4
+          (RequestEncoder "create_manager" (Opcode 1) 1 False . putNewId . objectId)
+          managerRoute
+    drainClientFrame peer 12
+    serverId <- requireObjectId 0xff000001
+    sendEvent peer (objectId manager) (Opcode 6) (putNewId serverId) []
+    expectDispatched =<< dispatchNextEvent connection
+    window <- takeMVar createdWindow
+    assertEqual "registered server ID" serverId (objectId window)
+    assertEqual "creation precedes parent handler" ["created", "manager"] =<< readIORef creationOrder
+    sendEvent peer serverId (Opcode 17) (putString "stable-window") []
+    expectDispatched =<< dispatchNextEvent connection
+    assertEqual "typed child route" (River.RiverWindowV1Identifier "stable-window") =<< takeMVar windowEvent
+    assertEqual "child handler order" ["created", "manager", "window"] =<< readIORef creationOrder
+
+testMissingServerObjectRoute :: Assertion
+testMissingServerObjectRoute =
+  withConnectionPair $ \connection display peer -> do
+    manager <-
+      expectRight
+        =<< submitNewObjectRequestWithRoute
+          connection
+          Wayland.wlDisplayInterface
+          display
+          River.riverWindowManagerV1Interface
+          4
+          (RequestEncoder "create_manager" (Opcode 1) 1 False . putNewId . objectId)
+          (eventRoute River.decodeRiverWindowManagerV1Event (\_ _ -> pure ()))
+    drainClientFrame peer 12
+    serverId <- requireObjectId 0xff000002
+    sendEvent peer (objectId manager) (Opcode 6) (putNewId serverId) []
+    let expected = ConnectionServerObjectRoutesMismatch [serverId] []
+    assertEqual "missing server route" (Left expected) =<< dispatchNextEvent connection
+    assertEqual
+      "route failure is terminal"
+      (Left expected)
+      =<< submitRequest
+        connection
+        Wayland.wlDisplayInterface
+        display
+        (RequestEncoder "after_failure" (Opcode 0) 1 False (pure ()))
+
 testCleanEof :: Assertion
 testCleanEof =
   withConnectionPair $ \connection display peer -> do
@@ -366,7 +445,7 @@ descriptorTargetInterface :: Interface DescriptorTarget
 descriptorTargetInterface = Interface "descriptor_target" 1
 
 decodeDescriptorEvent :: Opcode -> Maybe (EventDecoder OwnedFd OwnedFd)
-decodeDescriptorEvent (Opcode 0) = Just (EventDecoder "descriptor" 1 False getFd)
+decodeDescriptorEvent (Opcode 0) = Just (EventDecoder "descriptor" 1 False getFd (const []))
 decodeDescriptorEvent _ = Nothing
 
 sendEvent :: Transport -> ObjectId -> Opcode -> ArgumentEncoder OwnedFd () -> [OwnedFd] -> IO ()
@@ -434,6 +513,9 @@ expectTransport = either (assertFailure . ("unexpected transport error: " <>) . 
 
 expectRight :: (Show errorValue) => Either errorValue value -> IO value
 expectRight = either (assertFailure . ("unexpected error: " <>) . show) pure
+
+requireObjectId :: Word32 -> IO ObjectId
+requireObjectId rawId = maybe (assertFailure ("invalid object ID: " <> show rawId)) pure (mkObjectId rawId)
 
 withPipe :: (Fd -> Fd -> IO value) -> IO value
 withPipe action = bracket createPipe closePipe (uncurry action)

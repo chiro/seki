@@ -10,6 +10,8 @@ module Seki.Wire.Connection.Event (
   preparedEventSince,
   preparedEventDestructor,
   preparedEventArguments,
+  preparedEventNewIds,
+  preparedEventVersion,
   EventPreparationError (..),
   prepareEvent,
   finalizeDecodedEvent,
@@ -43,6 +45,8 @@ data PreparedEvent interface fd event = PreparedEvent
   , preparedEventSince :: Word32
   , preparedEventDestructor :: Bool
   , preparedEventArguments :: ArgumentDecoder fd event
+  , preparedEventNewIds :: event -> [ObjectId]
+  , preparedEventVersion :: Word32
   , preparedEventObject :: Object interface
   }
 
@@ -87,6 +91,8 @@ prepareEvent interface sender decodeEvent frame table = do
       , preparedEventSince = eventSince decoder
       , preparedEventDestructor = eventDestructor decoder
       , preparedEventArguments = eventArguments decoder
+      , preparedEventNewIds = eventNewIds decoder
+      , preparedEventVersion = objectInfoVersion senderInfo
       , preparedEventObject = sender
       }
 

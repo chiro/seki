@@ -352,8 +352,19 @@ Allocation and registration of a request-created object happen atomically
 before the request is made visible to other Haskell code.
 
 For a server-created `new_id` event, the generated decoder supplies the new
-interface descriptor and version rule. The connection registers that object
-before dispatching any later frame.
+object's typed interface marker. The connection applies the parent-bounded
+version rule and registers that object before dispatching any later frame.
+
+Concretely, a statically typed event argument is decoded as `NewObject a`, an
+opaque token pairing the wire ID with the generated interface marker. The
+event route must turn every token into a `ServerObjectRoute` containing the
+matching interface descriptor, child event route, and creation callback. The
+connection rejects missing or extra route plans, registers all child objects
+at `min(parent version, child maximum version)`, and publishes their routes in
+the same state transition that finalizes the parent event. Creation callbacks
+then run before the parent event handler. This ensures that even a child event
+in the immediately following frame has a route, without exposing an unchecked
+object cast.
 
 The lifecycle model distinguishes client- and server-allocated ID namespaces.
 Client-created objects become inactive after either a destructor request or a

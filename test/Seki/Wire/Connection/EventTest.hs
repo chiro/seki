@@ -107,7 +107,7 @@ testUnsupportedVersion = do
   (table0, _) <- expectRight (newObjectTable defaultObjectLimit Wayland.wlDisplayInterface)
   (table1, object) <- expectRight (allocateClientObject versionedInterface 1 table0)
   let frame = RawFrame (objectId object) (Opcode 0) ByteString.empty
-      decoder _ = Just (EventDecoder "newer" 2 False (pure ()))
+      decoder _ = Just (EventDecoder "newer" 2 False (pure ()) (const []))
   expectLeft
     (UnsupportedEventVersion "versioned" "newer" 2 1)
     (prepareEvent versionedInterface object decoder frame table1)
@@ -116,7 +116,7 @@ testInvalidSince :: Assertion
 testInvalidSince = do
   (table, callback) <- callbackTable
   let frame = RawFrame (objectId callback) (Opcode 0) ByteString.empty
-      decoder _ = Just (EventDecoder "invalid" 0 False (pure ()))
+      decoder _ = Just (EventDecoder "invalid" 0 False (pure ()) (const []))
   expectLeft
     (InvalidEventSince "wl_callback" "invalid" 0)
     (prepareEvent Wayland.wlCallbackInterface callback decoder frame table)

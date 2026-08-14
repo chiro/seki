@@ -15,6 +15,9 @@ module Seki.Wire.Connection (
   ConnectionError (..),
   EventRoute,
   eventRoute,
+  ServerObjectRoute,
+  serverObjectRoute,
+  eventRouteWithServerObjects,
   wlDisplayEventRoute,
   DispatchedEvent (..),
   DispatchResult (..),
@@ -32,14 +35,15 @@ where
 
 import Control.Concurrent.MVar (MVar, modifyMVar, newMVar, readMVar, withMVar)
 import Control.Exception (IOException, SomeException, displayException, fromException, mask, mask_, throwIO, try)
-import Control.Monad (void)
+import Control.Monad (foldM, void)
 import Data.Bifunctor (first)
+import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Word (Word32)
 import Seki.Protocol.Wayland qualified as Wayland
-import Seki.Wire.Binding (EventDecoder, Interface, RequestEncoder)
+import Seki.Wire.Binding (EventDecoder, Interface (..), NewObject, RequestEncoder, newObjectId)
 import Seki.Wire.Connection.Buffer (
   ArgumentPoll (..),
   FramePoll (..),
@@ -62,8 +66,10 @@ import Seki.Wire.Connection.Event (
   preparedEventArguments,
   preparedEventInterface,
   preparedEventName,
+  preparedEventNewIds,
   preparedEventOpcode,
   preparedEventSender,
+  preparedEventVersion,
  )
 import Seki.Wire.Connection.ObjectTable (
   Object,
@@ -74,6 +80,7 @@ import Seki.Wire.Connection.ObjectTable (
   newObjectTable,
   objectId,
   objectInfoInterfaceName,
+  registerServerObject,
   validateObject,
  )
 import Seki.Wire.Connection.Request (
@@ -109,8 +116,23 @@ data EventRoute interface
   = forall event.
     EventRoute
       (Opcode -> Maybe (EventDecoder OwnedFd event))
-      (Interface interface -> PreparedEvent interface OwnedFd event -> event -> ObjectTable -> Either ConnectionError ObjectTable)
+      (Interface interface -> PreparedEvent interface OwnedFd event -> event -> ObjectTable -> Either ConnectionError EventTransition)
       (Object interface -> event -> IO ())
+
+-- | A typed route and creation callback for an object introduced by an event.
+data ServerObjectRoute
+  = forall interface.
+    ServerObjectRoute
+      (NewObject interface)
+      (Interface interface)
+      (EventRoute interface)
+      (Object interface -> IO ())
+
+data EventTransition = EventTransition
+  { transitionObjects :: ObjectTable
+  , transitionRoutes :: [RegisteredEventRoute]
+  , transitionCallbacks :: [IO ()]
+  }
 
 data RegisteredEventRoute
   = forall interface event.
@@ -118,7 +140,7 @@ data RegisteredEventRoute
       (Interface interface)
       (Object interface)
       (Opcode -> Maybe (EventDecoder OwnedFd event))
-      (Interface interface -> PreparedEvent interface OwnedFd event -> event -> ObjectTable -> Either ConnectionError ObjectTable)
+      (Interface interface -> PreparedEvent interface OwnedFd event -> event -> ObjectTable -> Either ConnectionError EventTransition)
       (Object interface -> event -> IO ())
 
 -- | Metadata for an event whose typed handler completed successfully.
@@ -144,6 +166,7 @@ data ConnectionError
   | ConnectionTransportError TransportError
   | ConnectionEventRouteMissing ObjectId
   | ConnectionEventRouteAlreadyRegistered ObjectId
+  | ConnectionServerObjectRoutesMismatch [ObjectId] [ObjectId]
   | ConnectionDisplayError ObjectId Word32 (Maybe Text) Text
   | ConnectionUnexpectedError String
   | ConnectionClosed
@@ -155,7 +178,41 @@ eventRoute ::
   (Object interface -> event -> IO ()) ->
   EventRoute interface
 eventRoute decoder =
-  EventRoute decoder (\interface prepared _ -> first ConnectionEventError . finalizeDecodedEvent interface prepared)
+  EventRoute decoder $ \interface prepared event table -> do
+    requireServerObjectRoutes prepared event []
+    nextTable <- first ConnectionEventError (finalizeDecodedEvent interface prepared table)
+    pure (EventTransition nextTable [] [])
+
+-- | Describe the route to install for one statically typed server-created ID.
+serverObjectRoute ::
+  NewObject interface ->
+  Interface interface ->
+  EventRoute interface ->
+  (Object interface -> IO ()) ->
+  ServerObjectRoute
+serverObjectRoute = ServerObjectRoute
+
+{- | Build a route that atomically registers and routes every @new_id@ carried
+by an event. Creation callbacks run before the parent event handler.
+-}
+eventRouteWithServerObjects ::
+  (Opcode -> Maybe (EventDecoder OwnedFd event)) ->
+  (event -> [ServerObjectRoute]) ->
+  (Object interface -> event -> IO ()) ->
+  EventRoute interface
+eventRouteWithServerObjects decoder selectRoutes =
+  EventRoute decoder finalize
+ where
+  finalize interface prepared event table = do
+    let selectedRoutes = selectRoutes event
+    requireServerObjectRoutes prepared event selectedRoutes
+    finalized <- first ConnectionEventError (finalizeDecodedEvent interface prepared table)
+    (nextTable, routes, callbacks) <-
+      foldM
+        (registerServerObjectRoute (preparedEventVersion prepared))
+        (finalized, [], [])
+        selectedRoutes
+    pure (EventTransition nextTable (reverse routes) (reverse callbacks))
 
 {- | Build the core display route, including automatic @delete_id@ handling.
 
@@ -169,7 +226,7 @@ wlDisplayEventRoute = EventRoute Wayland.decodeWlDisplayEvent finalizeDisplay
  where
   finalizeDisplay interface prepared event table = case event of
     Wayland.WlDisplayDeleteId deletedId ->
-      first ConnectionEventError (finalizeDeleteIdEvent interface prepared deletedId table)
+      makeTransition <$> first ConnectionEventError (finalizeDeleteIdEvent interface prepared deletedId table)
     Wayland.WlDisplayError referencedObject code message ->
       Left
         ( ConnectionDisplayError
@@ -178,6 +235,8 @@ wlDisplayEventRoute = EventRoute Wayland.decodeWlDisplayEvent finalizeDisplay
             (objectInfoInterfaceName <$> lookupObjectInfo referencedObject table)
             message
         )
+
+  makeTransition nextTable = EventTransition nextTable [] []
 
 {- | Attach connection state to an open transport and install object ID 1.
 
@@ -242,6 +301,40 @@ registerRoute interface object (EventRoute decoder finalize handler) =
 installRoute :: Map Word32 RegisteredEventRoute -> RegisteredEventRoute -> Map Word32 RegisteredEventRoute
 installRoute routes registered@(RegisteredEventRoute _ object _ _ _) =
   Map.insert (objectIdValue (objectId object)) registered routes
+
+requireServerObjectRoutes ::
+  PreparedEvent interface fd event ->
+  event ->
+  [ServerObjectRoute] ->
+  Either ConnectionError ()
+requireServerObjectRoutes prepared event routes
+  | expectedIds == selectedIds = Right ()
+  | otherwise = Left (ConnectionServerObjectRoutesMismatch expectedIds selectedIds)
+ where
+  expectedIds = normalizeObjectIds (preparedEventNewIds prepared event)
+  selectedIds = normalizeObjectIds (map serverObjectRouteId routes)
+
+normalizeObjectIds :: [ObjectId] -> [ObjectId]
+normalizeObjectIds = sortOn objectIdValue
+
+serverObjectRouteId :: ServerObjectRoute -> ObjectId
+serverObjectRouteId (ServerObjectRoute newObject _ _ _) = newObjectId newObject
+
+registerServerObjectRoute ::
+  Word32 ->
+  (ObjectTable, [RegisteredEventRoute], [IO ()]) ->
+  ServerObjectRoute ->
+  Either ConnectionError (ObjectTable, [RegisteredEventRoute], [IO ()])
+registerServerObjectRoute parentVersion (table, routes, callbacks) (ServerObjectRoute newObject interface route callback) = do
+  let childVersion = min parentVersion (interfaceMaximumVersion interface)
+  (nextTable, object) <-
+    first ConnectionObjectTableError $
+      registerServerObject (newObjectId newObject) interface childVersion table
+  pure
+    ( nextTable
+    , registerRoute interface object route : routes
+    , callback object : callbacks
+    )
 
 -- | Receive, decode, finalize, and handle the next event in stream order.
 dispatchNextEvent :: Connection -> IO (Either ConnectionError DispatchResult)
@@ -462,7 +555,7 @@ dispatchFrame connection frame =
                       case finalize interface prepared event (connectionObjects connectionData) of
                         Left errorValue ->
                           pure (ConnectionFailed errorValue, DispatchFailed errorValue)
-                        Right nextTable ->
+                        Right transition ->
                           let result =
                                 EventDispatched
                                   DispatchedEvent
@@ -473,10 +566,17 @@ dispatchFrame connection frame =
                                     }
                               nextData =
                                 connectionData
-                                  { connectionObjects = nextTable
-                                  , connectionEventRoutes = pruneRoutes nextTable (connectionEventRoutes connectionData)
+                                  { connectionObjects = transitionObjects transition
+                                  , connectionEventRoutes =
+                                      foldl
+                                        installRoute
+                                        (pruneRoutes (transitionObjects transition) (connectionEventRoutes connectionData))
+                                        (transitionRoutes transition)
                                   }
-                              invocation = EventInvocation result handler object event
+                              invocation =
+                                EventInvocation
+                                  result
+                                  (sequence_ (transitionCallbacks transition) >> handler object event)
                            in pure (ConnectionOpen nextData, DispatchInvoke invocation)
     case outcome of
       DispatchReturned result -> pure result
@@ -486,17 +586,11 @@ dispatchFrame connection frame =
         rethrowOrReturn exception
       DispatchInvoke invocation -> runEventInvocation connection invocation
 
-data EventInvocation
-  = forall interface event.
-    EventInvocation
-      DispatchResult
-      (Object interface -> event -> IO ())
-      (Object interface)
-      event
+data EventInvocation = EventInvocation DispatchResult (IO ())
 
 runEventInvocation :: Connection -> EventInvocation -> IO (Either ConnectionError DispatchResult)
-runEventInvocation connection (EventInvocation result handler object event) = do
-  attempted <- try @SomeException (handler object event)
+runEventInvocation connection (EventInvocation result action) = do
+  attempted <- try @SomeException action
   case attempted of
     Right () -> pure (Right result)
     Left exception -> do

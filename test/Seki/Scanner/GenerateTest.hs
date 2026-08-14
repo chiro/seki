@@ -148,6 +148,18 @@ testRiverBindings = do
     "typed manage_start event"
     (Done River.RiverWindowManagerV1ManageStart ByteString.empty [])
     (runCompleteArgumentDecoder (Binding.eventArguments managerDecoder) ByteString.empty ([] :: [()]))
+  serverId <- requireObjectId 0xff000001
+  serverPayload <- expectEncoded (putNewId serverId)
+  windowDecoder <- case River.decodeRiverWindowManagerV1Event (Opcode 6) of
+    Nothing -> assertFailure "missing window decoder"
+    Just decoder -> pure decoder
+  case runCompleteArgumentDecoder (Binding.eventArguments windowDecoder) serverPayload ([] :: [()]) of
+    Done event@(River.RiverWindowManagerV1Window newWindow) remaining remainingFds -> do
+      assertEqual "server-created window ID" serverId (Binding.newObjectId newWindow)
+      assertEqual "generated new-ID metadata" [serverId] (Binding.eventNewIds windowDecoder event)
+      assertEqual "consumed server-created payload" ByteString.empty remaining
+      assertEqual "consumed server-created descriptors" [] remainingFds
+    other -> assertFailure ("unexpected server-created window decode: " <> show other)
 
 generateWayland :: IO Text
 generateWayland = do

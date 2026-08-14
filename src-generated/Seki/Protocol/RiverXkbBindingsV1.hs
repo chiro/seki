@@ -266,11 +266,11 @@ data RiverXkbBindingV1Event fd
 
 decodeRiverXkbBindingV1Event :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (RiverXkbBindingV1Event fd))
 decodeRiverXkbBindingV1Event (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "pressed" 1 False (pure RiverXkbBindingV1Pressed))
+  Just (Binding.EventDecoder "pressed" 1 False (pure RiverXkbBindingV1Pressed) (const []))
 decodeRiverXkbBindingV1Event (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "released" 1 False (pure RiverXkbBindingV1Released))
+  Just (Binding.EventDecoder "released" 1 False (pure RiverXkbBindingV1Released) (const []))
 decodeRiverXkbBindingV1Event (Wire.Opcode 2) =
-  Just (Binding.EventDecoder "stop_repeat" 2 False (pure RiverXkbBindingV1StopRepeat))
+  Just (Binding.EventDecoder "stop_repeat" 2 False (pure RiverXkbBindingV1StopRepeat) (const []))
 decodeRiverXkbBindingV1Event _ = Nothing
 
 -- | xkb bindings seat
@@ -394,8 +394,8 @@ data RiverXkbBindingsSeatV1Event fd
 
 decodeRiverXkbBindingsSeatV1Event :: Wire.Opcode -> Maybe (Binding.EventDecoder fd (RiverXkbBindingsSeatV1Event fd))
 decodeRiverXkbBindingsSeatV1Event (Wire.Opcode 0) =
-  Just (Binding.EventDecoder "ate_unbound_key" 2 False (pure RiverXkbBindingsSeatV1AteUnboundKey))
+  Just (Binding.EventDecoder "ate_unbound_key" 2 False (pure RiverXkbBindingsSeatV1AteUnboundKey) (const []))
 decodeRiverXkbBindingsSeatV1Event (Wire.Opcode 1) =
-  Just (Binding.EventDecoder "modifiers_update" 3 False (RiverXkbBindingsSeatV1ModifiersUpdate <$> (Seki.Protocol.RiverWindowManagementV1.RiverSeatV1ModifiersFlags <$> Arguments.getUint) <*> (Seki.Protocol.RiverWindowManagementV1.RiverSeatV1ModifiersFlags <$> Arguments.getUint)))
+  Just (Binding.EventDecoder "modifiers_update" 3 False (RiverXkbBindingsSeatV1ModifiersUpdate <$> (Seki.Protocol.RiverWindowManagementV1.RiverSeatV1ModifiersFlags <$> Arguments.getUint) <*> (Seki.Protocol.RiverWindowManagementV1.RiverSeatV1ModifiersFlags <$> Arguments.getUint)) (const []))
 decodeRiverXkbBindingsSeatV1Event _ = Nothing
 
