@@ -14,8 +14,8 @@ import Data.Text (Text)
 import Data.Word (Word32)
 import Network.Socket (Family (AF_UNIX), Socket, SocketType (Stream), close, defaultProtocol, socketPair, withFdSocket)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Run.Full (prepareFullManagePlan, prepareFullRenderPlan)
 import Seki.Run.Inventory (
-  RiverInventory,
   RiverInventoryError (..),
   RiverRectangle (..),
   RiverSize (..),
@@ -24,7 +24,7 @@ import Seki.Run.Inventory (
   riverInventoryWindows,
   riverOutputRectangle,
  )
-import Seki.Run.Phase (ManageM, RenderM, proposeWindowDimensions, setNodePosition, setWindowDimensionBounds)
+import Seki.Run.Phase (setWindowDimensionBounds)
 import Seki.Run.River (RiverBootstrapError (..), RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (
   RiverRuntimeError (..),
@@ -81,6 +81,7 @@ tests =
     "river runtime"
     [ testCase "opens, binds, dispatches, and closes an owned runtime" testOwnedRuntime
     , testCase "executes phase plans before sequence completion" testPhasePlans
+    , testCase "Full placement hides windows without an output" testFullWithoutOutput
     , testCase "retires removed inventory objects and their nodes" testInventoryRemoval
     , testCase "does not finish a sequence after a phase-plan failure" testPhasePlanFailure
     , testCase "promotes inventory failures before user event delivery" testInventoryFailure
@@ -170,6 +171,7 @@ testPhasePlans =
       receiveExpectedRequest reader peer managerId (Opcode 2) (pure ())
       sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
       receiveExpectedRequest reader peer nodeId (Opcode 1) (putInt (-1920) >> putInt 30)
+      receiveExpectedRequest reader peer windowId (Opcode 5) (pure ())
       receiveExpectedRequest reader peer managerId (Opcode 4) (pure ())
       closeTransport peer
     let handlers =
@@ -192,6 +194,40 @@ testPhasePlans =
           (Just (RiverRectangle (-1920) 30 1280 720))
           (riverOutputRectangle output)
       _ -> assertFailure "unexpected runtime inventory"
+
+testFullWithoutOutput :: Assertion
+testFullWithoutOutput =
+  withRuntimePair $ \target peer -> do
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , callbackDoneFrame callbackId 95
+        ]
+      managerId <- receiveManagerBind reader peer
+      windowId <- requireObjectId 0xff000004
+      sendFrames
+        peer
+        [ encodedFrame managerId (Opcode 6) (putNewId windowId)
+        , encodedFrame managerId (Opcode 2) (pure ())
+        ]
+      _ <- receiveNewIdRequest reader peer windowId (Opcode 2)
+      receiveExpectedRequest reader peer managerId (Opcode 2) (pure ())
+      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+      receiveExpectedRequest reader peer windowId (Opcode 4) (pure ())
+      receiveExpectedRequest reader peer managerId (Opcode 4) (pure ())
+      closeTransport peer
+    let handlers =
+          RiverRuntimeHandlers
+            { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
+            , prepareRiverManagePlan = prepareFullManagePlan
+            , prepareRiverRenderPlan = prepareFullRenderPlan
+            }
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
+    assertEqual "headless Full lifecycle" (Right ()) =<< runRiverSession session
+    expectMockSuccess mockDone
 
 testInventoryRemoval :: Assertion
 testInventoryRemoval =
@@ -459,42 +495,6 @@ runtimeHandlers managerHandler =
     , prepareRiverManagePlan = \_ -> pure ()
     , prepareRiverRenderPlan = \_ -> pure ()
     }
-
-prepareFullManagePlan :: RiverInventory -> ManageM ()
-prepareFullManagePlan inventory =
-  case firstOutputRectangle inventory of
-    Nothing -> pure ()
-    Just rectangle ->
-      mapM_
-        ( \window ->
-            proposeWindowDimensions
-              (riverWindowObject window)
-              (riverRectangleWidth rectangle)
-              (riverRectangleHeight rectangle)
-        )
-        (riverInventoryWindows inventory)
-
-prepareFullRenderPlan :: RiverInventory -> RenderM ()
-prepareFullRenderPlan inventory =
-  case firstOutputRectangle inventory of
-    Nothing -> pure ()
-    Just rectangle ->
-      mapM_
-        ( \window -> case riverWindowNode window of
-            Nothing -> pure ()
-            Just node ->
-              setNodePosition
-                node
-                (riverRectangleX rectangle)
-                (riverRectangleY rectangle)
-        )
-        (riverInventoryWindows inventory)
-
-firstOutputRectangle :: RiverInventory -> Maybe RiverRectangle
-firstOutputRectangle inventory =
-  case [rectangle | output <- riverInventoryOutputs inventory, Just rectangle <- [riverOutputRectangle output]] of
-    [] -> Nothing
-    rectangle : _ -> Just rectangle
 
 protocolHandlers ::
   (River.RiverWindowManagerV1Event OwnedFd -> IO ()) ->

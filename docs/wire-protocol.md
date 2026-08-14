@@ -483,7 +483,7 @@ stale handle cannot modify a reused object ID. IDs are unique across all tracked
 river object kinds. The model validates positive dimensions, ordered non-negative
 dimension hints, once-only PID/output-name/identifier events, and river v4's
 printable-ASCII identifier rule. Complete output position and size state is
-exposed as a rectangle for the upcoming Full placement planner.
+exposed as a rectangle for placement planning.
 
 The runtime applies inventory transitions before delivering creation or event
 callbacks, and returns validation failures as structured runtime errors without
@@ -496,7 +496,21 @@ for diagnostics and tests. On closure/removal, callbacks run once and the
 runtime destroys the window's node before its window object, or the removed
 output object, so long-running sessions do not accumulate protocol objects.
 
-### 7.9 Fatal display errors
+### 7.9 M0 Full placement
+
+`Seki.Run.Full` turns an inventory snapshot into the minimal M0 manage and
+render plans. It deterministically selects the complete output with the lowest
+object ID, proposes that output's dimensions for every live window during
+manage, then positions and shows every initialized window during render.
+
+Outputs that have not reported both position and dimensions are not placement
+targets. If no complete output exists, the manage plan emits no requests and
+the render plan hides every window, preventing stale placement from remaining
+visible after output removal. A window missing its node is also kept hidden as
+a defensive fallback, although the owned runtime normally attaches every node
+before a sequence can observe the window.
+
+### 7.10 Fatal display errors
 
 `wl_display.error` is decoded even when the referenced object is already being
 destroyed. Its object ID, numeric error code, interface when known, and message
