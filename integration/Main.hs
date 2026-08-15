@@ -26,17 +26,19 @@ import Control.Exception (
   throwIO,
   try,
  )
-import Control.Monad (filterM, forM, forever, unless, void, when)
+import Control.Monad (filterM, forM, forM_, forever, unless, void, when)
 import Data.Aeson (FromJSON (parseJSON), eitherDecodeStrict', withObject, (.:))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString8
+import Data.Char (ord)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List (intercalate, minimumBy, nub, sort)
 import Data.Maybe (isJust)
 import Data.Ord (comparing)
 import Data.Text qualified as Text
-import Data.Word (Word16)
+import Data.Text.Encoding qualified as TextEncoding
+import Data.Word (Word16, Word32)
 import Foreign.C.Types (CInt (..), CULong (..))
 import Foreign.Marshal.Alloc (allocaBytes)
 import Foreign.Ptr (Ptr, castPtr)
@@ -88,10 +90,15 @@ import Seki.Run.Startup (readWaylandGlobalCatalog)
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
 import Seki.Wire.Connection.ObjectTable qualified as ObjectTable
+import Seki.Wire.Connection.Registry (
+  announcedGlobalInterface,
+  announcedGlobals,
+ )
 import Seki.Wire.Transport (ConnectionTarget (UnixSocketPath))
 import System.Directory (
   createDirectory,
   doesFileExist,
+  doesPathExist,
   findExecutable,
   removeFile,
  )
@@ -153,7 +160,8 @@ data BoundedLog = BoundedLog
   }
 
 data ManagedProcess = ManagedProcess
-  { managedProcessHandle :: ProcessHandle
+  { managedProcessStdin :: Maybe Handle
+  , managedProcessHandle :: ProcessHandle
   , managedProcessStdout :: BoundedLog
   , managedProcessStderr :: BoundedLog
   }
@@ -164,6 +172,11 @@ data ProbeSize = ProbeSize
   , probePixelWidth :: Int
   , probePixelHeight :: Int
   }
+  deriving (Eq, Show)
+
+data TerminalProbeMode
+  = PlainTerminalProbe
+  | ImeTerminalProbe
   deriving (Eq, Show)
 
 data RuntimeObservation = RuntimeObservation
@@ -210,7 +223,8 @@ main :: IO ()
 main = do
   getArgs >>= \case
     ["--river-init", socketPath] -> riverInitHelper socketPath
-    ["--terminal-probe", socketPath] -> terminalProbe socketPath
+    ["--terminal-probe", socketPath] -> terminalProbe PlainTerminalProbe socketPath
+    ["--ime-terminal-probe", socketPath] -> terminalProbe ImeTerminalProbe socketPath
     [] -> integrationMain
     arguments -> do
       hPutStrLn stderr ("seki-integration: unsupported arguments: " <> show arguments)
@@ -229,6 +243,7 @@ integrationMain = do
           [ ("native-wayland-full", runNativeWaylandFull)
           , ("two-output-full", runTwoOutputFull)
           , ("xwayland", runXwayland)
+          , ("fcitx5-mozc", runFcitx5Mozc)
           ]
           (uncurry (runScenario manifest))
       unless (and results) exitFailure
@@ -256,24 +271,35 @@ appendManifest (Just path) entry = appendFile path (entry <> "\n")
 
 runNativeWaylandFull :: IO ()
 runNativeWaylandFull =
-  withRiverFixture "native-wayland-full" 1 False ["river", "foot", "wtype"] runNativeAssertions
+  withRiverFixture "native-wayland-full" 1 False PlainTerminalProbe ["river", "foot", "wtype"] runNativeAssertions
 
 runTwoOutputFull :: IO ()
 runTwoOutputFull =
-  withRiverFixture "two-output-full" 2 False ["river", "foot", "wtype", "wlr-randr"] runTwoOutputAssertions
+  withRiverFixture "two-output-full" 2 False PlainTerminalProbe ["river", "foot", "wtype", "wlr-randr"] runTwoOutputAssertions
 
 runXwayland :: IO ()
 runXwayland =
-  withRiverFixture "xwayland" 1 True ["river", "foot", "wtype", "xterm", "xdotool"] runXwaylandAssertions
+  withRiverFixture "xwayland" 1 True PlainTerminalProbe ["river", "foot", "wtype", "xterm", "xdotool"] runXwaylandAssertions
+
+runFcitx5Mozc :: IO ()
+runFcitx5Mozc =
+  withRiverFixture
+    "fcitx5-mozc"
+    1
+    False
+    ImeTerminalProbe
+    ["river", "foot", "wtype", "dbus-daemon", "dbus-test-tool", "fcitx5", "fcitx5-remote", "gdbus"]
+    runFcitx5MozcAssertions
 
 withRiverFixture ::
   String ->
   Int ->
   Bool ->
+  TerminalProbeMode ->
   [String] ->
   (RiverFixture -> IO ()) ->
   IO ()
-withRiverFixture scenarioName outputCount enableXwayland prerequisites assertions = do
+withRiverFixture scenarioName outputCount enableXwayland probeMode prerequisites assertions = do
   requireExecutables prerequisites
   announce (scenarioName <> ": prerequisites available: " <> intercalate ", " prerequisites)
   executable <- getExecutablePath
@@ -313,7 +339,7 @@ withRiverFixture scenarioName outputCount enableXwayland prerequisites assertion
             handlers <-
               requireRight "build default runtime handlers" $
                 defaultRuntimeHandlers
-                  (integrationConfig executable footConfigPath probeSocketPath clientEnvironment terminalProcess)
+                  (integrationConfig probeMode executable footConfigPath probeSocketPath clientEnvironment terminalProcess)
             session <- do
               opened <-
                 timeout startupTimeoutMicroseconds $
@@ -356,13 +382,14 @@ withRiverFixture scenarioName outputCount enableXwayland prerequisites assertion
               `finally` cleanup
 
 integrationConfig ::
+  TerminalProbeMode ->
   FilePath ->
   FilePath ->
   FilePath ->
   [(String, String)] ->
   MVar ManagedProcess ->
   DefaultConfig
-integrationConfig executable footConfigPath probeSocketPath clientEnvironment terminalProcess =
+integrationConfig probeMode executable footConfigPath probeSocketPath clientEnvironment terminalProcess =
   DefaultConfig
     { defaultTerminalBinding = functionKeyBinding 0xffbe
     , defaultCloseBinding = functionKeyBinding 0xffbf
@@ -378,7 +405,7 @@ integrationConfig executable footConfigPath probeSocketPath clientEnvironment te
                 , "-a"
                 , "seki-integration-probe"
                 , executable
-                , "--terminal-probe"
+                , terminalProbeArgument probeMode
                 , probeSocketPath
                 ]
             )
@@ -392,6 +419,10 @@ integrationConfig executable footConfigPath probeSocketPath clientEnvironment te
       , riverKeyBindingModifiers = River.RiverSeatV1ModifiersFlags 0
       , riverKeyBindingLayoutOverride = Just 0
       }
+
+terminalProbeArgument :: TerminalProbeMode -> String
+terminalProbeArgument PlainTerminalProbe = "--terminal-probe"
+terminalProbeArgument ImeTerminalProbe = "--ime-terminal-probe"
 
 runNativeAssertions :: RiverFixture -> IO ()
 runNativeAssertions fixture = do
@@ -580,6 +611,292 @@ queryX11FocusedWindowName childEnvironment = do
 
 trimAscii :: String -> String
 trimAscii = reverse . dropWhile (`elem` [' ', '\t', '\r', '\n']) . reverse . dropWhile (`elem` [' ', '\t', '\r', '\n'])
+
+runFcitx5MozcAssertions :: RiverFixture -> IO ()
+runFcitx5MozcAssertions fixture = do
+  preflightImeProtocols fixture
+  preflightFootIme (fixtureClientEnvironment fixture)
+  imeBaseEnvironment <- prepareFcitxEnvironment (fixtureClientEnvironment fixture)
+  withPrivateDbus imeBaseEnvironment $ \imeEnvironment ->
+    bracket
+      (startManagedProcess "fcitx5" imeEnvironment (proc "fcitx5" ["-D", "-k"]))
+      stopManagedProcess
+      $ \fcitxProcess ->
+        (runAssertions imeEnvironment fcitxProcess `onException` printManagedProcessDiagnostics fcitxProcess)
+ where
+  runAssertions imeEnvironment fcitxProcess = do
+    waitForFcitxReady imeEnvironment fcitxProcess
+    announce "fcitx5-mozc: private D-Bus and fcitx5 ready"
+    bracket
+      ( startManagedProcess
+          "fcitx5 virtual-keyboard owner"
+          imeEnvironment
+          (proc "dbus-test-tool" ["echo", "--name=org.fcitx.Fcitx5.VirtualKeyboard", "--session"])
+      )
+      stopManagedProcess
+      $ \virtualKeyboardOwner -> do
+        bracket startKeyboardKeeper stopManagedProcess $ \keyboardKeeper ->
+          (runWithKeyboard imeEnvironment virtualKeyboardOwner keyboardKeeper `onException` printManagedProcessDiagnostics keyboardKeeper)
+  startKeyboardKeeper =
+    startManagedProcess
+      "wtype keyboard keeper"
+      (fixtureClientEnvironment fixture)
+      ((proc "wtype" ["-s", "100", "-"]){std_in = CreatePipe})
+  runWithKeyboard imeEnvironment virtualKeyboardOwner keyboardKeeper = do
+    runInputDriver (fixtureClientEnvironment fixture) ["-s", "200", "-k", "F1"]
+    requireManagedProcessRunning "persistent virtual keyboard" keyboardKeeper
+    footProcess <- waitForMVar "IME foot process" (fixtureTerminalProcess fixture)
+    probeHandle <- waitForProbe (fixtureProbeListener fixture) footProcess
+    flip finally (hClose probeHandle) $ do
+      _ <-
+        waitForObservation
+          "focused IME foot window"
+          (fixtureRiverSession fixture)
+          (fixtureSessionResult fixture)
+          managedFootObservation
+      _ <- runProcessCapture imeEnvironment "fcitx5-remote" ["-s", "mozc"]
+      _ <- runProcessCapture imeEnvironment "fcitx5-remote" ["-o"]
+      currentInputMethod <- runProcessCapture imeEnvironment "fcitx5-remote" ["-n"]
+      assertEqual "fcitx5 current input method" "mozc" (trimAscii (ByteString8.unpack currentInputMethod))
+      currentState <- runProcessCapture imeEnvironment "fcitx5-remote" []
+      assertEqual "fcitx5 active state" "2" (trimAscii (ByteString8.unpack currentState))
+      announce "fcitx5-mozc: Mozc selected and active for focused foot"
+      _ <-
+        runProcessCapture
+          imeEnvironment
+          "gdbus"
+          [ "call"
+          , "--session"
+          , "--dest"
+          , "org.fcitx.Fcitx5"
+          , "--object-path"
+          , "/virtualkeyboard"
+          , "--method"
+          , "org.fcitx.Fcitx.VirtualKeyboard1.ShowVirtualKeyboard"
+          ]
+      waitForFcitxVirtualKeyboardBackend imeEnvironment virtualKeyboardOwner
+      _ <-
+        runProcessCapture
+          imeEnvironment
+          "gdbus"
+          [ "call"
+          , "--session"
+          , "--dest"
+          , "org.fcitx.Fcitx5.VirtualKeyboardBackend"
+          , "--object-path"
+          , "/virtualkeyboard"
+          , "--method"
+          , "org.fcitx.Fcitx5.VirtualKeyboardBackend1.SetVirtualKeyboardFunctionMode"
+          , "1"
+          ]
+      sendFcitxVirtualKeyboardSequence
+        imeEnvironment
+        -- Fcitx expects XKB keycodes (the evdev code plus 8).
+        [ (ord 'n', 57)
+        , (ord 'i', 31)
+        , (ord 'h', 43)
+        , (ord 'o', 32)
+        , (ord 'n', 57)
+        , (ord 'g', 42)
+        , (ord 'o', 32)
+        , (ord ' ', 65)
+        , (0xff0d, 36)
+        ]
+      -- Mozc consumes the commit Return; wtype supplies only the line delimiter.
+      runInputDriver (fixtureClientEnvironment fixture) ["-s", "100", "-k", "Return"]
+      committed <- waitForProbeInput probeHandle
+      assertEqual "Mozc UTF-8 commit" "日本語" committed
+      announce "fcitx5-mozc: exact UTF-8 commit verified"
+      runInputDriver (fixtureClientEnvironment fixture) ["-s", "100", "-k", "F2"]
+      _ <-
+        waitForObservation
+          "IME foot removal from runtime inventory"
+          (fixtureRiverSession fixture)
+          (fixtureSessionResult fixture)
+          (null . riverInventoryWindows . observationInventory)
+      exitCode <- waitForProcessWithTimeout "IME foot exit" footProcess
+      announce ("fcitx5-mozc: close lifecycle verified; foot exited with " <> show exitCode)
+
+preflightImeProtocols :: RiverFixture -> IO ()
+preflightImeProtocols fixture = do
+  catalog <-
+    readWaylandGlobalCatalog (riverWaylandSession (fixtureRiverSession fixture))
+      >>= requireRight "read Wayland globals for IME preflight"
+  let advertised = map announcedGlobalInterface (announcedGlobals catalog)
+      required = ["zwp_input_method_manager_v2", "zwp_text_input_manager_v3"]
+      missing = filter (`notElem` advertised) required
+  unless (null missing) $
+    failIntegration
+      ( "missing required Wayland IME protocols: "
+          <> intercalate ", " (map Text.unpack missing)
+      )
+  announce "fcitx5-mozc: input-method-v2 and text-input-v3 advertised"
+
+preflightFootIme :: [(String, String)] -> IO ()
+preflightFootIme childEnvironment = do
+  version <- runProcessCapture childEnvironment "foot" ["--version"]
+  unless ("+ime" `elem` words (ByteString8.unpack version)) $
+    failIntegration
+      ( "foot was built without IME support; foot --version output: "
+          <> show version
+      )
+  announce "fcitx5-mozc: foot +ime build feature verified"
+
+sendFcitxVirtualKeyboardSequence :: [(String, String)] -> [(Int, Int)] -> IO ()
+sendFcitxVirtualKeyboardSequence childEnvironment keys =
+  forM_ keys $ \key -> do
+    sendKey False key
+    sendKey True key
+ where
+  sendKey isRelease (keysym, keycode) = do
+    eventTime <- monotonicMilliseconds
+    _ <-
+      runProcessCapture
+        childEnvironment
+        "gdbus"
+        [ "call"
+        , "--session"
+        , "--dest"
+        , "org.fcitx.Fcitx5.VirtualKeyboardBackend"
+        , "--object-path"
+        , "/virtualkeyboard"
+        , "--method"
+        , "org.fcitx.Fcitx5.VirtualKeyboardBackend1.ProcessKeyEvent"
+        , show keysym
+        , show keycode
+        , "0"
+        , if isRelease then "true" else "false"
+        , show eventTime
+        ]
+    pure ()
+
+monotonicMilliseconds :: IO Word32
+monotonicMilliseconds =
+  fromIntegral . (`div` 1000000) <$> getMonotonicTimeNSec
+
+waitForFcitxVirtualKeyboardBackend :: [(String, String)] -> ManagedProcess -> IO ()
+waitForFcitxVirtualKeyboardBackend childEnvironment ownerProcess = do
+  _ <-
+    waitUntil
+      "fcitx5 virtual-keyboard D-Bus backend"
+      startupTimeoutMicroseconds
+      observe
+      (\(exitCode, payload) -> exitCode == ExitSuccess && "ProcessKeyEvent" `ByteString8.isInfixOf` payload)
+  pure ()
+ where
+  observe = do
+    requireManagedProcessRunning "fcitx5 virtual-keyboard owner" ownerProcess
+    (exitCode, stdoutBytes, _) <-
+      runProcessOutcome
+        childEnvironment
+        "gdbus"
+        [ "introspect"
+        , "--session"
+        , "--dest"
+        , "org.fcitx.Fcitx5.VirtualKeyboardBackend"
+        , "--object-path"
+        , "/virtualkeyboard"
+        ]
+    pure (exitCode, stdoutBytes)
+
+prepareFcitxEnvironment :: [(String, String)] -> IO [(String, String)]
+prepareFcitxEnvironment childEnvironment = do
+  configDirectory <- requireEnvironmentValue "XDG_CONFIG_HOME" childEnvironment
+  let fcitxDirectory = configDirectory </> "fcitx5"
+      homeDirectory = configDirectory </> "ime-home"
+      dataDirectory = configDirectory </> "ime-data"
+      cacheDirectory = configDirectory </> "ime-cache"
+      stateDirectory = configDirectory </> "ime-state"
+  mapM_ createPrivateDirectory [fcitxDirectory, homeDirectory, dataDirectory, cacheDirectory, stateDirectory]
+  writeFcitxProfile (fcitxDirectory </> "profile")
+  pure $
+    replaceEnvironment
+      [ ("HOME", homeDirectory)
+      , ("XDG_DATA_HOME", dataDirectory)
+      , ("XDG_CACHE_HOME", cacheDirectory)
+      , ("XDG_STATE_HOME", stateDirectory)
+      , ("LANG", "ja_JP.UTF-8")
+      , ("LC_ALL", "ja_JP.UTF-8")
+      , ("XDG_SESSION_TYPE", "wayland")
+      , ("XDG_CURRENT_DESKTOP", "river")
+      , ("GTK_IM_MODULE", "fcitx")
+      , ("QT_IM_MODULE", "fcitx")
+      , ("XMODIFIERS", "@im=fcitx")
+      , ("SDL_IM_MODULE", "fcitx")
+      ]
+      childEnvironment
+
+withPrivateDbus :: [(String, String)] -> ([(String, String)] -> IO value) -> IO value
+withPrivateDbus childEnvironment action = do
+  runtimeDirectory <- requireEnvironmentValue "XDG_RUNTIME_DIR" childEnvironment
+  let busPath = runtimeDirectory </> "dbus-session-bus"
+      busAddress = "unix:path=" <> busPath
+      dbusEnvironment = replaceEnvironment [("DBUS_SESSION_BUS_ADDRESS", busAddress)] childEnvironment
+  bracket
+    ( startManagedProcess
+        "dbus-daemon"
+        childEnvironment
+        (proc "dbus-daemon" ["--session", "--nofork", "--nopidfile", "--address=" <> busAddress])
+    )
+    stopManagedProcess
+    $ \dbusProcess -> do
+      _ <-
+        waitUntil
+          "private D-Bus socket"
+          startupTimeoutMicroseconds
+          (privateDbusReady busPath dbusProcess)
+          id
+      action dbusEnvironment `onException` printManagedProcessDiagnostics dbusProcess
+
+privateDbusReady :: FilePath -> ManagedProcess -> IO Bool
+privateDbusReady busPath dbusProcess =
+  getProcessExitCode (managedProcessHandle dbusProcess) >>= \case
+    Nothing -> doesPathExist busPath
+    Just exitCode -> do
+      logs <- renderManagedProcessLogs dbusProcess
+      failIntegration ("private dbus-daemon exited with " <> show exitCode <> logs)
+
+waitForFcitxReady :: [(String, String)] -> ManagedProcess -> IO ()
+waitForFcitxReady childEnvironment fcitxProcess = do
+  _ <-
+    waitUntil
+      "fcitx5 D-Bus service"
+      startupTimeoutMicroseconds
+      checkReady
+      (== ExitSuccess)
+  pure ()
+ where
+  checkReady =
+    getProcessExitCode (managedProcessHandle fcitxProcess) >>= \case
+      Nothing -> do
+        (exitCode, _, _) <- runProcessOutcome childEnvironment "fcitx5-remote" ["--check"]
+        pure exitCode
+      Just exitCode -> do
+        logs <- renderManagedProcessLogs fcitxProcess
+        failIntegration ("fcitx5 exited during startup with " <> show exitCode <> logs)
+
+writeFcitxProfile :: FilePath -> IO ()
+writeFcitxProfile path =
+  writeFile
+    path
+    ( unlines
+        [ "[Groups/0]"
+        , "Name=Default"
+        , "Default Layout=us"
+        , "DefaultIM=mozc"
+        , ""
+        , "[Groups/0/Items/0]"
+        , "Name=keyboard-us"
+        , "Layout="
+        , ""
+        , "[Groups/0/Items/1]"
+        , "Name=mozc"
+        , "Layout="
+        , ""
+        , "[GroupOrder]"
+        , "0=Default"
+        ]
+    )
 
 readyObservation :: Int -> RuntimeObservation -> Bool
 readyObservation outputCount observation =
@@ -772,10 +1089,12 @@ riverInitHelper socketPath = do
     SocketByteString.sendAll connection . ByteString8.pack $
       "WAYLAND_DISPLAY=" <> waylandDisplay <> "\nDISPLAY=" <> maybe "" id xDisplay <> "\n"
 
-terminalProbe :: FilePath -> IO ()
-terminalProbe socketPath = do
+terminalProbe :: TerminalProbeMode -> FilePath -> IO ()
+terminalProbe probeMode socketPath = do
   hSetBinaryMode stdin True
   hSetBuffering stdout NoBuffering
+  when (probeMode == ImeTerminalProbe) $
+    ByteString.hPut stdout "\ESC[?737769h"
   bracket (socket AF_UNIX Stream defaultProtocol) close $ \connection -> do
     connect connection (SockAddrUnix socketPath)
     sendLock <- newMVar ()
@@ -874,7 +1193,11 @@ waitForProbeInput handle =
   nextInput = do
     line <- hGetLine handle
     case wordsPrefix "INPUT " line of
-      Just value -> pure value
+      Just value ->
+        Text.unpack
+          <$> requireRight
+            "decode terminal probe input as UTF-8"
+            (TextEncoding.decodeUtf8' (ByteString8.pack value))
       Nothing
         | isJust (wordsPrefix "SIZE " line) -> nextInput
         | otherwise -> failIntegration ("invalid terminal probe report: " <> show line)
@@ -951,6 +1274,21 @@ runProcessCapture childEnvironment command arguments =
         failIntegration (command <> " failed with " <> show exitCode <> logs)
       pure stdoutBytes
 
+runProcessOutcome ::
+  [(String, String)] ->
+  FilePath ->
+  [String] ->
+  IO (ExitCode, ByteString, ByteString)
+runProcessOutcome childEnvironment command arguments =
+  bracket
+    (startManagedProcess command childEnvironment (proc command arguments))
+    stopManagedProcess
+    $ \process -> do
+      exitCode <- waitForProcessWithTimeout (command <> " exit") process
+      stdoutBytes <- waitForBoundedLog (managedProcessStdout process)
+      stderrBytes <- waitForBoundedLog (managedProcessStderr process)
+      pure (exitCode, stdoutBytes, stderrBytes)
+
 runInputDriver :: [(String, String)] -> [String] -> IO ()
 runInputDriver childEnvironment arguments =
   bracket
@@ -964,7 +1302,7 @@ runInputDriver childEnvironment arguments =
 
 startManagedProcess :: String -> [(String, String)] -> CreateProcess -> IO ManagedProcess
 startManagedProcess label childEnvironment specification = do
-  (_, stdoutPipe, stderrPipe, processHandle) <-
+  (stdinPipe, stdoutPipe, stderrPipe, processHandle) <-
     createProcess
       specification
         { env = Just childEnvironment
@@ -976,7 +1314,7 @@ startManagedProcess label childEnvironment specification = do
     (Just processStdout, Just processStderr) -> do
       stdoutLog <- startBoundedLog (label <> " stdout") processStdout
       stderrLog <- startBoundedLog (label <> " stderr") processStderr
-      pure (ManagedProcess processHandle stdoutLog stderrLog)
+      pure (ManagedProcess stdinPipe processHandle stdoutLog stderrLog)
         `onException` stopProcessGroup processHandle
     _ -> do
       stopProcessGroup processHandle
@@ -1022,13 +1360,23 @@ printManagedProcessDiagnostics process = do
   logs <- renderManagedProcessLogs process
   hPutStrLn stderr ("client status: " <> show status <> logs)
 
+requireManagedProcessRunning :: String -> ManagedProcess -> IO ()
+requireManagedProcessRunning label process =
+  getProcessExitCode (managedProcessHandle process) >>= \case
+    Nothing -> pure ()
+    Just exitCode -> do
+      logs <- renderManagedProcessLogs process
+      failIntegration (label <> " exited with " <> show exitCode <> logs)
+
 renderBoundedLog :: BoundedLog -> IO String
 renderBoundedLog logCapture = do
   bytes <- readIORef (boundedLogBytes logCapture)
   pure ("--- " <> boundedLogLabel logCapture <> " (last 64 KiB) ---\n" <> ByteString8.unpack bytes)
 
 stopManagedProcess :: ManagedProcess -> IO ()
-stopManagedProcess = stopProcessGroup . managedProcessHandle
+stopManagedProcess process = do
+  mapM_ (\handle -> hClose handle `catch` \(_ :: IOException) -> pure ()) (managedProcessStdin process)
+  stopProcessGroup (managedProcessHandle process)
 
 stopProcessGroup :: ProcessHandle -> IO ()
 stopProcessGroup processHandle = do
@@ -1131,6 +1479,18 @@ fixtureEnvironment ::
 fixtureEnvironment hostEnvironment runtimeDirectory configDirectory =
   filter (not . isIsolatedVariable . fst) hostEnvironment
     <> [("XDG_RUNTIME_DIR", runtimeDirectory), ("XDG_CONFIG_HOME", configDirectory)]
+
+replaceEnvironment :: [(String, String)] -> [(String, String)] -> [(String, String)]
+replaceEnvironment replacements environment =
+  filter ((`notElem` replacementNames) . fst) environment <> replacements
+ where
+  replacementNames = map fst replacements
+
+requireEnvironmentValue :: String -> [(String, String)] -> IO String
+requireEnvironmentValue name environment =
+  case lookup name environment of
+    Nothing -> failIntegration ("required child environment variable missing: " <> name)
+    Just value -> pure value
 
 isIsolatedVariable :: String -> Bool
 isIsolatedVariable name =

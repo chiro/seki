@@ -1,11 +1,12 @@
 # Real-river Integration Testing Design
 
-Status: **implementation in progress — I0 through I2 complete** / Last updated: 2026-08-15
+Status: **implementation in progress — I0 through I3 complete** / Last updated: 2026-08-15
 
 Implementation status: the opt-in component, native Wayland Full lifecycle,
-two-output Full selection, and isolated Xwayland lifecycle from I0–I2 are
-implemented and pass repeatedly against river 0.4.6, foot 1.27.0, wlr-randr
-0.5.0, Xwayland 24.1.13, and Xterm 410. I3–I4 remain pending.
+two-output Full selection, isolated Xwayland lifecycle, and isolated fcitx5/Mozc
+commit scenario from I0–I3 are implemented and pass against river 0.4.6, foot
+1.27.0, wlr-randr 0.5.0, Xwayland 24.1.13, Xterm 410, fcitx5 5.1.21, and
+fcitx5-mozc 3.34.6239.2. I4 remains pending.
 
 This note defines how seki's end-to-end tests will run against a real river
 compositor without taking over the developer's desktop. It turns the manual M0
@@ -87,6 +88,7 @@ Each scenario owns a fresh fixture:
 seki-integration
 ├── private XDG_RUNTIME_DIR and XDG_CONFIG_HOME
 ├── private D-Bus session (IME scenario only)
+│   └── fcitx5 + Mozc and the virtual-keyboard D-Bus backend
 ├── river: WLR_BACKENDS=headless, one or two headless outputs
 │   └── Xwayland (X11 scenario only)
 ├── seki runtime connected to river's private Wayland socket
@@ -219,9 +221,9 @@ unreliable.
 
 ### 6.3 fcitx5 and Mozc commit
 
-Prerequisites: the core prerequisites, `dbus-daemon`, `fcitx5`,
-`fcitx5-remote`, the Mozc engine and dictionaries, and a foot build with IME
-support.
+Prerequisites: the core prerequisites, `dbus-daemon`, `dbus-test-tool`,
+`gdbus`, `fcitx5`, `fcitx5-remote`, the Mozc engine and dictionaries, and a
+foot build with IME support.
 
 This scenario starts a private D-Bus session and fcitx5 with fresh configuration
 under the fixture directory. Before launching clients, the harness requires
@@ -232,10 +234,18 @@ specific prerequisite error rather than a commit timeout.
 
 The generated foot configuration fixes the settings needed by the probe, and
 the probe emits foot's IME-enable DECSET sequence before reading input instead
-of inheriting an installed release's current default. The harness waits for
-focus, selects Mozc through the private D-Bus session, and injects the romaji
-conversion sequence with `wtype`. The probe must receive a line whose UTF-8
-contents are exactly:
+of inheriting an installed release's current default. The harness starts a
+persistent `wtype` virtual keyboard before foot so the nested seat has keyboard
+capability, waits for focus, and selects Mozc through the private D-Bus session.
+
+River does not route `wtype`'s virtual-keyboard events through the input-method
+keyboard grab. The harness therefore owns fcitx5's virtual-keyboard UI name on
+the private bus, enables its full-function backend, and sends the romaji,
+conversion, and commit key events through `ProcessKeyEvent`. These events target
+foot's focused native Wayland input context and Mozc commits through
+`input-method-v2`/`text-input-v3`. A final `wtype` Return supplies only the line
+delimiter after the conversion has committed. The probe must receive a line
+whose decoded UTF-8 contents are exactly:
 
 ```text
 日本語
@@ -354,10 +364,8 @@ scenario was disabled or skipped.
 
 ## 10. Initial Feasibility Result
 
-On 2026-08-15, a local probe started river 0.4.6 with
-`WLR_BACKENDS=headless` and one headless output in a private
-`XDG_RUNTIME_DIR`. seki connected to the resulting socket, and `wtype` triggered
-the terminal binding, launching foot without interacting with the host Wayland
-session. River also started its Xwayland instance. This validates the proposed
-isolation topology; the harness and assertions described above remain to be
-implemented.
+On 2026-08-15, the implemented I0–I3 suite passed locally against river 0.4.6.
+It exercised one- and two-output headless fixtures, native and Xwayland client
+lifecycles, and an exact Mozc `日本語` commit over river's Wayland input-method
+protocols. Every scenario used private runtime/configuration directories; the
+IME scenario additionally used a private D-Bus session and fresh fcitx5 state.
