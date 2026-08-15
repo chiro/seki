@@ -1,0 +1,5 @@
+enabled=true
+native-wayland-full=passed
+two-output-full=passed
+xwayland=passed
+fcitx5-mozc=passed

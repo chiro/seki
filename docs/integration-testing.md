@@ -1,12 +1,13 @@
 # Real-river Integration Testing Design
 
-Status: **implementation in progress — I0 through I3 complete** / Last updated: 2026-08-15
+Status: **implemented — I0 through I4 complete** / Last updated: 2026-08-16
 
 Implementation status: the opt-in component, native Wayland Full lifecycle,
 two-output Full selection, isolated Xwayland lifecycle, and isolated fcitx5/Mozc
 commit scenario from I0–I3 are implemented and pass against river 0.4.6, foot
 1.27.0, wlr-randr 0.5.0, Xwayland 24.1.13, Xterm 410, fcitx5 5.1.21, and
-fcitx5-mozc 3.34.6239.2. I4 remains pending.
+fcitx5-mozc 3.34.6239.2. I4 adds the pinned Nix CI environment, separate
+enabled integration job, exact release-manifest gate, and bounded artifacts.
 
 This note defines how seki's end-to-end tests will run against a real river
 compositor without taking over the developer's desktop. It turns the manual M0
@@ -76,6 +77,11 @@ fcitx5-mozc=passed
 The CI job must require this file and assert the complete set of scenario names
 and `passed` results. Exit status alone is insufficient because the deliberately
 disabled suite also exits successfully.
+
+`ci/run-integration.sh` is the release entry point. It builds the integration
+component, runs it with both opt-in variables, and byte-compares the result with
+`ci/expected-integration-manifest.txt`. It fails when the manifest is missing,
+partial, reordered, contains a failed scenario, or contains an unknown scenario.
 
 The normal test suite remains `seki-test`; no real compositor is started by
 that component.
@@ -306,13 +312,22 @@ record the exact versions of river, foot, Xwayland, fcitx5, Mozc, and the output
 configuration tool.
 
 The headless backend still needs a renderer. Local runs may use the system Mesa
-stack. Before enabling the suite in hosted CI, validate either a software
-renderer or the CI runner's render device and record that choice in the CI
-configuration; renderer fallback must not be guessed silently by the test.
+stack. Hosted CI explicitly sets `WLR_RENDERER=pixman`; it does not guess at or
+depend on a runner render device.
 
 The test has no network dependency. All protocol definitions and generated
 bindings come from the repository, and all external programs must already be
 installed.
+
+The hosted jobs install Nix through a commit-pinned action and evaluate
+`flake.nix`. Its runtime nixpkgs input is pinned to
+`0e251e24a4f24e036a084b6b4b2d2491af4167f4`, while its toolchain input is pinned
+to `50ab793786d9de88ee30ec4e4c24fb4236fc2674`, the revision supplying the exact
+GHC 9.6.6 required by `cabal.project`. Together they pin the compiler and the
+complete river/foot/Xwayland/wtype/wlr-randr/fcitx5/Mozc tool closure. The
+integration job evaluates `integrationVersions.x86_64-linux` into its artifact
+before the test, so every run records both revisions, the resolved component
+versions, and the `pixman` renderer choice.
 
 ## 9. Implementation Sequence
 
@@ -361,6 +376,12 @@ access to the host compositor.
 
 Acceptance: CI cannot report the integration job as passed when a required
 scenario was disabled or skipped.
+
+Implemented by `.github/workflows/ci.yml`, `flake.nix`, and
+`ci/run-integration.sh`. Unit/mock tests and the enabled real-river suite run as
+separate jobs. The integration job always uploads its version record, exact
+manifest, and a log truncated to the last 1 MiB; the release script gates
+success on both the suite exit status and byte-for-byte complete manifest.
 
 ## 10. Initial Feasibility Result
 

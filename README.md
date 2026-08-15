@@ -60,6 +60,16 @@ cabal build all
 cabal test all
 ```
 
+Run the release integration check, including exact manifest validation, from
+the pinned Nix environment with:
+
+```console
+nix develop --no-write-lock-file .#ci --command ci/run-integration.sh
+```
+
+The command writes a bounded log and completion manifest beneath
+`artifacts/integration/`.
+
 Format and lint Haskell sources with:
 
 ```console
