@@ -25,6 +25,7 @@ extra-source-files:
 extra-doc-files:
   README.md
   THIRD_PARTY_NOTICES.md
+  docs/integration-testing.md
   docs/spec.md
   docs/wire-protocol.md
 
