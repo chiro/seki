@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PatternSynonyms #-}
 
 module Seki.Run.InventoryTest (tests) where
 
@@ -47,11 +46,25 @@ tests =
   testGroup
     "river inventory"
     [ testCase "accumulates persistent window state and removes closed windows" testWindowLifecycle
+    , testCase "accepts an unspecified maximum dimensions hint" testUnspecifiedMaximumDimensions
     , testCase "tracks the deterministic active window" testActiveWindow
     , testCase "accumulates output geometry and removes outputs" testOutputLifecycle
     , testCase "rejects duplicate IDs and stale object handles" testObjectIdentity
     , testCase "rejects invalid and repeated protocol state" testInvalidState
     ]
+
+testUnspecifiedMaximumDimensions :: Assertion
+testUnspecifiedMaximumDimensions = do
+  window <- makeServerObject River.riverWindowV1Interface 0xff000002 False
+  inventory0 <- expectRight (addRiverWindow window emptyRiverInventory)
+  inventory1 <-
+    expectRight
+      (applyRiverWindowEvent window (River.RiverWindowV1DimensionsHint 6 42 0 0) inventory0)
+  state <- maybe (assertFailure "window missing") pure (lookupRiverWindow (objectId window) inventory1)
+  assertEqual
+    "dimensions hint"
+    (Just (RiverDimensionsHint 6 42 0 0))
+    (riverWindowDimensionsHint state)
 
 testWindowLifecycle :: Assertion
 testWindowLifecycle = do

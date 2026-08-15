@@ -1,6 +1,6 @@
 # seki Specification — A river Window Manager in Haskell
 
-Status: **v1.0 design draft — ready for M0 validation** / Last updated: 2026-08-08
+Status: **v1.0 design accepted — M0 validated** / Last updated: 2026-08-15
 Legend: [DECIDED] = current design decision, [RESOLVED] = checked against the protocol or other available evidence
 
 ---

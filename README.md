@@ -2,7 +2,7 @@
 
 A tiling window manager for [river](https://codeberg.org/river/river), written in Haskell — with xmonad's semantics and xmonad's configuration model.
 
-> **Status: M0 implementation, ready for nested-river validation.**
+> **Status: M0 validated; M1 core development is next.**
 > This is not ready for daily use; see [Roadmap](#roadmap).
 
 ## What this is

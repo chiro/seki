@@ -1,6 +1,6 @@
 # Wayland Wire Protocol and Binding Generator Design
 
-Status: **accepted — W4 river bootstrap** / Last updated: 2026-08-14
+Status: **accepted — M0 validated** / Last updated: 2026-08-15
 
 This document refines the wire-protocol portion of `docs/spec.md` into an
 implementation design for M0. It covers the Wayland client transport, message
@@ -904,9 +904,15 @@ state without protocol errors.
 Acceptance: a terminal can be launched, focused, resized to the output, used,
 and closed on nested river. Every sequence is finished within river's deadline.
 
-Japanese input and Xwayland validation remain final M0 acceptance items from the
-general specification; they exercise the compositor/client path rather than
+Japanese input and Xwayland validation were the final M0 acceptance items from
+the general specification; they exercise the compositor/client path rather than
 adding wire-layer features.
+
+Validated on 2026-08-15 with river 0.4.6, foot 1.27.0, fcitx5 5.1.21 with
+Mozc, and Xwayland 24.1.13. The default bindings launched and closed foot, Full
+placement filled the nested output, an Xterm client was managed through
+Xwayland, and fcitx5 committed `日本語` into foot. The mock integration suite and
+the live session completed without a seki protocol or sequence error.
 
 ## 14. Open Review Items
 

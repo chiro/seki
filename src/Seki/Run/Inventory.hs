@@ -1,5 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
-
 -- | Pure live inventory of river windows and outputs.
 module Seki.Run.Inventory (
   RiverInventory,
@@ -336,8 +334,8 @@ validDimensionsHint (RiverDimensionsHint minimumWidth minimumHeight maximumWidth
     && minimumHeight >= 0
     && maximumWidth >= 0
     && maximumHeight >= 0
-    && minimumWidth <= maximumWidth
-    && minimumHeight <= maximumHeight
+    && (maximumWidth == 0 || minimumWidth <= maximumWidth)
+    && (maximumHeight == 0 || minimumHeight <= maximumHeight)
 
 validWindowIdentifier :: Text -> Bool
 validWindowIdentifier value =
