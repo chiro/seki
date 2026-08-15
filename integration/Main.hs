@@ -172,6 +172,16 @@ data RuntimeObservation = RuntimeObservation
   }
   deriving (Eq, Show)
 
+data RiverFixture = RiverFixture
+  { fixtureClientEnvironment :: [(String, String)]
+  , fixtureExecutable :: FilePath
+  , fixtureProbeListener :: Socket
+  , fixtureProbeSocketPath :: FilePath
+  , fixtureTerminalProcess :: MVar ManagedProcess
+  , fixtureRiverSession :: RiverSession
+  , fixtureSessionResult :: MVar (Either RiverRuntimeError ())
+  }
+
 newtype WlrRandrOutput = WlrRandrOutput
   { wlrRandrOutputName :: String
   }
@@ -218,6 +228,7 @@ integrationMain = do
         forM
           [ ("native-wayland-full", runNativeWaylandFull)
           , ("two-output-full", runTwoOutputFull)
+          , ("xwayland", runXwayland)
           ]
           (uncurry (runScenario manifest))
       unless (and results) exitFailure
@@ -245,19 +256,24 @@ appendManifest (Just path) entry = appendFile path (entry <> "\n")
 
 runNativeWaylandFull :: IO ()
 runNativeWaylandFull =
-  withRiverFixture "native-wayland-full" 1 ["river", "foot", "wtype"] runNativeAssertions
+  withRiverFixture "native-wayland-full" 1 False ["river", "foot", "wtype"] runNativeAssertions
 
 runTwoOutputFull :: IO ()
 runTwoOutputFull =
-  withRiverFixture "two-output-full" 2 ["river", "foot", "wtype", "wlr-randr"] runTwoOutputAssertions
+  withRiverFixture "two-output-full" 2 False ["river", "foot", "wtype", "wlr-randr"] runTwoOutputAssertions
+
+runXwayland :: IO ()
+runXwayland =
+  withRiverFixture "xwayland" 1 True ["river", "foot", "wtype", "xterm", "xdotool"] runXwaylandAssertions
 
 withRiverFixture ::
   String ->
   Int ->
+  Bool ->
   [String] ->
-  ([(String, String)] -> Socket -> MVar ManagedProcess -> RiverSession -> MVar (Either RiverRuntimeError ()) -> IO ()) ->
+  (RiverFixture -> IO ()) ->
   IO ()
-withRiverFixture scenarioName outputCount prerequisites assertions = do
+withRiverFixture scenarioName outputCount enableXwayland prerequisites assertions = do
   requireExecutables prerequisites
   announce (scenarioName <> ": prerequisites available: " <> intercalate ", " prerequisites)
   executable <- getExecutablePath
@@ -276,14 +292,21 @@ withRiverFixture scenarioName outputCount prerequisites assertions = do
             <> [("WLR_BACKENDS", "headless"), ("WLR_HEADLESS_OUTPUTS", show outputCount)]
     withUnixListener initSocketPath $ \initListener ->
       bracket
-        (startManagedProcess "river" riverEnvironment (proc "river" ["-no-xwayland", "-c", riverInitCommand executable initSocketPath]))
+        (startManagedProcess "river" riverEnvironment (proc "river" (riverArguments enableXwayland executable initSocketPath)))
         stopManagedProcess
         $ \riverProcess -> do
           displayNames <- waitForRiverInit initListener riverProcess
           announce (scenarioName <> ": river ready on " <> nestedWaylandDisplay displayNames)
+          xDisplay <-
+            if enableXwayland
+              then case nestedXDisplay displayNames of
+                Nothing -> failIntegration "Xwayland unavailable: river init did not report DISPLAY"
+                Just value -> pure (Just value)
+              else pure Nothing
           let clientEnvironment =
                 fixtureEnvironment hostEnvironment runtimeDirectory configDirectory
                   <> [("WAYLAND_DISPLAY", nestedWaylandDisplay displayNames)]
+                  <> maybe [] (\value -> [("DISPLAY", value)]) xDisplay
               waylandSocketPath = runtimeDirectory </> nestedWaylandDisplay displayNames
           withUnixListener probeSocketPath $ \probeListener -> do
             terminalProcess <- newEmptyMVar
@@ -314,7 +337,16 @@ withRiverFixture scenarioName outputCount prerequisites assertions = do
                   waitForRuntimeExit sessionResult
                   tryReadMVar terminalProcess >>= mapM_ stopManagedProcess
                 scenario = do
-                  assertions clientEnvironment probeListener terminalProcess session sessionResult
+                  assertions
+                    RiverFixture
+                      { fixtureClientEnvironment = clientEnvironment
+                      , fixtureExecutable = executable
+                      , fixtureProbeListener = probeListener
+                      , fixtureProbeSocketPath = probeSocketPath
+                      , fixtureTerminalProcess = terminalProcess
+                      , fixtureRiverSession = session
+                      , fixtureSessionResult = sessionResult
+                      }
                   stopManagedProcess riverProcess
                   runtimeResult <- requireRuntimeExit sessionResult
                   assertEqual "river runtime shutdown" (Right ()) runtimeResult
@@ -361,14 +393,8 @@ integrationConfig executable footConfigPath probeSocketPath clientEnvironment te
       , riverKeyBindingLayoutOverride = Just 0
       }
 
-runNativeAssertions ::
-  [(String, String)] ->
-  Socket ->
-  MVar ManagedProcess ->
-  RiverSession ->
-  MVar (Either RiverRuntimeError ()) ->
-  IO ()
-runNativeAssertions clientEnvironment probeListener terminalProcess session sessionResult = do
+runNativeAssertions :: RiverFixture -> IO ()
+runNativeAssertions fixture = do
   initial <-
     waitForObservation
       "one complete output, one seat, and initialized bindings"
@@ -409,15 +435,15 @@ runNativeAssertions clientEnvironment probeListener terminalProcess session sess
         (null . riverInventoryWindows . observationInventory)
     exitCode <- waitForProcessWithTimeout "foot exit" footProcess
     announce ("native-wayland-full: close lifecycle verified; foot exited with " <> show exitCode)
+ where
+  clientEnvironment = fixtureClientEnvironment fixture
+  probeListener = fixtureProbeListener fixture
+  terminalProcess = fixtureTerminalProcess fixture
+  session = fixtureRiverSession fixture
+  sessionResult = fixtureSessionResult fixture
 
-runTwoOutputAssertions ::
-  [(String, String)] ->
-  Socket ->
-  MVar ManagedProcess ->
-  RiverSession ->
-  MVar (Either RiverRuntimeError ()) ->
-  IO ()
-runTwoOutputAssertions clientEnvironment probeListener terminalProcess session sessionResult = do
+runTwoOutputAssertions :: RiverFixture -> IO ()
+runTwoOutputAssertions fixture = do
   _ <-
     waitForObservation
       "two initial outputs, one seat, and initialized bindings"
@@ -460,6 +486,100 @@ runTwoOutputAssertions clientEnvironment probeListener terminalProcess session s
         (null . riverInventoryWindows . observationInventory)
     exitCode <- waitForProcessWithTimeout "two-output foot exit" footProcess
     announce ("two-output-full: foot closed with " <> show exitCode)
+ where
+  clientEnvironment = fixtureClientEnvironment fixture
+  probeListener = fixtureProbeListener fixture
+  terminalProcess = fixtureTerminalProcess fixture
+  session = fixtureRiverSession fixture
+  sessionResult = fixtureSessionResult fixture
+
+runXwaylandAssertions :: RiverFixture -> IO ()
+runXwaylandAssertions fixture =
+  bracket startXterm stopManagedProcess $ \xtermProcess ->
+    (runAssertions xtermProcess `onException` printManagedProcessDiagnostics xtermProcess)
+ where
+  clientEnvironment = fixtureClientEnvironment fixture
+  session = fixtureRiverSession fixture
+  sessionResult = fixtureSessionResult fixture
+  startXterm =
+    startManagedProcess
+      "xterm"
+      clientEnvironment
+      ( proc
+          "xterm"
+          [ "-title"
+          , "seki-integration-xterm"
+          , "-fa"
+          , "monospace"
+          , "-fs"
+          , "12"
+          , "-e"
+          , fixtureExecutable fixture
+          , "--terminal-probe"
+          , fixtureProbeSocketPath fixture
+          ]
+      )
+  runAssertions xtermProcess = do
+    probeHandle <- waitForProbe (fixtureProbeListener fixture) xtermProcess
+    flip finally (hClose probeHandle) $ do
+      managed <-
+        waitForObservation
+          "managed Xwayland xterm"
+          session
+          sessionResult
+          managedXtermObservation
+      xtermWindow <- requireSingleWindow "managed Xwayland xterm" managed
+      case riverWindowAppId xtermWindow of
+        Just appId
+          | appId `elem` map Text.pack ["xterm", "XTerm"] -> pure ()
+        appId -> failIntegration ("unexpected Xterm river app ID: " <> show appId)
+      announce ("xwayland: managed app ID " <> show (riverWindowAppId xtermWindow))
+      focusedName <-
+        waitUntil
+          "Xwayland input focus"
+          assertionTimeoutMicroseconds
+          (queryX11FocusedWindowName clientEnvironment)
+          (== "seki-integration-xterm")
+      assertEqual "focused Xwayland window title" "seki-integration-xterm" focusedName
+      announce "xwayland: X input focus verified"
+      runInputDriver clientEnvironment ["-s", "100", "-k", "F2"]
+      _ <-
+        waitForObservation
+          "Xterm removal from runtime inventory"
+          session
+          sessionResult
+          (null . riverInventoryWindows . observationInventory)
+      exitCode <- waitForProcessWithTimeout "xterm exit" xtermProcess
+      announce ("xwayland: close lifecycle verified; xterm exited with " <> show exitCode)
+
+managedXtermObservation :: RuntimeObservation -> Bool
+managedXtermObservation observation =
+  case riverInventoryWindows (observationInventory observation) of
+    [window] ->
+      isJust (riverWindowAppId window)
+        && isJust (riverWindowDimensions window)
+        && isJust (riverWindowNode window)
+    _ -> False
+
+requireSingleWindow :: String -> RuntimeObservation -> IO RiverWindowState
+requireSingleWindow phase observation =
+  case riverInventoryWindows (observationInventory observation) of
+    [window] -> pure window
+    windows -> failIntegration (phase <> " expected one window, got: " <> show windows)
+
+queryX11FocusedWindowName :: [(String, String)] -> IO String
+queryX11FocusedWindowName childEnvironment = do
+  payload <-
+    runProcessCapture
+      childEnvironment
+      "xdotool"
+      ["getwindowfocus", "getwindowname"]
+  case reverse (filter (not . null) (map trimAscii (lines (ByteString8.unpack payload)))) of
+    focusedName : _ -> pure focusedName
+    [] -> failIntegration ("xdotool returned no focused window name: " <> show payload)
+
+trimAscii :: String -> String
+trimAscii = reverse . dropWhile (`elem` [' ', '\t', '\r', '\n']) . reverse . dropWhile (`elem` [' ', '\t', '\r', '\n'])
 
 readyObservation :: Int -> RuntimeObservation -> Bool
 readyObservation outputCount observation =
@@ -896,6 +1016,12 @@ renderManagedProcessLogs process = do
   stderrLog <- renderBoundedLog (managedProcessStderr process)
   pure ("\n" <> stdoutLog <> "\n" <> stderrLog)
 
+printManagedProcessDiagnostics :: ManagedProcess -> IO ()
+printManagedProcessDiagnostics process = do
+  status <- getProcessExitCode (managedProcessHandle process)
+  logs <- renderManagedProcessLogs process
+  hPutStrLn stderr ("client status: " <> show status <> logs)
+
 renderBoundedLog :: BoundedLog -> IO String
 renderBoundedLog logCapture = do
   bytes <- readIORef (boundedLogBytes logCapture)
@@ -1051,6 +1177,11 @@ withUnixListener path = bracket open close
 riverInitCommand :: FilePath -> FilePath -> String
 riverInitCommand executable socketPath =
   shellQuote executable <> " --river-init " <> shellQuote socketPath
+
+riverArguments :: Bool -> FilePath -> FilePath -> [String]
+riverArguments enableXwayland executable socketPath =
+  (if enableXwayland then [] else ["-no-xwayland"])
+    <> ["-c", riverInitCommand executable socketPath]
 
 shellQuote :: String -> String
 shellQuote value = "'" <> concatMap quoteCharacter value <> "'"

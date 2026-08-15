@@ -1,10 +1,11 @@
 # Real-river Integration Testing Design
 
-Status: **implementation in progress — I0 and I1 complete** / Last updated: 2026-08-15
+Status: **implementation in progress — I0 through I2 complete** / Last updated: 2026-08-15
 
 Implementation status: the opt-in component, native Wayland Full lifecycle,
-and two-output Full selection from I0–I1 are implemented and pass repeatedly
-against river 0.4.6, foot 1.27.0, and wlr-randr 0.5.0. I2–I4 remain pending.
+two-output Full selection, and isolated Xwayland lifecycle from I0–I2 are
+implemented and pass repeatedly against river 0.4.6, foot 1.27.0, wlr-randr
+0.5.0, Xwayland 24.1.13, and Xterm 410. I3–I4 remain pending.
 
 This note defines how seki's end-to-end tests will run against a real river
 compositor without taking over the developer's desktop. It turns the manual M0
@@ -199,7 +200,9 @@ it reliably.
 
 ### 6.2 Xwayland window lifecycle
 
-Prerequisites: the core prerequisites, `xterm`, and a river build with Xwayland.
+Prerequisites: the core prerequisites, `xterm`, `xdotool`, and a river build
+with Xwayland. `xdotool` is used only to query the private X server's input
+focus; keybinding injection still goes through `wtype` and river.
 
 The river-init helper must report `DISPLAY`; otherwise the scenario fails with
 an explicit Xwayland-unavailable message. The harness starts xterm with the
