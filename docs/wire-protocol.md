@@ -856,8 +856,8 @@ partial-write and error tests cannot be produced reliably by the kernel.
 The real-river component is disabled by default with an explicit message. Once
 explicitly enabled, an unavailable river or required client is a failure rather
 than a skip. Real-river tests are never replaced by the mock compositor in
-release validation. The isolated headless harness and its acceptance scenarios
-are specified in [Real-river Integration Testing Design](integration-testing.md).
+release validation. The isolated headless harness and its scenarios are
+documented in [Real-river Integration Tests](integration-testing.md).
 
 ## 13. Implementation Sequence
 

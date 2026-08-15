@@ -112,7 +112,8 @@ Non-goals for seki itself: animations and window effects, multi-seat (v1 is sing
 
 - [`docs/spec.md`](docs/spec.md) — the design specification: pure core, protocol mapping, configuration model, risks, and milestones.
 - [`docs/wire-protocol.md`](docs/wire-protocol.md) — the M0 design for the native Wayland transport and XML binding generator.
-- [`docs/integration-testing.md`](docs/integration-testing.md) — the design for isolated, automated testing against headless river, Xwayland, and fcitx5.
+- [`docs/integration-testing.md`](docs/integration-testing.md) — how to run,
+  diagnose, and maintain the isolated real-river integration suite.
 
 ## Related projects
 
