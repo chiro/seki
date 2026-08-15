@@ -509,8 +509,12 @@ output object, so long-running sessions do not accumulate protocol objects.
 
 `Seki.Run.Full` turns an inventory snapshot into the minimal M0 manage and
 render plans. It deterministically selects the complete output with the lowest
-object ID, proposes that output's dimensions for every live window during
-manage, then positions and shows every initialized window during render.
+object ID, requests server-side decoration, marks every window edge as tiled,
+and proposes that output's dimensions for every live window during manage. It
+then positions and shows every initialized window during render. The SSD and
+tiled requests prevent clients such as terminals from reserving CSD titlebar
+space or treating the Full placement as a floating resize and quantizing the
+configured window dimensions to their cell grid.
 
 Outputs that have not reported both position and dimensions are not placement
 targets. If no complete output exists, the manage plan emits no requests and

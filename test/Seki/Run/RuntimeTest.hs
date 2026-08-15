@@ -185,6 +185,8 @@ testPhasePlans =
         , encodedFrame managerId (Opcode 2) (pure ())
         ]
       nodeId <- receiveNewIdRequest reader peer windowId (Opcode 2)
+      receiveExpectedRequest reader peer windowId (Opcode 7) (pure ())
+      receiveExpectedRequest reader peer windowId (Opcode 9) (putUint 15)
       receiveExpectedRequest reader peer windowId (Opcode 3) (putInt 1280 >> putInt 720)
       receiveExpectedRequest reader peer managerId (Opcode 2) (pure ())
       sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
@@ -291,6 +293,8 @@ testDefaultPolicy =
       receiveExpectedRequest reader peer terminalId (Opcode 2) (pure ())
       receiveExpectedRequest reader peer closeId (Opcode 1) (putUint 0)
       receiveExpectedRequest reader peer closeId (Opcode 2) (pure ())
+      receiveExpectedRequest reader peer windowId (Opcode 7) (pure ())
+      receiveExpectedRequest reader peer windowId (Opcode 9) (putUint 15)
       receiveExpectedRequest reader peer windowId (Opcode 3) (putInt 1600 >> putInt 900)
       receiveExpectedRequest reader peer seatId (Opcode 1) (putObject windowId)
       receiveSequenceCompletion reader peer managerId (Opcode 2)
@@ -304,6 +308,8 @@ testDefaultPolicy =
         , encodedFrame managerId (Opcode 2) (pure ())
         ]
       receiveExpectedRequest reader peer windowId (Opcode 1) (pure ())
+      receiveExpectedRequest reader peer windowId (Opcode 7) (pure ())
+      receiveExpectedRequest reader peer windowId (Opcode 9) (putUint 15)
       receiveExpectedRequest reader peer windowId (Opcode 3) (putInt 1600 >> putInt 900)
       receiveExpectedRequest reader peer seatId (Opcode 1) (putObject windowId)
       receiveSequenceCompletion reader peer managerId (Opcode 2)

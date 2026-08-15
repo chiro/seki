@@ -6,6 +6,7 @@ module Seki.Run.Full (
 )
 where
 
+import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Inventory (
   RiverInventory,
   RiverRectangle (..),
@@ -20,7 +21,9 @@ import Seki.Run.Phase (
   hideWindow,
   proposeWindowDimensions,
   setNodePosition,
+  setWindowTiled,
   showWindow,
+  useWindowSsd,
  )
 
 {- | Select the complete output with the lowest object ID.
@@ -37,14 +40,18 @@ selectFullOutputRectangle inventory =
     [] -> Nothing
     rectangle : _ -> Just rectangle
 
--- | Propose the selected output's dimensions for every live window.
+-- | Request SSD, mark every edge tiled, and propose the output dimensions.
 prepareFullManagePlan :: RiverInventory -> ManageM ()
 prepareFullManagePlan inventory =
   case selectFullOutputRectangle inventory of
     Nothing -> pure ()
     Just rectangle ->
       mapM_
-        ( \window ->
+        ( \window -> do
+            useWindowSsd (riverWindowObject window)
+            setWindowTiled
+              (riverWindowObject window)
+              (River.RiverWindowV1EdgesFlags 15)
             proposeWindowDimensions
               (riverWindowObject window)
               (riverRectangleWidth rectangle)
