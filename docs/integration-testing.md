@@ -1,10 +1,10 @@
 # Real-river Integration Testing Design
 
-Status: **implementation in progress — I0 complete** / Last updated: 2026-08-15
+Status: **implementation in progress — I0 and I1 complete** / Last updated: 2026-08-15
 
-Implementation status: the opt-in component and native Wayland Full lifecycle
-from I0 are implemented and pass repeatedly against river 0.4.6 and foot
-1.27.0. I1–I4 remain pending.
+Implementation status: the opt-in component, native Wayland Full lifecycle,
+and two-output Full selection from I0–I1 are implemented and pass repeatedly
+against river 0.4.6, foot 1.27.0, and wlr-randr 0.5.0. I2–I4 remain pending.
 
 This note defines how seki's end-to-end tests will run against a real river
 compositor without taking over the developer's desktop. It turns the manual M0

@@ -1,5 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Main (main) where
 
@@ -25,13 +26,15 @@ import Control.Exception (
   throwIO,
   try,
  )
-import Control.Monad (filterM, forever, unless, void, when)
+import Control.Monad (filterM, forM, forever, unless, void, when)
+import Data.Aeson (FromJSON (parseJSON), eitherDecodeStrict', withObject, (.:))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
-import Data.List (intercalate)
+import Data.List (intercalate, minimumBy, nub, sort)
 import Data.Maybe (isJust)
+import Data.Ord (comparing)
 import Data.Text qualified as Text
 import Data.Word (Word16)
 import Foreign.C.Types (CInt (..), CULong (..))
@@ -84,6 +87,7 @@ import Seki.Run.Runtime (
 import Seki.Run.Startup (readWaylandGlobalCatalog)
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
+import Seki.Wire.Connection.ObjectTable qualified as ObjectTable
 import Seki.Wire.Transport (ConnectionTarget (UnixSocketPath))
 import System.Directory (
   createDirectory,
@@ -145,6 +149,7 @@ data DisplayNames = DisplayNames
 data BoundedLog = BoundedLog
   { boundedLogLabel :: String
   , boundedLogBytes :: IORef ByteString
+  , boundedLogFinished :: MVar ()
   }
 
 data ManagedProcess = ManagedProcess
@@ -166,6 +171,15 @@ data RuntimeObservation = RuntimeObservation
   , observationSeats :: [RiverSeatBindings]
   }
   deriving (Eq, Show)
+
+newtype WlrRandrOutput = WlrRandrOutput
+  { wlrRandrOutputName :: String
+  }
+  deriving (Eq, Show)
+
+instance FromJSON WlrRandrOutput where
+  parseJSON = withObject "wlr-randr output" $ \objectValue ->
+    WlrRandrOutput <$> objectValue .: "name"
 
 logLimit :: Int
 logLimit = 64 * 1024
@@ -200,15 +214,26 @@ integrationMain = do
     else do
       manifest <- lookupEnv "SEKI_INTEGRATION_MANIFEST"
       initializeManifest manifest
-      result <- try @SomeException runNativeWaylandFull
-      case result of
-        Right () -> do
-          appendManifest manifest "native-wayland-full=passed"
-          putStrLn "seki-integration: native-wayland-full passed"
-        Left errorValue -> do
-          appendManifest manifest "native-wayland-full=failed"
-          hPutStrLn stderr ("seki-integration: native-wayland-full failed: " <> displayException errorValue)
-          exitFailure
+      results <-
+        forM
+          [ ("native-wayland-full", runNativeWaylandFull)
+          , ("two-output-full", runTwoOutputFull)
+          ]
+          (uncurry (runScenario manifest))
+      unless (and results) exitFailure
+
+runScenario :: Maybe FilePath -> String -> IO () -> IO Bool
+runScenario manifest scenarioName action = do
+  result <- try @SomeException action
+  case result of
+    Right () -> do
+      appendManifest manifest (scenarioName <> "=passed")
+      putStrLn ("seki-integration: " <> scenarioName <> " passed")
+      pure True
+    Left errorValue -> do
+      appendManifest manifest (scenarioName <> "=failed")
+      hPutStrLn stderr ("seki-integration: " <> scenarioName <> " failed: " <> displayException errorValue)
+      pure False
 
 initializeManifest :: Maybe FilePath -> IO ()
 initializeManifest Nothing = pure ()
@@ -219,9 +244,22 @@ appendManifest Nothing _ = pure ()
 appendManifest (Just path) entry = appendFile path (entry <> "\n")
 
 runNativeWaylandFull :: IO ()
-runNativeWaylandFull = do
-  requireExecutables ["river", "foot", "wtype"]
-  announce "native-wayland-full: prerequisites available"
+runNativeWaylandFull =
+  withRiverFixture "native-wayland-full" 1 ["river", "foot", "wtype"] runNativeAssertions
+
+runTwoOutputFull :: IO ()
+runTwoOutputFull =
+  withRiverFixture "two-output-full" 2 ["river", "foot", "wtype", "wlr-randr"] runTwoOutputAssertions
+
+withRiverFixture ::
+  String ->
+  Int ->
+  [String] ->
+  ([(String, String)] -> Socket -> MVar ManagedProcess -> RiverSession -> MVar (Either RiverRuntimeError ()) -> IO ()) ->
+  IO ()
+withRiverFixture scenarioName outputCount prerequisites assertions = do
+  requireExecutables prerequisites
+  announce (scenarioName <> ": prerequisites available: " <> intercalate ", " prerequisites)
   executable <- getExecutablePath
   hostEnvironment <- getEnvironment
   withSystemTempDirectory "seki-integration" $ \fixtureDirectory -> do
@@ -235,14 +273,14 @@ runNativeWaylandFull = do
     writeFootConfig footConfigPath
     let riverEnvironment =
           fixtureEnvironment hostEnvironment runtimeDirectory configDirectory
-            <> [("WLR_BACKENDS", "headless"), ("WLR_HEADLESS_OUTPUTS", "1")]
+            <> [("WLR_BACKENDS", "headless"), ("WLR_HEADLESS_OUTPUTS", show outputCount)]
     withUnixListener initSocketPath $ \initListener ->
       bracket
         (startManagedProcess "river" riverEnvironment (proc "river" ["-no-xwayland", "-c", riverInitCommand executable initSocketPath]))
         stopManagedProcess
         $ \riverProcess -> do
           displayNames <- waitForRiverInit initListener riverProcess
-          announce ("native-wayland-full: river ready on " <> nestedWaylandDisplay displayNames)
+          announce (scenarioName <> ": river ready on " <> nestedWaylandDisplay displayNames)
           let clientEnvironment =
                 fixtureEnvironment hostEnvironment runtimeDirectory configDirectory
                   <> [("WAYLAND_DISPLAY", nestedWaylandDisplay displayNames)]
@@ -268,7 +306,7 @@ runNativeWaylandFull = do
                   logs <- renderManagedProcessLogs riverProcess
                   failIntegration ("open private river session failed: " <> show errorValue <> logs)
                 Just (Right value) -> pure value
-            announce "native-wayland-full: seki runtime connected"
+            announce (scenarioName <> ": seki runtime connected")
             sessionResult <- newEmptyMVar
             void . forkIO $ runRiverSession session >>= putMVar sessionResult
             let cleanup = do
@@ -276,11 +314,11 @@ runNativeWaylandFull = do
                   waitForRuntimeExit sessionResult
                   tryReadMVar terminalProcess >>= mapM_ stopManagedProcess
                 scenario = do
-                  runNativeAssertions clientEnvironment probeListener terminalProcess session sessionResult
+                  assertions clientEnvironment probeListener terminalProcess session sessionResult
                   stopManagedProcess riverProcess
                   runtimeResult <- requireRuntimeExit sessionResult
                   assertEqual "river runtime shutdown" (Right ()) runtimeResult
-                  announce "native-wayland-full: river shutdown observed as clean EOF"
+                  announce (scenarioName <> ": river shutdown observed as clean EOF")
             scenario
               `onException` printFixtureDiagnostics fixtureDirectory riverProcess terminalProcess session sessionResult
               `finally` cleanup
@@ -336,7 +374,7 @@ runNativeAssertions clientEnvironment probeListener terminalProcess session sess
       "one complete output, one seat, and initialized bindings"
       session
       sessionResult
-      readyObservation
+      (readyObservation 1)
   assertEqual "usable output count" 1 (length (completeOutputs (observationInventory initial)))
   announce "native-wayland-full: output, seat, and bindings ready"
   announce "native-wayland-full: injecting terminal binding"
@@ -372,14 +410,107 @@ runNativeAssertions clientEnvironment probeListener terminalProcess session sess
     exitCode <- waitForProcessWithTimeout "foot exit" footProcess
     announce ("native-wayland-full: close lifecycle verified; foot exited with " <> show exitCode)
 
-readyObservation :: RuntimeObservation -> Bool
-readyObservation observation =
-  length (completeOutputs (observationInventory observation)) == 1
+runTwoOutputAssertions ::
+  [(String, String)] ->
+  Socket ->
+  MVar ManagedProcess ->
+  RiverSession ->
+  MVar (Either RiverRuntimeError ()) ->
+  IO ()
+runTwoOutputAssertions clientEnvironment probeListener terminalProcess session sessionResult = do
+  _ <-
+    waitForObservation
+      "two initial outputs, one seat, and initialized bindings"
+      session
+      sessionResult
+      (readyObservation 2)
+  announce "two-output-full: both headless outputs discovered"
+  outputNames <- queryWlrRandrOutputNames clientEnvironment
+  configureTwoOutputs clientEnvironment outputNames
+  configured <-
+    waitForObservation
+      "two distinct configured output rectangles"
+      session
+      sessionResult
+      configuredTwoOutputObservation
+  selectedRectangle <- assertLowestObjectOutputSelected configured
+  announce ("two-output-full: selected lowest-ID rectangle " <> show selectedRectangle)
+  runInputDriver clientEnvironment ["-s", "100", "-k", "F1"]
+  footProcess <- waitForMVar "two-output foot process launch" terminalProcess
+  probeHandle <- waitForProbe probeListener footProcess
+  flip finally (hClose probeHandle) $ do
+    _ <-
+      waitForObservation
+        "foot dimensions on selected output"
+        session
+        sessionResult
+        (windowMatchesRectangle selectedRectangle)
+    let selectedSize =
+          RiverSize
+            (riverRectangleWidth selectedRectangle)
+            (riverRectangleHeight selectedRectangle)
+    waitForTerminalExtent selectedSize probeHandle
+    announce "two-output-full: foot dimensions match the lowest-ID output"
+    runInputDriver clientEnvironment ["-s", "100", "-k", "F2"]
+    _ <-
+      waitForObservation
+        "two-output foot removal from runtime inventory"
+        session
+        sessionResult
+        (null . riverInventoryWindows . observationInventory)
+    exitCode <- waitForProcessWithTimeout "two-output foot exit" footProcess
+    announce ("two-output-full: foot closed with " <> show exitCode)
+
+readyObservation :: Int -> RuntimeObservation -> Bool
+readyObservation outputCount observation =
+  length (completeOutputs (observationInventory observation)) == outputCount
     && case observationSeats observation of
       [seat] ->
         length (riverSeatKeyBindings seat) == 2
           && all riverKeyBindingInitialized (riverSeatKeyBindings seat)
       _ -> False
+
+configuredTwoOutputObservation :: RuntimeObservation -> Bool
+configuredTwoOutputObservation observation =
+  readyObservation 2 observation
+    && rectanglesMatch expectedTwoOutputRectangles (completeOutputRectangles (observationInventory observation))
+
+expectedTwoOutputRectangles :: [RiverRectangle]
+expectedTwoOutputRectangles =
+  [ RiverRectangle 0 0 1024 768
+  , RiverRectangle 1024 0 1600 900
+  ]
+
+completeOutputRectangles :: RiverInventory -> [RiverRectangle]
+completeOutputRectangles inventory =
+  [rectangle | output <- completeOutputs inventory, Just rectangle <- [riverOutputRectangle output]]
+
+rectanglesMatch :: [RiverRectangle] -> [RiverRectangle] -> Bool
+rectanglesMatch expected actual =
+  length expected == length actual
+    && all (`elem` actual) expected
+
+assertLowestObjectOutputSelected :: RuntimeObservation -> IO RiverRectangle
+assertLowestObjectOutputSelected observation = do
+  let inventory = observationInventory observation
+      outputs = completeOutputs inventory
+      lowestOutput = minimumBy (comparing (ObjectTable.objectId . riverOutputObject)) outputs
+      expected = riverOutputRectangle lowestOutput
+      actual = selectFullOutputRectangle inventory
+  assertEqual "lowest-object-ID Full selection" expected actual
+  case actual of
+    Nothing -> failIntegration "two configured outputs produced no Full selection"
+    Just rectangle -> pure rectangle
+
+windowMatchesRectangle :: RiverRectangle -> RuntimeObservation -> Bool
+windowMatchesRectangle rectangle observation =
+  case riverInventoryWindows (observationInventory observation) of
+    [window] ->
+      riverWindowAppId window == Just (Text.pack "seki-integration-probe")
+        && riverWindowDimensions window
+          == Just (RiverSize (riverRectangleWidth rectangle) (riverRectangleHeight rectangle))
+        && isJust (riverWindowNode window)
+    _ -> False
 
 managedFootObservation :: RuntimeObservation -> Bool
 managedFootObservation observation =
@@ -639,6 +770,67 @@ parseInt label value =
     [(parsed, "")] -> pure parsed
     _ -> failIntegration ("invalid " <> label <> " in terminal size report: " <> show value)
 
+queryWlrRandrOutputNames :: [(String, String)] -> IO [String]
+queryWlrRandrOutputNames childEnvironment = do
+  payload <- runProcessCapture childEnvironment "wlr-randr" ["--json"]
+  outputs <-
+    case eitherDecodeStrict' payload of
+      Left errorValue ->
+        failIntegration
+          ( "could not decode wlr-randr --json output: "
+              <> errorValue
+              <> "; payload="
+              <> show payload
+          )
+      Right value -> pure value
+  let names = sort (map wlrRandrOutputName outputs)
+  unless (length names == 2 && length (nub names) == 2 && all (not . null) names) $
+    failIntegration ("expected two uniquely named wlr-randr outputs, got: " <> show names)
+  pure names
+
+configureTwoOutputs :: [(String, String)] -> [String] -> IO ()
+configureTwoOutputs childEnvironment outputNames =
+  case outputNames of
+    [firstOutput, secondOutput] -> do
+      _ <-
+        runProcessCapture
+          childEnvironment
+          "wlr-randr"
+          [ "--output"
+          , firstOutput
+          , "--custom-mode"
+          , "1024x768"
+          , "--pos"
+          , "0,0"
+          , "--output"
+          , secondOutput
+          , "--custom-mode"
+          , "1600x900"
+          , "--pos"
+          , "1024,0"
+          ]
+      announce
+        ( "two-output-full: configured "
+            <> firstOutput
+            <> " as 1024x768 and "
+            <> secondOutput
+            <> " as 1600x900"
+        )
+    _ -> failIntegration ("cannot configure unexpected output names: " <> show outputNames)
+
+runProcessCapture :: [(String, String)] -> FilePath -> [String] -> IO ByteString
+runProcessCapture childEnvironment command arguments =
+  bracket
+    (startManagedProcess command childEnvironment (proc command arguments))
+    stopManagedProcess
+    $ \process -> do
+      exitCode <- waitForProcessWithTimeout (command <> " exit") process
+      stdoutBytes <- waitForBoundedLog (managedProcessStdout process)
+      unless (exitCode == ExitSuccess) $ do
+        logs <- renderManagedProcessLogs process
+        failIntegration (command <> " failed with " <> show exitCode <> logs)
+      pure stdoutBytes
+
 runInputDriver :: [(String, String)] -> [String] -> IO ()
 runInputDriver childEnvironment arguments =
   bracket
@@ -673,13 +865,23 @@ startManagedProcess label childEnvironment specification = do
 startBoundedLog :: String -> Handle -> IO BoundedLog
 startBoundedLog label handle = do
   bytes <- newIORef ByteString.empty
+  finished <- newEmptyMVar
   let capture =
         ByteString.hGetSome handle 4096 >>= \chunk ->
           if ByteString.null chunk
             then hClose handle
             else appendBounded bytes chunk >> capture
-  void . forkIO $ capture `catch` \(_ :: IOException) -> pure ()
-  pure (BoundedLog label bytes)
+  void . forkIO $
+    (capture `catch` \(_ :: IOException) -> pure ())
+      `finally` putMVar finished ()
+  pure (BoundedLog label bytes finished)
+
+waitForBoundedLog :: BoundedLog -> IO ByteString
+waitForBoundedLog logCapture = do
+  completed <- timeout assertionTimeoutMicroseconds (readMVar (boundedLogFinished logCapture))
+  case completed of
+    Nothing -> failIntegration ("timeout draining " <> boundedLogLabel logCapture)
+    Just () -> readIORef (boundedLogBytes logCapture)
 
 appendBounded :: IORef ByteString -> ByteString -> IO ()
 appendBounded bytes chunk =
