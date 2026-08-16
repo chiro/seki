@@ -1,6 +1,6 @@
 # seki Specification — A river Window Manager in Haskell
 
-Status: **v1 design accepted — M0 complete, M1 next** / Last updated: 2026-08-16
+Status: **v1 design accepted — M0 complete, M1 next** / Last updated: 2026-08-17
 Legend: [DECIDED] = current design decision, [RESOLVED] = checked against the protocol or other available evidence
 
 This is the target design for v1, not a description of the currently exported
@@ -152,6 +152,8 @@ class LayoutClass l where
 
 - The StackSet's `focus` = the keyboard focus of the single seat. [DECIDED: single seat]
 - Both click-to-focus and focus-follows-mouse are selectable in configuration.
+  M1 implements a fixed click-to-focus policy; the configurable focus model and
+  focus-follows-mouse arrive in M2.
 - [RESOLVED] The protocol supports both focus models directly:
   - focus-follows-mouse: pointer_enter / pointer_leave events (per-window crossing notifications; the window's region includes the input regions of borders and decorations) → focus_window on enter.
   - click-to-focus / raise: the window_interaction event (a "this window was interacted with" notification abstracting over button presses, touch, and tablet input — policy over mechanism).
@@ -234,7 +236,7 @@ Required functionality: river_window_manager_v1 **version 3** (depends on set_co
 
 ### 4.3 Design Notes Drawn from Reading the Protocol
 
-- **set_capabilities**: in v1, declare only `fullscreen` and leave maximize / minimize / window_menu undeclared. Clients may use this information to omit the corresponding controls. The protocol default is "all supported", so the WM must send the intended capability set explicitly.
+- **set_capabilities**: in final v1, declare only `fullscreen` and leave maximize / minimize / window_menu undeclared. Clients may use this information to omit the corresponding controls. The protocol default is "all supported", so the WM must send the intended capability set explicitly. M1 sends an empty capability set and ignores all corresponding client requests; M2 advertises `fullscreen` only when its fullscreen policy is implemented.
 - **set_tiled**: `plan` computes which edges adjoin others within the tiling and sends this per window (suppressing CSD drop shadows). Added as a field of DesiredScene.
 - **Type-level separation of the two phases**: window management state may only be changed inside a manage sequence, rendering state only inside manage/render, and violations are protocol errors (sequence_order). Split the `Protocol ()` of 3.3 into two monads, `ManageM` and `RenderM`, and expose each request through the phase or phases in which it is valid. This makes invalid phase-specific calls unrepresentable through these APIs; the lower-level binding and sequence state machine still require runtime validation.
 - **The unresponsive error**: the compositor may disconnect a WM that fails to respond. Do no heavy work during manage/render: `step`/`plan` are lightweight pure computations, and hook IO (spawning processes, etc.) is deferred to asynchronous tasks outside the sequence, re-entering via manage_dirty on completion.
@@ -358,7 +360,7 @@ instance Default (Config StdLayouts)  -- def supplies the standard configuration
 |---|---|---|
 | river's bus factor of 1 and funding difficulties | Development halt, maintenance stagnation | The protocol is stable and MIT-licensed. Investment on the WM side carries over to any protocol-compatible compositor (a future wlroots-based implementation, say). Most of this WM's code (the pure core) is protocol-independent |
 | Low-level correctness of the Haskell wire implementation (fd passing via SCM_RIGHTS, message framing) | Protocol bugs or disconnection | The completed M0 suite covers pure codecs, socket-pair transport, mock protocol behavior, and real river. The pinned real-river suite remains a release gate |
-| Disconnection on unresponsive (4.3) | Losing the WM mid-session | Only pure computation inside sequences; IO re-enters via manage_dirty (enforced at the API level in 5.1). GC pauses to be measured in M1, including evaluating the nonmoving GC |
+| A compositor disconnecting an unresponsive WM (4.3) | Losing the WM mid-session | Only pure computation inside sequences; IO re-enters via manage_dirty (enforced at the API level in 5.1). M1 measures sequence latency and GC pauses against seki-owned budgets, including evaluating the nonmoving GC. The pinned river 0.4.6 declares the protocol error but does not enforce a WM response timer, so no river threshold is claimed |
 | Windows created or closed during WM handover (3.7) | Serialized and enumerated window sets differ | Match surviving windows by the version 4 identifier; apply normal placement to new windows and discard stale entries |
 | shm drawing ecosystem (bar, prompt) | M3 effort | Avoided for now by using an external bar (Waybar). A dmenu-family replacement lets us start using the prompt too |
 | river's IM (text-input / input-method) compatibility | Japanese input via fcitx5 | [RESOLVED] M0 validated an exact `日本語` commit through river 0.4.6, foot, fcitx5, and Mozc; the scenario remains in the release suite |
@@ -369,7 +371,7 @@ instance Default (Config StdLayouts)  -- def supplies the standard configuration
 | Milestone | Status | Contents | Acceptance criteria |
 |---|---|---|---|
 | M0 Validation | **Complete** | Haskell wire protocol implementation without libwayland; own XML code generator; connection and window/output event handling; Full placement; terminal and close bindings; Japanese input and Xwayland validation | Completed on nested river, including exact fcitx5/Mozc input and the real-river release suite |
-| M1 Core | **Next** | StackSet port + QuickCheck properties, Tall / Mirror / Full / `\|\|\|`, greedyView, focus movement, swapMaster, borders, non_exclusive_area, the two-phase monads (ManageM/RenderM) | Tiling operations follow the intended xmonad semantics. Measured GC pauses remain below the unresponsive threshold with a documented margin |
+| M1 Core | **Next** | StackSet port + QuickCheck properties, Tall / Mirror / Full / `\|\|\|`, greedyView, focus movement, swapMaster, borders, non_exclusive_area, the two-phase monads (ManageM/RenderM) | Tiling operations follow the intended xmonad semantics. Sequence latency and GC pauses meet the documented seki budgets; see the [M1 implementation plan](m1-plan.md) |
 | M2 Practical | Planned | Floating (mod+drag), ManageHook, fullscreen, submaps, hot-swap + state restoration, inputRules, Crop/Tolerate | The main parts of my own xmonad.hs can be ported |
 | M3 Daily use | Planned | Bar IPC + `sekictl`, scratchpad, urgent handling, documentation and configuration skeleton | **Full migration from xmonad; used for daily work** |
 | M4 onwards | Planned | Prompt (shell surface + shm drawing), the contrib-equivalent extension set, IndependentScreens, further protocol integrations | — |

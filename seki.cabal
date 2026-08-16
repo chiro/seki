@@ -26,6 +26,7 @@ extra-doc-files:
   README.md
   THIRD_PARTY_NOTICES.md
   docs/integration-testing.md
+  docs/m1-plan.md
   docs/spec.md
   docs/wire-protocol.md
 
