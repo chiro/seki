@@ -1,5 +1,7 @@
 # Real-river Integration Tests
 
+Status: **release gate for M0 and later work** / Last updated: 2026-08-16
+
 The `seki-integration` Cabal component exercises seki against a real river
 compositor and real Wayland, Xwayland, and input-method clients. It runs river
 with a headless backend in a private fixture, so it does not take over the

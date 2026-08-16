@@ -1,19 +1,43 @@
 # seki
 
-A tiling window manager for [river](https://codeberg.org/river/river), written in Haskell — with xmonad's semantics and xmonad's configuration model.
+A tiling window manager for [river](https://codeberg.org/river/river), written
+in Haskell and aiming for xmonad's semantics and configuration model.
 
-> **Status: M0 validated; M1 core development is next.**
-> This is not ready for daily use; see [Roadmap](#roadmap).
+> **Status: M0 is complete; M1 core development is next.**
+> This is a validated protocol and Full-layout prototype, not yet a daily-use
+> window manager. See the [milestones](docs/spec.md#62-milestones).
 
-## What this is
+## Current status
 
 River 0.4 split the compositor from the window manager. The compositor handles DRM/KMS, rendering, input devices, and Xwayland, while delegating window-management policy to a separate process over the `river-window-management-v1` protocol. That process is an ordinary Wayland client and can be written in any language with suitable protocol bindings.
 
-seki is a Haskell implementation of that process, intended for xmonad users moving from X11:
+M0 establishes that seki can be that process without linking to `libwayland`.
+The current implementation provides:
+
+- a native Haskell Wayland transport, connection layer, and XML binding
+  generator;
+- typed river startup, window/output/seat inventory, and manage/render phase
+  handling;
+- a Full policy that places all windows on one output; and
+- Mod4-Shift-Return to launch `foot` and Mod4-Shift-c to close the active
+  window.
+
+The release integration suite exercises the native Wayland path, two outputs,
+Xwayland, and an exact Japanese input commit through fcitx5 and Mozc. See the
+[integration testing manual](docs/integration-testing.md) for reproduction and
+maintenance instructions.
+
+## Project direction
+
+seki is intended for xmonad users moving from X11. The accepted v1 design has
+these goals:
 
 - **Your configuration is the window manager.** As in xmonad, there is no config file. You write a Haskell program that imports `Seki`; `def` is intended to provide a usable default configuration.
 - **The core is pure.** `StackSet`, the layout algebra (`|||`, `Mirror`, layout modifiers), and `ManageHook` are based on xmonad, with its semantics and QuickCheck properties retained where applicable. Layout is a pure function; only the reconciler touches IO.
 - **Workspaces use xmonad-style semantics.** They form a shared pool across outputs, with `greedyView` as the default. River itself has no workspace abstraction, so seki implements this policy in the window manager.
+
+The following illustrates the target configuration API. It is not implemented
+in M0 and may change as M1–M3 are delivered.
 
 ```haskell
 import Seki
@@ -32,11 +56,13 @@ main = seki def
   where tall = Tall 1 (3/100) (1/2)
 ```
 
-## Consequences of this architecture
+## Architectural consequences
 
 Splitting the WM from the compositor changes the behavior of restarts, failures, and input processing:
 
-- **The WM can restart without ending the session.** River keeps the session and windows alive during a restart. The version 4 window identifier lets seki restore state for surviving windows across a WM reconnect; windows created during the handover use normal initial-placement rules.
+- **The WM can exit without ending the session.** River keeps the compositor
+  and windows alive. M2 will use river's version 4 window identifier to restore
+  WM-owned state across a seki restart.
 - **A WM crash does not terminate the session.** Existing windows remain in river, and starting a window manager again restores active management.
 - **Ordinary client input remains compositor-side.** Keybinding matching also happens in the compositor, and pointer motion alone does not wake the WM. Actions handled by the WM can still be delayed by a GC pause, so pause duration remains an implementation concern.
 - **Types represent the protocol phases.** River separates window-management state from rendering state and rejects requests made in the wrong phase. `ManageM` and `RenderM` make many invalid phase-specific calls unrepresentable in the higher-level API.
@@ -49,7 +75,7 @@ Splitting the WM from the compositor changes the behavior of restarts, failures,
 
 ## Development
 
-The initial development toolchain is GHC 9.6.6, cabal-install 3.10 or later,
+The development toolchain is GHC 9.6.6, cabal-install 3.10 or later,
 and Haskell Language Server. Install those with your system package manager or
 [GHCup](https://www.haskell.org/ghcup/).
 
@@ -73,8 +99,8 @@ The command writes a bounded log and completion manifest beneath
 Format and lint Haskell sources with:
 
 ```console
-fourmolu --mode inplace src test tools
-hlint src test tools
+fourmolu --mode inplace src test tools integration
+hlint src test tools integration
 ```
 
 With a Wayland compositor running, print the synchronized global registry with:
@@ -111,7 +137,7 @@ Non-goals for seki itself: animations and window effects, multi-seat (v1 is sing
 ## Documentation
 
 - [`docs/spec.md`](docs/spec.md) — the design specification: pure core, protocol mapping, configuration model, risks, and milestones.
-- [`docs/wire-protocol.md`](docs/wire-protocol.md) — the M0 design for the native Wayland transport and XML binding generator.
+- [`docs/wire-protocol.md`](docs/wire-protocol.md) — the implemented M0 design for the native Wayland transport and XML binding generator.
 - [`docs/integration-testing.md`](docs/integration-testing.md) — how to run,
   diagnose, and maintain the isolated real-river integration suite.
 

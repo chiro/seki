@@ -1,11 +1,11 @@
 # Wayland Wire Protocol and Binding Generator Design
 
-Status: **accepted — M0 validated** / Last updated: 2026-08-15
+Status: **implemented — M0 complete** / Last updated: 2026-08-16
 
-This document refines the wire-protocol portion of `docs/spec.md` into an
-implementation design for M0. It covers the Wayland client transport, message
-codec, object lifecycle, XML scanner, generated bindings, and the first river
-integration slice.
+This document records the implemented M0 wire-protocol design. It refines the
+wire-protocol portion of `docs/spec.md` and covers the Wayland client transport,
+message codec, object lifecycle, XML scanner, generated bindings, and first
+river integration slice.
 
 The words **MUST**, **SHOULD**, and **MAY** describe requirements on seki's
 implementation. They are not additions to the Wayland or river protocols.
@@ -21,8 +21,8 @@ implementation. They are not additions to the Wayland or river protocols.
   so building seki does not require running the scanner.
 - The codec is pure except for file-descriptor ownership. Transport, object
   dispatch, and generated protocol bindings are separate layers.
-- Generated bindings enforce interface versions and object types. The later
-  `ManageM` and `RenderM` wrappers enforce river's sequence phases.
+- Generated bindings enforce interface versions and object types. `ManageM`
+  and `RenderM` wrappers enforce river's sequence phases.
 - M0 implements only the protocols needed to enumerate and place windows and
   outputs, launch a terminal, and close the focused window. The scanner itself
   is designed for all Wayland XML argument types from the beginning.
@@ -52,7 +52,7 @@ implementation. They are not additions to the Wayland or river protocols.
 - Generating C headers or interoperating with libwayland objects.
 - Enforcing river's manage/render sequence in generated code. That belongs in
   the higher-level runtime API.
-- Optimizing allocations before correctness and integration tests exist.
+- Allocation tuning without a benchmark demonstrating a need.
 
 ## 3. Protocol Source and Version Policy
 
@@ -176,18 +176,15 @@ newtype ObjectId = ObjectId Word32
 newtype Opcode = Opcode Word16
 
 data RawFrame = RawFrame
-  { sender  :: ObjectId
-  , opcode  :: Opcode
-  , payload :: ByteString
+  { rawFrameSender  :: ObjectId
+  , rawFrameOpcode  :: Opcode
+  , rawFramePayload :: ByteString
   }
 ```
 
-The real definitions will use names that do not require globally disabling
-record-field warnings.
-
 ### 5.2 Argument encoding
 
-| XML type | Wire form | Proposed Haskell form |
+| XML type | Wire form | Implemented Haskell form |
 |---|---|---|
 | `int` | signed 32-bit | `Int32` |
 | `uint` | unsigned 32-bit | `Word32` or a generated newtype |
@@ -222,17 +219,16 @@ Bytes and file descriptors arrive as independent ordered streams. The decoder
 therefore has four outcomes:
 
 ```haskell
-data DecodeResult a
-  = Done a
+data DecodeResult fd a
+  = Done a ByteString [fd]
   | NeedBytes Int
   | NeedFds Int
-  | DecodeFailed WireError
+  | DecodeFailed ArgumentError
 ```
 
-The exact API may encode the remaining input in a state value, but it MUST
-distinguish missing bytes from missing descriptors. A complete frame that
-expects an `fd` cannot be dispatched until the corresponding descriptor has
-arrived.
+The implemented argument decoder distinguishes missing bytes from missing
+descriptors. A complete frame that expects an `fd` cannot be dispatched until
+the corresponding descriptor has arrived.
 
 No parser may read beyond the current frame payload. Trailing payload after all
 declared arguments is a malformed-frame error, not ignored extension data.
@@ -435,7 +431,7 @@ which river may start another render sequence or a new manage sequence.
 
 The transition layer rejects overlapping, repeated, and out-of-order starts or
 completions with the current phase and attempted operation. It also exposes the
-phase capabilities needed by the later `ManageM` and `RenderM` APIs:
+phase capabilities used by the `ManageM` and `RenderM` APIs:
 management changes are legal only during manage, while rendering changes are
 legal during manage or render. Keeping the transition pure lets the runtime
 submit the returned completion request before publishing the next state.
@@ -654,9 +650,8 @@ Generated request functions perform:
 6. ordered submission to the connection.
 
 Generated event decoders perform the inverse and return structured events. The
-exact handler-registration surface is intentionally left for a small prototype:
-either per-object typed callbacks or an existential routed-event stream can
-satisfy the design. The choice must not leak untyped argument lists upward.
+connection registers a typed route per object; existential packaging stays
+inside the route table, so untyped argument lists do not leak upward.
 
 The generated river request functions are internal. Later modules wrap them:
 
@@ -726,7 +721,7 @@ CI freshness check.
 The scanner is a separate Cabal executable component. Scanner-only dependencies
 do not become dependencies of the seki runtime library.
 
-## 10. Proposed Repository Layout
+## 10. Repository Layout
 
 ```text
 protocol/
@@ -737,9 +732,13 @@ protocol/
 
 src/Seki/Wire/
   Types.hs
+  Arguments.hs
+  Binding.hs
   Codec.hs
   Transport.hs
+  Transport/Driver.hs
   Connection.hs
+  Connection/{Buffer,Event,ObjectTable,Registry,Request}.hs
 
 src-generated/Seki/Protocol/
   Wayland.hs
@@ -747,61 +746,47 @@ src-generated/Seki/Protocol/
   RiverXkbBindingsV1.hs
 
 tools/scanner/
-  Main.hs
-  IR.hs
-  Parse.hs
-  Generate.hs
+  app/Main.hs
+  Seki/Scanner/{IR,Parse,Generate}.hs
 
 cbits/
-  seki_wayland_socket.c
-  seki_wayland_socket.h
+  seki_wayland_transport.c
+  seki_wayland_transport.h
 
 test/
-  wire/
-  scanner/
-  golden/
+  Seki/Wire/
+  Seki/Scanner/
+
+integration/
+  Main.hs
 ```
 
 The library uses both `src` and `src-generated` as source directories. The
-generated modules are internal modules unless a later use case justifies a
-supported low-level API.
+generated modules and low-level runtime are private Cabal components; the
+public `Seki` API will grow during later milestones.
 
-Initial runtime dependencies are expected to be `bytestring`, `containers`,
-`network`, `text`, and `unix`. Scanner and test dependencies are selected when
-their first code is written; dependency weight and maintenance status are part
-of that review.
+The runtime uses `binary`, `bytestring`, `containers`, `network`, `process`,
+`text`, and `unix`. The scanner uses `xeno` for XML parsing. Test-only
+dependencies remain outside the runtime components.
 
 ## 11. Errors, Diagnostics, and Tracing
 
-Errors are structured by layer:
+Errors are structured by layer: frame and argument errors feed receive-buffer
+or request/event preparation errors; those feed `ConnectionError`; registry,
+bootstrap, inventory, and sequence failures feed `RiverRuntimeError`.
+Structured values retain object IDs and interface information where available.
+Invalid strings are rejected, and descriptor contents are never logged.
 
-```haskell
-data WireError
-  = ConnectionDiscoveryError ...
-  | TransportError ...
-  | TruncatedConnection ...
-  | MalformedFrame ...
-  | InvalidArgument ...
-  | DescriptorTruncated
-  | UnknownObject ObjectId
-  | UnexpectedOpcode ObjectId Opcode
-  | UnsupportedVersion InterfaceName Version
-  | ProtocolError ...
-```
-
-The public error text includes interface and message names when the object table
-can resolve them. It never logs raw descriptor contents or silently replaces
-invalid strings.
-
-`SEKI_WIRE_DEBUG=1` enables a trace similar in purpose to `WAYLAND_DEBUG`:
+Wire tracing is not implemented in M0. If added, it should resemble
+`WAYLAND_DEBUG` without logging descriptor contents:
 
 ```text
 -> 7@river_window_v1.propose_dimensions(1280, 720)
 <- 1@wl_display.delete_id(12)
 ```
 
-Tracing is off by default, goes through seki's logger, and must not change
-ordering or descriptor lifetime.
+Tracing must be off by default, use seki's logger, and must not change ordering
+or descriptor lifetime.
 
 ## 12. Verification Strategy
 
@@ -859,83 +844,16 @@ than a skip. Real-river tests are never replaced by the mock compositor in
 release validation. The isolated headless harness and its scenarios are
 documented in [Real-river Integration Tests](integration-testing.md).
 
-## 13. Implementation Sequence
+## 13. Remaining Technical Follow-up
 
-### W0: Pin sources and settle public shapes
+1. **C shim portability:** M0 targets Linux. A non-Linux port must define and
+   test equivalent send-safety and close-on-exec behavior.
+2. **Big-endian testing:** the codec uses native byte order, but CI has not run
+   in a big-endian Wayland environment.
+3. **Tracing:** structured errors are implemented; optional wire tracing remains
+   future diagnostic work.
 
-- Correct the version wording in `docs/spec.md`.
-- Vendor XML and provenance metadata.
-- Prototype the event-handler surface and choose typed callbacks or routed
-  events.
-
-Acceptance: source digests and licenses are reviewable; parsing all three M0 XML
-files produces a validated IR.
-
-### W1: Pure codec
-
-- Wire types, frame header, primitive encoders/decoders, incremental buffering.
-- No live Wayland connection yet.
-
-Acceptance: golden, boundary, fragmentation, and property tests pass.
-
-### W2: Unix transport
-
-- Connection discovery, socket wrapper, C ancillary-data shim, ownership and
-  cleanup.
-
-Acceptance: socket-pair descriptor tests pass under repeated and failure runs
-without leaks.
-
-### W3: Scanner and generated core bindings
-
-- IR validation, deterministic Haskell generation, `wayland.xml` bindings.
-
-Acceptance: generated code is stable across two runs, compiles cleanly, and
-completes a mock registry sync.
-
-### W4: Real registry and river bindings
-
-- Connect to a real display, negotiate versions, bind river globals, route
-  window/output/seat events.
-
-Acceptance: a smoke program connects to nested river and logs a complete initial
-state without protocol errors.
-
-### W5: M0 window-manager slice
-
-- Minimal river sequence state machine.
-- Full-output placement for every window.
-- One terminal binding and one close-window binding.
-
-Acceptance: a terminal can be launched, focused, resized to the output, used,
-and closed on nested river. Every sequence is finished within river's deadline.
-
-Japanese input and Xwayland validation were the final M0 acceptance items from
-the general specification; they exercise the compositor/client path rather than
-adding wire-layer features.
-
-Validated on 2026-08-15 with river 0.4.6, foot 1.27.0, fcitx5 5.1.21 with
-Mozc, and Xwayland 24.1.13. The default bindings launched and closed foot, Full
-placement filled the nested output, an Xterm client was managed through
-Xwayland, and fcitx5 committed `日本語` into foot. The mock integration suite and
-the live session completed without a seki protocol or sequence error.
-
-## 14. Open Review Items
-
-1. **Event delivery API:** typed per-object callbacks or a typed existential
-   event stream. Prototype both only far enough to compare object creation and
-   cleanup.
-2. **XML parser dependency:** select a maintained parser after measuring the
-   scanner dependency footprint. Do not write a bespoke XML parser.
-3. **C shim portability:** M0 is Linux-only. Decide whether the shim API should
-   expose BSD `SO_NOSIGPIPE` immediately or keep only the Linux implementation
-   until another target is supported.
-4. **Resource limits:** choose numeric byte, descriptor, and object-table limits
-   alongside tests rather than guessing them in this document.
-5. **Big-endian testing:** the codec must use native byte order, but CI access to
-   a big-endian Wayland environment is unresolved.
-
-## 15. References
+## 14. References
 
 - [Wayland protocol and model of operation](https://wayland.freedesktop.org/docs/book/Protocol.html)
 - [Wayland core protocol specification](https://wayland.freedesktop.org/docs/html/apa.html)

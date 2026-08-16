@@ -1,7 +1,10 @@
 # seki Specification — A river Window Manager in Haskell
 
-Status: **v1.0 design accepted — M0 validated** / Last updated: 2026-08-15
+Status: **v1 design accepted — M0 complete, M1 next** / Last updated: 2026-08-16
 Legend: [DECIDED] = current design decision, [RESOLVED] = checked against the protocol or other available evidence
+
+This is the target design for v1, not a description of the currently exported
+API. Implementation availability is tracked by the milestones in section 6.2.
 
 ---
 
@@ -354,33 +357,35 @@ instance Default (Config StdLayouts)  -- def supplies the standard configuration
 | Risk | Impact | Mitigation |
 |---|---|---|
 | river's bus factor of 1 and funding difficulties | Development halt, maintenance stagnation | The protocol is stable and MIT-licensed. Investment on the WM side carries over to any protocol-compatible compositor (a future wlroots-based implementation, say). Most of this WM's code (the pure core) is protocol-independent |
-| Effort and low-level correctness of the Haskell wire implementation (fd passing via SCM_RIGHTS, message framing) | M0 delay, protocol bugs | The wire format is small and its specification is stable. Refer to prior implementations such as wayland-rs. Integration testing against real river is part of M0's acceptance criteria. hs-wayland-scanner + libwayland FFI is retained as a fallback. This approach avoids directly integrating libwayland's C event loop with the GHC runtime |
+| Low-level correctness of the Haskell wire implementation (fd passing via SCM_RIGHTS, message framing) | Protocol bugs or disconnection | The completed M0 suite covers pure codecs, socket-pair transport, mock protocol behavior, and real river. The pinned real-river suite remains a release gate |
 | Disconnection on unresponsive (4.3) | Losing the WM mid-session | Only pure computation inside sequences; IO re-enters via manage_dirty (enforced at the API level in 5.1). GC pauses to be measured in M1, including evaluating the nonmoving GC |
 | Windows created or closed during WM handover (3.7) | Serialized and enumerated window sets differ | Match surviving windows by the version 4 identifier; apply normal placement to new windows and discard stale entries |
 | shm drawing ecosystem (bar, prompt) | M3 effort | Avoided for now by using an external bar (Waybar). A dmenu-family replacement lets us start using the prompt too |
-| river's IM (text-input / input-method) support level | Japanese input via fcitx5 | [RESOLVED, on paper] river implements zwp_input_method_v2, and fcitx5 release notes refer to upstream fixes for river compatibility. On-device confirmation remains part of M0 |
+| river's IM (text-input / input-method) compatibility | Japanese input via fcitx5 | [RESOLVED] M0 validated an exact `日本語` commit through river 0.4.6, foot, fcitx5, and Mozc; the scenario remains in the release suite |
 | modifiers_watch version (3.8) | alt-tab-style UI | [RESOLVED] Confirmed as added in 0.4.5. Resolved by targeting river 0.4.5+ |
 
 ### 6.2 Milestones
 
-| | Contents | Acceptance criteria |
-|---|---|---|
-| M0 Validation | Haskell wire protocol implementation without libwayland + own codegen from XML, connection, window/output event handling, all windows placed Full, two keybindings (spawn terminal, close window). **Plus on-device validation of Japanese input (fcitx5) and Xwayland** | A terminal is usable on a nested river. Japanese can be typed via fcitx5. Integration tests of the wire implementation against real river pass |
-| M1 Core | StackSet port + QuickCheck properties, Tall / Mirror / Full / `\|\|\|`, greedyView, focus movement, swapMaster, borders, non_exclusive_area, the two-phase monads (ManageM/RenderM) | Tiling operations follow the intended xmonad semantics. Measured GC pauses remain below the unresponsive threshold with a documented margin |
-| M2 Practical | Floating (mod+drag), ManageHook, fullscreen, submaps, hot-swap + state restoration, inputRules, Crop/Tolerate | The main parts of my own xmonad.hs can be ported |
-| M3 Daily use | Bar IPC + `sekictl`, scratchpad, urgent handling, documentation and configuration skeleton | **Full migration from xmonad; used for daily work** |
-| M4 onwards | Prompt (shell surface + shm drawing), the contrib-equivalent extension set, IndependentScreens, further protocol integrations | — |
+| Milestone | Status | Contents | Acceptance criteria |
+|---|---|---|---|
+| M0 Validation | **Complete** | Haskell wire protocol implementation without libwayland; own XML code generator; connection and window/output event handling; Full placement; terminal and close bindings; Japanese input and Xwayland validation | Completed on nested river, including exact fcitx5/Mozc input and the real-river release suite |
+| M1 Core | **Next** | StackSet port + QuickCheck properties, Tall / Mirror / Full / `\|\|\|`, greedyView, focus movement, swapMaster, borders, non_exclusive_area, the two-phase monads (ManageM/RenderM) | Tiling operations follow the intended xmonad semantics. Measured GC pauses remain below the unresponsive threshold with a documented margin |
+| M2 Practical | Planned | Floating (mod+drag), ManageHook, fullscreen, submaps, hot-swap + state restoration, inputRules, Crop/Tolerate | The main parts of my own xmonad.hs can be ported |
+| M3 Daily use | Planned | Bar IPC + `sekictl`, scratchpad, urgent handling, documentation and configuration skeleton | **Full migration from xmonad; used for daily work** |
+| M4 onwards | Planned | Prompt (shell surface + shm drawing), the contrib-equivalent extension set, IndependentScreens, further protocol integrations | — |
 
-### 6.3 Open Items and Verification Results
+### 6.3 Resolved Questions and Follow-up
 
-The following investigations informed this draft:
+The following investigations informed the accepted design:
 
-1. [RESOLVED] river's IM support → see 6.1. river implements zwp_input_method_v2, and fcitx5 release notes refer to upstream compatibility fixes.
+1. [RESOLVED] river's IM support → the M0 release suite verified an exact
+   Japanese commit through fcitx5 and Mozc.
 2. [RESOLVED] river-libinput-config-v1 → reflected in 3.9.
 3. [RESOLVED] modifiers_watch / update → reflected in 3.8. **Required river version: 0.4.5+**.
-4. [RESOLVED] Xwayland → enabled with the build option `-Dxwayland` (zig build). Whether a distribution's package is built with this option must be checked in the deployment environment.
+4. [RESOLVED] Xwayland → the M0 release suite verified Xterm management,
+   focus, and close behavior. Deployment packages must still enable river's
+   Xwayland support.
 5. [RESOLVED] The project name is **seki** (堰, a weir): a structure that controls the flow of a river. Derived names: package `seki` / modules `Seki.*` / binary `seki` / CLI `sekictl` / socket `$XDG_RUNTIME_DIR/seki/ipc.sock`.
    - Collision check (as of 2026-07): no collisions on Hackage or in the Wayland/WM space. Same-name packages in other registries are in distant fields and small (crates.io: a log-analysis CLI; npm: dormant since 2022; PyPI: a security tool). Same-name projects on GitHub are likewise small (a Go/baduk library and similar).
-   - Remaining work: final name check when publishing to Hackage (`seki-wm` if `seki` is unavailable); distribution package names to be checked at packaging time.
-
-Appendix — compositor-side protocol coverage recorded during design: as of river 0.4.2, colour management protocols, cursor-shape v2, ext-image-capture-source (including per-window capture), and a subset of wlr-foreign-toplevel-management are implemented; xdg-foreign-v2 was added in 0.4.5. Licensing: river itself is GPL-3.0-only and its protocols are MIT.
+   - Follow-up: repeat the name check before publishing to Hackage
+     (`seki-wm` remains the fallback) and when preparing distribution packages.
