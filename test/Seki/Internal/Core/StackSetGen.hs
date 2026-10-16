@@ -18,13 +18,36 @@ module Seki.Internal.Core.StackSetGen (
   applyN,
   tags,
   invariant,
+  Hotplug (..),
+  Step (..),
+  hotplugState,
+  coreWorkspaces,
+  coreFloating,
+  coreInvariant,
 ) where
 
-import Data.List (nub, sortOn)
+import Data.List (nub, sort, sortOn)
+import Data.Map.Strict (Map)
 import Data.Maybe (maybeToList)
+import Seki.Internal.Core.Geometry (Point (..), mkRect, mkSize)
 import Seki.Internal.Core.StackSet
-import Seki.Internal.Core.State (CoreState (..), addOutput, newCoreState)
-import Test.QuickCheck (Arbitrary (..), Gen, chooseInt, elements, frequency, sized, suchThat, vectorOf)
+import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), addOutput, newCoreState, removeOutput)
+import Test.QuickCheck (
+  Arbitrary (..),
+  Gen,
+  Property,
+  chooseInt,
+  conjoin,
+  counterexample,
+  elements,
+  frequency,
+  listOf,
+  shrinkList,
+  sized,
+  suchThat,
+  vectorOf,
+  (===),
+ )
 
 type T = StackSet Int Int
 
@@ -122,4 +145,83 @@ invariant s = distinct windows && distinct allTags && distinct outputs
   windows = [w | ws <- allWs, t <- maybeToList (stack ws), w <- focus t : up t ++ down t]
   allTags = map tag allWs
   outputs = output (current s) : map output (visible s)
+  distinct xs = nub xs == xs
+
+-- | One event in a generated hotplug history.
+data Step
+  = AddOutput OutputId
+  | RemoveOutput OutputId
+  | InsertWindow WindowId
+  | FloatWindow WindowId
+  | ViewTag Int
+  | GreedyViewTag Int
+  deriving (Show)
+
+{- | A configured tag list and the events applied to a fresh core state. Outputs
+come from a pool of six, so outputs are re-added, removed while unknown, and
+left unassigned.
+-}
+data Hotplug = Hotplug
+  { hotplugTags :: [Int]
+  , hotplugSteps :: [Step]
+  }
+  deriving (Show)
+
+instance Arbitrary Hotplug where
+  arbitrary = do
+    numWs <- chooseInt (1, 8)
+    let output' = OutputId . fromIntegral <$> chooseInt (1, 6)
+        tag' = chooseInt (1, numWs)
+    steps <-
+      listOf $
+        frequency
+          [ (3, AddOutput <$> output')
+          , (2, RemoveOutput <$> output')
+          , (3, InsertWindow <$> arbitrary)
+          , (1, FloatWindow <$> arbitrary)
+          , (1, ViewTag <$> tag')
+          , (1, GreedyViewTag <$> tag')
+          ]
+    pure (Hotplug [1 .. numWs] steps)
+  shrink (Hotplug ts steps) = Hotplug ts <$> shrinkList (const []) steps
+
+hotplugState :: Hotplug -> CoreState Int Int
+hotplugState (Hotplug ts steps) = foldl (flip apply) initial steps
+ where
+  initial = either (error . show) id (newCoreState 0 ts)
+  apply (AddOutput o) = addOutput o
+  apply (RemoveOutput o) = removeOutput o
+  apply (InsertWindow w) = attached (insertUp w)
+  apply (FloatWindow w) = attached (\ss -> if member w ss then float w floatRect ss else ss)
+  apply (ViewTag t) = attached (view t)
+  apply (GreedyViewTag t) = attached (greedyView t)
+  attached f (AttachedState ss unassigned) = AttachedState (f ss) unassigned
+  attached _ st = st
+  floatRect = either (error . show) id (mkSize 100 100 >>= mkRect (Point 100 100))
+
+-- | Every workspace, sorted by tag.
+coreWorkspaces :: (Ord i) => CoreState i l -> [Workspace i l]
+coreWorkspaces (HeadlessState (HeadlessWorkspaces c hs _)) = sortOn tag (c : hs)
+coreWorkspaces (AttachedState ss _) = sortOn tag (workspaces ss)
+
+coreFloating :: CoreState i l -> Map WindowId FloatGeom
+coreFloating (HeadlessState hw) = headlessFloating hw
+coreFloating (AttachedState ss _) = floating ss
+
+-- | The plan's StackSet and headless-state invariants for the configured tags.
+coreInvariant :: [Int] -> CoreState Int Int -> Property
+coreInvariant configured st =
+  conjoin
+    [ counterexample "every configured tag appears exactly once" (sort (map tag allWs) === sort configured)
+    , counterexample "no window appears twice" (distinct windows)
+    , counterexample "screen outputs are distinct" (distinct outputs)
+    , counterexample "unassigned outputs are distinct" (distinct unassigned)
+    , counterexample "unassigned outputs show no workspace" (all (`notElem` outputs) unassigned)
+    , counterexample "outputs wait only when no workspace is hidden" (null unassigned || null hiddenWs)
+    ]
+ where
+  (allWs, hiddenWs, outputs, unassigned) = case st of
+    HeadlessState (HeadlessWorkspaces c hs _) -> (c : hs, hs, [], [])
+    AttachedState ss u -> (workspaces ss, hidden ss, map output (screens ss), u)
+  windows = concatMap (integrate' . stack) allWs
   distinct xs = nub xs == xs

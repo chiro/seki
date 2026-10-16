@@ -1,9 +1,18 @@
 module Seki.Internal.Core.StateTest (tests) where
 
 import Data.Either (isRight)
-import Data.List (nub)
+import Data.List (find, nub)
 import Data.Map.Strict qualified as Map
-import Seki.Internal.Core.StackSet (OutputId (..), Screen (..), StackSet (..), Workspace (..))
+import Data.Maybe (listToMaybe)
+import Seki.Internal.Core.StackSet (
+  OutputId (..),
+  Screen (..),
+  StackSet (..),
+  Workspace (..),
+  screens,
+  tag,
+ )
+import Seki.Internal.Core.StackSetGen (Hotplug (..), coreFloating, coreInvariant, coreWorkspaces, hotplugState)
 import Seki.Internal.Core.State (
   CoreState (..),
   HeadlessWorkspaces (..),
@@ -12,10 +21,10 @@ import Seki.Internal.Core.State (
   newCoreState,
   removeOutput,
  )
-import Test.QuickCheck (Property, (===))
-import Test.Tasty (TestTree, testGroup)
+import Test.QuickCheck (Gen, Property, arbitrary, checkCoverage, conjoin, cover, elements, forAll, property, suchThatMap, (===))
+import Test.Tasty (TestTree, localOption, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
-import Test.Tasty.QuickCheck (testProperty)
+import Test.Tasty.QuickCheck (QuickCheckTests (..), testProperty)
 
 tests :: TestTree
 tests =
@@ -79,7 +88,78 @@ tests =
             (removeOutput o2 . removeOutput o1 . addOutput o2 . addOutput o1) initial
               @?= HeadlessState (HeadlessWorkspaces (ws 'b') [ws 'a', ws 'c'] Map.empty)
         ]
+    , testGroup
+        "hotplug properties"
+        [ localOption (QuickCheckTests 1000) $
+            testProperty "every hotplug history keeps the core invariant" $ \h ->
+              let st = hotplugState h
+               in checkCoverage
+                    . cover 10 (null (knownOutputs st)) "headless"
+                    . cover 10 (unassignedCount st > 0) "an unassigned output"
+                    . cover 20 (length (knownOutputs st) - unassignedCount st >= 2) "two or more screens"
+                    $ coreInvariant (hotplugTags h) st
+        , testProperty "adding and removing keep every workspace and floating window" $ \h ->
+            let st = hotplugState h
+             in forAll anyOutput $ \o ->
+                  conjoin
+                    [ (coreWorkspaces (f st), coreFloating (f st)) === (coreWorkspaces st, coreFloating st)
+                    | f <- [addOutput o, removeOutput o]
+                    ]
+        , testProperty "removing a freshly added output undoes the addition" $ \h ->
+            let st = hotplugState h
+             in forAll (elements (filter (`notElem` knownOutputs st) (map OutputId [1 .. 12]))) $ \o ->
+                  removeOutput o (addOutput o st) === st
+        , testProperty "adding is idempotent" $ \h -> forAll anyOutput $ \o ->
+            let once = addOutput o (hotplugState h) in addOutput o once === once
+        , testProperty "removing is idempotent" $ \h -> forAll anyOutput $ \o ->
+            let once = removeOutput o (hotplugState h) in removeOutput o once === once
+        , testProperty "re-adding a removed output restores its workspace when none waits" $
+            forAll (attachedWith (null . snd)) $ \(ss, _) ->
+              forAll (elements (screens ss)) $ \sc ->
+                fmap tag (shownOn (output sc) (addOutput (output sc) (removeOutput (output sc) (AttachedState ss []))))
+                  === Just (tag (workspace sc))
+        , testProperty "the last output's workspace and the hidden order return with a new output" $
+            forAll (attachedWith (\(ss, u) -> null (visible ss) && null u)) $ \(ss, _) ->
+              addOutput o9 (removeOutput (output (current ss)) (AttachedState ss []))
+                === AttachedState ss{current = (current ss){output = o9}} []
+        , testProperty "removing the current output focuses the first visible screen" $
+            forAll (attachedWith (not . null . visible . fst)) $ \(ss, u) ->
+              case removeOutput (output (current ss)) (AttachedState ss u) of
+                AttachedState ss' _ -> Just (current ss') === listToMaybe (visible ss)
+                HeadlessState{} -> property False
+        , testProperty "a freed workspace goes to the first unassigned output" $
+            forAll (attachedWith (not . null . snd)) $ \(ss, u) ->
+              forAll (elements (screens ss)) $ \sc ->
+                (listToMaybe u >>= \first -> tag <$> shownOn first (removeOutput (output sc) (AttachedState ss u)))
+                  === Just (tag (workspace sc))
+        ]
     ]
+
+o9 :: OutputId
+o9 = OutputId 9
+
+anyOutput :: Gen OutputId
+anyOutput = OutputId <$> elements [1 .. 8]
+
+unassignedCount :: CoreState i l -> Int
+unassignedCount HeadlessState{} = 0
+unassignedCount (AttachedState _ u) = length u
+
+knownOutputs :: CoreState i l -> [OutputId]
+knownOutputs HeadlessState{} = []
+knownOutputs (AttachedState ss u) = map output (screens ss) ++ u
+
+-- | An attached hotplug state, as its StackSet and unassigned outputs, that satisfies the predicate.
+attachedWith :: ((StackSet Int Int, [OutputId]) -> Bool) -> Gen (StackSet Int Int, [OutputId])
+attachedWith p = (hotplugState <$> arbitrary) `suchThatMap` matching
+ where
+  matching (AttachedState ss u) | p (ss, u) = Just (ss, u)
+  matching _ = Nothing
+
+-- | The workspace shown on an output.
+shownOn :: OutputId -> CoreState i l -> Maybe (Workspace i l)
+shownOn _ HeadlessState{} = Nothing
+shownOn o (AttachedState ss _) = workspace <$> find ((== o) . output) (screens ss)
 
 o1, o2, o3, o4, o5 :: OutputId
 o1 = OutputId 1
