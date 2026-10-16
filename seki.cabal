@@ -59,8 +59,11 @@ library seki-core
   hs-source-dirs:  src-core
   exposed-modules:
     Seki.Internal.Core.Geometry
+    Seki.Internal.Core.StackSet
   build-depends:
-    base >=4.18 && <4.19
+    base >=4.18 && <4.19,
+    containers >=0.6.7 && <0.8,
+    transformers >=0.6.1 && <0.7
 
 library seki-wire
   import:          warnings
@@ -161,6 +164,7 @@ test-suite seki-test
   main-is:        Main.hs
   other-modules:
     Seki.Internal.Core.GeometryTest
+    Seki.Internal.Core.StackSetTest
     Seki.Scanner.GenerateTest
     Seki.Scanner.ParseTest
     Seki.Run.FullTest
