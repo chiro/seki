@@ -46,9 +46,22 @@ common warnings
 library
   import:          warnings
   hs-source-dirs:  src-public
-  exposed-modules: Seki
+  exposed-modules:
+    Seki
+    Seki.Core.Geometry
   build-depends:
-    base >=4.18 && <4.19
+    base >=4.18 && <4.19,
+    seki:seki-core
+
+library seki-core
+  import:          warnings
+  visibility:      private
+  hs-source-dirs:  src-core
+  exposed-modules:
+    Seki.Internal.Core.Geometry
+  build-depends:
+    base >=4.18 && <4.19,
+    containers >=0.6.7 && <0.8
 
 library seki-wire
   import:          warnings
@@ -95,6 +108,7 @@ library seki-wire
     filepath >=1.4.3 && <1.6,
     network >=3.1.4 && <3.3,
     process >=1.6.18 && <1.7,
+    seki:seki-core,
     text >=2.0.2 && <2.2,
     unix >=2.8.4 && <2.9
 
@@ -147,6 +161,7 @@ test-suite seki-test
   hs-source-dirs: test
   main-is:        Main.hs
   other-modules:
+    Seki.Internal.Core.GeometryTest
     Seki.Scanner.GenerateTest
     Seki.Scanner.ParseTest
     Seki.Run.FullTest
@@ -174,7 +189,9 @@ test-suite seki-test
     binary >=0.8.9 && <0.9,
     bytestring >=0.11.5 && <0.12,
     network >=3.1.4 && <3.3,
+    containers >=0.6.7 && <0.8,
     seki:scanner,
+    seki:seki-core,
     seki:seki-wire,
     tasty >=1.4.3 && <1.6,
     tasty-hunit >=0.10 && <0.11,
@@ -182,6 +199,15 @@ test-suite seki-test
     temporary >=1.3 && <1.4,
     text >=2.0.2 && <2.2,
     unix >=2.8.4 && <2.9
+
+test-suite seki-public
+  import:         warnings
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test-public
+  main-is:        Main.hs
+  build-depends:
+    base >=4.18 && <4.19,
+    seki
 
 test-suite seki-integration
   import:         warnings

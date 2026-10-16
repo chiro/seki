@@ -99,8 +99,8 @@ The command writes a bounded log and completion manifest beneath
 Format and lint Haskell sources with:
 
 ```console
-fourmolu --mode inplace src test tools integration
-hlint src test tools integration
+fourmolu --mode inplace src src-core src-public test test-public tools integration
+hlint src src-core src-public test test-public tools integration
 ```
 
 With a Wayland compositor running, print the synchronized global registry with:
