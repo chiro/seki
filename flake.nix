@@ -2,7 +2,7 @@
   description = "Pinned seki CI and real-river integration environment";
 
   inputs.nixpkgs.url =
-    "github:NixOS/nixpkgs/0e251e24a4f24e036a084b6b4b2d2491af4167f4";
+    "github:NixOS/nixpkgs/55bfb4d7437bd4e09ab7cba58a43bd68eb310044";
   inputs.nixpkgs-ghc.url =
     "github:NixOS/nixpkgs/50ab793786d9de88ee30ec4e4c24fb4236fc2674";
 
@@ -62,7 +62,7 @@
         fcitx5-mozc = version pkgs.fcitx5-mozc;
         foot = version pkgs.foot;
         ghc = version ghc;
-        nixpkgs = "0e251e24a4f24e036a084b6b4b2d2491af4167f4";
+        nixpkgs = "55bfb4d7437bd4e09ab7cba58a43bd68eb310044";
         nixpkgs-ghc = "50ab793786d9de88ee30ec4e4c24fb4236fc2674";
         renderer = "pixman";
         river = version pkgs.river;

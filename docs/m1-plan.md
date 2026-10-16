@@ -110,8 +110,8 @@ existing window-management and XKB protocols. Update `protocol/SOURCES.md`,
 `protocol/SHA256SUMS`, package source lists, generated bindings, and scanner
 tests together.
 
-The pinned release integration environment currently runs river 0.4.6. A
-source audit of that release found that `river_window_manager_v1.error` defines
+The pinned release integration environment currently runs river 0.5.0. A
+source audit of releases 0.4.6 and 0.5.0 found that `river_window_manager_v1.error` defines
 `unresponsive`, but river does not start a response timer while waiting for
 `manage_finish` or `render_finish`. The 100 ms timer in
 `river/WindowManager.zig` waits for application configure acknowledgements and
@@ -640,7 +640,7 @@ This baseline recommends the following choices:
    running but incomplete WM.
 4. **Use xmonad 0.18.1 as the semantic source pin.** This matches the installed
    development package and provides a stable property corpus.
-5. **Adopt seki-owned latency budgets.** River 0.4.6 has no enforceable WM
+5. **Adopt seki-owned latency budgets.** River 0.5.0 has no enforceable WM
    response timeout to measure margin against.
 6. **Retain floating state in the M1 StackSet.** Pure `float` / `sink` map
    bookkeeping is ported and tested internally, while public/runtime floating
