@@ -49,12 +49,16 @@ module Seki.Internal.Core.StackSet (
 
   -- * Membership
   insertUp,
+  delete,
+  filter,
   tagMember,
 
   -- * Workspaces
   view,
   greedyView,
 ) where
+
+import Prelude hiding (filter)
 
 import Control.Applicative.Backwards (Backwards (..))
 import Data.Containers.ListUtils (nubOrd)
@@ -279,3 +283,30 @@ swapMaster = modify' $ \c -> case c of
   Stack t (l : ls) rs -> Stack t [] (xs ++ x : rs)
    where
     x :| xs = NE.reverse (l :| ls)
+
+{- | Remove a window from every workspace. When it had focus, focus moves to
+the window below it, or above it when it was at the bottom.
+-}
+delete :: WindowId -> StackSet i l -> StackSet i l
+delete = delete'
+
+delete' :: WindowId -> StackSet i l -> StackSet i l
+delete' w s =
+  s
+    { current = removeFromScreen (current s)
+    , visible = map removeFromScreen (visible s)
+    , hidden = map removeFromWorkspace (hidden s)
+    }
+ where
+  removeFromWorkspace ws = ws{stack = stack ws >>= filter (/= w)}
+  removeFromScreen scr = scr{workspace = removeFromWorkspace (workspace scr)}
+
+{- | Keep the elements that satisfy the predicate, in order. Focus stays if it
+survives, else moves to the next element below, else the nearest above.
+-}
+filter :: (a -> Bool) -> Stack a -> Maybe (Stack a)
+filter p (Stack f ls rs) = case L.filter p (f : rs) of
+  f' : rs' -> Just (Stack f' (L.filter p ls) rs')
+  [] -> case L.filter p ls of
+    f' : ls' -> Just (Stack f' ls' [])
+    [] -> Nothing

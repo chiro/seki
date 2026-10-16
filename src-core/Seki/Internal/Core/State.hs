@@ -9,7 +9,7 @@ module Seki.Internal.Core.State (
 
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Seki.Internal.Core.StackSet
+import Seki.Internal.Core.StackSet (FloatGeom, OutputId, Screen (..), StackSet (..), WindowId, Workspace (..))
 
 -- | The core's workspaces, with or without outputs to show them on.
 data CoreState i l

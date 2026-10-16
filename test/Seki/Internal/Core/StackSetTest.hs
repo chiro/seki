@@ -3,7 +3,8 @@ module Seki.Internal.Core.StackSetTest (tests) where
 import Data.Foldable (toList)
 import Data.Functor.Compose (Compose (..))
 import Data.Functor.Identity (Identity (..))
-import Data.List (sortOn)
+import Data.List (nub, sortOn)
+import Data.List qualified as L
 import Data.Maybe (isNothing, listToMaybe)
 import Data.Word (Word32)
 import Seki.Internal.Core.StackSet
@@ -12,6 +13,7 @@ import Test.QuickCheck (Fun, Gen, NonNegative (..), Property, applyFun, arbitrar
 import Test.Tasty (TestTree, localOption, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.QuickCheck (QuickCheckTests (..), testProperty)
+import Prelude hiding (filter)
 
 tests :: TestTree
 tests =
@@ -34,11 +36,48 @@ tests =
               , testProperty "swap_left_I" $ \(SizedPositive n) (x :: T) -> invariant (applyN (Just n) swapUp x)
               , testProperty "swap_right_I" $ \(SizedPositive n) (x :: T) -> invariant (applyN (Just n) swapDown x)
               , testProperty "insertUp_I" $ \n (x :: T) -> invariant (insertUp n x)
+              , testProperty "delete_I" $ \(x :: T) -> invariant (maybe x (`delete` x) (peek x))
               ]
         , testProperty "empty" $ \(EmptyStackSet x) -> all (isNothing . stack) (workspaces x)
         , testProperty "empty_current" $ \(EmptyStackSet x) -> take 1 (tags x) === [currentTag x]
         , testProperty "member_empty" $ \i (EmptyStackSet x) -> not (member i x)
         , testProperty "member_peek" $ \(x :: T) -> maybe True (`member` x) (peek x)
+        ]
+    , testGroup
+        "Delete"
+        [ testProperty "delete" $ \(x :: T) -> maybe True (\i -> not (member i (delete i x))) (peek x)
+        , testProperty "delete_insert" $ \(x :: T) ->
+            let y = swapMaster x in maybe (property True) (\n -> insertUp n (delete n y) === y) (peek y)
+        , testProperty "delete_local" $ \(x :: T) ->
+            maybe (property True) (\i -> hiddenSpaces (delete i x) === hiddenSpaces x) (peek x)
+        , testProperty "delete_focus" $
+            forAll (arbitrary `suchThat` ((>= 2) . length . allWindows)) $ \x ->
+              forAll (arbitraryWindow (NonEmptyWindowsStackSet x) `suchThat` ((/= peek x) . Just)) $ \w ->
+                peek (delete w x) === peek x
+        , testProperty "delete_focus_end" $
+            forAll (genT `suchThat` ((>= 2) . length . index)) $ \x ->
+              let w = last (index x)
+                  y = focusWindow w x
+               in peek (delete w y) === peek (focusUp y)
+        , testProperty "delete_focus_not_end" $
+            forAll (arbitrary `suchThat` focusNotLast) $ \x ->
+              maybe (property False) (\n -> peek (delete n x) === peek (focusDown x)) (peek x)
+        ]
+    , testGroup
+        "Insert"
+        [ testProperty "insert_empty" $ \i (EmptyStackSet x) -> member i (insertUp i x)
+        , testProperty "insert_idem" $ \i (x :: T) -> insertUp i (insertUp i x) === insertUp i x
+        , testProperty "insert_duplicate" $ \nex@(NonEmptyWindowsStackSet x) ->
+            forAll (arbitraryWindow nex) $ \w -> insertUp w x === x
+        , testProperty "insert_local" $ \(x :: T) ->
+            forAll (arbitrary `suchThat` (not . (`member` x))) $ \i -> hiddenSpaces (insertUp i x) === hiddenSpaces x
+        , testProperty "insert_peek" $ \(EmptyStackSet x) (NonEmptyNubList is) ->
+            peek (foldr insertUp x is) === listToMaybe is
+        , testProperty "insert_delete" $ \(x :: T) ->
+            let y = swapMaster x
+             in forAll (arbitrary `suchThat` (not . (`member` x))) $ \n -> delete n (insertUp n y) === y
+        , testProperty "size_insert" $ \is (EmptyStackSet x) ->
+            length (index (foldr insertUp x (nub is))) === length (nub is)
         ]
     , testGroup
         "Focus"
@@ -117,7 +156,10 @@ tests =
         ]
     , testGroup
         "Stack"
-        [ testProperty "differentiate" propDifferentiate
+        [ testProperty "filter_order" $ \(x :: T) -> case stack (workspace (current x)) of
+            Nothing -> property True
+            Just st -> integrate' (filter (/= focus st) st) === L.filter (/= focus st) (integrate st)
+        , testProperty "differentiate" propDifferentiate
         , testProperty "Foldable toList is integrate" propToListIntegrate
         , testProperty "Foldable methods agree with toList" propFoldableConsistent
         , testProperty "Traversable identity" propTraverseIdentity
@@ -145,6 +187,12 @@ onStack f st = case stack (workspace (current (f x))) of
  where
   base = attach 1 0 [1]
   x = base{current = (current base){workspace = (workspace (current base)){stack = Just (fmap WindowId st)}}}
+
+genT :: Gen T
+genT = arbitrary
+
+focusNotLast :: T -> Bool
+focusNotLast x = length (index x) >= 2 && peek x /= listToMaybe (reverse (index x))
 
 byTag :: T -> [Workspace Int Int]
 byTag = sortOn tag . workspaces
