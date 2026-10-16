@@ -135,6 +135,7 @@ class LayoutClass l where
 
 - The algebra of `Choose` (`|||`), `Mirror`, and `ModifiedLayout` is ported from xmonad.
 - [DECIDED] `pureLayout` may omit windows of the stack. Omitted windows are hidden (3.1). `Full` returns only the focused window at the whole rectangle, as in xmonad. A returned rectangle with zero width or height counts as omitted (3.3).
+- [DECIDED] A returned rectangle is a tile that includes the border. The WM proposes content inset by the border width on all four sides, because river draws borders outside the content box. A tile no larger than twice the border width in either dimension leaves zero content and counts as omitted. `Full` keeps the border (M1-D07).
 - Layouts bundled in v1: `Tall`, `Mirror Tall`, `Full`. Anything else arrives incrementally as the equivalent of contrib.
 
 ### 3.5 Floating [DECIDED: absolute logical pixel coordinates]
@@ -210,7 +211,7 @@ Required functionality: river_window_manager_v1 **version 3** (depends on set_co
 | Stacking order (raise, etc.) | river_node_v1.place_above/below/top/bottom | **Initial order is undefined** → the reconciler explicitly establishes the full order every time |
 | Screen / rescreen | river_output_v1 (position/dimensions/removed) | The corresponding wl_output global name is also provided (usable for screencopy integration, etc.) |
 | Keyboard focus | river_seat_v1.focus_window / clear_focus | In the manage sequence |
-| Focus border | river_window_v1.set_borders | **Drawn by the compositor** (edge selection + width + RGBA; hidden while fullscreen). No drawing needed on the WM side |
+| Focus border | river_window_v1.set_borders | **Drawn by the compositor** outside the content box (edge selection + width + RGBA; hidden while fullscreen). No drawing needed on the WM side. [DECIDED] The WM insets each tile's content by the border width on all four sides so that content plus border fills the tile (M1-D07) |
 | Keybindings | river-xkb-bindings-v1 (separate protocol) | Read; see 3.8 |
 | Mouse bindings (mod+drag) | river_seat_v1.get_pointer_binding + op_start_pointer | See 3.5 |
 | kill | river_window_v1.close → closed event | Delete from the StackSet on closed |

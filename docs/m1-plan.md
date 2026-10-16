@@ -321,7 +321,12 @@ Planner rules:
 - every window the layout places, including one whose first dimensions are
   pending, receives all four `set_tiled` edges; windows the layout omits keep
   their last flags, since they are hidden;
-- borders do not affect content positions or dimensions;
+- with border width `b`, a window's content rectangle is its tile inset by
+  `b` on all four sides, because river draws borders outside the content box
+  (M1-D07). Content and border then fill the tile exactly, as in xmonad's
+  `tileWindow`. A tile whose inset content has zero width or height, that is
+  a tile no larger than `2b` in either dimension, is degenerate and follows
+  the zero-sized tile rule above. `Full` keeps the border on its window;
 - at most one window is the keyboard-focus target: the StackSet's focused
   window, and only while it is shown. Otherwise the scene has no focus target.
   The StackSet focus itself never changes for rendering reasons; and
@@ -531,7 +536,8 @@ Tests:
 - scene properties for window uniqueness, visibility, all four tiled edges on
   every placed window, at
   most one focus target that is always shown, no degenerate tile shown or
-  proposed, and deterministic stacking;
+  proposed, content plus borders inside each tile, and deterministic
+  stacking;
 - request-level tests for focus recovery: when a degenerate tile regains a
   positive size and when a spawned window's first dimensions settle, `show`
   arrives in a render sequence with the focused border, then `focus_window`
@@ -677,7 +683,8 @@ M1 is complete only when all of the following are true:
 - windows on hidden workspaces and windows omitted by the active layout
   receive `hide`, and only windows the layout places with settled dimensions
   receive `show`;
-- focus, borders, complete stacking, and tiled edges are observable in tests;
+- focus, borders, complete stacking, and tiled edges are observable in tests,
+  and every shown window's content plus borders stays inside its tile;
 - keyboard focus never targets a hidden window, no degenerate tile is
   proposed or shown, and focus returns through the post-render
   `manage_dirty` path;
@@ -763,7 +770,7 @@ entries initially.
 | M1-D04 | Zero-sized tiles and their focus behavior | P2 | Decided | WP1, WP3, WP6 |
 | M1-D05 | Tiled flags at output boundaries | P2 | Decided | WP1, WP6 |
 | M1-D06 | Dialogs are tiled in M1 | P3 | Decided | WP6 |
-| M1-D07 | Borders outside the tile | P2 | Open | WP6 |
+| M1-D07 | Borders outside the tile | P2 | Decided | WP6 |
 
 ### M1-D01 — Reclaiming non-exclusive layer focus
 
@@ -935,12 +942,25 @@ entries initially.
   tile and extends past the usable area, under a bar or off the output.
   xmonad 0.18.1's `tileWindow` instead shrinks the window by twice the border
   width so that content and border fit inside the tile.
-- **Proposed resolution:** confirm on real river where borders are drawn.
-  If outside the content, inset the proposed content by the border width on
-  each bordered edge, as xmonad does. Decide how a tile no larger than twice
-  the border width interacts with M1-D04 (zero content means a degenerate
-  tile), whether `Full` keeps its border, and how the inset combines with M1's
-  size-mismatch placement.
+- **Evidence:** river 0.4.6's `drawBorders` (`river/Window.zig`) places the
+  left border at `x = -width` and the right border at `x = content.width`,
+  and likewise for top and bottom, so borders surround the content box from
+  outside. River 0.5.0 draws them the same way. A nested headless river 0.5.0
+  run proposed 1180×620 at (50, 50) with a 20 px border. The screenshot showed
+  content at x 50–1229 and y 50–669, and the border at x 30–49 and 1230–1249
+  and y 30–49 and 670–689. River 0.4.6 also calls `setSize` on every edge
+  after the per-edge branch, which reads as drawing edges that were not
+  requested; 0.5.0 removed that call. This was read from source, not tested.
+- **Decision:** inset content by the border width on all four sides, as
+  xmonad does. A placed window's content rectangle is its tile shrunk by `b`
+  on each side, at the tile origin plus `(b, b)`. A tile no larger than `2b`
+  in either dimension leaves zero content and is degenerate under M1-D04: the
+  window is hidden and receives no proposal, instead of xmonad's 1 px clamp.
+  `Full` keeps the border, as in core xmonad; hiding a lone window's border is
+  a later layout modifier like xmonad-contrib's `smartBorders`. River draws the
+  border around the content the client commits, so a smaller commit leaves a
+  gap inside the tile and a larger one overflows it, which is M1's general
+  size-mismatch behavior. A border width of zero gives no inset.
 - **Affected text:** plan sections 3.5, 3.6, WP6, and exit criteria;
   `spec.md` sections 3.3 and 4.1 (the focus border row).
 - **Required regression:** on real river, record where a border is drawn
