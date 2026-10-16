@@ -3,6 +3,7 @@ module Seki.Internal.Core.State (
   HeadlessWorkspaces (..),
   WorkspaceTagError (..),
   newCoreState,
+  addOutput,
 ) where
 
 import Data.Map.Strict (Map)
@@ -42,3 +43,14 @@ newCoreState l tags@(t : ts) = case firstRepeat [] tags of
   firstRepeat seen (x : xs)
     | x `elem` seen = Just x
     | otherwise = firstRepeat (x : seen) xs
+
+{- | Give a new output the remembered workspace when headless, otherwise the
+first hidden workspace, or leave it unassigned when none is hidden. Adding a
+known output changes nothing.
+-}
+addOutput :: OutputId -> CoreState i l -> CoreState i l
+addOutput o (HeadlessState (HeadlessWorkspaces c hs f)) = AttachedState (StackSet (Screen c o) [] hs f) []
+addOutput o st@(AttachedState ss unassigned)
+  | o `elem` map output (current ss : visible ss) || o `elem` unassigned = st
+  | h : hs <- hidden ss = AttachedState ss{visible = visible ss ++ [Screen h o], hidden = hs} unassigned
+  | otherwise = AttachedState ss (unassigned ++ [o])
