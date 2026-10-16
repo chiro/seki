@@ -5,6 +5,7 @@ import Data.Functor.Compose (Compose (..))
 import Data.Functor.Identity (Identity (..))
 import Data.List (sortOn)
 import Data.Maybe (isNothing, listToMaybe)
+import Data.Word (Word32)
 import Seki.Internal.Core.StackSet
 import Seki.Internal.Core.StackSetGen
 import Test.QuickCheck (Fun, Gen, NonNegative (..), Property, applyFun, arbitrary, chooseInt, forAll, property, suchThat, (===))
@@ -29,6 +30,9 @@ tests =
               , testProperty "focusMaster_I" $ \(SizedPositive n) (x :: T) -> invariant (applyN (Just n) focusMaster x)
               , testProperty "focusDown_I" $ \(SizedPositive n) (x :: T) -> invariant (applyN (Just n) focusDown x)
               , testProperty "focus_I" propFocusI
+              , testProperty "swap_master_I" $ \(x :: T) -> invariant (swapMaster x)
+              , testProperty "swap_left_I" $ \(SizedPositive n) (x :: T) -> invariant (applyN (Just n) swapUp x)
+              , testProperty "swap_right_I" $ \(SizedPositive n) (x :: T) -> invariant (applyN (Just n) swapDown x)
               , testProperty "insertUp_I" $ \n (x :: T) -> invariant (insertUp n x)
               ]
         , testProperty "empty" $ \(EmptyStackSet x) -> all (isNothing . stack) (workspaces x)
@@ -79,6 +83,28 @@ tests =
             forAll (arbitraryTag x) $ \n -> normal (greedyView (currentTag x) (greedyView n x)) === normal x
         ]
     , testGroup
+        "Swap"
+        [ testProperty "swap_left" $ \(x :: T) -> swapUp (swapDown x) === x
+        , testProperty "swap_right" $ \(x :: T) -> swapDown (swapUp x) === x
+        , testProperty "swap_master_focus" $ \(x :: T) -> peek (swapMaster x) === peek x
+        , testProperty "swap_left_focus" $ \(x :: T) -> peek (swapUp x) === peek x
+        , testProperty "swap_right_focus" $ \(x :: T) -> peek (swapDown x) === peek x
+        , testProperty "swap_master_local" $ \(x :: T) -> hiddenSpaces (swapMaster x) === hiddenSpaces x
+        , testProperty "swap_left_local" $ \(x :: T) -> hiddenSpaces (swapUp x) === hiddenSpaces x
+        , testProperty "swap_right_local" $ \(x :: T) -> hiddenSpaces (swapDown x) === hiddenSpaces x
+        , testProperty "swap_all_l" $ \(x :: T) -> foldr (const swapUp) x (index x) === x
+        , testProperty "swap_all_r" $ \(x :: T) -> foldr (const swapDown) x (index x) === x
+        , testProperty "swap_master_idempotent" $ \(x :: T) -> swapMaster (swapMaster x) === swapMaster x
+        , testCase "swapUp exchanges the focus with the window above" $
+            onStack swapUp (Stack 2 [1] [3]) @?= Stack 2 [] [1, 3]
+        , testCase "swapUp moves a top focus to the bottom" $
+            onStack swapUp (Stack 1 [] [2, 3]) @?= Stack 1 [3, 2] []
+        , testCase "swapDown exchanges the focus with the window below" $
+            onStack swapDown (Stack 2 [1] [3]) @?= Stack 2 [3, 1] []
+        , testCase "swapMaster exchanges the focus with the master" $
+            onStack swapMaster (Stack 3 [2, 1] []) @?= Stack 3 [] [2, 1]
+        ]
+    , testGroup
         "View"
         [ testProperty "view_current" $ \(x :: T) ->
             forAll (arbitraryTag x) $ \n -> currentTag (view n x) === n
@@ -110,6 +136,15 @@ withCurrentWindow :: Int -> T -> (WindowId -> Property) -> Property
 withCurrentWindow n x p = case index x of
   [] -> property True
   ws -> p (ws !! (n `mod` length ws))
+
+-- | Run an operation on a one-workspace StackSet holding the given stack.
+onStack :: (T -> T) -> Stack Word32 -> Stack Word32
+onStack f st = case stack (workspace (current (f x))) of
+  Just result -> fmap (\(WindowId w) -> w) result
+  Nothing -> error "onStack: the stack disappeared"
+ where
+  base = attach 1 0 [1]
+  x = base{current = (current base){workspace = (workspace (current base)){stack = Just (fmap WindowId st)}}}
 
 byTag :: T -> [Workspace Int Int]
 byTag = sortOn tag . workspaces

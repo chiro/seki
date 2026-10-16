@@ -42,6 +42,11 @@ module Seki.Internal.Core.StackSet (
   focusMaster,
   focusWindow,
 
+  -- * Ordering
+  swapUp,
+  swapDown,
+  swapMaster,
+
   -- * Membership
   insertUp,
   tagMember,
@@ -254,3 +259,23 @@ focusWindow :: (Eq i) => WindowId -> StackSet i l -> StackSet i l
 focusWindow w s
   | Just w == peek s = s
   | otherwise = maybe s (\n -> until ((Just w ==) . peek) focusUp (view n s)) (findTag w s)
+
+-- | Swap the focused window with the one above it, wrapping at the top.
+swapUp :: StackSet i l -> StackSet i l
+swapUp = modify' swapUp'
+
+-- | Swap the focused window with the one below it, wrapping at the bottom.
+swapDown :: StackSet i l -> StackSet i l
+swapDown = modify' (reverseStack . swapUp' . reverseStack)
+
+swapUp' :: Stack a -> Stack a
+swapUp' (Stack t (l : ls) rs) = Stack t ls (l : rs)
+swapUp' (Stack t [] rs) = Stack t (reverse rs) []
+
+-- | Swap the focused window with the master window, keeping focus.
+swapMaster :: StackSet i l -> StackSet i l
+swapMaster = modify' $ \c -> case c of
+  Stack _ [] _ -> c
+  Stack t (l : ls) rs -> Stack t [] (xs ++ x : rs)
+   where
+    x :| xs = NE.reverse (l :| ls)
