@@ -1,7 +1,7 @@
 module Seki.Internal.Core.GeometryTest (tests) where
 
 import Control.Monad (void)
-import Data.Int (Int32, Int64)
+import Data.Int (Int32)
 import Seki.Internal.Core.Geometry (
   GeometryError (..),
   Point (..),
@@ -11,29 +11,24 @@ import Seki.Internal.Core.Geometry (
   mkSize,
   rectHeight,
   rectWidth,
-  rectX,
-  rectY,
   splitHorizontally,
   splitHorizontallyBy,
   splitVertically,
   splitVerticallyBy,
   translate,
  )
+import Seki.Internal.Core.GeometryGen (expectRight, fields, genRatio, genRect, overlapArea, rectOf, within)
 import Test.QuickCheck (
-  Gen,
   Property,
   chooseInt,
   conjoin,
   counterexample,
-  elements,
   forAll,
-  frequency,
-  oneof,
   (===),
  )
 import Test.QuickCheck qualified as QC
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (Assertion, assertEqual, assertFailure, testCase)
+import Test.Tasty.HUnit (Assertion, assertEqual, testCase)
 import Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
@@ -229,54 +224,3 @@ partitions whole parts =
 
 area :: Rect -> Integer
 area rect = toInteger (rectWidth rect) * toInteger (rectHeight rect)
-
-within :: Rect -> Rect -> Bool
-within inner outer =
-  rectX inner >= rectX outer
-    && rectY inner >= rectY outer
-    && farX inner <= farX outer
-    && farY inner <= farY outer
-
-overlapArea :: Rect -> Rect -> Integer
-overlapArea a b =
-  toInteger (max 0 (min (farX a) (farX b) - max (x64 a) (x64 b)))
-    * toInteger (max 0 (min (farY a) (farY b) - max (y64 a) (y64 b)))
-
-x64, y64, farX, farY :: Rect -> Int64
-x64 = fromIntegral . rectX
-y64 = fromIntegral . rectY
-farX rect = x64 rect + fromIntegral (rectWidth rect)
-farY rect = y64 rect + fromIntegral (rectHeight rect)
-
-genRatio :: Gen Rational
-genRatio =
-  frequency
-    [ (1, elements [0, 1, 1 / 2, 3 / 100, 97 / 100, -1, 2])
-    , (4, chooseInt (1, 1000) >>= \d -> (\n -> toRational n / toRational d) <$> chooseInt (0, d))
-    ]
-
-genRect :: Gen Rect
-genRect = do
-  x <- genCoordinate
-  y <- genCoordinate
-  w <- genLength x
-  h <- genLength y
-  either (error . show) pure (mkSize w h >>= mkRect (Point x y))
- where
-  genCoordinate = oneof [genSmall, QC.chooseBoundedIntegral (minBound, maxBound)]
-  genSmall = fromIntegral <$> chooseInt (-3000, 3000)
-  genLength origin =
-    let room = min (fromIntegral (maxBound :: Int32)) (fromIntegral (maxBound :: Int32) - fromIntegral origin) :: Int64
-     in oneof
-          [ fromIntegral <$> chooseInt (0, fromIntegral (min room 4000))
-          , fromIntegral <$> QC.chooseBoundedIntegral (0, room)
-          ]
-
-rectOf :: Int32 -> Int32 -> Int32 -> Int32 -> IO Rect
-rectOf x y w h = expectRight (mkSize w h >>= mkRect (Point x y))
-
-fields :: Rect -> (Int32, Int32, Int32, Int32)
-fields rect = (rectX rect, rectY rect, rectWidth rect, rectHeight rect)
-
-expectRight :: (Show e) => Either e a -> IO a
-expectRight = either (assertFailure . show) pure
