@@ -4,6 +4,7 @@ module Seki.Internal.Core.State (
   WorkspaceTagError (..),
   newCoreState,
   addOutput,
+  removeOutput,
 ) where
 
 import Data.Map.Strict (Map)
@@ -54,3 +55,22 @@ addOutput o st@(AttachedState ss unassigned)
   | o `elem` map output (current ss : visible ss) || o `elem` unassigned = st
   | h : hs <- hidden ss = AttachedState ss{visible = visible ss ++ [Screen h o], hidden = hs} unassigned
   | otherwise = AttachedState ss (unassigned ++ [o])
+
+{- | Forget an output. A removed screen's workspace becomes the first hidden
+one, and unassigned outputs then take hidden workspaces in order. The first
+surviving screen becomes current; with none left the state goes headless and
+remembers the removed workspace. Removing an unknown output changes nothing.
+-}
+removeOutput :: OutputId -> CoreState i l -> CoreState i l
+removeOutput _ st@HeadlessState{} = st
+removeOutput o st@(AttachedState ss unassigned)
+  | o `elem` unassigned = AttachedState ss (filter (/= o) unassigned)
+  | otherwise = case break ((== o) . output) (current ss : visible ss) of
+      (_, []) -> st
+      (before, Screen w _ : after) ->
+        let freed = w : hidden ss
+            assigned = zipWith (flip Screen) unassigned freed
+            n = length assigned
+         in case before ++ after ++ assigned of
+              [] -> HeadlessState (HeadlessWorkspaces w (hidden ss) (floating ss))
+              c : vs -> AttachedState ss{current = c, visible = vs, hidden = drop n freed} (drop n unassigned)
