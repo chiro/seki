@@ -62,6 +62,10 @@ module Seki.Internal.Core.StackSet (
   greedyView,
   mapWorkspace,
   mapLayout,
+
+  -- * Floating bookkeeping
+  float,
+  sink,
 ) where
 
 import Prelude hiding (filter)
@@ -73,6 +77,7 @@ import Data.List qualified as L
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.List.NonEmpty qualified as NE
 import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, listToMaybe)
 import Data.Word (Word32)
 import Seki.Internal.Core.Geometry (Rect)
@@ -290,11 +295,12 @@ swapMaster = modify' $ \c -> case c of
    where
     x :| xs = NE.reverse (l :| ls)
 
-{- | Remove a window from every workspace. When it had focus, focus moves to
-the window below it, or above it when it was at the bottom.
+{- | Remove a window from every workspace and from the floating map. When it
+had focus, focus moves to the window below it, or above it when it was at
+the bottom.
 -}
 delete :: WindowId -> StackSet i l -> StackSet i l
-delete = delete'
+delete w = sink w . delete' w
 
 delete' :: WindowId -> StackSet i l -> StackSet i l
 delete' w s =
@@ -361,3 +367,11 @@ mapLayout f (StackSet v vs hs m) = StackSet (fScreen v) (map fScreen vs) (map fW
  where
   fScreen (Screen ws o) = Screen (fWorkspace ws) o
   fWorkspace (Workspace t l s) = Workspace t (f l) s
+
+-- | Record a window's floating rectangle.
+float :: WindowId -> FloatGeom -> StackSet i l -> StackSet i l
+float w r s = s{floating = Map.insert w r (floating s)}
+
+-- | Forget a window's floating rectangle.
+sink :: WindowId -> StackSet i l -> StackSet i l
+sink w s = s{floating = Map.delete w (floating s)}

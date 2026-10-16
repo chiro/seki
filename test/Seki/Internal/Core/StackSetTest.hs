@@ -5,8 +5,10 @@ import Data.Functor.Compose (Compose (..))
 import Data.Functor.Identity (Identity (..))
 import Data.List (nub, sortOn)
 import Data.List qualified as L
+import Data.Map.Strict qualified as Map
 import Data.Maybe (isNothing, listToMaybe, maybeToList)
 import Data.Word (Word32)
+import Seki.Internal.Core.Geometry (Point (..), mkRect, mkSize)
 import Seki.Internal.Core.StackSet
 import Seki.Internal.Core.StackSetGen
 import Test.QuickCheck (Fun, Gen, NonNegative (..), Property, applyFun, arbitrary, chooseInt, conjoin, elements, forAll, property, suchThat, (===))
@@ -203,6 +205,17 @@ tests =
         , testProperty "mapLayoutInverse" $ \(x :: T) -> mapLayout pred (mapLayout succ x) === x
         ]
     , testGroup
+        "Floating"
+        [ testProperty "float_reversible" $ \nex@(NonEmptyWindowsStackSet x) ->
+            forAll (arbitraryWindow nex) $ \w -> sink w (float w geom x) === x
+        , testProperty "float_geometry" $ \nex@(NonEmptyWindowsStackSet x) ->
+            forAll (arbitraryWindow nex) $ \w -> Map.lookup w (floating (float w geom x)) === Just geom
+        , testProperty "float_delete" $ \nex@(NonEmptyWindowsStackSet x) ->
+            forAll (arbitraryWindow nex) $ \w -> not (w `member` delete w (float w geom x))
+        , testProperty "delete forgets the floating rectangle" $ \nex@(NonEmptyWindowsStackSet x) ->
+            forAll (arbitraryWindow nex) $ \w -> Map.member w (floating (delete w (float w geom x))) === False
+        ]
+    , testGroup
         "Stack"
         [ testProperty "index_length" $ \(x :: T) ->
             length (index x) === length (integrate' (stack (workspace (current x))))
@@ -253,6 +266,9 @@ otherWindows x = allWindows x L.\\ index x
 succTag, predTag :: Workspace Int Int -> Workspace Int Int
 succTag w = w{tag = succ (tag w)}
 predTag w = w{tag = pred (tag w)}
+
+geom :: FloatGeom
+geom = either (error . show) id (mkSize 100 100 >>= mkRect (Point 100 100))
 
 genT :: Gen T
 genT = arbitrary
