@@ -45,7 +45,7 @@ common warnings
 
 library
   import:          warnings
-  hs-source-dirs:  src
+  hs-source-dirs:  src-public
   exposed-modules: Seki
   build-depends:
     base >=4.18 && <4.19
