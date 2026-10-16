@@ -28,6 +28,9 @@ jobs:
       - name: Run ordinary test suite
         run: nix develop --no-write-lock-file .#unit --command cabal test all
 
+      - name: Check source distribution and public documentation
+        run: nix develop --no-write-lock-file .#unit --command ci/check-package.sh
+
   integration:
     name: Real river integration
     runs-on: ubuntu-24.04

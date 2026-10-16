@@ -86,6 +86,13 @@ cabal build all
 cabal test all
 ```
 
+Check that the source distribution ships every module once and that the public
+Haddock index documents every public module with:
+
+```console
+ci/check-package.sh
+```
+
 Run the release integration check, including exact manifest validation, from
 the pinned Nix environment with:
 
