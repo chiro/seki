@@ -174,7 +174,7 @@ protocol objects.
 
 | Module | Responsibility |
 |---|---|
-| `Seki.Core.Geometry` | `Point`, `Size`, `Rect`, safe splitting/mirroring, tiled-edge adjacency |
+| `Seki.Core.Geometry` | `Point`, `Size`, `Rect`, checked construction and translation, splitting, mirroring |
 | `Seki.Core.StackSet` | Workspace/screen/stack zipper and xmonad-compatible pure operations |
 | `Seki.Core.Layout` | `LayoutClass`, messages, `Choose` / `(|||)`, `Mirror` |
 | `Seki.Layout.Tall` | `Tall`, tile/split functions, `Shrink`, `Expand`, `IncMasterN` |
@@ -318,7 +318,9 @@ Planner rules:
      descendants;
   4. hidden windows sit below every shown window, in StackSet order; and
   5. stacking never changes the StackSet's stack order;
-- `set_tiled` edges name only edges adjacent to another tiled rectangle;
+- every window the layout places, including one whose first dimensions are
+  pending, receives all four `set_tiled` edges; windows the layout omits keep
+  their last flags, since they are hidden;
 - borders do not affect content positions or dimensions;
 - at most one window is the keyboard-focus target: the StackSet's focused
   window, and only while it is shown. Otherwise the scene has no focus target.
@@ -399,8 +401,7 @@ Deliverables:
   a minimal re-exported module, without compiling one module into multiple
   components;
 - add `Seki.Core.Geometry`;
-- define checked rectangle construction, split, mirror, translation, and edge
-  adjacency;
+- define checked rectangle construction, split, mirror, and translation;
 - document all signed-coordinate and overflow behavior.
 
 Tests:
@@ -412,6 +413,9 @@ Tests:
   documentation input exactly once;
 - unit examples for negative origins, zero area, one-pixel and odd splits;
 - properties for area preservation, no overlap, bounds, and mirror involution.
+
+M1-D05 removed edge adjacency from WP1: M1's tiled flags do not depend on
+geometry.
 
 ### WP2 — StackSet port and properties
 
@@ -524,7 +528,8 @@ Deliverables:
 
 Tests:
 
-- scene properties for window uniqueness, visibility, adjacency symmetry, at
+- scene properties for window uniqueness, visibility, all four tiled edges on
+  every placed window, at
   most one focus target that is always shown, no degenerate tile shown or
   proposed, and deterministic stacking;
 - request-level tests for focus recovery: when a degenerate tile regains a
@@ -744,7 +749,7 @@ Status progression:
 - **Verified**: implementation and the required regression tests have landed;
   link the supporting commits or PRs in the entry.
 
-The design review is complete when all six entries are **Decided** or
+The design review is complete when all seven entries are **Decided** or
 **Verified**. M1 completion requires every entry to be **Verified**. Proposed
 resolutions below are starting points for the decisions, not replacements for
 the current baseline. Decision and verification evidence are pending for all
@@ -756,8 +761,9 @@ entries initially.
 | M1-D02 | Full visibility and layout-omitted windows | P2 | Decided | WP3, WP6 |
 | M1-D03 | Parent/child stacking versus focus raising | P2 | Decided | WP6 |
 | M1-D04 | Zero-sized tiles and their focus behavior | P2 | Decided | WP1, WP3, WP6 |
-| M1-D05 | Tiled flags at output boundaries | P2 | Open | WP6 |
+| M1-D05 | Tiled flags at output boundaries | P2 | Decided | WP1, WP6 |
 | M1-D06 | Dialogs are tiled in M1 | P3 | Decided | WP6 |
+| M1-D07 | Borders outside the tile | P2 | Open | WP6 |
 
 ### M1-D01 — Reclaiming non-exclusive layer focus
 
@@ -888,6 +894,20 @@ entries initially.
 - **Required regression:** assert protocol flags for a single Tall window,
   Full's selected window, a multi-window split, and an output reduced by an
   exclusive zone. Check both internal edges and usable-area boundaries.
+- **Decision (2026-10-16):** every window the layout places receives all four
+  tiled edges, independent of geometry. Hidden windows keep their last flags;
+  M2 floating windows will receive none. For `Tall`, `Mirror Tall`, and
+  `Full`, which partition the usable area exactly, this equals counting both
+  tile adjacency and usable-area boundaries. Rejected: tile adjacency alone,
+  which tells a single tiled window that it is not tiled; and adjacency plus
+  boundaries as a general rule, which tells an isolated tile in a future gap
+  layout that it is not tiled. Gap layouts decide their own rule when one
+  exists. WP1's `adjacentEdges` is removed as unused. Updated: plan sections
+  3.1, 3.5, WP1, and WP6; `spec.md` section 4.3.
+- **Required regression (revised):** all four flags for a single Tall window,
+  Full's selected window, every tile of a multi-window split, and a layout
+  over a usable area reduced by an exclusive zone; a window with a pending
+  first proposal is flagged in the same manage sequence as the proposal.
 
 ### M1-D06 — Dialogs are tiled in M1
 
@@ -904,3 +924,28 @@ entries initially.
   child window is inserted and focused like any window, and under `Full`
   focusing its parent hides it. M2 changes this test deliberately when it
   floats dialogs.
+
+### M1-D07 — Borders outside the tile
+
+- **Problem:** section 3.5 says borders do not affect content positions or
+  dimensions, so the planner proposes the whole tile as content. River's
+  `set_borders` states that a window's position and dimensions are its
+  content's and are unaffected by borders, which implies that borders extend
+  outside the content box. If they do, each border overlaps the neighbouring
+  tile and extends past the usable area, under a bar or off the output.
+  xmonad 0.18.1's `tileWindow` instead shrinks the window by twice the border
+  width so that content and border fit inside the tile.
+- **Proposed resolution:** confirm on real river where borders are drawn.
+  If outside the content, inset the proposed content by the border width on
+  each bordered edge, as xmonad does. Decide how a tile no larger than twice
+  the border width interacts with M1-D04 (zero content means a degenerate
+  tile), whether `Full` keeps its border, and how the inset combines with M1's
+  size-mismatch placement.
+- **Affected text:** plan sections 3.5, 3.6, WP6, and exit criteria;
+  `spec.md` sections 3.3 and 4.1 (the focus border row).
+- **Required regression:** on real river, record where a border is drawn
+  relative to its content. In request-level tests with border width `b`,
+  assert that each window's content plus borders stays inside its tile, that
+  adjacent windows' borders do not overlap, that a single window's border
+  stays inside the usable area, and that a tile of at most `2b` follows the
+  M1-D04 rule.
