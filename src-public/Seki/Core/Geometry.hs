@@ -24,8 +24,6 @@ module Seki.Core.Geometry (
   splitHorizontally,
   splitVerticallyBy,
   splitHorizontallyBy,
-  Edge (..),
-  adjacentEdges,
 ) where
 
 import Seki.Internal.Core.Geometry

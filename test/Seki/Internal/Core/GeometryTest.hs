@@ -2,13 +2,10 @@ module Seki.Internal.Core.GeometryTest (tests) where
 
 import Control.Monad (void)
 import Data.Int (Int32, Int64)
-import Data.Set qualified as Set
 import Seki.Internal.Core.Geometry (
-  Edge (..),
   GeometryError (..),
   Point (..),
   Rect,
-  adjacentEdges,
   mirror,
   mkRect,
   mkSize,
@@ -71,17 +68,6 @@ tests =
         [ testCase "exchanges axes with negative origins" testMirror
         , testProperty "is an involution" propMirrorInvolution
         , testProperty "relates horizontal and vertical splits" propMirrorSplit
-        ]
-    , testGroup
-        "adjacency"
-        [ testCase "side-by-side rectangles share facing edges" testSideBySide
-        , testCase "stacked rectangles share facing edges" testStacked
-        , testCase "corner contact is not adjacency" testCornerContact
-        , testCase "separated rectangles are not adjacent" testSeparated
-        , testCase "a positive-area rectangle is not adjacent to itself" testSelfAdjacency
-        , testCase "a zero-width tile still touches its neighbours" testZeroWidthAdjacency
-        , testProperty "is symmetric under opposite edges" propAdjacencySymmetric
-        , testProperty "ratio split halves face each other along a positive height" propSplitHalvesAdjacent
         ]
     ]
 
@@ -230,62 +216,6 @@ propMirrorSplit =
  where
   both f (a, b) = (f a, f b)
 
-testSideBySide :: Assertion
-testSideBySide = do
-  left <- rectOf (-100) 0 100 50
-  right <- rectOf 0 25 100 50
-  assertEqual "left" (Set.singleton EdgeRight) (adjacentEdges left right)
-  assertEqual "right" (Set.singleton EdgeLeft) (adjacentEdges right left)
-
-testStacked :: Assertion
-testStacked = do
-  top <- rectOf 0 0 100 50
-  bottom <- rectOf 0 50 100 50
-  assertEqual "top" (Set.singleton EdgeBottom) (adjacentEdges top bottom)
-  assertEqual "bottom" (Set.singleton EdgeTop) (adjacentEdges bottom top)
-
-testCornerContact :: Assertion
-testCornerContact = do
-  a <- rectOf 0 0 10 10
-  b <- rectOf 10 10 10 10
-  assertEqual "corner" Set.empty (adjacentEdges a b)
-
-testSeparated :: Assertion
-testSeparated = do
-  a <- rectOf 0 0 10 10
-  b <- rectOf 11 0 10 10
-  assertEqual "gap" Set.empty (adjacentEdges a b)
-
-testSelfAdjacency :: Assertion
-testSelfAdjacency = do
-  a <- rectOf 0 0 10 10
-  assertEqual "self" Set.empty (adjacentEdges a a)
-
-testZeroWidthAdjacency :: Assertion
-testZeroWidthAdjacency = do
-  left <- rectOf 0 0 10 10
-  sliver <- rectOf 10 0 0 10
-  assertEqual "left" (Set.singleton EdgeRight) (adjacentEdges left sliver)
-  assertEqual "sliver" (Set.singleton EdgeLeft) (adjacentEdges sliver left)
-
-propAdjacencySymmetric :: Property
-propAdjacencySymmetric =
-  forAll (oneof [(,) <$> genRect <*> genRect, genSplitPair]) $ \(a, b) ->
-    Set.map opposite (adjacentEdges a b) === adjacentEdges b a
-
-propSplitHalvesAdjacent :: Property
-propSplitHalvesAdjacent =
-  forAll genRect $ \rect ->
-    forAll genRatio $ \ratio ->
-      let (left, right) = splitHorizontallyBy ratio rect
-       in counterexample (show (left, right)) $
-            adjacentEdges left right === expected rect
- where
-  expected rect
-    | rectHeight rect == 0 = Set.empty
-    | rectWidth rect == 0 = Set.fromList [EdgeLeft, EdgeRight]
-    | otherwise = Set.singleton EdgeRight
-
 partitions :: Rect -> [Rect] -> Property
 partitions whole parts =
   counterexample (show (whole, parts)) $
@@ -318,12 +248,6 @@ y64 = fromIntegral . rectY
 farX rect = x64 rect + fromIntegral (rectWidth rect)
 farY rect = y64 rect + fromIntegral (rectHeight rect)
 
-opposite :: Edge -> Edge
-opposite EdgeTop = EdgeBottom
-opposite EdgeBottom = EdgeTop
-opposite EdgeLeft = EdgeRight
-opposite EdgeRight = EdgeLeft
-
 genRatio :: Gen Rational
 genRatio =
   frequency
@@ -347,11 +271,6 @@ genRect = do
           [ fromIntegral <$> chooseInt (0, fromIntegral (min room 4000))
           , fromIntegral <$> QC.chooseBoundedIntegral (0, room)
           ]
-
-genSplitPair :: Gen (Rect, Rect)
-genSplitPair = do
-  split <- elements [splitHorizontallyBy, splitVerticallyBy]
-  split <$> genRatio <*> genRect
 
 rectOf :: Int32 -> Int32 -> Int32 -> Int32 -> IO Rect
 rectOf x y w h = expectRight (mkSize w h >>= mkRect (Point x y))

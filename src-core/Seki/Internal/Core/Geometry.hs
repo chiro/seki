@@ -38,13 +38,9 @@ module Seki.Internal.Core.Geometry (
   splitHorizontally,
   splitVerticallyBy,
   splitHorizontallyBy,
-  Edge (..),
-  adjacentEdges,
 ) where
 
 import Data.Int (Int32, Int64)
-import Data.Set (Set)
-import Data.Set qualified as Set
 
 -- | A position in global logical coordinates.
 data Point = Point
@@ -75,10 +71,6 @@ data GeometryError
     -- outside 'Int32'.
     RectOutOfRange !Int64 !Int64 !Int32 !Int32
   deriving (Eq, Show)
-
--- | One side of a rectangle.
-data Edge = EdgeTop | EdgeBottom | EdgeLeft | EdgeRight
-  deriving (Bounded, Enum, Eq, Ord, Show)
 
 mkSize :: Int32 -> Int32 -> Either GeometryError Size
 mkSize width height
@@ -145,25 +137,3 @@ splitVerticallyBy :: Rational -> Rect -> (Rect, Rect)
 splitVerticallyBy ratio rect =
   let (top, bottom) = splitHorizontallyBy ratio (mirror rect)
    in (mirror top, mirror bottom)
-
-{- | The edges of the first rectangle that lie along an edge of the second
-over a positive length. Rectangles that meet only at a corner, overlap, or
-are separated by a gap share no edge with each other. A zero-width or
-zero-height rectangle still lies along its neighbours over its non-zero
-extent; callers that hide degenerate tiles must exclude them first.
--}
-adjacentEdges :: Rect -> Rect -> Set Edge
-adjacentEdges a b =
-  Set.fromList . map fst . filter snd $
-    [ (EdgeTop, top a == bottom b && overlaps left right)
-    , (EdgeBottom, bottom a == top b && overlaps left right)
-    , (EdgeLeft, left a == right b && overlaps top bottom)
-    , (EdgeRight, right a == left b && overlaps top bottom)
-    ]
- where
-  overlaps low high = min (high a) (high b) > max (low a) (low b)
-  left, right, top, bottom :: Rect -> Int64
-  left = fromIntegral . rectX
-  top = fromIntegral . rectY
-  right r = left r + fromIntegral (rectWidth r)
-  bottom r = top r + fromIntegral (rectHeight r)
