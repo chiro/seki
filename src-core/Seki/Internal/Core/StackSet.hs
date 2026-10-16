@@ -1,3 +1,19 @@
+{- | The workspace, screen, and window zipper behind seki's tiling state.
+
+Closely derived from @XMonad.StackSet@ in xmonad 0.18.1 (BSD-3-Clause, see
+@THIRD_PARTY_NOTICES.md@). The operations keep xmonad's semantics. Deliberate
+differences:
+
+* Windows are 'WindowId' and screens are 'OutputId', river object
+  identities, rather than type parameters.
+* A 'Screen' carries no geometry. The scene planner reads each output's
+  usable rectangle separately.
+* 'FloatGeom' is an absolute 'Rect', not a @RationalRect@.
+* There is no @new@ and no @abort@. Construction is total and lives in
+  "Seki.Internal.Core.State", which returns typed errors.
+* The workspace set is fixed once validated, so @renameTag@ and
+  @ensureTags@ are not ported.
+-}
 module Seki.Internal.Core.StackSet (
   StackSet (..),
   Screen (..),
@@ -6,13 +22,37 @@ module Seki.Internal.Core.StackSet (
   WindowId (..),
   OutputId (..),
   FloatGeom,
+
+  -- * Observation
+  peek,
+  index,
   integrate,
+  integrate',
   differentiate,
+  currentTag,
+  member,
+  findTag,
+  workspaces,
+  allWindows,
+
+  -- * Focus
+  focusUp,
+
+  -- * Membership
+  insertUp,
+
+  -- * Workspaces
+  view,
 ) where
 
 import Control.Applicative.Backwards (Backwards (..))
+import Data.Containers.ListUtils (nubOrd)
 import Data.Foldable (toList)
+import Data.List qualified as L
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.List.NonEmpty qualified as NE
 import Data.Map.Strict (Map)
+import Data.Maybe (isJust, listToMaybe)
 import Data.Word (Word32)
 import Seki.Internal.Core.Geometry (Rect)
 
@@ -84,3 +124,78 @@ integrate (Stack x l r) = reverse l ++ x : r
 differentiate :: [a] -> Maybe (Stack a)
 differentiate [] = Nothing
 differentiate (x : xs) = Just (Stack x [] xs)
+
+-- | The stack's elements, or none.
+integrate' :: Maybe (Stack a) -> [a]
+integrate' = maybe [] integrate
+
+{- | Focus workspace @i@. A visible workspace swaps screens with the current
+one; a hidden workspace replaces the current one on its screen. An unknown tag
+changes nothing.
+-}
+view :: (Eq i) => i -> StackSet i l -> StackSet i l
+view i s
+  | i == currentTag s = s
+  | Just x <- L.find ((i ==) . tag . workspace) (visible s) =
+      s{current = x, visible = current s : L.deleteBy (equating output) x (visible s)}
+  | Just x <- L.find ((i ==) . tag) (hidden s) =
+      s
+        { current = (current s){workspace = x}
+        , hidden = workspace (current s) : L.deleteBy (equating tag) x (hidden s)
+        }
+  | otherwise = s
+ where
+  equating f x y = f x == f y
+
+with :: b -> (Stack WindowId -> b) -> StackSet i l -> b
+with dflt f = maybe dflt f . stack . workspace . current
+
+modify :: Maybe (Stack WindowId) -> (Stack WindowId -> Maybe (Stack WindowId)) -> StackSet i l -> StackSet i l
+modify d f s = s{current = (current s){workspace = (workspace (current s)){stack = with d f s}}}
+
+modify' :: (Stack WindowId -> Stack WindowId) -> StackSet i l -> StackSet i l
+modify' f = modify Nothing (Just . f)
+
+-- | The focused window of the current workspace.
+peek :: StackSet i l -> Maybe WindowId
+peek = with Nothing (Just . focus)
+
+-- | The current workspace's windows from top to bottom.
+index :: StackSet i l -> [WindowId]
+index = with [] integrate
+
+-- | Move focus up the current stack, wrapping from the top to the bottom.
+focusUp :: StackSet i l -> StackSet i l
+focusUp = modify' focusUp'
+
+focusUp' :: Stack a -> Stack a
+focusUp' (Stack t (l : ls) rs) = Stack l ls (t : rs)
+focusUp' (Stack t [] rs) = Stack x xs []
+ where
+  x :| xs = NE.reverse (t :| rs)
+
+-- | The current screen's workspace, then the visible ones, then the hidden ones.
+workspaces :: StackSet i l -> [Workspace i l]
+workspaces s = workspace (current s) : map workspace (visible s) ++ hidden s
+
+-- | Every window on every workspace, without duplicates.
+allWindows :: StackSet i l -> [WindowId]
+allWindows = nubOrd . concatMap (integrate' . stack) . workspaces
+
+currentTag :: StackSet i l -> i
+currentTag = tag . workspace . current
+
+member :: WindowId -> StackSet i l -> Bool
+member a s = isJust (findTag a s)
+
+-- | The tag of the workspace holding the window.
+findTag :: WindowId -> StackSet i l -> Maybe i
+findTag a s = listToMaybe [tag w | w <- workspaces s, a `elem` integrate' (stack w)]
+
+{- | Insert a window above the focus of the current workspace and focus it.
+A window already in the StackSet changes nothing.
+-}
+insertUp :: WindowId -> StackSet i l -> StackSet i l
+insertUp a s
+  | member a s = s
+  | otherwise = modify (Just (Stack a [] [])) (\(Stack t l r) -> Just (Stack a l (t : r))) s

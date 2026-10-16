@@ -165,6 +165,7 @@ test-suite seki-test
   main-is:        Main.hs
   other-modules:
     Seki.Internal.Core.GeometryTest
+    Seki.Internal.Core.StackSetGen
     Seki.Internal.Core.StackSetTest
     Seki.Internal.Core.StateTest
     Seki.Scanner.GenerateTest
