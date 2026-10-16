@@ -48,7 +48,9 @@ phase state machine.
 
 ### 1.2 Explicitly deferred to M2+
 
-- Floating placement/rendering, public floating actions, and pointer move/resize
+- Floating placement/rendering, public floating actions, and pointer move/resize.
+  M1 tiles a window with a parent, such as a dialog, like any other window;
+  see [M1-D06](#m1-d06--dialogs-are-tiled-in-m1)
 - `ManageHook`
 - Fullscreen policy
 - Focus-follows-mouse
@@ -65,8 +67,8 @@ proposed tile. M2 replaces that behavior with the configured `Crop` or
 `Tolerate` policy.
 
 M1 has one fixed focus policy: `window_interaction` focuses the interacted
-window, and the scene planner raises the focused window to the top of the
-explicit stacking order. `pointer_enter` / `pointer_leave` cause no core policy
+window, and the scene planner raises the focused window's family to the top
+of the explicit stacking order (section 3.5). `pointer_enter` / `pointer_leave` cause no core policy
 transition until focus-follows-mouse is implemented in M2.
 
 For every new window, M1 explicitly sends an empty `set_capabilities` value. It
@@ -134,7 +136,10 @@ the module documentation. Expected M1 differences are:
 - the runtime may be temporarily headless;
 - a live output can exist when there is no hidden workspace left to assign;
 - visibility is an explicit protocol state derived from the active layout's
-  output, rather than X11 map state.
+  output, rather than X11 map state;
+- the focused window's family is raised, where xmonad never raises the
+  focused window (M1-D03); and
+- windows with a parent are tiled rather than floated (M1-D06).
 
 ## 3. Target Architecture
 
@@ -295,8 +300,19 @@ Planner rules:
 - incomplete outputs or zero-area usable rectangles show no windows;
 - `Full` places only the focused window, at the full rectangle, and omits the
   rest, as in xmonad;
-- stacking is deterministic, explicitly complete, and respects child-above-
-  parent constraints from inventory;
+- stacking is deterministic and explicitly complete, built bottom to top as
+  follows:
+  1. parent links from inventory group the shown windows into families; a
+     window whose parent is closed, unknown, or not shown starts its own
+     family;
+  2. families stack in the StackSet's window order, except that the focused
+     window's family is on top;
+  3. within a family each parent sits directly below its children; among
+     siblings the branch containing the focused window is on top and the rest
+     keep StackSet order, so the focused window is topmost unless it has shown
+     descendants;
+  4. hidden windows sit below every shown window, in StackSet order; and
+  5. stacking never changes the StackSet's stack order;
 - `set_tiled` edges name only edges adjacent to another tiled rectangle;
 - borders do not affect content positions or dimensions; and
 - exactly one window may be the focus target.
@@ -487,7 +503,9 @@ Tests:
 
 - scene properties for window uniqueness, visibility, adjacency symmetry, one
   focus target, and deterministic stacking;
-- an interaction-focused window becomes the top node without disturbing its
+- an interaction-focused window's family becomes the top of the stacking
+  order, with the focused window topmost unless it has shown descendants,
+  without disturbing its
   workspace's stack order;
 - request-level mock tests for unchanged scenes, focus-only changes, workspace
   hiding, layout changes, delayed dimensions, superseded proposals, closed
@@ -674,7 +692,7 @@ This baseline recommends the following choices:
    behavior remains M2 work.
 7. **Use an intentionally narrow M1 interaction policy.** M1 advertises no
    optional window capabilities, ignores unsupported client requests, and uses
-   click-to-focus with the focused window raised. Fullscreen and
+   click-to-focus with the focused window's family raised. Fullscreen and
    focus-follows-mouse are enabled only when M2 implements them.
 8. **Own the exclusive-zone integration fixture.** A deterministic Haskell
    fixture uses seki's native Wayland transport and a pinned integration-only
@@ -696,7 +714,7 @@ Status progression:
 - **Verified**: implementation and the required regression tests have landed;
   link the supporting commits or PRs in the entry.
 
-The design review is complete when all five entries are **Decided** or
+The design review is complete when all six entries are **Decided** or
 **Verified**. M1 completion requires every entry to be **Verified**. Proposed
 resolutions below are starting points for the decisions, not replacements for
 the current baseline. Decision and verification evidence are pending for all
@@ -706,9 +724,10 @@ entries initially.
 |---|---|---|---|---|
 | M1-D01 | Reclaiming non-exclusive layer focus | P1 | Open | WP5, WP6 |
 | M1-D02 | Full visibility and layout-omitted windows | P2 | Decided | WP3, WP6 |
-| M1-D03 | Parent/child stacking versus focus raising | P2 | Open | WP6 |
+| M1-D03 | Parent/child stacking versus focus raising | P2 | Decided | WP6 |
 | M1-D04 | Zero-sized tiles and their focus behavior | P2 | Open | WP1, WP3, WP6 |
 | M1-D05 | Tiled flags at output boundaries | P2 | Open | WP6 |
+| M1-D06 | Dialogs are tiled in M1 | P3 | Decided | WP6 |
 
 ### M1-D01 — Reclaiming non-exclusive layer focus
 
@@ -772,6 +791,23 @@ entries initially.
 - **Required regression:** focus a parent with a visible child and grandchild
   among unrelated windows. Assert the chosen complete stacking order without
   changing workspace stack order; also cover hidden relatives and parent close.
+- **Decision (2026-10-16):** raise the focused window's family. Parent links
+  group shown windows into families. The focused family stacks on top, the
+  others follow StackSet order, each parent sits directly below its children,
+  and the focused branch is on top among siblings. Hidden windows sit below all
+  shown windows. A window whose parent is closed, unknown, or not shown starts
+  its own family. This satisfies river's recommendation that children render
+  directly above their parent. xmonad 0.18.1 never raises the focused window
+  and floats transients instead, so the raise is a named seki deviation.
+  Rejected: raising only the focused window, which covers a parent's dialog,
+  and raising only the focused subtree, which lets unrelated windows separate
+  a dialog from its parent. The top family is not remembered after focus
+  leaves it; M2 floating may need a remembered raise order. Updated: plan
+  sections 1.2, 3.5, WP6, and planning decision 7; `spec.md` sections 3.1
+  and 3.6.
+- **Additional regression:** focusing a child places its parent below it,
+  with only that parent's other descendants between them and no unrelated
+  window.
 
 ### M1-D04 — Zero-sized tiles and their focus behavior
 
@@ -803,3 +839,19 @@ entries initially.
 - **Required regression:** assert protocol flags for a single Tall window,
   Full's selected window, a multi-window split, and an output reduced by an
   exclusive zone. Check both internal edges and usable-area boundaries.
+
+### M1-D06 — Dialogs are tiled in M1
+
+- **Problem:** xmonad 0.18.1 floats every transient or fixed-size window in
+  `manage`, so dialogs sit above the tiled layer. M1 defers floating, so a
+  window with a parent is an ordinary tile. Under `Full` (M1-D02) a dialog
+  takes focus and fills the area; refocusing its parent hides the dialog, and
+  the application can look frozen until focus returns to the dialog.
+- **Decision (2026-10-16):** accept this as a known M1 limitation and revisit
+  it with M2's ManageHook and floating. M1 adds no special case to M1-D02's
+  shown-state rule.
+- **Affected text:** plan section 1.2.
+- **Required regression:** a request-level test pins the M1 behavior: a new
+  child window is inserted and focused like any window, and under `Full`
+  focusing its parent hides it. M2 changes this test deliberately when it
+  floats dialogs.
