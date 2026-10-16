@@ -68,7 +68,9 @@ mirroring functions of `XMonad.Layout`. `src-core/Seki/Internal/Core/Layout.hs`
 adapts the layout class and messages of `XMonad.Core` and the `Mirror` and
 `Choose` layouts of `XMonad.Layout`. `src-core/Seki/Internal/Layout/Tall.hs`
 and `src-core/Seki/Internal/Layout/Full.hs` adapt the `Tall` and `Full`
-layouts of `XMonad.Layout`.
+layouts of `XMonad.Layout`. `src-core/Seki/Internal/Core/StackSet.hs` adapts
+`XMonad.StackSet`, and the tests under `test/Seki/Internal/` adapt xmonad's
+QuickCheck properties from `tests/`.
 
 Copyright (c) 2007,2008 Spencer Janssen
 Copyright (c) 2007,2008 Don Stewart
