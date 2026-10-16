@@ -15,6 +15,7 @@ differences:
   @ensureTags@ are not ported.
 -}
 module Seki.Internal.Core.StackSet (
+  -- * Types
   StackSet (..),
   Screen (..),
   Workspace (..),
@@ -32,6 +33,8 @@ module Seki.Internal.Core.StackSet (
   currentTag,
   member,
   findTag,
+  tagMember,
+  lookupWorkspace,
   screens,
   workspaces,
   allWindows,
@@ -54,8 +57,6 @@ module Seki.Internal.Core.StackSet (
   filter,
   shift,
   shiftWin,
-  tagMember,
-  lookupWorkspace,
 
   -- * Workspaces
   view,
@@ -208,9 +209,11 @@ workspaces s = workspace (current s) : map workspace (visible s) ++ hidden s
 allWindows :: StackSet i l -> [WindowId]
 allWindows = nubOrd . concatMap (integrate' . stack) . workspaces
 
+-- | The tag of the current screen's workspace.
 currentTag :: StackSet i l -> i
 currentTag = tag . workspace . current
 
+-- | Whether a workspace holds the window.
 member :: WindowId -> StackSet i l -> Bool
 member a s = isJust (findTag a s)
 

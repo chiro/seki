@@ -1,3 +1,28 @@
+{- | The core's workspaces across output hotplug, including the time when no
+output exists. An attached state keeps an xmonad 'StackSet' unchanged; the
+headless state stands in for it, since a StackSet always has a current
+screen.
+
+Every transition keeps these invariants:
+
+* every configured workspace appears exactly once;
+* every window appears in at most one workspace stack;
+* current and visible screens have distinct outputs and workspaces;
+* hidden workspaces have no output;
+* the focused window, when present, is a member of the current workspace;
+* an output waits unassigned only while no workspace is hidden.
+
+Hotplug rules:
+
+* The first output shows the remembered workspace. Each later output shows
+  the first hidden workspace, appended after the visible screens, or waits
+  unassigned in arrival order when none is hidden.
+* Removing a screen's output puts its workspace at the front of the hidden
+  workspaces, then pairs unassigned outputs with hidden workspaces in order.
+  The first surviving screen becomes current. With no screen left the state
+  goes headless and remembers the removed workspace.
+* Adding a known output or removing an unknown one changes nothing.
+-}
 module Seki.Internal.Core.State (
   CoreState (..),
   HeadlessWorkspaces (..),
