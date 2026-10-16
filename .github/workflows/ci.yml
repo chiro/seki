@@ -25,6 +25,11 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
+      # cabal-install 3.12 can start a test suite before sibling libraries it
+      # does not depend on are registered, and then fails to find them.
+      - name: Build all components
+        run: nix develop --no-write-lock-file .#unit --command cabal build all
+
       - name: Run ordinary test suite
         run: nix develop --no-write-lock-file .#unit --command cabal test all
 
