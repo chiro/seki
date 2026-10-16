@@ -32,6 +32,7 @@ module Seki.Internal.Core.StackSet (
   currentTag,
   member,
   findTag,
+  screens,
   workspaces,
   allWindows,
 
@@ -40,9 +41,11 @@ module Seki.Internal.Core.StackSet (
 
   -- * Membership
   insertUp,
+  tagMember,
 
   -- * Workspaces
   view,
+  greedyView,
 ) where
 
 import Control.Applicative.Backwards (Backwards (..))
@@ -199,3 +202,26 @@ insertUp :: WindowId -> StackSet i l -> StackSet i l
 insertUp a s
   | member a s = s
   | otherwise = modify (Just (Stack a [] [])) (\(Stack t l r) -> Just (Stack a l (t : r))) s
+
+{- | Like 'view', but a visible workspace moves onto the current screen and
+the current workspace takes its place.
+-}
+greedyView :: (Eq i) => i -> StackSet i l -> StackSet i l
+greedyView w ws
+  | any wTag (hidden ws) = view w ws
+  | Just s <- L.find (wTag . workspace) (visible ws) =
+      ws
+        { current = (current ws){workspace = workspace s}
+        , visible = s{workspace = workspace (current ws)} : L.filter (not . wTag . workspace) (visible ws)
+        }
+  | otherwise = ws
+ where
+  wTag = (w ==) . tag
+
+-- | The current screen, then the visible ones.
+screens :: StackSet i l -> [Screen i l]
+screens s = current s : visible s
+
+-- | Whether a workspace has the tag.
+tagMember :: (Eq i) => i -> StackSet i l -> Bool
+tagMember t = elem t . map tag . workspaces
