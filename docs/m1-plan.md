@@ -179,7 +179,7 @@ protocol objects.
 | `Seki.Core.Geometry` | `Point`, `Size`, `Rect`, checked construction and translation, splitting, mirroring |
 | `Seki.Core.StackSet` | Workspace/screen/stack zipper and xmonad-compatible pure operations |
 | `Seki.Core.Layout` | `LayoutClass`, messages, `Choose` / `(|||)`, `Mirror` |
-| `Seki.Layout.Tall` | `Tall`, tile/split functions, `Shrink`, `Expand`, `IncMasterN` |
+| `Seki.Layout.Tall` | `Tall` and `tile`; its `Shrink`, `Expand`, and `IncMasterN` messages live in `Seki.Core.Layout` |
 | `Seki.Layout.Full` | `Full` |
 | `Seki.Core.State` | Headless/attached policy state, queued core events, output hotplug |
 | `Seki.Core.Action` | Pure user actions: `windows`, `sendMessage`, kill/spawn intents |

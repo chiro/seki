@@ -125,14 +125,14 @@ reconcile :: DesiredScene -> ActualState -> Protocol ()      -- ③ apply the di
 ### 3.4 LayoutClass
 
 ```haskell
-class LayoutClass l where
-  pureLayout  :: l -> Rect -> Stack WindowId -> [(WindowId, Rect)]
-  handleMsg   :: l -> SomeMessage -> Maybe l    -- Shrink / Expand / IncMaster ...
-  sizePolicy  :: l -> SizePolicy                -- Crop | Tolerate (default from 3.3)
-  description :: l -> String
+class Show l => LayoutClass l where
+  pureLayout  :: l -> Rect -> Stack WindowId -> [(WindowId, Rect)]  -- default: focused window, whole rect
+  pureMessage :: l -> SomeMessage -> Maybe l    -- Shrink / Expand / IncMasterN / NextLayout ...
+  description :: l -> String                    -- default: show
 ```
 
-- The algebra of `Choose` (`|||`), `Mirror`, and `ModifiedLayout` is ported from xmonad.
+- The core is pure, so xmonad's `doLayout`, `emptyLayout`, and `handleMessage` collapse into `pureLayout` and `pureMessage`. `sizePolicy` arrives with `Crop` / `Tolerate` (section 3.3) in M2.
+- The algebra of `Choose` (`|||`) and `Mirror` is ported from xmonad in M1; `ModifiedLayout` follows later.
 - [DECIDED] `pureLayout` may omit windows of the stack. Omitted windows are hidden (3.1). `Full` returns only the focused window at the whole rectangle, as in xmonad. A returned rectangle with zero width or height counts as omitted (3.3).
 - [DECIDED] A returned rectangle is a tile that includes the border. The WM proposes content inset by the border width on all four sides, because river draws borders outside the content box. A tile no larger than twice the border width in either dimension leaves zero content and counts as omitted. `Full` keeps the border (M1-D07).
 - Layouts bundled in v1: `Tall`, `Mirror Tall`, `Full`. Anything else arrives incrementally as the equivalent of contrib.
