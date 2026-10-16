@@ -5,11 +5,11 @@ import Data.Functor.Compose (Compose (..))
 import Data.Functor.Identity (Identity (..))
 import Data.List (nub, sortOn)
 import Data.List qualified as L
-import Data.Maybe (isNothing, listToMaybe)
+import Data.Maybe (isNothing, listToMaybe, maybeToList)
 import Data.Word (Word32)
 import Seki.Internal.Core.StackSet
 import Seki.Internal.Core.StackSetGen
-import Test.QuickCheck (Fun, Gen, NonNegative (..), Property, applyFun, arbitrary, chooseInt, elements, forAll, property, suchThat, (===))
+import Test.QuickCheck (Fun, Gen, NonNegative (..), Property, applyFun, arbitrary, chooseInt, conjoin, elements, forAll, property, suchThat, (===))
 import Test.Tasty (TestTree, localOption, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.QuickCheck (QuickCheckTests (..), testProperty)
@@ -187,8 +187,35 @@ tests =
                 current (shiftWin n w x) === current x
         ]
     , testGroup
+        "Workspace"
+        [ testProperty "lookup_current" $ \(x :: T) ->
+            lookupWorkspace (output (current x)) x === Just (currentTag x)
+        , testProperty "lookup_visible" $
+            forAll (genT `suchThat` (not . null . visible)) $ \x ->
+              let visibleTags = map (tag . workspace) (visible x)
+               in maybe False (`elem` visibleTags) (lookupWorkspace (output (last (visible x))) x)
+        , testProperty "currentTag" $ \(x :: T) -> currentTag x === tag (workspace (current x))
+        , testProperty "mapWorkspaceId" $ \(x :: T) -> mapWorkspace id x === x
+        , testProperty "mapWorkspaceInverse" $ \(x :: T) -> mapWorkspace predTag (mapWorkspace succTag x) === x
+        , testProperty "mapWorkspace applies to every workspace" $ \(x :: T) ->
+            tags (mapWorkspace succTag x) === map succ (tags x)
+        , testProperty "mapLayoutId" $ \(x :: T) -> mapLayout id x === x
+        , testProperty "mapLayoutInverse" $ \(x :: T) -> mapLayout pred (mapLayout succ x) === x
+        ]
+    , testGroup
         "Stack"
-        [ testProperty "filter_order" $ \(x :: T) -> case stack (workspace (current x)) of
+        [ testProperty "index_length" $ \(x :: T) ->
+            length (index x) === length (integrate' (stack (workspace (current x))))
+        , testProperty "findIndex" $ \(x :: T) ->
+            conjoin
+              [ findTag i x === Just (tag w)
+              | w <- workspace (current x) : map workspace (visible x) ++ hidden x
+              , t <- maybeToList (stack w)
+              , i <- focus t : up t ++ down t
+              ]
+        , testProperty "allWindowsMember" $ \(NonEmptyWindowsStackSet x) ->
+            forAll (elements (allWindows x)) (`member` x)
+        , testProperty "filter_order" $ \(x :: T) -> case stack (workspace (current x)) of
             Nothing -> property True
             Just st -> integrate' (filter (/= focus st) st) === L.filter (/= focus st) (integrate st)
         , testProperty "differentiate" propDifferentiate
@@ -222,6 +249,10 @@ onStack f st = case stack (workspace (current (f x))) of
 
 otherWindows :: T -> [WindowId]
 otherWindows x = allWindows x L.\\ index x
+
+succTag, predTag :: Workspace Int Int -> Workspace Int Int
+succTag w = w{tag = succ (tag w)}
+predTag w = w{tag = pred (tag w)}
 
 genT :: Gen T
 genT = arbitrary

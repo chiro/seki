@@ -55,10 +55,13 @@ module Seki.Internal.Core.StackSet (
   shift,
   shiftWin,
   tagMember,
+  lookupWorkspace,
 
   -- * Workspaces
   view,
   greedyView,
+  mapWorkspace,
+  mapLayout,
 ) where
 
 import Prelude hiding (filter)
@@ -336,3 +339,25 @@ shiftWin n w s = case findTag w s of
 
 onWorkspace :: (Eq i) => i -> (StackSet i l -> StackSet i l) -> StackSet i l -> StackSet i l
 onWorkspace n f s = view (currentTag s) . f . view n $ s
+
+-- | The tag of the workspace shown on an output.
+lookupWorkspace :: OutputId -> StackSet i l -> Maybe i
+lookupWorkspace o s = listToMaybe [tag w | Screen w o' <- screens s, o' == o]
+
+-- | Apply a function to every workspace.
+mapWorkspace :: (Workspace i l -> Workspace i l) -> StackSet i l -> StackSet i l
+mapWorkspace f s =
+  s
+    { current = updScr (current s)
+    , visible = map updScr (visible s)
+    , hidden = map f (hidden s)
+    }
+ where
+  updScr scr = scr{workspace = f (workspace scr)}
+
+-- | Apply a function to every workspace's layout.
+mapLayout :: (l -> l') -> StackSet i l -> StackSet i l'
+mapLayout f (StackSet v vs hs m) = StackSet (fScreen v) (map fScreen vs) (map fWorkspace hs) m
+ where
+  fScreen (Screen ws o) = Screen (fWorkspace ws) o
+  fWorkspace (Workspace t l s) = Workspace t (f l) s
