@@ -49,7 +49,10 @@ library
   exposed-modules:
     Seki
     Seki.Core.Geometry
+    Seki.Core.Layout
     Seki.Core.StackSet
+    Seki.Layout.Full
+    Seki.Layout.Tall
   build-depends:
     base >=4.18 && <4.19,
     seki:seki-core
