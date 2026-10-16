@@ -60,8 +60,10 @@ library seki-core
   hs-source-dirs:  src-core
   exposed-modules:
     Seki.Internal.Core.Geometry
+    Seki.Internal.Core.Layout
     Seki.Internal.Core.StackSet
     Seki.Internal.Core.State
+    Seki.Internal.Layout.Full
   build-depends:
     base >=4.18 && <4.19,
     containers >=0.6.7 && <0.8,
@@ -167,9 +169,11 @@ test-suite seki-test
   other-modules:
     Seki.Internal.Core.GeometryGen
     Seki.Internal.Core.GeometryTest
+    Seki.Internal.Core.LayoutTest
     Seki.Internal.Core.StackSetGen
     Seki.Internal.Core.StackSetTest
     Seki.Internal.Core.StateTest
+    Seki.Internal.Layout.FullTest
     Seki.Scanner.GenerateTest
     Seki.Scanner.ParseTest
     Seki.Run.FullTest
