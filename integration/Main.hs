@@ -96,6 +96,7 @@ import Seki.Wire.Connection.Registry (
  )
 import Seki.Wire.Transport (ConnectionTarget (UnixSocketPath))
 import System.Directory (
+  canonicalizePath,
   createDirectory,
   doesFileExist,
   doesPathExist,
@@ -109,7 +110,7 @@ import System.Environment (
   lookupEnv,
  )
 import System.Exit (ExitCode (..), exitFailure)
-import System.FilePath ((</>))
+import System.FilePath (takeDirectory, (</>))
 import System.IO (
   BufferMode (NoBuffering),
   Handle,
@@ -832,11 +833,12 @@ withPrivateDbus childEnvironment action = do
   let busPath = runtimeDirectory </> "dbus-session-bus"
       busAddress = "unix:path=" <> busPath
       dbusEnvironment = replaceEnvironment [("DBUS_SESSION_BUS_ADDRESS", busAddress)] childEnvironment
+  configArguments <- dbusSessionConfigArguments
   bracket
     ( startManagedProcess
         "dbus-daemon"
         childEnvironment
-        (proc "dbus-daemon" ["--session", "--nofork", "--nopidfile", "--address=" <> busAddress])
+        (proc "dbus-daemon" (configArguments <> ["--nofork", "--nopidfile", "--address=" <> busAddress]))
     )
     stopManagedProcess
     $ \dbusProcess -> do
@@ -847,6 +849,18 @@ withPrivateDbus childEnvironment action = do
           (privateDbusReady busPath dbusProcess)
           id
       action dbusEnvironment `onException` printManagedProcessDiagnostics dbusProcess
+
+-- Nix builds dbus to read its session configuration from /etc, which a CI
+-- runner may lack, so prefer the copy installed beside the daemon.
+dbusSessionConfigArguments :: IO [String]
+dbusSessionConfigArguments =
+  findExecutable "dbus-daemon" >>= \case
+    Nothing -> pure ["--session"]
+    Just daemon -> do
+      prefix <- takeDirectory . takeDirectory <$> canonicalizePath daemon
+      let config = prefix </> "share" </> "dbus-1" </> "session.conf"
+      present <- doesFileExist config
+      pure (if present then ["--config-file=" <> config] else ["--session"])
 
 privateDbusReady :: FilePath -> ManagedProcess -> IO Bool
 privateDbusReady busPath dbusProcess =
