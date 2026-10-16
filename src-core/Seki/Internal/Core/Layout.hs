@@ -27,9 +27,14 @@ module Seki.Internal.Core.Layout (
   LayoutClass (..),
   runLayout,
   Mirror (..),
+  CLR (..),
+  Choose (..),
+  (|||),
 ) where
 
+import Control.Applicative ((<|>))
 import Data.Bifunctor (second)
+import Data.Maybe (fromMaybe)
 import Data.Typeable (Typeable, cast)
 import Seki.Internal.Core.Geometry (Rect, mirror)
 import Seki.Internal.Core.StackSet (Stack (..), WindowId, Workspace (..))
@@ -92,3 +97,63 @@ instance (LayoutClass l) => LayoutClass (Mirror l) where
   pureLayout (Mirror l) r s = map (second mirror) (pureLayout l (mirror r) s)
   pureMessage (Mirror l) m = Mirror <$> pureMessage l m
   description (Mirror l) = "Mirror " ++ description l
+
+-- | Which layout of a 'Choose' is selected.
+data CLR = CL | CR
+  deriving (Eq, Show)
+
+-- | Two layouts with one selected; 'NextLayout' and 'FirstLayout' switch.
+data Choose l r = Choose CLR l r
+  deriving (Eq, Show)
+
+-- | Choose between two layouts, starting with the left one.
+(|||) :: l -> r -> Choose l r
+(|||) = Choose CL
+
+infixr 5 |||
+
+-- | Selects the next layout without wrapping; 'NextLayout' wraps with it.
+data NextNoWrap = NextNoWrap
+  deriving (Eq, Show)
+
+instance Message NextNoWrap
+
+instance (LayoutClass l, LayoutClass r) => LayoutClass (Choose l r) where
+  pureLayout (Choose CL l _) = pureLayout l
+  pureLayout (Choose CR _ r) = pureLayout r
+
+  description (Choose CL l _) = description l
+  description (Choose CR _ r) = description r
+
+  pureMessage lr m
+    | Just NextLayout <- fromMessage m = handle lr NextNoWrap <|> handle lr FirstLayout
+  pureMessage c@(Choose d l r) m
+    | Just NextNoWrap <- fromMessage m = case d of
+        CL -> case handle l NextNoWrap of
+          ml@(Just _) -> choose c CL ml Nothing
+          Nothing -> choose c CR Nothing (handle r FirstLayout)
+        CR -> choose c CR Nothing (handle r NextNoWrap)
+  pureMessage c@(Choose _ l _) m
+    | Just FirstLayout <- fromMessage m = choose c CL (handle l FirstLayout) Nothing
+  pureMessage c@(Choose CL l _) m = choose c CL (pureMessage l m) Nothing
+  pureMessage c@(Choose CR _ r) m = choose c CR Nothing (pureMessage r m)
+
+handle :: (LayoutClass l, Message m) => l -> m -> Maybe l
+handle l m = pureMessage l (SomeMessage m)
+
+{- | Select side @d'@ given the sides' answers to a message. Switching sides
+sends 'Hide' to the side switched away from.
+-}
+choose :: (LayoutClass l, LayoutClass r) => Choose l r -> CLR -> Maybe l -> Maybe r -> Maybe (Choose l r)
+choose (Choose d _ _) d' Nothing Nothing | d == d' = Nothing
+choose (Choose d l r) d' ml mr =
+  Just
+    ( case (d, d') of
+        (CL, CR) -> Choose d' (hide l') r'
+        (CR, CL) -> Choose d' l' (hide r')
+        _ -> Choose d' l' r'
+    )
+ where
+  l' = fromMaybe l ml
+  r' = fromMaybe r mr
+  hide x = fromMaybe x (handle x Hide)
