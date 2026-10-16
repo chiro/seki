@@ -1,11 +1,57 @@
 module Seki.Internal.Core.StackSet (
+  StackSet (..),
+  Screen (..),
+  Workspace (..),
   Stack (..),
+  WindowId (..),
+  OutputId (..),
+  FloatGeom,
   integrate,
   differentiate,
 ) where
 
 import Control.Applicative.Backwards (Backwards (..))
 import Data.Foldable (toList)
+import Data.Map.Strict (Map)
+import Data.Word (Word32)
+import Seki.Internal.Core.Geometry (Rect)
+
+-- | A river window's identity.
+newtype WindowId = WindowId Word32
+  deriving (Eq, Ord, Show)
+
+-- | A river output's identity.
+newtype OutputId = OutputId Word32
+  deriving (Eq, Ord, Show)
+
+-- | A floating window's rectangle in global logical coordinates.
+type FloatGeom = Rect
+
+{- | Every workspace exactly once: the focused screen's, the other screens',
+and the hidden ones, plus the floating windows' rectangles.
+-}
+data StackSet i l = StackSet
+  { current :: !(Screen i l)
+  , visible :: [Screen i l]
+  , hidden :: [Workspace i l]
+  , floating :: Map WindowId FloatGeom
+  }
+  deriving (Eq, Show)
+
+-- | A workspace shown on an output.
+data Screen i l = Screen
+  { workspace :: !(Workspace i l)
+  , output :: !OutputId
+  }
+  deriving (Eq, Show)
+
+-- | A tagged workspace with its layout and its windows, if any.
+data Workspace i l = Workspace
+  { tag :: !i
+  , layout :: l
+  , stack :: Maybe (Stack WindowId)
+  }
+  deriving (Eq, Show)
 
 {- | A non-empty list zipper. @up@ holds the elements above 'focus', nearest
 first; @down@ holds those below it, in order.
