@@ -1,10 +1,13 @@
 # M1 Core Implementation Plan
 
-Status: **planning baseline** / Last updated: 2026-08-17
+Status: **planning baseline — open design issues** / Last updated: 2026-10-16
 
 This document turns the M1 row in the specification into an ordered,
 testable implementation plan. It is intentionally narrower than the complete
 v1 design in `spec.md`.
+
+The current review findings are tracked in [Open design issues](#9-open-design-issues).
+The affected baseline rules remain subject to those decisions.
 
 ## 1. Outcome
 
@@ -130,8 +133,8 @@ the module documentation. Expected M1 differences are:
   behavior is deferred;
 - the runtime may be temporarily headless;
 - a live output can exist when there is no hidden workspace left to assign;
-- visibility is an explicit protocol state rather than an X workspace side
-  effect.
+- visibility is an explicit protocol state derived from the active layout's
+  output, rather than X11 map state.
 
 ## 3. Target Architecture
 
@@ -284,11 +287,14 @@ window it specifies:
 
 Planner rules:
 
-- visible workspace windows receive the active layout's rectangles;
+- windows that the active layout places on a visible workspace receive its
+  rectangles;
+- windows that the active layout omits on a visible workspace are explicitly
+  hidden, as xmonad unmaps them;
 - hidden workspace windows are always explicitly hidden;
 - incomplete outputs or zero-area usable rectangles show no windows;
-- `Full` maps each stack window to the full rectangle and places the focused
-  window on top;
+- `Full` places only the focused window, at the full rectangle, and omits the
+  rest, as in xmonad;
 - stacking is deterministic, explicitly complete, and respects child-above-
   parent constraints from inventory;
 - `set_tiled` edges name only edges adjacent to another tiled rectangle;
@@ -322,8 +328,19 @@ Render reconciliation sends, in deterministic order:
 4. explicit show/hide state; and
 5. render completion through the existing runtime.
 
+A window is shown only when the active layout places it on a visible
+workspace and its dimensions are settled. A window that the layout omits
+receives no dimension proposal and keeps its last applied dimensions. Cycling
+focus in `Full` therefore resizes a window only the first time `Full` selects
+it, and returning from `Full` to `Tall` sends no proposal to the windows that
+`Full` omitted.
+
 A proposal is settled only after a newer dimensions revision is observed.
 While a new window has no settled dimensions it remains explicitly hidden.
+When the layout selects an existing window whose dimensions are not yet
+settled for its new rectangle, a WP6 prototype on real river decides what is
+shown until they settle: either the window at its last settled size, or the
+previous selection until the swap can complete.
 If the desired dimensions change while a proposal is in flight, retain only
 the latest desired rectangle, finish the current render sequence safely, and
 request another manage sequence with `manage_dirty` after sequence completion.
@@ -398,7 +415,8 @@ Deliverables:
 
 Tests:
 
-- port applicable xmonad Tall/Full properties;
+- port applicable xmonad Tall/Full properties, including that `Full` returns
+  only the focused window at the full rectangle;
 - prove tiles remain within the supplied rectangle and do not overlap;
 - cover `Tall` ratios 0 and 1, zero masters, more masters than windows, odd
   dimensions, negative origins, Mirror, nested choices, and layout wraparound;
@@ -474,6 +492,9 @@ Tests:
 - request-level mock tests for unchanged scenes, focus-only changes, workspace
   hiding, layout changes, delayed dimensions, superseded proposals, closed
   pending windows, and output geometry changes;
+- request-level tests proving that layout-omitted windows receive `hide` and
+  no dimension proposal, and that Tall → Full → Tall sends no proposal to the
+  windows `Full` omitted;
 - request-level tests proving every new window receives empty capabilities and
   unsupported client requests do not mutate core state;
 - compile-surface tests that manage-only operations cannot appear in
@@ -568,6 +589,9 @@ Deliverables:
 
 ## 5. Dependency and Merge Order
 
+Resolve each [open design issue](#9-open-design-issues) to **Decided** before
+implementing its affected work packages.
+
 Recommended merge sequence:
 
 1. WP1 component/re-export spike, geometry, and reference pin; WP5's protocol
@@ -591,6 +615,8 @@ changes whether river permits layer clients to remain mapped.
 
 M1 is complete only when all of the following are true:
 
+- all design issues in section 9 are **Verified**, with implementation and
+  regression-test evidence linked from their entries;
 - all properties in the explicit xmonad suite disposition pass or have their
   documented typed-error/M2 replacement;
 - StackSet/event-sequence invariant tests pass at the configured high
@@ -598,7 +624,8 @@ M1 is complete only when all of the following are true:
 - Tall, Mirror Tall, Full, and choice-message properties pass;
 - mock protocol tests cover delayed dimensions and prove every sequence is
   completed or returns a structured runtime error;
-- hidden workspace windows receive `hide`, and only visible settled windows
+- windows on hidden workspaces and windows omitted by the active layout
+  receive `hide`, and only windows the layout places with settled dimensions
   receive `show`;
 - focus, borders, complete stacking, and tiled edges are observable in tests;
 - every new M1 window receives empty capabilities and unsupported client
@@ -655,3 +682,124 @@ This baseline recommends the following choices:
 
 If any of these decisions changes, revise the affected work packages before
 implementation begins.
+
+## 9. Open Design Issues
+
+These entries track the spec/plan review findings. Keep their IDs stable and
+retain resolved entries as a short decision history.
+
+Status progression:
+
+- **Open**: the problem is recorded; the proposed resolution is not yet adopted.
+- **Decided**: the chosen behavior is recorded and the affected spec sections,
+  plan rules, and acceptance criteria have been updated consistently.
+- **Verified**: implementation and the required regression tests have landed;
+  link the supporting commits or PRs in the entry.
+
+The design review is complete when all five entries are **Decided** or
+**Verified**. M1 completion requires every entry to be **Verified**. Proposed
+resolutions below are starting points for the decisions, not replacements for
+the current baseline. Decision and verification evidence are pending for all
+entries initially.
+
+| ID | Issue | Priority | Status | Affected work |
+|---|---|---|---|---|
+| M1-D01 | Reclaiming non-exclusive layer focus | P1 | Open | WP5, WP6 |
+| M1-D02 | Full visibility and layout-omitted windows | P2 | Decided | WP3, WP6 |
+| M1-D03 | Parent/child stacking versus focus raising | P2 | Open | WP6 |
+| M1-D04 | Zero-sized tiles and their focus behavior | P2 | Open | WP1, WP3, WP6 |
+| M1-D05 | Tiled flags at output boundaries | P2 | Open | WP6 |
+
+### M1-D01 — Reclaiming non-exclusive layer focus
+
+- **Problem:** WP5 suppresses window focus requests while any layer surface has
+  accepted focus, restoring focus only after `focus_none`. For non-exclusive
+  layer focus, a WM request to move focus away is itself a trigger for
+  `focus_none`; this policy can leave keyboard input with the layer surface
+  after the user clicks an application.
+- **Proposed resolution:** distinguish exclusive and non-exclusive ownership.
+  Allow explicit user focus actions to reclaim non-exclusive focus while
+  preventing routine reconciliation from stealing it. Specify border state
+  during the transition.
+- **Affected text:** plan sections 1.2, 3.4–3.6, WP5/WP6, and exit criteria;
+  `spec.md` sections 3.6 and 4.5.
+- **Required regression:** accept non-exclusive layer focus, then click a
+  window or invoke a keyboard focus action. Verify the focus request and border
+  transition, including the subsequent `focus_none`. Also verify that an
+  unchanged scene preserves non-exclusive focus and exclusive focus remains
+  protected.
+
+### M1-D02 — Full visibility and layout-omitted windows
+
+- **Problem:** section 3.5 places every Full window at the full rectangle,
+  whereas xmonad's Full displays only the focused window. With M1's accepted
+  size mismatches, a smaller focused window exposes other applications beneath
+  it. The spec's workspace-based shown-state invariant also fails to express
+  windows omitted by a layout.
+- **Proposed resolution:** preserve xmonad Full semantics and explicitly hide
+  windows omitted by the active layout. Define shown-state eligibility using
+  layout output as well as workspace visibility and dimension readiness.
+- **Affected text:** plan sections 2.3, 3.5–3.6, WP3/WP6, and exit criteria;
+  `spec.md` sections 3.1, 3.3, and 3.4.
+- **Required regression:** switch a three-window workspace to Full with a
+  focused client that commits a smaller size. Verify that only the selected
+  window is shown, focus cycling hides the previous selection, and returning
+  to Tall restores eligible windows. Cover a custom layout omitting a window.
+- **Decision (2026-10-16):** preserve xmonad Full semantics. `Full` returns only
+  the focused window. The active layout's output, workspace visibility, and
+  settled dimensions together define the shown state. Layout-omitted windows
+  are hidden and keep their last applied dimensions, with no new proposal.
+  Rejected: showing every Full window at the full rectangle, which makes
+  focus cycling a restack but lets a smaller or transparent focused window
+  expose the windows beneath it and keeps covered windows rendering. The
+  display during an unsettled selection change is left to a WP6 real-river
+  prototype (section 3.6). Updated: plan sections 2.3, 3.5, 3.6, WP3, WP6,
+  and exit criteria; `spec.md` sections 3.1 and 3.4. Section 3.3 already
+  allows a provisional or hidden placement and needed no change.
+- **Additional regression:** Tall → Full → Tall sends no dimension proposal to
+  the windows `Full` omitted.
+
+### M1-D03 — Parent/child stacking versus focus raising
+
+- **Problem:** section 3.5 requires children above parents, while section 1.2
+  and WP6 require the focused window to become the top node. Both cannot hold
+  when a parent with a visible child receives focus.
+- **Proposed resolution:** define precedence explicitly, for example by raising
+  the focused window's family while preserving child-above-parent order.
+  Specify how hidden relatives and relatives on other workspaces participate.
+- **Affected text:** plan sections 1.2, 3.5, WP6, and planning decision 7;
+  `spec.md` sections 3.1 and 3.6.
+- **Required regression:** focus a parent with a visible child and grandchild
+  among unrelated windows. Assert the chosen complete stacking order without
+  changing workspace stack order; also cover hidden relatives and parent close.
+
+### M1-D04 — Zero-sized tiles and their focus behavior
+
+- **Problem:** section 3.2 handles an empty usable area, but splitting a positive
+  rectangle can also yield individual zero-width or zero-height tiles. Passing
+  zero to `propose_dimensions` lets the client choose that dimension; it does
+  not produce an empty tile and can cause overlap under M1's mismatch policy.
+- **Proposed resolution:** define how degenerate tiles are handled before
+  dimension proposals, for example by hiding them. Explicitly decide the
+  keyboard-focus behavior when the StackSet focus has no drawable tile.
+- **Affected text:** plan sections 3.2, 3.5–3.6, WP1/WP3/WP6, and exit criteria;
+  `spec.md` sections 3.3, 3.4, and 3.6.
+- **Required regression:** split a one-pixel rectangle among multiple windows,
+  test Tall ratios at and near 0 and 1, and repeat through Mirror. Assert that
+  no degenerate tile becomes a client-selected visible size, verify focus, and
+  verify recovery when the available area grows.
+
+### M1-D05 — Tiled flags at output boundaries
+
+- **Problem:** section 3.5 allows tiled flags only on edges adjacent to another
+  tile. A single Tall window receives no flags, which the protocol defines as
+  not being part of a tiled layout. This can produce inappropriate client-side
+  decorations for a tiled window.
+- **Proposed resolution:** define how output and usable-area boundaries count
+  toward tiled edges, ensuring single-window tiled layouts remain marked tiled.
+  Keep geometric tile adjacency distinct from the final protocol flags.
+- **Affected text:** plan sections 3.2, 3.5, WP1/WP6, and exit criteria;
+  `spec.md` section 4.3. WP1's adjacency API should accommodate the WP6 decision.
+- **Required regression:** assert protocol flags for a single Tall window,
+  Full's selected window, a multi-window split, and an output reduced by an
+  exclusive zone. Check both internal edges and usable-area boundaries.

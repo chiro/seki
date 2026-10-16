@@ -1,6 +1,6 @@
 # seki Specification — A river Window Manager in Haskell
 
-Status: **v1 design accepted — M0 complete, M1 next** / Last updated: 2026-08-17
+Status: **v1 design accepted — M0 complete, M1 next** / Last updated: 2026-10-16
 Legend: [DECIDED] = current design decision, [RESOLVED] = checked against the protocol or other available evidence
 
 This is the target design for v1, not a description of the currently exported
@@ -86,7 +86,7 @@ data Stack a       = Stack { focus :: a, up :: [a], down :: [a] }
 | `i` (WorkspaceId) | `String` (or a newtype) | The compositor knows nothing about it |
 
 - Pure operations such as `greedyView` / `view` / `shift` / `focusUp` / `focusDown` / `swapMaster` are ported from xmonad with their meaning unchanged. The QuickCheck properties are ported too.
-- [RESOLVED] A hidden workspace means **explicitly sending** river_window_v1.hide (rendering state; borders and decorations are hidden along with it). New windows are shown by default, so hide must always be sent when placing a window on a hidden workspace. Reconciler invariant: "visible in the StackSet ⇔ in the shown state".
+- [RESOLVED] A hidden workspace means **explicitly sending** river_window_v1.hide (rendering state; borders and decorations are hidden along with it). New windows are shown by default, so hide must always be sent when placing a window on a hidden workspace. [DECIDED] Reconciler invariant: "placed by the active layout on a visible workspace, with settled dimensions ⇔ in the shown state". A window the layout omits (for example every non-focused window under `Full`) is hidden, as xmonad unmaps it, and keeps its last dimensions without a new proposal.
 - [RESOLVED] Inputs available to ManageHook: app_id (**may be null**), title (**may be null**), parent (for dialog detection), decoration_hint, dimensions_hint (min/max, 0 = unspecified), unreliable_pid, and the version 4 identifier (non-empty printable ASCII). These are guaranteed to arrive after the window event and before the next manage_start. Since app_id/title can be null for Xwayland windows, the core types are `Maybe Text`.
 - [RESOLVED] The parent event makes windows form a tree (the server guarantees there are no loops). The protocol recommends drawing child windows directly above their parent → fold this into the stacking-order computation in `plan`. This information was not directly available in xmonad's X11 model.
 
@@ -132,6 +132,7 @@ class LayoutClass l where
 ```
 
 - The algebra of `Choose` (`|||`), `Mirror`, and `ModifiedLayout` is ported from xmonad.
+- [DECIDED] `pureLayout` may omit windows of the stack. Omitted windows are hidden (3.1). `Full` returns only the focused window at the whole rectangle, as in xmonad.
 - Layouts bundled in v1: `Tall`, `Mirror Tall`, `Full`. Anything else arrives incrementally as the equivalent of contrib.
 
 ### 3.5 Floating [DECIDED: absolute logical pixel coordinates]
