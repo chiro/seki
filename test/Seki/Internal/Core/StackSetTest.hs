@@ -178,6 +178,9 @@ tests =
             forAll (arbitraryTag x) $ \n -> byTag (view n x) === byTag x
         , testProperty "view_idem" $ \(x :: T) ->
             forAll (arbitraryTag x) $ \n -> view n (view n x) === view n x
+        , testCase "moves the previous current screen to the front of the visible ones" $
+            map (\sc -> (tag (workspace sc), output sc)) (screens (view 'c' (attach 3 () "abc")))
+              @?= [('c', OutputId 3), ('a', OutputId 1), ('b', OutputId 2)]
         , testProperty "view_reversible" $ \(x :: T) ->
             forAll (arbitraryTag x) $ \n -> normal (view (currentTag x) (view n x)) === normal x
         ]
@@ -204,6 +207,9 @@ tests =
             forAll (arbitraryTag x) $ \n -> maybe (property True) (\w -> shiftWin n w x === shift n x) (peek x)
         , testProperty "shift_win_indentity" $ \(x :: T) ->
             forAll ((,) <$> arbitraryTag x <*> (arbitrary `suchThat` (not . (`member` x)))) $ \(n, w) ->
+              shiftWin n w x === x
+        , testProperty "shiftWin to an unknown tag changes nothing" $ \nex@(NonEmptyWindowsStackSet x) ->
+            forAll ((,) <$> arbitraryWindow nex <*> (arbitrary `suchThat` (not . (`tagMember` x)))) $ \(w, n) ->
               shiftWin n w x === x
         , testProperty "shift_win_fix_current" $
             forAll (genT `suchThat` \x -> length (tags x) >= 2 && not (null (otherWindows x))) $ \x ->
