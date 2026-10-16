@@ -38,6 +38,9 @@ module Seki.Internal.Core.StackSet (
 
   -- * Focus
   focusUp,
+  focusDown,
+  focusMaster,
+  focusWindow,
 
   -- * Membership
   insertUp,
@@ -225,3 +228,29 @@ screens s = current s : visible s
 -- | Whether a workspace has the tag.
 tagMember :: (Eq i) => i -> StackSet i l -> Bool
 tagMember t = elem t . map tag . workspaces
+
+-- | Move focus down the current stack, wrapping from the bottom to the top.
+focusDown :: StackSet i l -> StackSet i l
+focusDown = modify' focusDown'
+
+focusDown' :: Stack a -> Stack a
+focusDown' = reverseStack . focusUp' . reverseStack
+
+reverseStack :: Stack a -> Stack a
+reverseStack (Stack t ls rs) = Stack t rs ls
+
+-- | Focus the top window of the current stack, keeping the window order.
+focusMaster :: StackSet i l -> StackSet i l
+focusMaster = modify' $ \c -> case c of
+  Stack _ [] _ -> c
+  Stack t (l : ls) rs -> Stack x [] (xs ++ t : rs)
+   where
+    x :| xs = NE.reverse (l :| ls)
+
+{- | Focus a window, viewing its workspace first. A window outside the
+StackSet changes nothing.
+-}
+focusWindow :: (Eq i) => WindowId -> StackSet i l -> StackSet i l
+focusWindow w s
+  | Just w == peek s = s
+  | otherwise = maybe s (\n -> until ((Just w ==) . peek) focusUp (view n s)) (findTag w s)

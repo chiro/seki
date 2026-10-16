@@ -24,13 +24,15 @@ import Data.List (nub, sortOn)
 import Data.Maybe (maybeToList)
 import Seki.Internal.Core.StackSet
 import Seki.Internal.Core.State (CoreState (..), addOutput, newCoreState)
-import Test.QuickCheck (Arbitrary (..), Gen, chooseInt, elements, sized, suchThat, vectorOf)
+import Test.QuickCheck (Arbitrary (..), Gen, chooseInt, elements, frequency, sized, suchThat, vectorOf)
 
 type T = StackSet Int Int
 
--- | A small range, so generated windows repeat and non-members are common.
+{- | Mostly a small range, so generated windows repeat. The wider tail keeps
+non-members available even when a StackSet holds every small id.
+-}
 instance Arbitrary WindowId where
-  arbitrary = WindowId . fromIntegral <$> chooseInt (0, 60)
+  arbitrary = WindowId . fromIntegral <$> frequency [(3, chooseInt (0, 60)), (1, chooseInt (61, 1000))]
 
 instance Arbitrary T where
   arbitrary = do

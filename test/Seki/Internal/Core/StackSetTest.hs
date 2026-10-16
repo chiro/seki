@@ -4,10 +4,10 @@ import Data.Foldable (toList)
 import Data.Functor.Compose (Compose (..))
 import Data.Functor.Identity (Identity (..))
 import Data.List (sortOn)
-import Data.Maybe (isNothing)
+import Data.Maybe (isNothing, listToMaybe)
 import Seki.Internal.Core.StackSet
 import Seki.Internal.Core.StackSetGen
-import Test.QuickCheck (Fun, Gen, Property, applyFun, arbitrary, chooseInt, forAll, suchThat, (===))
+import Test.QuickCheck (Fun, Gen, NonNegative (..), Property, applyFun, arbitrary, chooseInt, forAll, property, suchThat, (===))
 import Test.Tasty (TestTree, localOption, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.QuickCheck (QuickCheckTests (..), testProperty)
@@ -26,12 +26,39 @@ tests =
               , testProperty "view_I" $ \n (x :: T) -> invariant (view n x)
               , testProperty "greedyView_I" $ \n (x :: T) -> invariant (greedyView n x)
               , testProperty "focusUp_I" $ \(SizedPositive n) (x :: T) -> invariant (applyN (Just n) focusUp x)
+              , testProperty "focusMaster_I" $ \(SizedPositive n) (x :: T) -> invariant (applyN (Just n) focusMaster x)
+              , testProperty "focusDown_I" $ \(SizedPositive n) (x :: T) -> invariant (applyN (Just n) focusDown x)
+              , testProperty "focus_I" propFocusI
               , testProperty "insertUp_I" $ \n (x :: T) -> invariant (insertUp n x)
               ]
         , testProperty "empty" $ \(EmptyStackSet x) -> all (isNothing . stack) (workspaces x)
         , testProperty "empty_current" $ \(EmptyStackSet x) -> take 1 (tags x) === [currentTag x]
         , testProperty "member_empty" $ \i (EmptyStackSet x) -> not (member i x)
         , testProperty "member_peek" $ \(x :: T) -> maybe True (`member` x) (peek x)
+        ]
+    , testGroup
+        "Focus"
+        [ testProperty "focus_left_master" $ \(SizedPositive n) (x :: T) -> index (applyN (Just n) focusUp x) === index x
+        , testProperty "focus_right_master" $ \(SizedPositive n) (x :: T) -> index (applyN (Just n) focusDown x) === index x
+        , testProperty "focus_master_master" $ \(SizedPositive n) (x :: T) -> index (applyN (Just n) focusMaster x) === index x
+        , testProperty "focusWindow_master" $ \(NonNegative n) (x :: T) ->
+            withCurrentWindow n x $ \w -> index (focusWindow w x) === index x
+        , testProperty "focus_left" $ \(x :: T) -> focusUp (focusDown x) === x
+        , testProperty "focus_right" $ \(x :: T) -> focusDown (focusUp x) === x
+        , testProperty "focusMaster focuses the master window" $ \(x :: T) ->
+            peek (focusMaster x) === listToMaybe (index x)
+        , testProperty "focusMaster_idem" $ \(x :: T) -> focusMaster x === focusMaster (focusMaster x)
+        , testProperty "focusWindow_works" $ \(NonNegative n) (x :: T) ->
+            withCurrentWindow n x $ \w -> peek (focusWindow w x) === Just w
+        , testProperty "focus_all_l" $ \(x :: T) -> foldr (const focusUp) x (index x) === x
+        , testProperty "focus_all_r" $ \(x :: T) -> foldr (const focusDown) x (index x) === x
+        , testProperty "focus_down_local" $ \(x :: T) -> hiddenSpaces (focusDown x) === hiddenSpaces x
+        , testProperty "focus_up_local" $ \(x :: T) -> hiddenSpaces (focusUp x) === hiddenSpaces x
+        , testProperty "focus_master_local" $ \(x :: T) -> hiddenSpaces (focusMaster x) === hiddenSpaces x
+        , testProperty "focusWindow_local" $ \(NonNegative n) (x :: T) ->
+            withCurrentWindow n x $ \w -> hiddenSpaces (focusWindow w x) === hiddenSpaces x
+        , testProperty "focusWindow_identity" $ \(x :: T) ->
+            forAll (arbitrary `suchThat` (not . (`member` x))) $ \w -> focusWindow w x === x
         ]
     , testGroup
         "GreedyView"
@@ -72,6 +99,17 @@ tests =
         , testProperty "Traversable effects run in integrate order" propTraverseOrder
         ]
     ]
+
+propFocusI :: SizedPositive -> T -> Bool
+propFocusI (SizedPositive n) x = case peek (applyN (Just n) focusUp x) of
+  Nothing -> True
+  Just w -> invariant (focusWindow w x)
+
+-- | Apply the property to the current workspace's window at index @n@, wrapped.
+withCurrentWindow :: Int -> T -> (WindowId -> Property) -> Property
+withCurrentWindow n x p = case index x of
+  [] -> property True
+  ws -> p (ws !! (n `mod` length ws))
 
 byTag :: T -> [Workspace Int Int]
 byTag = sortOn tag . workspaces
