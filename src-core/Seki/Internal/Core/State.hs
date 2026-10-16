@@ -9,7 +9,7 @@ module Seki.Internal.Core.State (
 
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Seki.Internal.Core.StackSet (FloatGeom, OutputId, Screen (..), StackSet (..), WindowId, Workspace (..))
+import Seki.Internal.Core.StackSet (FloatGeom, OutputId, Screen (..), StackSet (..), WindowId, Workspace (..), screens)
 
 -- | The core's workspaces, with or without outputs to show them on.
 data CoreState i l
@@ -52,7 +52,7 @@ known output changes nothing.
 addOutput :: OutputId -> CoreState i l -> CoreState i l
 addOutput o (HeadlessState (HeadlessWorkspaces c hs f)) = AttachedState (StackSet (Screen c o) [] hs f) []
 addOutput o st@(AttachedState ss unassigned)
-  | o `elem` map output (current ss : visible ss) || o `elem` unassigned = st
+  | o `elem` map output (screens ss) || o `elem` unassigned = st
   | h : hs <- hidden ss = AttachedState ss{visible = visible ss ++ [Screen h o], hidden = hs} unassigned
   | otherwise = AttachedState ss (unassigned ++ [o])
 
@@ -65,7 +65,7 @@ removeOutput :: OutputId -> CoreState i l -> CoreState i l
 removeOutput _ st@HeadlessState{} = st
 removeOutput o st@(AttachedState ss unassigned)
   | o `elem` unassigned = AttachedState ss (filter (/= o) unassigned)
-  | otherwise = case break ((== o) . output) (current ss : visible ss) of
+  | otherwise = case break ((== o) . output) (screens ss) of
       (_, []) -> st
       (before, Screen w _ : after) ->
         let freed = w : hidden ss
