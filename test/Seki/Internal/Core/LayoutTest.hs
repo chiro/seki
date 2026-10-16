@@ -2,11 +2,14 @@ module Seki.Internal.Core.LayoutTest (tests) where
 
 import Seki.Internal.Core.GeometryGen (rectOf)
 import Seki.Internal.Core.Layout
-import Seki.Internal.Core.StackSet (Stack (..), WindowId (..), Workspace (..))
+import Seki.Internal.Core.StackSet (Screen (..), Stack (..), StackSet (..), WindowId (..), Workspace (..), mapLayout, workspaces)
+import Seki.Internal.Core.StackSetGen (T)
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
+import Test.QuickCheck (Property, conjoin, (===))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertEqual, testCase)
+import Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests =
@@ -38,7 +41,37 @@ tests =
         , testCase "nested choices hide and select as xmonad does" testNestedHide
         , testCase "an unhandled message changes nothing" testUnhandled
         ]
+    , testGroup
+        "messageCurrentLayout"
+        [ testProperty "changes only the current workspace's layout" propMessageCurrent
+        , testProperty "leaves the StackSet unchanged for an unhandled message" propMessageUnhandled
+        ]
     ]
+
+-- | A layout that counts the 'Shrink' messages it receives.
+newtype Counter = Counter Int
+  deriving (Eq, Show)
+
+instance LayoutClass Counter where
+  pureMessage (Counter n) m
+    | Just Shrink <- fromMessage m = Just (Counter (n + 1))
+    | otherwise = Nothing
+
+propMessageCurrent :: T -> Property
+propMessageCurrent x =
+  let s = mapLayout Counter x
+      s' = messageCurrentLayout (SomeMessage Shrink) s
+      Counter n = layout (workspace (current s))
+   in conjoin
+        [ layout (workspace (current s')) === Counter (n + 1)
+        , drop 1 (workspaces s') === drop 1 (workspaces s)
+        , mapLayout (const ()) s' === mapLayout (const ()) s
+        ]
+
+propMessageUnhandled :: T -> Property
+propMessageUnhandled x =
+  let s = mapLayout Counter x
+   in messageCurrentLayout (SomeMessage (IncMasterN 1)) s === s
 
 {- | A layout that answers 'Hide', 'Shrink', and 'Expand' by recording them,
 and ignores every other message.

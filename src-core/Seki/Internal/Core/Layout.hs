@@ -30,6 +30,9 @@ module Seki.Internal.Core.Layout (
   CLR (..),
   Choose (..),
   (|||),
+
+  -- * Workspace layout state
+  messageCurrentLayout,
 ) where
 
 import Control.Applicative ((<|>))
@@ -37,7 +40,7 @@ import Data.Bifunctor (second)
 import Data.Maybe (fromMaybe)
 import Data.Typeable (Typeable, cast)
 import Seki.Internal.Core.Geometry (Rect, mirror)
-import Seki.Internal.Core.StackSet (Stack (..), WindowId, Workspace (..))
+import Seki.Internal.Core.StackSet (Screen (..), Stack (..), StackSet (..), WindowId, Workspace (..))
 
 -- | A value a layout can receive through 'SomeMessage'.
 class (Typeable a) => Message a
@@ -157,3 +160,14 @@ choose (Choose d l r) d' ml mr =
   l' = fromMaybe l ml
   r' = fromMaybe r mr
   hide x = fromMaybe x (handle x Hide)
+
+{- | Send a message to the current workspace's layout and keep the result.
+Other workspaces keep their own layout state, and a message the layout
+ignores leaves the StackSet unchanged.
+-}
+messageCurrentLayout :: (LayoutClass l) => SomeMessage -> StackSet i l -> StackSet i l
+messageCurrentLayout m s = case pureMessage (layout ws) m of
+  Nothing -> s
+  Just l -> s{current = (current s){workspace = ws{layout = l}}}
+ where
+  ws = workspace (current s)
