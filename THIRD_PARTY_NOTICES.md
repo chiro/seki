@@ -64,7 +64,11 @@ seki ports semantics from xmonad 0.18.1
 (`https://hackage.haskell.org/package/xmonad-0.18.1/xmonad-0.18.1.tar.gz`,
 SHA-256 `988b5f3104ac03aa078248afea7efcaed86661dfb239efd44995f58cd4f7a1f0`).
 `src-core/Seki/Internal/Core/Geometry.hs` adapts the rectangle splitting and
-mirroring functions of `XMonad.Layout`.
+mirroring functions of `XMonad.Layout`. `src-core/Seki/Internal/Core/Layout.hs`
+adapts the layout class and messages of `XMonad.Core` and the `Mirror` and
+`Choose` layouts of `XMonad.Layout`. `src-core/Seki/Internal/Layout/Tall.hs`
+and `src-core/Seki/Internal/Layout/Full.hs` adapt the `Tall` and `Full`
+layouts of `XMonad.Layout`.
 
 Copyright (c) 2007,2008 Spencer Janssen
 Copyright (c) 2007,2008 Don Stewart

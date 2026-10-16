@@ -5,6 +5,7 @@ module Seki.Internal.Core.GeometryGen (
   within,
   overlapArea,
   rectOf,
+  rectAt,
   fields,
   expectRight,
 ) where
@@ -59,6 +60,10 @@ genRect = do
 
 rectOf :: Int32 -> Int32 -> Int32 -> Int32 -> IO Rect
 rectOf x y w h = expectRight (mkSize w h >>= mkRect (Point x y))
+
+-- | A rectangle the test knows to be valid.
+rectAt :: Int32 -> Int32 -> Int32 -> Int32 -> Rect
+rectAt x y w h = either (error . show) id (mkSize w h >>= mkRect (Point x y))
 
 fields :: Rect -> (Int32, Int32, Int32, Int32)
 fields rect = (rectX rect, rectY rect, rectWidth rect, rectHeight rect)
