@@ -9,7 +9,7 @@ import Data.Maybe (isNothing, listToMaybe)
 import Data.Word (Word32)
 import Seki.Internal.Core.StackSet
 import Seki.Internal.Core.StackSetGen
-import Test.QuickCheck (Fun, Gen, NonNegative (..), Property, applyFun, arbitrary, chooseInt, forAll, property, suchThat, (===))
+import Test.QuickCheck (Fun, Gen, NonNegative (..), Property, applyFun, arbitrary, chooseInt, elements, forAll, property, suchThat, (===))
 import Test.Tasty (TestTree, localOption, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.QuickCheck (QuickCheckTests (..), testProperty)
@@ -36,6 +36,9 @@ tests =
               , testProperty "swap_left_I" $ \(SizedPositive n) (x :: T) -> invariant (applyN (Just n) swapUp x)
               , testProperty "swap_right_I" $ \(SizedPositive n) (x :: T) -> invariant (applyN (Just n) swapDown x)
               , testProperty "insertUp_I" $ \n (x :: T) -> invariant (insertUp n x)
+              , testProperty "shift_I" $ \(x :: T) -> forAll (arbitraryTag x) $ \n -> invariant (shift n x)
+              , testProperty "shift_win_I" $ \nex@(NonEmptyWindowsStackSet x) ->
+                  forAll ((,) <$> arbitraryWindow nex <*> arbitraryTag x) $ \(w, n) -> invariant (shiftWin n w x)
               , testProperty "delete_I" $ \(x :: T) -> invariant (maybe x (`delete` x) (peek x))
               ]
         , testProperty "empty" $ \(EmptyStackSet x) -> all (isNothing . stack) (workspaces x)
@@ -155,6 +158,35 @@ tests =
             forAll (arbitraryTag x) $ \n -> normal (view (currentTag x) (view n x)) === normal x
         ]
     , testGroup
+        "Shift"
+        [ testProperty "shift_reversible" $ \(x :: T) ->
+            let y = swapMaster x
+                n = currentTag y
+             in forAll (arbitraryTag x) $ \i ->
+                  isNothing (peek y) || normal ((view n . shift n . view i . shift i) y) == normal y
+        , testProperty "shift moves the focused window to the target workspace" $ \(x :: T) ->
+            forAll (arbitraryTag x) $ \n -> case peek x of
+              Nothing -> property True
+              Just w -> findTag w (shift n x) === Just n
+        , testProperty "shift_master_focus" $ \(x :: T) -> peek (shiftMaster x) === peek x
+        , testProperty "shift_master_local" $ \(x :: T) -> hiddenSpaces (shiftMaster x) === hiddenSpaces x
+        , testProperty "shift_master_idempotent" $ \(x :: T) -> shiftMaster (shiftMaster x) === shiftMaster x
+        , testProperty "shift_master_ordering" $ \(x :: T) -> case peek x of
+            Nothing -> property True
+            Just m -> L.delete m (index (shiftMaster x)) === L.delete m (index x)
+        , testCase "shiftMaster moves the focus to the top" $
+            onStack shiftMaster (Stack 3 [2, 1] []) @?= Stack 3 [] [1, 2]
+        , testProperty "shift_win_focus" $ \(x :: T) ->
+            forAll (arbitraryTag x) $ \n -> maybe (property True) (\w -> shiftWin n w x === shift n x) (peek x)
+        , testProperty "shift_win_indentity" $ \(x :: T) ->
+            forAll ((,) <$> arbitraryTag x <*> (arbitrary `suchThat` (not . (`member` x)))) $ \(n, w) ->
+              shiftWin n w x === x
+        , testProperty "shift_win_fix_current" $
+            forAll (genT `suchThat` \x -> length (tags x) >= 2 && not (null (otherWindows x))) $ \x ->
+              forAll ((,) <$> (arbitraryTag x `suchThat` (/= currentTag x)) <*> elements (otherWindows x)) $ \(n, w) ->
+                current (shiftWin n w x) === current x
+        ]
+    , testGroup
         "Stack"
         [ testProperty "filter_order" $ \(x :: T) -> case stack (workspace (current x)) of
             Nothing -> property True
@@ -187,6 +219,9 @@ onStack f st = case stack (workspace (current (f x))) of
  where
   base = attach 1 0 [1]
   x = base{current = (current base){workspace = (workspace (current base)){stack = Just (fmap WindowId st)}}}
+
+otherWindows :: T -> [WindowId]
+otherWindows x = allWindows x L.\\ index x
 
 genT :: Gen T
 genT = arbitrary

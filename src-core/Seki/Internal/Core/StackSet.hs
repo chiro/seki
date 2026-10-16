@@ -46,11 +46,14 @@ module Seki.Internal.Core.StackSet (
   swapUp,
   swapDown,
   swapMaster,
+  shiftMaster,
 
   -- * Membership
   insertUp,
   delete,
   filter,
+  shift,
+  shiftWin,
   tagMember,
 
   -- * Workspaces
@@ -310,3 +313,26 @@ filter p (Stack f ls rs) = case L.filter p (f : rs) of
   [] -> case L.filter p ls of
     f' : ls' -> Just (Stack f' ls' [])
     [] -> Nothing
+
+-- | Move the focused window to the top of the stack, keeping focus.
+shiftMaster :: StackSet i l -> StackSet i l
+shiftMaster = modify' $ \c -> case c of
+  Stack _ [] _ -> c
+  Stack t ls rs -> Stack t [] (reverse ls ++ rs)
+
+-- | Move the focused window to workspace @n@, keeping the current workspace.
+shift :: (Eq i) => i -> StackSet i l -> StackSet i l
+shift n s = maybe s (\w -> shiftWin n w s) (peek s)
+
+{- | Move a window to workspace @n@ and focus it there. An unknown window or
+tag, or a window already on @n@, changes nothing.
+-}
+shiftWin :: (Eq i) => i -> WindowId -> StackSet i l -> StackSet i l
+shiftWin n w s = case findTag w s of
+  Just from | n `tagMember` s && n /= from -> go from s
+  _ -> s
+ where
+  go from = onWorkspace n (insertUp w) . onWorkspace from (delete' w)
+
+onWorkspace :: (Eq i) => i -> (StackSet i l -> StackSet i l) -> StackSet i l -> StackSet i l
+onWorkspace n f s = view (currentTag s) . f . view n $ s
