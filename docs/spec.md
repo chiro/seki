@@ -71,8 +71,7 @@ data StackSet i l = StackSet
   , floating :: Map WindowId FloatGeom }
 
 data Screen i l    = Screen { workspace :: Workspace i l
-                            , output    :: OutputId
-                            , outRect   :: Rect }      -- logical coordinates
+                            , output    :: OutputId }
 data Workspace i l = Workspace { tag :: i, layout :: l
                                , stack :: Maybe (Stack WindowId) }
 data Stack a       = Stack { focus :: a, up :: [a], down :: [a] }
@@ -82,7 +81,7 @@ data Stack a       = Stack { focus :: a, up :: [a], down :: [a] }
 |---|---|---|
 | `a` (X11 Window) | `WindowId` (river_window_v1) | xdg_toplevel and Xwayland handled transparently |
 | `sid` (ScreenId) | `OutputId` (river_output_v1) | |
-| `sd` (Rectangle) | `Rect` (from the output's position/dimensions) | Logical coordinates; scaling is river's job |
+| `sd` (Rectangle) | none | Screens carry no geometry; the planner reads each output's usable rectangle from inventory |
 | `i` (WorkspaceId) | `String` (or a newtype) | The compositor knows nothing about it |
 
 - Pure operations such as `greedyView` / `view` / `shift` / `focusUp` / `focusDown` / `swapMaster` are ported from xmonad with their meaning unchanged. The QuickCheck properties are ported too.

@@ -131,6 +131,8 @@ the module documentation. Expected M1 differences are:
 
 - river window/output identifiers replace X11 windows and screen IDs;
 - rectangles use signed global logical coordinates;
+- screens carry no geometry; the planner takes usable output rectangles
+  separately;
 - floating state and pure bookkeeping exist, but floating scene/runtime
   behavior is deferred;
 - the runtime may be temporarily headless;
@@ -226,7 +228,8 @@ non-empty current-screen invariant:
 ```haskell
 data CoreState i l
   = HeadlessState (HeadlessWorkspaces i l)
-  | AttachedState (StackSet i l)
+  | AttachedState (StackSet i l) [OutputId]
+    -- ^ outputs that have no workspace yet, in arrival order
 ```
 
 The StackSet retains `floating :: Map WindowId FloatGeom`, with
