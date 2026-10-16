@@ -19,7 +19,7 @@ import Data.Ratio ((%))
 import Data.Word (Word32)
 import Seki.Internal.Core.Geometry (Rect, rectHeight, rectWidth, rectX, splitHorizontally, splitVerticallyBy)
 import Seki.Internal.Core.GeometryGen (fields, genRatio, genRect, overlapArea, rectAt, within)
-import Seki.Internal.Core.Layout (IncMasterN (..), LayoutClass (..), Resize (..), SomeMessage (..))
+import Seki.Internal.Core.Layout (IncMasterN (..), LayoutClass (..), Mirror (..), Resize (..), SomeMessage (..))
 import Seki.Internal.Core.StackSet (Screen (..), Stack (..), StackSet (..), WindowId (..), Workspace (..), index, peek)
 import Seki.Internal.Core.StackSetGen (T)
 import Seki.Internal.Layout.Tall (Tall (..), tile)
@@ -58,10 +58,12 @@ tests =
         , testProperty "shrink_tall" prop_shrink_tall
         , testProperty "expand_tall" prop_expand_tall
         , testProperty "incmaster_tall" prop_incmaster_tall
+        , testProperty "desc_mirror" prop_desc_mirror
         ]
     , testGroup
         "placement"
-        [ testProperty "tiles stay inside the rectangle, apart, and once per window" propTallPlacement
+        [ testProperty "tiles stay inside the rectangle, apart, and once per window" (propPlacement id)
+        , testProperty "Mirror tiles stay inside the rectangle, apart, and once per window" (propPlacement Mirror)
         , testCase "ratio 0 omits the masters" testRatioZero
         , testCase "ratio 1 omits the stack" testRatioOne
         , testCase "zero masters tile one column" testZeroMasters
@@ -69,12 +71,17 @@ tests =
         , testCase "more masters than windows tile one column" testMoreMasters
         , testCase "a ratio that floors to zero keeps a zero-width master" testZeroWidthMaster
         , testCase "a one-pixel rectangle keeps zero-sized tiles" testOnePixel
+        , testCase "Mirror keeps a zero-height master" testMirrorZeroHeightMaster
+        , testCase "Mirror keeps zero-sized tiles of a one-pixel rectangle" testMirrorOnePixel
         ]
     , testGroup
         "default Tall golden examples"
         [ testCase "1920x1080 at the origin" testGoldenOrigin
         , testCase "odd 1921x1081" testGoldenOdd
         , testCase "negative origin at (-1920, 0)" testGoldenNegative
+        , testCase "Mirror at the origin" testMirrorGoldenOrigin
+        , testCase "Mirror on odd 1921x1081" testMirrorGoldenOdd
+        , testCase "Mirror at a negative origin" testMirrorGoldenNegative
         ]
     , testCase "description" (assertEqual "description" "Tall" (description (Tall 1 (3 / 100) (1 / 2))))
     ]
@@ -173,13 +180,16 @@ prop_incmaster_tall (NonNegative n) (Positive delta) (NonNegative frac) (NonNega
  where
   Tall n' delta' frac' = fromJust (pureMessage (Tall n delta frac) (SomeMessage (IncMasterN k)))
 
-propTallPlacement :: Property
-propTallPlacement =
+prop_desc_mirror :: Int -> Rational -> Rational -> Property
+prop_desc_mirror n r1 r2 = description (Mirror (Tall n r1 r2)) === "Mirror Tall"
+
+propPlacement :: (LayoutClass l) => (Tall -> l) -> Property
+propPlacement wrap =
   forAll genRect $ \rect ->
     forAll (chooseInt (0, 6)) $ \n ->
       forAll genRatio $ \r ->
         forAll ((arbitrary :: Gen T) `suchThat` (isJust . peek)) $ \x ->
-          let placed = pureLayout (Tall n (3 / 100) r) rect (fromJust (stack (workspace (current x))))
+          let placed = pureLayout (wrap (Tall n (3 / 100) r)) rect (fromJust (stack (workspace (current x))))
               ws = map fst placed
            in counterexample (show placed) $
                 conjoin
@@ -192,7 +202,7 @@ propTallPlacement =
 stackOf :: Int -> Stack WindowId
 stackOf k = Stack (WindowId 1) [] (map WindowId [2 .. fromIntegral k :: Word32])
 
-placements :: Tall -> Rect -> Int -> [(Word32, (Int32, Int32, Int32, Int32))]
+placements :: (LayoutClass l) => l -> Rect -> Int -> [(Word32, (Int32, Int32, Int32, Int32))]
 placements l rect k = [(w, fields t) | (WindowId w, t) <- pureLayout l rect (stackOf k)]
 
 screen :: Rect
@@ -270,3 +280,47 @@ testGoldenNegative = do
     "three"
     [(1, (-1920, 0, 960, 1080)), (2, (-960, 0, 960, 540)), (3, (-960, 540, 960, 540))]
     (placements defaultTall rect 3)
+
+testMirrorZeroHeightMaster :: Assertion
+testMirrorZeroHeightMaster =
+  assertEqual
+    "placements"
+    [(1, (0, 0, 30, 0)), (2, (0, 0, 30, 50))]
+    (placements (Mirror (Tall 1 (3 / 100) (1 / 100))) (rectAt 0 0 30 50) 2)
+
+testMirrorOnePixel :: Assertion
+testMirrorOnePixel =
+  assertEqual
+    "placements"
+    [(1, (0, 0, 1, 0)), (2, (0, 0, 0, 1)), (3, (0, 0, 1, 1))]
+    (placements (Mirror defaultTall) (rectAt 0 0 1 1) 3)
+
+testMirrorGoldenOrigin :: Assertion
+testMirrorGoldenOrigin = do
+  let rect = rectAt 0 0 1920 1080
+  assertEqual "one" [(1, (0, 0, 1920, 1080))] (placements (Mirror defaultTall) rect 1)
+  assertEqual "two" [(1, (0, 0, 1920, 540)), (2, (0, 540, 1920, 540))] (placements (Mirror defaultTall) rect 2)
+  assertEqual
+    "three"
+    [(1, (0, 0, 1920, 540)), (2, (0, 540, 960, 540)), (3, (960, 540, 960, 540))]
+    (placements (Mirror defaultTall) rect 3)
+
+testMirrorGoldenOdd :: Assertion
+testMirrorGoldenOdd = do
+  let rect = rectAt 0 0 1921 1081
+  assertEqual "one" [(1, (0, 0, 1921, 1081))] (placements (Mirror defaultTall) rect 1)
+  assertEqual "two" [(1, (0, 0, 1921, 540)), (2, (0, 540, 1921, 541))] (placements (Mirror defaultTall) rect 2)
+  assertEqual
+    "three"
+    [(1, (0, 0, 1921, 540)), (2, (0, 540, 960, 541)), (3, (960, 540, 961, 541))]
+    (placements (Mirror defaultTall) rect 3)
+
+testMirrorGoldenNegative :: Assertion
+testMirrorGoldenNegative = do
+  let rect = rectAt (-1920) 0 1920 1080
+  assertEqual "one" [(1, (-1920, 0, 1920, 1080))] (placements (Mirror defaultTall) rect 1)
+  assertEqual "two" [(1, (-1920, 0, 1920, 540)), (2, (-1920, 540, 1920, 540))] (placements (Mirror defaultTall) rect 2)
+  assertEqual
+    "three"
+    [(1, (-1920, 0, 1920, 540)), (2, (-1920, 540, 960, 540)), (3, (-960, 540, 960, 540))]
+    (placements (Mirror defaultTall) rect 3)

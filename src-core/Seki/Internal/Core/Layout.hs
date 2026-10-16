@@ -26,10 +26,12 @@ module Seki.Internal.Core.Layout (
   -- * Layouts
   LayoutClass (..),
   runLayout,
+  Mirror (..),
 ) where
 
+import Data.Bifunctor (second)
 import Data.Typeable (Typeable, cast)
-import Seki.Internal.Core.Geometry (Rect)
+import Seki.Internal.Core.Geometry (Rect, mirror)
 import Seki.Internal.Core.StackSet (Stack (..), WindowId, Workspace (..))
 
 -- | A value a layout can receive through 'SomeMessage'.
@@ -81,3 +83,12 @@ class (Show l) => LayoutClass l where
 -- | Lay out a workspace's windows; a workspace without windows places none.
 runLayout :: (LayoutClass l) => Workspace i l -> Rect -> [(WindowId, Rect)]
 runLayout (Workspace _ l ms) r = maybe [] (pureLayout l r) ms
+
+-- | A layout with its x and y axes exchanged.
+newtype Mirror l = Mirror l
+  deriving (Eq, Show)
+
+instance (LayoutClass l) => LayoutClass (Mirror l) where
+  pureLayout (Mirror l) r s = map (second mirror) (pureLayout l (mirror r) s)
+  pureMessage (Mirror l) m = Mirror <$> pureMessage l m
+  description (Mirror l) = "Mirror " ++ description l

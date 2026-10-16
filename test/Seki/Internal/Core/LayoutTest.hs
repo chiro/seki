@@ -4,6 +4,7 @@ import Seki.Internal.Core.GeometryGen (rectOf)
 import Seki.Internal.Core.Layout
 import Seki.Internal.Core.StackSet (Stack (..), WindowId (..), Workspace (..))
 import Seki.Internal.Layout.Full (Full (..))
+import Seki.Internal.Layout.Tall (Tall (..))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertEqual, testCase)
 
@@ -20,7 +21,22 @@ tests =
         [ testCase "places nothing on an empty workspace" testRunLayoutEmpty
         , testCase "lays out a workspace's stack" testRunLayoutStack
         ]
+    , testGroup
+        "Mirror"
+        [ testCase "passes messages to the inner layout and rewraps it" testMirrorMessage
+        , testCase "ignores what the inner layout ignores" testMirrorUnhandled
+        ]
     ]
+
+testMirrorMessage :: Assertion
+testMirrorMessage =
+  assertEqual
+    "layout"
+    (Just (Mirror (Tall 1 (1 / 10) (2 / 5))))
+    (pureMessage (Mirror (Tall 1 (1 / 10) (1 / 2))) (SomeMessage Shrink))
+
+testMirrorUnhandled :: Assertion
+testMirrorUnhandled = assertEqual "layout" Nothing (pureMessage (Mirror Full) (SomeMessage Shrink))
 
 testFromMessage :: Assertion
 testFromMessage = do
