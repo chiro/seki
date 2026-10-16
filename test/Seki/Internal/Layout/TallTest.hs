@@ -60,6 +60,7 @@ tests =
         , testProperty "incmaster_tall" prop_incmaster_tall
         , testProperty "desc_mirror" prop_desc_mirror
         ]
+    , testCase "Shrink, Expand, and IncMasterN stop at their bounds" testMessageBounds
     , testGroup
         "placement"
         [ testProperty "tiles stay inside the rectangle, apart, and once per window" (propPlacement id)
@@ -179,6 +180,14 @@ prop_incmaster_tall (NonNegative n) (Positive delta) (NonNegative frac) (NonNega
   delta == delta' && frac == frac' && n' == n + k
  where
   Tall n' delta' frac' = fromJust (pureMessage (Tall n delta frac) (SomeMessage (IncMasterN k)))
+
+testMessageBounds :: Assertion
+testMessageBounds = do
+  assertEqual "Shrink" (Just (Tall 1 (3 / 100) 0)) (send Shrink (Tall 1 (3 / 100) (1 / 100)))
+  assertEqual "Expand" (Just (Tall 1 (3 / 100) 1)) (send Expand (Tall 1 (3 / 100) (99 / 100)))
+  assertEqual "IncMasterN" (Just (Tall 0 (3 / 100) (1 / 2))) (send (IncMasterN (-5)) (Tall 1 (3 / 100) (1 / 2)))
+ where
+  send m l = pureMessage l (SomeMessage m)
 
 prop_desc_mirror :: Int -> Rational -> Rational -> Property
 prop_desc_mirror n r1 r2 = description (Mirror (Tall n r1 r2)) === "Mirror Tall"
