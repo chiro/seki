@@ -1,17 +1,39 @@
+{- | xmonad 0.18.1's StackSet properties (@tests/Properties/*.hs@), one group
+per xmonad suite, each property named after its original without @prop_@.
+Properties named in prose are seki additions that pin behavior the originals
+would also accept from a no-op.
+
+Dispositions:
+
+* Failure: @prop_abort@ and @prop_new_abort@ are replaced by typed-error
+  properties in "Seki.Internal.Core.StateTest"; there is no @abort@ or @new@.
+* StackSet: @prop_empty_I@ builds through @newCoreState@ and @addOutput@.
+* Stack: @prop_laws_Stack@ needs quickcheck-classes, which the GHC pin
+  lacks; hand-written Foldable and Traversable law properties replace it.
+* Workspace: @prop_rename1@, @prop_ensure@, @prop_ensure_append@ are
+  excluded because @renameTag@ and @ensureTags@ are not ported.
+* Screen: @prop_point_within@ and @prop_point_within_mirror@ use 'Rect',
+  'mirror', and a test-local @pointWithin@.
+* Screen: @prop_resize_inc@, @prop_resize_inc_extra@, @prop_resize_max@,
+  @prop_resize_max_extra@, @prop_aspect_hint_shrink@, @prop_aspect_fits@ are
+  excluded; they test X11 size hints, deferred to M2.
+* Floating: a fixed 'Rect' replaces @RationalRect 100 100 100 100@.
+-}
 module Seki.Internal.Core.StackSetTest (tests) where
 
 import Data.Foldable (toList)
 import Data.Functor.Compose (Compose (..))
 import Data.Functor.Identity (Identity (..))
+import Data.Int (Int32)
 import Data.List (nub, sortOn)
 import Data.List qualified as L
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isNothing, listToMaybe, maybeToList)
 import Data.Word (Word32)
-import Seki.Internal.Core.Geometry (Point (..), mkRect, mkSize)
+import Seki.Internal.Core.Geometry (Point (..), Rect, mirror, mkRect, mkSize, rectHeight, rectWidth, rectX, rectY)
 import Seki.Internal.Core.StackSet
 import Seki.Internal.Core.StackSetGen
-import Test.QuickCheck (Fun, Gen, NonNegative (..), Property, applyFun, arbitrary, chooseInt, conjoin, elements, forAll, property, suchThat, (===))
+import Test.QuickCheck (Fun, Gen, NonNegative (..), Property, applyFun, arbitrary, choose, chooseInt, conjoin, elements, forAll, property, suchThat, (===), (==>))
 import Test.Tasty (TestTree, localOption, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.QuickCheck (QuickCheckTests (..), testProperty)
@@ -216,6 +238,17 @@ tests =
             forAll (arbitraryWindow nex) $ \w -> Map.member w (floating (delete w (float w geom x))) === False
         ]
     , testGroup
+        "Screen"
+        [ testProperty "screens" $ \(x :: T) -> current x `elem` screens x
+        , testProperty "screens_works" $ \(x :: T) -> screens x === current x : visible x
+        , testProperty "point_within" $ forAll (genRect 1) $ \r ->
+            forAll ((,) <$> chooseInt32 (0, rectWidth r - 1) <*> chooseInt32 (0, rectHeight r - 1)) $ \(dx, dy) ->
+              dx > 0 && dy > 0 ==> pointWithin (rectX r + dx) (rectY r + dy) r
+        , testProperty "point_within_mirror" $ forAll (genRect 0) $ \r ->
+            forAll ((,) <$> chooseInt32 (-6000, 8000) <*> chooseInt32 (-6000, 8000)) $ \(x, y) ->
+              pointWithin x y r === pointWithin y x (mirror r)
+        ]
+    , testGroup
         "Stack"
         [ testProperty "index_length" $ \(x :: T) ->
             length (index x) === length (integrate' (stack (workspace (current x))))
@@ -269,6 +302,22 @@ predTag w = w{tag = pred (tag w)}
 
 geom :: FloatGeom
 geom = either (error . show) id (mkSize 100 100 >>= mkRect (Point 100 100))
+
+pointWithin :: Int32 -> Int32 -> Rect -> Bool
+pointWithin x y r =
+  x >= rectX r && x < rectX r + rectWidth r && y >= rectY r && y < rectY r + rectHeight r
+
+-- | A rectangle near the origin whose sides are at least @minSide@.
+genRect :: Int32 -> Gen Rect
+genRect minSide = do
+  x <- chooseInt32 (-5000, 5000)
+  y <- chooseInt32 (-5000, 5000)
+  w <- chooseInt32 (minSide, 2000)
+  h <- chooseInt32 (minSide, 2000)
+  pure (either (error . show) id (mkSize w h >>= mkRect (Point x y)))
+
+chooseInt32 :: (Int32, Int32) -> Gen Int32
+chooseInt32 = choose
 
 genT :: Gen T
 genT = arbitrary
