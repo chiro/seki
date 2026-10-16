@@ -6,8 +6,9 @@ This document turns the M1 row in the specification into an ordered,
 testable implementation plan. It is intentionally narrower than the complete
 v1 design in `spec.md`.
 
-The current review findings are tracked in [Open design issues](#9-open-design-issues).
-The affected baseline rules remain subject to those decisions.
+The review findings are tracked in [Open design issues](#9-open-design-issues).
+All seven are Decided, so the design review is complete; each becomes
+Verified as its implementation lands.
 
 ## 1. Outcome
 
@@ -58,8 +59,7 @@ phase state machine.
 - Submaps and binding repeat
 - Hot-swap, serialization, and restoration
 - Input-device rules
-- Layer-shell focus arbitration beyond the state needed to avoid false focus
-  borders
+- Layer-shell focus arbitration beyond the M1-D01 rules
 - Bar IPC, `sekictl`, scratchpads, urgency, and prompt UI
 
 M1 temporarily accepts a client's actual dimensions when they differ from the
@@ -332,7 +332,8 @@ Planner rules:
   The StackSet focus itself never changes for rendering reasons; and
 - the focused border is drawn on the StackSet's focused window whenever it is
   shown, even before the following manage sequence sends `focus_window`. While
-  a layer surface holds focus, M1-D01 governs the border.
+  a layer surface holds keyboard focus, every window draws the unfocused
+  border, so the border always shows where keystrokes go (M1-D01).
 
 ### 3.6 Proposal and render state machine
 
@@ -341,7 +342,9 @@ The reconciler owns state that persists across sequences:
 - last applied manage attributes;
 - last applied rendering attributes;
 - most recent actual dimensions and their inventory revision;
-- at most one in-flight proposal per window; and
+- at most one in-flight proposal per window;
+- the keyboard owner river last reported: a window, an exclusive layer
+  surface, a non-exclusive layer surface, or nobody; and
 - a queued target rectangle when layout changes supersede an in-flight
   proposal.
 
@@ -387,6 +390,29 @@ window becomes shown in a render sequence, the reconciler requests
 never sent together with a proposal, so keyboard input never reaches a hidden
 window. The same path restores a window whose degenerate tile regains a
 positive size, after a ratio change or a usable-area change.
+
+Layer surfaces take keyboard focus outside the StackSet (M1-D01). River ends
+every manage sequence by focusing an exclusive layer surface and ignores WM
+focus requests until it reports otherwise. A non-exclusive layer surface keeps
+focus only through manage sequences in which the WM sends no focus request;
+any `focus_window` or `clear_focus` wins, and river then reports `focus_none`.
+The reconciler therefore:
+
+- sends no focus request while an exclusive layer surface holds focus;
+- sends no focus request from routine reconciliation while a non-exclusive
+  layer surface holds focus, so new windows, layout changes, and output
+  changes leave keyboard input with the layer surface;
+- reclaims non-exclusive focus for an explicit user focus action, meaning
+  `window_interaction` or a key-binding action that applies `windows`, by
+  sending the scene's focus request in that manage sequence; and
+- on `focus_none`, treats its last focus request as void and, in the same
+  manage sequence, sends `focus_window` for the scene's focus target, or
+  `clear_focus` when there is none. River does not restore window focus
+  itself, so this request is needed even when the target has not changed.
+
+The StackSet changes exactly as it would without a layer surface. A new window
+still becomes the StackSet focus; only keyboard input stays with the layer
+surface until the user acts or the surface gives up focus.
 
 For M1, a settled size mismatch keeps the desired top-left and uses the actual
 client size. This behavior must be isolated behind the reconciler so M2 can add
@@ -500,8 +526,8 @@ Deliverables:
 - create and destroy one layer-shell output object per river output;
 - track `non_exclusive_area` revisions;
 - create the seat object needed to track whether a layer surface owns focus;
-- suppress window focus requests and focused borders while a layer surface has
-  accepted focus, restoring StackSet focus after `focus_none`;
+- track river's keyboard owner from `focus_exclusive`, `focus_non_exclusive`,
+  and `focus_none`, and apply the M1-D01 focus and border rules;
 - send `set_default` for the focused output in a manage sequence;
 - add a `seki-layer-surface-fixture` Haskell executable using the existing
   native Wayland transport. It binds `wl_compositor`, `wl_shm`, and
@@ -542,6 +568,12 @@ Tests:
   positive size and when a spawned window's first dimensions settle, `show`
   arrives in a render sequence with the focused border, then `focus_window`
   in the next manage sequence, with `clear_focus` until then;
+- request-level tests for layer focus: an unchanged scene and a newly mapped
+  window send no focus request during non-exclusive focus; a window
+  interaction or a `windows` key binding sends `focus_window`, followed by
+  `focus_none` handling; exclusive focus suppresses every focus request;
+  `focus_none` re-sends `focus_window` even for an unchanged target; and every
+  window draws the unfocused border while a layer surface holds focus;
 - an interaction-focused window's family becomes the top of the stacking
   order, with the focused window topmost unless it has shown descendants,
   without disturbing its workspace's stack order;
@@ -688,6 +720,9 @@ M1 is complete only when all of the following are true:
 - keyboard focus never targets a hidden window, no degenerate tile is
   proposed or shown, and focus returns through the post-render
   `manage_dirty` path;
+- a window click or focus key binding takes keyboard input back from a
+  non-exclusive layer surface on real river, routine reconciliation does not,
+  and window focus returns after `focus_none`;
 - every new M1 window receives empty capabilities and unsupported client
   requests leave policy state unchanged;
 - Tall resize and master-count messages work through the default bindings;
@@ -764,7 +799,7 @@ entries initially.
 
 | ID | Issue | Priority | Status | Affected work |
 |---|---|---|---|---|
-| M1-D01 | Reclaiming non-exclusive layer focus | P1 | Open | WP5, WP6 |
+| M1-D01 | Reclaiming non-exclusive layer focus | P1 | Decided | WP5, WP6 |
 | M1-D02 | Full visibility and layout-omitted windows | P2 | Decided | WP3, WP6 |
 | M1-D03 | Parent/child stacking versus focus raising | P2 | Decided | WP6 |
 | M1-D04 | Zero-sized tiles and their focus behavior | P2 | Decided | WP1, WP3, WP6 |
@@ -779,10 +814,24 @@ entries initially.
   layer focus, a WM request to move focus away is itself a trigger for
   `focus_none`; this policy can leave keyboard input with the layer surface
   after the user clicks an application.
-- **Proposed resolution:** distinguish exclusive and non-exclusive ownership.
-  Allow explicit user focus actions to reclaim non-exclusive focus while
-  preventing routine reconciliation from stealing it. Specify border state
-  during the transition.
+- **Evidence:** river 0.5.0's `Seat.manageFinish` focuses an exclusive layer
+  surface at the end of every manage sequence. For non-exclusive focus it
+  focuses the layer surface only when the WM made no focus request in that
+  sequence; otherwise the WM's request wins and river schedules `focus_none`.
+  This applies even to a `focus_window` for the already focused window. River
+  grants non-exclusive focus when an on-demand layer surface maps or is
+  clicked, and never restores window focus itself. River 0.4.6 has the same
+  `manageFinish` logic. A second defect follows from the diff-based
+  reconciler: after `focus_none` an unchanged focus target would send no
+  request and leave no window focused.
+- **Decision:** only explicit user focus actions reclaim non-exclusive focus.
+  These are `window_interaction` and key-binding actions that apply
+  `windows`. Routine reconciliation, including a newly mapped window, sends no
+  focus request while any layer surface holds focus, and nothing is sent
+  during exclusive focus. `focus_none` voids the last focus request, and the
+  same manage sequence sends the scene's focus request. While a layer surface
+  holds keyboard focus every window draws the unfocused border. The StackSet
+  is unaffected throughout.
 - **Affected text:** plan sections 1.2, 3.4–3.6, WP5/WP6, and exit criteria;
   `spec.md` sections 3.6 and 4.5.
 - **Required regression:** accept non-exclusive layer focus, then click a
