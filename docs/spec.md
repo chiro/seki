@@ -115,6 +115,7 @@ reconcile :: DesiredScene -> ActualState -> Protocol ()      -- ③ apply the di
 - `DesiredScene` is a declarative description holding, per window, (proposed dimensions, position, stacking order, decoration, dimension-mismatch policy), plus (keyboard focus, decoration differences for the focused window).
 - [RESOLVED] The rectangle a layout is given can be either the whole output or river_layer_shell_output_v1.non_exclusive_area (the region left after subtracting exclusive zones such as bars, in global coordinates); the latter is the default. **This gives us the equivalent of avoidStruts with no computation of our own.** Layouts are free to ignore it (fullscreen-like layouts).
 - ③ sends proposed dimensions, focus, and so on in the manage sequence, then finalizes positions in the render sequence once the client's actually-committed dimensions (the dimensions event) arrive.
+- [DECIDED] A tile with zero width or zero height is never proposed, because a zero `propose_dimensions` value lets the client choose its own size. The window is treated as omitted by the layout (3.1): hidden, with its last dimensions kept.
 - Handling of the mismatch between proposed and actual dimensions is **selectable per layout**. [DECIDED: option (c)]
   - `Tolerate`: place the window at its actual size and allow gaps (equivalent to xmonad honouring resize hints).
   - `Crop`: maintain strict tiling using the protocol's window cropping.
@@ -133,7 +134,7 @@ class LayoutClass l where
 ```
 
 - The algebra of `Choose` (`|||`), `Mirror`, and `ModifiedLayout` is ported from xmonad.
-- [DECIDED] `pureLayout` may omit windows of the stack. Omitted windows are hidden (3.1). `Full` returns only the focused window at the whole rectangle, as in xmonad.
+- [DECIDED] `pureLayout` may omit windows of the stack. Omitted windows are hidden (3.1). `Full` returns only the focused window at the whole rectangle, as in xmonad. A returned rectangle with zero width or height counts as omitted (3.3).
 - Layouts bundled in v1: `Tall`, `Mirror Tall`, `Full`. Anything else arrives incrementally as the equivalent of contrib.
 
 ### 3.5 Floating [DECIDED: absolute logical pixel coordinates]
@@ -153,6 +154,7 @@ class LayoutClass l where
 ### 3.6 Focus Model
 
 - The StackSet's `focus` = the keyboard focus of the single seat. [DECIDED: single seat]
+- [DECIDED] Keyboard focus goes to the StackSet's focused window only while it is shown (3.1). Otherwise the WM sends clear_focus, so input never reaches a hidden window; the StackSet focus is left unchanged. When the window becomes shown in a render sequence, it is drawn with the focused border and the WM requests manage_dirty; the next manage sequence sends focus_window.
 - Both click-to-focus and focus-follows-mouse are selectable in configuration.
   M1 implements a fixed click-to-focus policy; the configurable focus model and
   focus-follows-mouse arrive in M2.

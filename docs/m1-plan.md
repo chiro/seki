@@ -212,6 +212,8 @@ Geometry rules:
 - dimensions are non-negative and use wider intermediates for multiplication,
   ratio application, and addition before checked conversion;
 - a zero-area `non_exclusive_area` is valid input but produces no visible tile;
+- splits may yield zero-width or zero-height tiles; geometry keeps them, and
+  the planner treats them as omitted (section 3.5);
 - splitting assigns every input pixel exactly once, including odd dimensions;
 - `Mirror` exchanges axes without losing negative origins.
 
@@ -298,6 +300,9 @@ Planner rules:
   hidden, as xmonad unmaps them;
 - hidden workspace windows are always explicitly hidden;
 - incomplete outputs or zero-area usable rectangles show no windows;
+- a tile with zero width or zero height is treated as omitted by the layout:
+  the window is hidden and receives no dimension proposal, because a zero
+  `propose_dimensions` value lets the client choose its own size;
 - `Full` places only the focused window, at the full rectangle, and omits the
   rest, as in xmonad;
 - stacking is deterministic and explicitly complete, built bottom to top as
@@ -314,8 +319,13 @@ Planner rules:
   4. hidden windows sit below every shown window, in StackSet order; and
   5. stacking never changes the StackSet's stack order;
 - `set_tiled` edges name only edges adjacent to another tiled rectangle;
-- borders do not affect content positions or dimensions; and
-- exactly one window may be the focus target.
+- borders do not affect content positions or dimensions;
+- at most one window is the keyboard-focus target: the StackSet's focused
+  window, and only while it is shown. Otherwise the scene has no focus target.
+  The StackSet focus itself never changes for rendering reasons; and
+- the focused border is drawn on the StackSet's focused window whenever it is
+  shown, even before the following manage sequence sends `focus_window`. While
+  a layer surface holds focus, M1-D01 governs the border.
 
 ### 3.6 Proposal and render state machine
 
@@ -334,7 +344,8 @@ Manage reconciliation sends, in deterministic order:
 2. tiled-edge changes;
 3. required dimension proposals;
 4. focused-output layer-shell `set_default`; and
-5. seat focus or clear-focus.
+5. `focus_window` for the scene's focus target, or `clear_focus` when the
+   scene has none.
 
 Render reconciliation sends, in deterministic order:
 
@@ -360,6 +371,15 @@ previous selection until the swap can complete.
 If the desired dimensions change while a proposal is in flight, retain only
 the latest desired rectangle, finish the current render sequence safely, and
 request another manage sequence with `manage_dirty` after sequence completion.
+
+Focus follows the shown state across both phases. When the StackSet's focused
+window is not shown, for example while its tile is degenerate or its first
+dimensions are pending, the manage sequence sends `clear_focus`. When that
+window becomes shown in a render sequence, the reconciler requests
+`manage_dirty`, and the next manage sequence sends `focus_window`. Focus is
+never sent together with a proposal, so keyboard input never reaches a hidden
+window. The same path restores a window whose degenerate tile regains a
+positive size, after a ratio change or a usable-area change.
 
 For M1, a settled size mismatch keeps the desired top-left and uses the actual
 client size. This behavior must be isolated behind the reconciler so M2 can add
@@ -436,6 +456,8 @@ Tests:
 - prove tiles remain within the supplied rectangle and do not overlap;
 - cover `Tall` ratios 0 and 1, zero masters, more masters than windows, odd
   dimensions, negative origins, Mirror, nested choices, and layout wraparound;
+- cover ratios that floor to a zero-width column and splits of a one-pixel
+  rectangle, through Mirror;
 - golden examples for the default `Tall 1 (3/100) (1/2)`.
 
 ### WP4 — Persistent core policy and Action execution
@@ -497,16 +519,21 @@ Deliverables:
 - persistent proposal state and dimensions revisions;
 - full stacking establishment, visibility invariant, tiled edges, focus, SSD
   policy, explicit empty M1 capabilities, and borders;
-- post-render `manage_dirty` scheduling for superseded proposals.
+- post-render `manage_dirty` scheduling for superseded proposals and for a
+  focus target that becomes shown.
 
 Tests:
 
-- scene properties for window uniqueness, visibility, adjacency symmetry, one
-  focus target, and deterministic stacking;
+- scene properties for window uniqueness, visibility, adjacency symmetry, at
+  most one focus target that is always shown, no degenerate tile shown or
+  proposed, and deterministic stacking;
+- request-level tests for focus recovery: when a degenerate tile regains a
+  positive size and when a spawned window's first dimensions settle, `show`
+  arrives in a render sequence with the focused border, then `focus_window`
+  in the next manage sequence, with `clear_focus` until then;
 - an interaction-focused window's family becomes the top of the stacking
   order, with the focused window topmost unless it has shown descendants,
-  without disturbing its
-  workspace's stack order;
+  without disturbing its workspace's stack order;
 - request-level mock tests for unchanged scenes, focus-only changes, workspace
   hiding, layout changes, delayed dimensions, superseded proposals, closed
   pending windows, and output geometry changes;
@@ -646,6 +673,9 @@ M1 is complete only when all of the following are true:
   receive `hide`, and only windows the layout places with settled dimensions
   receive `show`;
 - focus, borders, complete stacking, and tiled edges are observable in tests;
+- keyboard focus never targets a hidden window, no degenerate tile is
+  proposed or shown, and focus returns through the post-render
+  `manage_dirty` path;
 - every new M1 window receives empty capabilities and unsupported client
   requests leave policy state unchanged;
 - Tall resize and master-count messages work through the default bindings;
@@ -725,7 +755,7 @@ entries initially.
 | M1-D01 | Reclaiming non-exclusive layer focus | P1 | Open | WP5, WP6 |
 | M1-D02 | Full visibility and layout-omitted windows | P2 | Decided | WP3, WP6 |
 | M1-D03 | Parent/child stacking versus focus raising | P2 | Decided | WP6 |
-| M1-D04 | Zero-sized tiles and their focus behavior | P2 | Open | WP1, WP3, WP6 |
+| M1-D04 | Zero-sized tiles and their focus behavior | P2 | Decided | WP1, WP3, WP6 |
 | M1-D05 | Tiled flags at output boundaries | P2 | Open | WP6 |
 | M1-D06 | Dialogs are tiled in M1 | P3 | Decided | WP6 |
 
@@ -824,6 +854,25 @@ entries initially.
   test Tall ratios at and near 0 and 1, and repeat through Mirror. Assert that
   no degenerate tile becomes a client-selected visible size, verify focus, and
   verify recovery when the available area grows.
+- **Decision (2026-10-16):** a tile with zero width or zero height is treated
+  as omitted by the layout (M1-D02): the window is hidden, receives no
+  proposal, and keeps its last dimensions. Only exact zero is degenerate; a
+  tile a few pixels wide is still proposed, and an oversized commit is M1's
+  general mismatch behavior. The keyboard-focus target is the StackSet's
+  focused window only while it is shown; otherwise the manage sequence sends
+  `clear_focus`. The StackSet focus never changes for rendering reasons. When
+  the window becomes shown, the render sequence shows it with the focused
+  border and requests `manage_dirty`; the next manage sequence sends
+  `focus_window`. Rejected: clamping to one pixel as xmonad's `tileWindow`
+  does, because clients commit their minimum size and overlap neighbours;
+  focusing the hidden window, which sends keystrokes to an invisible client;
+  moving StackSet focus to a visible window, which breaks xmonad semantics;
+  and sending focus with the proposal, which saves one manage round trip but
+  briefly focuses a hidden window. Updated: plan sections 3.2, 3.5, 3.6, WP3,
+  WP6, and exit criteria; `spec.md` sections 3.3, 3.4, and 3.6.
+- **Additional regression:** a spawned window has no focus until its first
+  dimensions settle, then is shown with the focused border and receives
+  `focus_window` in the following manage sequence.
 
 ### M1-D05 — Tiled flags at output boundaries
 
