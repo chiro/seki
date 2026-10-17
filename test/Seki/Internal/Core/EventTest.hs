@@ -1,6 +1,8 @@
 module Seki.Internal.Core.EventTest (tests) where
 
+import Data.List (sort)
 import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
 import Seki.Internal.Core.Action (Intent (..), spawn, windows)
 import Seki.Internal.Core.Event (CoreEvent (..), drainCore, stepCore)
 import Seki.Internal.Core.StackSet (
@@ -10,16 +12,34 @@ import Seki.Internal.Core.StackSet (
   StackSet (..),
   WindowId (..),
   Workspace (..),
+  integrate',
   view,
  )
+import Seki.Internal.Core.StackSetGen (EventHistory (..), EventStep (..), coreInvariant, coreWorkspaces, historyStart)
 import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), newCoreState)
-import Test.Tasty (TestTree, testGroup)
+import Test.QuickCheck (Property, checkCoverage, conjoin, counterexample, cover, (===))
+import Test.Tasty (TestTree, localOption, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
+import Test.Tasty.QuickCheck (QuickCheckTests (..), testProperty)
 
 tests :: TestTree
 tests =
   testGroup
     "Core events"
+    [ reducerTests
+    , localOption (QuickCheckTests 1000) $
+        testGroup
+          "generated event sequences"
+          [ testProperty "every prefix keeps the core invariant" propInvariant
+          , testProperty "managed windows are those created and not yet closed" propManagedWindows
+          , testProperty "draining equals stepping one event at a time" propDrainSteps
+          ]
+    ]
+
+reducerTests :: TestTree
+reducerTests =
+  testGroup
+    "reducer"
     [ testCase "starts headless with nothing to do" $
         drainCore [] initial @?= (initial, [])
     , testCase "attaches the first output to the remembered workspace" $
@@ -92,3 +112,41 @@ w1, w2, w3 :: WindowId
 w1 = WindowId 1
 w2 = WindowId 2
 w3 = WindowId 3
+
+propInvariant :: EventHistory -> Property
+propInvariant h =
+  checkCoverage
+    . cover 10 (any isHeadless prefixes && not (all isHeadless prefixes)) "attached and headless"
+    . cover 20 (not (all (null . managed) prefixes)) "managed windows"
+    $ conjoin
+      [ counterexample ("after " ++ show n ++ " events") (coreInvariant (historyTags h) st)
+      | (n, st) <- zip [0 :: Int ..] prefixes
+      ]
+ where
+  prefixes = scanl (\st (EventStep _ e) -> fst (stepCore e st)) (historyStart h) (historySteps h)
+  isHeadless HeadlessState{} = True
+  isHeadless AttachedState{} = False
+
+propManagedWindows :: EventHistory -> Property
+propManagedWindows h = managed final === Set.toList expected
+ where
+  (final, _) = drainCore [e | EventStep _ e <- historySteps h] (historyStart h)
+  expected = foldl track Set.empty (historySteps h)
+  track live (EventStep _ (WindowCreated w)) = Set.insert w live
+  track live (EventStep _ (WindowClosed w)) = Set.delete w live
+  track live _ = live
+
+propDrainSteps :: EventHistory -> Property
+propDrainSteps h = drainCore events st0 === stepAll events st0
+ where
+  events = [e | EventStep _ e <- historySteps h]
+  st0 = historyStart h
+  stepAll [] st = (st, [])
+  stepAll (e : es) st =
+    let (st1, is1) = stepCore e st
+        (st2, is2) = stepAll es st1
+     in (st2, is1 ++ is2)
+
+-- | Every managed window, sorted, with any duplicate kept.
+managed :: CoreState Int l -> [WindowId]
+managed = sort . concatMap (integrate' . stack) . coreWorkspaces

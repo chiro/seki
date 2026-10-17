@@ -24,14 +24,24 @@ module Seki.Internal.Core.StackSetGen (
   coreWorkspaces,
   coreFloating,
   coreInvariant,
+  DefaultLayout,
+  EventStep (..),
+  EventHistory (..),
+  historyStart,
 ) where
 
 import Data.List (nub, sort, sortOn)
 import Data.Map.Strict (Map)
 import Data.Maybe (maybeToList)
+import Seki.Internal.Core.Action (Action)
+import Seki.Internal.Core.Action qualified as Action
+import Seki.Internal.Core.Event (CoreEvent (..))
 import Seki.Internal.Core.Geometry (Point (..), mkRect, mkSize)
+import Seki.Internal.Core.Layout (CLR (..), ChangeLayout (..), Choose (..), IncMasterN (..), Mirror (..), Resize (..))
 import Seki.Internal.Core.StackSet
 import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), addOutput, newCoreState, removeOutput)
+import Seki.Internal.Layout.Full (Full (..))
+import Seki.Internal.Layout.Tall (Tall (..))
 import Test.QuickCheck (
   Arbitrary (..),
   Gen,
@@ -209,7 +219,7 @@ coreFloating (HeadlessState hw) = headlessFloating hw
 coreFloating (AttachedState ss _) = floating ss
 
 -- | The plan's StackSet and headless-state invariants for the configured tags.
-coreInvariant :: [Int] -> CoreState Int Int -> Property
+coreInvariant :: [Int] -> CoreState Int l -> Property
 coreInvariant configured st =
   conjoin
     [ counterexample "every configured tag appears exactly once" (sort (map tag allWs) === sort configured)
@@ -225,3 +235,64 @@ coreInvariant configured st =
     AttachedState ss u -> (workspaces ss, hidden ss, map output (screens ss), u)
   windows = concatMap (integrate' . stack) allWs
   distinct xs = nub xs == xs
+
+-- | The layout WP7 will configure by default.
+type DefaultLayout = Choose Tall (Choose (Mirror Tall) Full)
+
+-- | A core event with a description, since an 'Action' has no 'Show'.
+data EventStep = EventStep String (CoreEvent Int DefaultLayout)
+
+instance Show EventStep where
+  show (EventStep d _) = d
+
+{- | A configured tag list and the events reduced from a fresh core state.
+Windows and outputs come from small pools, so windows are closed, re-created,
+and interacted with while unknown, and outputs come and go.
+-}
+data EventHistory = EventHistory
+  { historyTags :: [Int]
+  , historySteps :: [EventStep]
+  }
+  deriving (Show)
+
+instance Arbitrary EventHistory where
+  arbitrary = do
+    numWs <- chooseInt (1, 5)
+    let window = WindowId . fromIntegral <$> chooseInt (1, 8)
+        output' = OutputId . fromIntegral <$> chooseInt (1, 4)
+        tag' = chooseInt (1, numWs)
+        labelled name f x = EventStep (name ++ " " ++ show x) (f x)
+    steps <-
+      listOf $
+        frequency
+          [ (4, labelled "WindowCreated" WindowCreated <$> window)
+          , (2, labelled "WindowClosed" WindowClosed <$> window)
+          , (2, labelled "OutputCreated" OutputCreated <$> output')
+          , (1, labelled "OutputRemoved" OutputRemoved <$> output')
+          , (1, labelled "WindowInteraction" WindowInteraction <$> window)
+          , (4, (\(d, a) -> EventStep ("RunAction (" ++ d ++ ")") (RunAction a)) <$> (tag' >>= elements . defaultActions))
+          ]
+    pure (EventHistory [1 .. numWs] steps)
+  shrink (EventHistory ts steps) = EventHistory ts <$> shrinkList (const []) steps
+
+historyStart :: EventHistory -> CoreState Int DefaultLayout
+historyStart h = either (error . show) id (newCoreState (Choose CL tall (Choose CL (Mirror tall) Full)) (historyTags h))
+ where
+  tall = Tall 1 (3 / 100) (1 / 2)
+
+-- | The actions WP7 will bind by default, with workspace actions aimed at one tag.
+defaultActions :: Int -> [(String, Action Int DefaultLayout ())]
+defaultActions t =
+  [ ("sendMessage NextLayout", Action.sendMessage NextLayout)
+  , ("sendMessage Shrink", Action.sendMessage Shrink)
+  , ("sendMessage Expand", Action.sendMessage Expand)
+  , ("sendMessage (IncMasterN 1)", Action.sendMessage (IncMasterN 1))
+  , ("sendMessage (IncMasterN (-1))", Action.sendMessage (IncMasterN (-1)))
+  , ("windows focusUp", Action.windows focusUp)
+  , ("windows focusDown", Action.windows focusDown)
+  , ("windows swapMaster", Action.windows swapMaster)
+  , ("windows (greedyView " ++ show t ++ ")", Action.windows (greedyView t))
+  , ("windows (shift " ++ show t ++ ")", Action.windows (shift t))
+  , ("spawn \"foot\"", Action.spawn "foot")
+  , ("kill", Action.kill)
+  ]
