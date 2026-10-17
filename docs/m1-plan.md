@@ -181,12 +181,13 @@ protocol objects.
 | `Seki.Core.Layout` | `LayoutClass`, messages, `Choose` / `(|||)`, `Mirror` |
 | `Seki.Layout.Tall` | `Tall` and `tile`; its `Shrink`, `Expand`, and `IncMasterN` messages live in `Seki.Core.Layout` |
 | `Seki.Layout.Full` | `Full` |
-| `Seki.Core.State` | Headless/attached policy state, queued core events, output hotplug |
+| `Seki.Core.State` | Headless/attached policy state, window manage/unmanage/focus, output hotplug |
 | `Seki.Core.Action` | Pure user actions: `windows`, `sendMessage`, kill/spawn intents |
+| `Seki.Core.Event` | Core events and the reducer that applies them in arrival order |
 | `Seki.Core.Scene` | `DesiredScene` and pure planning |
 | `Seki.Run.LayerShell` | layer-shell global binding and per-output/per-seat objects |
 | `Seki.Run.Reconcile` | persistent proposal/applied state and phase-safe diffs |
-| `Seki.Run.Policy` | bridge from inventory/events/actions to core state and scenes |
+| `Seki.Run.Policy` | Queues river events and key-binding actions, drains them into core state at `manage_start`, and runs their intents; scenes arrive with WP6 |
 
 `Seki.Run.Full` remains available while the M1 policy is developed, then
 becomes a compatibility implementation or delegates to the new `Full` planner.
@@ -252,21 +253,26 @@ At all times:
 - current and visible screens have distinct outputs and workspaces;
 - hidden workspaces have no output;
 - the focused window, when present, is a member of the current workspace; and
-- live inventory windows not yet incorporated at a sequence boundary are
-  explicitly pending, never silently lost.
+- no live inventory window is lost: its creation event waits in the policy
+  queue until the next `manage_start` drains it, and a window created while
+  headless joins the remembered current workspace, so it is shown when the
+  first output arrives.
 
 ### 3.4 Events and Actions
 
-Inventory callbacks queue small pure events. A `manage_start` drains the queue
-in arrival order and applies it to `CoreState` before planning. The initial M1
-event set is:
+Inventory callbacks and key-binding presses queue small pure events in one
+queue. A `manage_start` drains the queue in arrival order and applies it to
+`CoreState` before planning. The M1 core events are:
 
-- window created/closed;
-- output created/removed/geometry changed;
-- window interaction (click-to-focus);
-- layer-shell usable-area changed;
-- layer-shell focus changed (`exclusive`, `non-exclusive`, or `none`); and
-- key-binding action.
+- window created (after its node is acquired) and closed;
+- output created and removed;
+- window interaction (click-to-focus); and
+- key-binding action, queued on `pressed`.
+
+Output geometry, the layer-shell usable area, and layer-shell focus are not
+core events. The StackSet holds no geometry, so the scene planner and
+reconciler (WP5/WP6) read those facts from inventory. Pointer enter and leave
+produce no event in M1.
 
 The M1 `Action` surface should be stable enough for the later configuration
 API:
