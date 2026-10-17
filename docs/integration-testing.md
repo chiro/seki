@@ -1,6 +1,6 @@
 # Real-river Integration Tests
 
-Status: **release gate for M0 and later work** / Last updated: 2026-08-16
+Status: **release gate for M0 and later work** / Last updated: 2026-10-17
 
 The `seki-integration` Cabal component exercises seki against a real river
 compositor and real Wayland, Xwayland, and input-method clients. It runs river
@@ -104,6 +104,63 @@ first, allowing seki's blocked event loop to observe EOF and return normally,
 then terminates remaining children with bounded TERM/KILL waits. Cleanup runs
 after success, failure, timeout, and asynchronous exceptions. It never searches
 for or kills processes globally by executable name.
+
+## Layer-surface fixture
+
+`seki-layer-surface-fixture` is the exclusive-zone client for WP8's
+layer-shell scenario (`docs/m1-plan.md`, WP8 item 8). No manifest entry uses
+it yet. It is a native Haskell wlr-layer-shell client built on seki's own
+Wayland transport, so it does not link `libwayland` and does not depend on a
+desktop bar.
+
+```console
+seki-layer-surface-fixture [HEIGHT]
+```
+
+`HEIGHT` is a positive pixel count and defaults to 32. The fixture connects
+through the standard `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` variables (or an
+inherited `WAYLAND_SOCKET`). It then does the following:
+
+1. Binds `wl_compositor`, `wl_shm`, and `zwlr_layer_shell_v1`, each at
+   version 1. A missing global is an error.
+2. Creates one layer surface on the top layer with no output, so the
+   compositor chooses the output. The surface is anchored top, left, and
+   right, with size (0, `HEIGHT`) and exclusive zone `HEIGHT`, in namespace
+   `seki-layer-surface-fixture`.
+3. Acks the first `configure`, attaches an XRGB8888 shared-memory buffer of
+   the configured width by `HEIGHT`, and commits.
+4. Prints exactly one line to stdout, `ready <width> <height>`, after a
+   `wl_display.sync` round trip that follows the buffer commit.
+
+At this point river has processed the mapped surface and its exclusive zone.
+
+The fixture tears down on stdin EOF, on SIGTERM, or when the compositor sends
+the layer surface's `closed` event. It first waits for a sync, so that every
+event already in flight reaches a live object. It then destroys the buffer,
+the pool, the layer surface, and the surface, waits for a final sync, closes
+the connection, and exits 0. Any protocol or connection error is printed to
+stderr and exits 1. An invalid argument exits 2.
+
+Harness requirements:
+
+- Keep the fixture's stdin open on a pipe until the scenario wants it to
+  leave. Closing that pipe is the stop signal, so `/dev/null` stops the
+  fixture at once.
+- Read stdout until the `ready` line. A fixture that exits 0 without a `ready`
+  line was closed by the compositor before it mapped.
+- River closes every layer surface while the window manager has not bound
+  `river_layer_shell_v1`. The fixture then exits 0 without a `ready` line, so
+  start it only after seki has bound layer shell.
+
+The fixture's protocol binding,
+`tools-generated/layer-surface-fixture/Seki/Fixture/Protocol/WlrLayerShellUnstableV1.hs`,
+is integration-only. seki's libraries never import it, and
+`test/Seki/Scanner/GenerateTest.hs` fails if it drifts from the vendored XML.
+Regenerate it with:
+
+```console
+cabal run seki-scanner -- generate Seki.Fixture.Protocol.WlrLayerShellUnstableV1 protocol/river/upstream/wlr-layer-shell-unstable-v1.xml 'river v0.4.5, commit f6d961773711dc29d3eb5b60bd14744a6a33894f' tools-generated/layer-surface-fixture/Seki/Fixture/Protocol/WlrLayerShellUnstableV1.hs protocol/river/upstream/wlr-layer-shell-unstable-v1.xml protocol/wayland/wayland.xml protocol/wayland-protocols/xdg-shell.xml
+```
 
 ## Completion manifest and CI gate
 
