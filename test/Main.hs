@@ -1,5 +1,6 @@
 module Main (main) where
 
+import Seki.Internal.Core.ActionTest qualified as ActionTest
 import Seki.Internal.Core.GeometryTest qualified as GeometryTest
 import Seki.Internal.Core.LayoutTest qualified as LayoutTest
 import Seki.Internal.Core.StackSetTest qualified as StackSetTest
@@ -30,4 +31,4 @@ import Seki.Wire.TransportTest qualified as TransportTest
 import Test.Tasty (defaultMain, testGroup)
 
 main :: IO ()
-main = defaultMain (testGroup "seki" [GeometryTest.tests, StackSetTest.tests, StateTest.tests, LayoutTest.tests, FullLayoutTest.tests, TallTest.tests, CodecTest.tests, ArgumentsTest.tests, TransportTest.tests, DriverTest.tests, BufferTest.tests, ObjectTableTest.tests, RequestTest.tests, EventTest.tests, ConnectionTest.tests, DispatchTest.tests, RegistryTest.tests, StartupTest.tests, RiverTest.tests, RuntimeTest.tests, SequenceTest.tests, PhaseTest.tests, InventoryTest.tests, FullTest.tests, DefaultTest.tests, ScannerTest.tests, GeneratorTest.tests])
+main = defaultMain (testGroup "seki" [GeometryTest.tests, StackSetTest.tests, StateTest.tests, LayoutTest.tests, FullLayoutTest.tests, TallTest.tests, ActionTest.tests, CodecTest.tests, ArgumentsTest.tests, TransportTest.tests, DriverTest.tests, BufferTest.tests, ObjectTableTest.tests, RequestTest.tests, EventTest.tests, ConnectionTest.tests, DispatchTest.tests, RegistryTest.tests, StartupTest.tests, RiverTest.tests, RuntimeTest.tests, SequenceTest.tests, PhaseTest.tests, InventoryTest.tests, FullTest.tests, DefaultTest.tests, ScannerTest.tests, GeneratorTest.tests])
