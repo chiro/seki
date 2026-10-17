@@ -36,6 +36,7 @@ cabal_files() {
 }
 
 tarball=$(cabal sdist | tail -n 1)
+tarball=${tarball#Wrote tarball sdist to }
 listing=$(tar -tzf "$tarball" | sed 's|^[^/]*/||')
 
 while IFS=$'\t' read -r section module; do

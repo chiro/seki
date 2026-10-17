@@ -651,6 +651,11 @@ Tests:
 
 ### WP8 — Real-river scenarios
 
+Implemented by the nine `m1-*` entries in the exact release manifest. The native
+Haskell fixture checks actual compositor pixels and keyboard delivery. See
+`docs/integration-testing.md` for the oracle, fixture limits, and output lifecycle
+coverage.
+
 Extend the pinned release suite with deterministic scenarios for:
 
 1. three windows in Tall, including observable geometry;

@@ -3,8 +3,8 @@
 A tiling window manager for [river](https://codeberg.org/river/river), written
 in Haskell and aiming for xmonad's semantics and configuration model.
 
-> **Status: M1 core and configuration are implemented through WP7.**
-> The real-river M1 scenarios and release measurements remain in WP8 and WP9. See the [milestones](docs/spec.md#62-milestones).
+> **Status: M1 core, configuration, and real-river coverage are implemented through WP8.**
+> Release measurements remain in WP9. See the [milestones](docs/spec.md#62-milestones).
 
 ## Current status
 
@@ -22,7 +22,9 @@ The current implementation provides:
   window.
 
 The release integration suite exercises the native Wayland path, two outputs,
-Xwayland, and an exact Japanese input commit through fcitx5 and Mozc. See the
+Xwayland, and an exact Japanese input commit through fcitx5 and Mozc. Nine M1
+scenarios check captured geometry, borders, workspace visibility, native input,
+layer exclusive zones, and complete headless output recovery. See the
 [integration testing manual](docs/integration-testing.md) for reproduction and
 maintenance instructions.
 

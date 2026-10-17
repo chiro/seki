@@ -24,6 +24,9 @@ extra-source-files:
   protocol/river/river-xkb-bindings-v1.xml
   protocol/river/upstream/wlr-layer-shell-unstable-v1.xml
   protocol/wayland-protocols/xdg-shell.xml
+  protocol/wayland-protocols/ext-image-capture-source-v1.xml
+  protocol/wayland-protocols/ext-image-copy-capture-v1.xml
+  protocol/wayland-protocols/ext-foreign-toplevel-list-v1.xml
   protocol/wayland/wayland.xml
 extra-doc-files:
   README.md
@@ -157,8 +160,13 @@ library layer-surface-fixture
     tools-generated/layer-surface-fixture
   exposed-modules:
     Seki.Fixture.LayerSurface
+    Seki.Fixture.Probe
+    Seki.Fixture.Protocol.XdgShell
+    Seki.Fixture.Protocol.ExtImageCaptureSourceV1
+    Seki.Fixture.Protocol.ExtImageCopyCaptureV1
     Seki.Fixture.Protocol.WlrLayerShellUnstableV1
   build-depends:
+    containers >=0.6.7 && <0.8,
     base >=4.18 && <4.19,
     bytestring >=0.11.5 && <0.12,
     seki:seki-wire,
@@ -279,7 +287,12 @@ test-suite seki-integration
   type:           exitcode-stdio-1.0
   hs-source-dirs: integration
   main-is:        Main.hs
+  other-modules:
+    Seki.Integration.Harness
+    Seki.Integration.M1
   build-depends:
+    containers >=0.6.7 && <0.8,
+    seki:layer-surface-fixture,
     aeson >=2.1 && <2.3,
     base >=4.18 && <4.19,
     bytestring >=0.11.5 && <0.12,
