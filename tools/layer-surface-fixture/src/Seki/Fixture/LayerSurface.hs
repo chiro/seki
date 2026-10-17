@@ -10,6 +10,7 @@ module Seki.Fixture.LayerSurface (
   FixtureError (..),
   FixtureControl,
   newFixtureControl,
+  requestStop,
   runLayerSurfaceFixture,
 )
 where
@@ -22,6 +23,7 @@ import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE, wit
 import Data.Bits ((.|.))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
+import Data.Foldable (for_)
 import Data.Int (Int32)
 import Data.Text (Text)
 import Data.Word (Word32)
@@ -95,13 +97,23 @@ data FixtureError
 data FixtureInput
   = InputConfigure Word32 Word32
   | InputClosed
-  | InputSyncDone
+  | InputSyncDone SyncPurpose
+  | InputStop
   | InputConnectionEnded (Either ConnectionError ())
+
+-- | Which round trip a sync callback closes; a stop can overtake the readiness sync.
+data SyncPurpose
+  = ReadinessSync
+  | TeardownSync
 
 newtype FixtureControl = FixtureControl (Chan FixtureInput)
 
 newFixtureControl :: IO FixtureControl
 newFixtureControl = FixtureControl <$> newChan
+
+-- | Ask a running fixture to tear down and exit cleanly. Safe from any thread.
+requestStop :: FixtureControl -> IO ()
+requestStop (FixtureControl inputs) = writeChan inputs InputStop
 
 data FixtureGlobals = FixtureGlobals
   { compositorGlobal :: Global Wayland.WlCompositor
@@ -157,25 +169,67 @@ data Phase
   = AwaitingConfigure
   | AwaitingReadySync MappedBuffer FixtureReady
   | Running MappedBuffer
+  | AwaitingTeardownSync FixtureStop
 
 data MappedBuffer = MappedBuffer
   { mappedPool :: Object Wayland.WlShmPool
   , mappedBuffer :: Object Wayland.WlBuffer
   }
 
+data Transition
+  = MapBuffer Word32 Word32
+  | ReportReady MappedBuffer FixtureReady
+  | TearDown (Maybe MappedBuffer) FixtureStop
+  | Finish FixtureStop
+  | Fail FixtureError
+  | Ignore
+
+transition :: Phase -> FixtureInput -> Transition
+transition _ (InputConnectionEnded (Left errorValue)) = Fail (FixtureConnectionError errorValue)
+transition _ (InputConnectionEnded (Right ())) = Fail FixtureConnectionFinished
+transition (AwaitingTeardownSync stop) (InputSyncDone TeardownSync) = Finish stop
+transition (AwaitingTeardownSync _) _ = Ignore
+transition phase InputStop = TearDown (phaseBuffer phase) StoppedByRequest
+transition phase InputClosed = TearDown (phaseBuffer phase) ClosedByCompositor
+transition AwaitingConfigure (InputConfigure serial width) = MapBuffer serial width
+transition (AwaitingReadySync mapped ready) (InputSyncDone ReadinessSync) = ReportReady mapped ready
+transition _ _ = Ignore
+
+phaseBuffer :: Phase -> Maybe MappedBuffer
+phaseBuffer = \case
+  AwaitingConfigure -> Nothing
+  AwaitingReadySync mapped _ -> Just mapped
+  Running mapped -> Just mapped
+  AwaitingTeardownSync _ -> Nothing
+
 runPhase :: Fixture -> Phase -> ExceptIO FixtureStop
 runPhase fixture phase = do
   input <- lift (readChan inputs)
-  case (phase, input) of
-    (_, InputConnectionEnded (Left errorValue)) -> throwE (FixtureConnectionError errorValue)
-    (_, InputConnectionEnded (Right ())) -> throwE FixtureConnectionFinished
-    (AwaitingConfigure, InputConfigure serial width) -> mapBuffer fixture serial width >>= runPhase fixture
-    (AwaitingReadySync mapped ready, InputSyncDone) -> do
+  case transition phase input of
+    MapBuffer serial width -> mapBuffer fixture serial width >>= runPhase fixture
+    ReportReady mapped ready -> do
       lift (fixtureReportReady fixture ready)
       runPhase fixture (Running mapped)
-    _ -> runPhase fixture phase
+    TearDown mapped stop -> tearDown fixture mapped stop >>= runPhase fixture
+    Finish stop -> pure stop
+    Fail errorValue -> throwE errorValue
+    Ignore -> runPhase fixture phase
  where
   FixtureControl inputs = fixtureControl fixture
+
+-- | Destroy every object the fixture created, role object before its surface.
+tearDown :: Fixture -> Maybe MappedBuffer -> FixtureStop -> ExceptIO Phase
+tearDown fixture mapped stop = do
+  send LayerShell.zwlrLayerSurfaceV1Interface (layerSurfaceObject surfaces) LayerShell.encodeZwlrLayerSurfaceV1Destroy
+  send Wayland.wlSurfaceInterface (surfaceObject surfaces) Wayland.encodeWlSurfaceDestroy
+  for_ mapped $ \buffers -> do
+    send Wayland.wlBufferInterface (mappedBuffer buffers) Wayland.encodeWlBufferDestroy
+    send Wayland.wlShmPoolInterface (mappedPool buffers) Wayland.encodeWlShmPoolDestroy
+  requestSync fixture TeardownSync
+  pure (AwaitingTeardownSync stop)
+ where
+  surfaces = fixtureSurfaces fixture
+  send interface object = connectionStep . submitRequest (waylandConnection (fixtureSession fixture)) interface object
 
 mapBuffer :: Fixture -> Word32 -> Word32 -> ExceptIO Phase
 mapBuffer fixture serial width = do
@@ -222,11 +276,11 @@ mapBuffer fixture serial width = do
   sendSurface (Wayland.encodeWlSurfaceAttach (Just (objectId buffer)) 0 0)
   sendSurface (Wayland.encodeWlSurfaceDamage 0 0 (layoutWidth layout) (layoutHeight layout))
   sendSurface Wayland.encodeWlSurfaceCommit
-  requestSync fixture
+  requestSync fixture ReadinessSync
   pure (AwaitingReadySync (MappedBuffer pool buffer) (FixtureReady width height))
 
-requestSync :: Fixture -> ExceptIO ()
-requestSync fixture = do
+requestSync :: Fixture -> SyncPurpose -> ExceptIO ()
+requestSync fixture purpose = do
   _ <-
     connectionStep
       ( submitNewObjectRequestWithRoute
@@ -236,7 +290,7 @@ requestSync fixture = do
           Wayland.wlCallbackInterface
           1
           (Wayland.encodeWlDisplaySync . objectId)
-          (eventRoute Wayland.decodeWlCallbackEvent (\_ _ -> writeChan inputs InputSyncDone))
+          (eventRoute Wayland.decodeWlCallbackEvent (\_ _ -> writeChan inputs (InputSyncDone purpose)))
       )
   pure ()
  where

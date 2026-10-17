@@ -17,6 +17,7 @@ import Seki.Fixture.LayerSurface (
   FixtureReady (..),
   FixtureStop (..),
   newFixtureControl,
+  requestStop,
   runLayerSurfaceFixture,
  )
 import Seki.Run.MockRiver (
@@ -74,6 +75,10 @@ tests =
     , testCase "attaches a shared-memory buffer matching the configure" testBufferAttachment
     , testCase "withholds readiness until the sync round trip completes" testNoReadyBeforeSync
     , testCase "reports readiness once the sync round trip completes" testReadyAfterSync
+    , testCase "tears down in order and exits cleanly on a stop request" testStopTeardown
+    , testCase "tears down in order and exits cleanly when the compositor closes it" testClosedTeardown
+    , testCase "tears down the unmapped surface when closed before configure" testClosedBeforeConfigure
+    , testCase "waits for the teardown sync, not the readiness sync" testTeardownWaitsForItsOwnSync
     ]
 
 testBindsGlobals :: Assertion
@@ -163,6 +168,71 @@ testReadyAfterSync = do
       sendFrames (mockPeer mock) [callbackDoneFrame (bufferSyncCallback buffers) 2]
   assertStoppedByConnection result
   assertEqual "readiness after the sync reply" [FixtureReady 1280 32] (fixtureReadies result)
+
+testStopTeardown :: Assertion
+testStopTeardown = do
+  (result, _) <-
+    withFixtureControl defaultConfig $ \control mock -> do
+      (objects, buffers) <- mapFixtureSurface 32 mock
+      sendFrames (mockPeer mock) [callbackDoneFrame (bufferSyncCallback buffers) 2]
+      requestStop control
+      expectMappedTeardown mock objects buffers >>= completeTeardown mock
+  assertEqual "stopped cleanly" (Right StoppedByRequest) (fixtureOutcome result)
+
+testClosedTeardown :: Assertion
+testClosedTeardown = do
+  (result, _) <-
+    withFixture defaultConfig $ \mock -> do
+      (objects, buffers) <- mapFixtureSurface 32 mock
+      sendFrames
+        (mockPeer mock)
+        [ callbackDoneFrame (bufferSyncCallback buffers) 2
+        , encodedFrame (objectsLayerSurface objects) (Opcode 1) (pure ())
+        ]
+      expectMappedTeardown mock objects buffers >>= completeTeardown mock
+  assertEqual "closed cleanly" (Right ClosedByCompositor) (fixtureOutcome result)
+  assertEqual "ready before closing" [FixtureReady 1280 32] (fixtureReadies result)
+
+testClosedBeforeConfigure :: Assertion
+testClosedBeforeConfigure = do
+  (result, _) <-
+    withFixture defaultConfig $ \mock -> do
+      objects <- expectSurfaceSetup 32 mock
+      sendFrames (mockPeer mock) [encodedFrame (objectsLayerSurface objects) (Opcode 1) (pure ())]
+      expectRequest mock "layer surface destroy" (objectsLayerSurface objects) (Opcode 7) (pure ())
+      expectRequest mock "surface destroy" (objectsSurface objects) (Opcode 0) (pure ())
+      receiveTeardownSync mock >>= completeTeardown mock
+  assertEqual "closed cleanly" (Right ClosedByCompositor) (fixtureOutcome result)
+  assertEqual "never ready" [] (fixtureReadies result)
+
+testTeardownWaitsForItsOwnSync :: Assertion
+testTeardownWaitsForItsOwnSync = do
+  (result, _) <-
+    withFixtureControl defaultConfig $ \control mock -> do
+      (objects, buffers) <- mapFixtureSurface 32 mock
+      requestStop control
+      _ <- expectMappedTeardown mock objects buffers
+      sendFrames (mockPeer mock) [callbackDoneFrame (bufferSyncCallback buffers) 2]
+  assertStoppedByConnection result
+  assertEqual "no readiness once stopping" [] (fixtureReadies result)
+
+expectMappedTeardown :: Mock -> Objects -> BufferObjects -> IO ObjectId
+expectMappedTeardown mock objects buffers = do
+  expectRequest mock "layer surface destroy" (objectsLayerSurface objects) (Opcode 7) (pure ())
+  expectRequest mock "surface destroy" (objectsSurface objects) (Opcode 0) (pure ())
+  expectRequest mock "buffer destroy" (bufferBuffer buffers) (Opcode 0) (pure ())
+  expectRequest mock "pool destroy" (bufferPool buffers) (Opcode 1) (pure ())
+  receiveTeardownSync mock
+
+receiveTeardownSync :: Mock -> IO ObjectId
+receiveTeardownSync mock = do
+  display <- requireObjectId 1
+  receiveNewIdRequest mock display (Opcode 0)
+
+completeTeardown :: Mock -> ObjectId -> Assertion
+completeTeardown mock callbackId = do
+  sendFrames (mockPeer mock) [callbackDoneFrame callbackId 3]
+  expectEndOfRequests mock
 
 mapFixtureSurface :: Word32 -> Mock -> IO (Objects, BufferObjects)
 mapFixtureSurface height mock = do
