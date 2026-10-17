@@ -13,8 +13,6 @@ module Seki.Run.Runtime (
   RiverLayerFocus (..),
   RiverRuntimeSnapshot (..),
   readRiverSeatBindings,
-  RiverManageAction (..),
-  noRiverManageAction,
   RiverRuntimeHandlers (..),
   RenderOutcome (..),
   RiverRuntimeError (..),
@@ -36,10 +34,9 @@ import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Run.Inventory (
   RiverInventory,
-  RiverInventoryError,
+  RiverInventoryError (..),
   RiverOutputState (..),
   RiverWindowState (..),
-  activateRiverWindow,
   addRiverOutput,
   addRiverWindow,
   applyRiverLayerShellOutputEvent,
@@ -161,24 +158,10 @@ data RiverRuntimeSnapshot = RiverRuntimeSnapshot
   }
   deriving (Eq, Show)
 
--- | A deferred management action evaluated against the next inventory snapshot.
-newtype RiverManageAction = RiverManageAction
-  { prepareRiverManageAction :: RiverRuntimeSnapshot -> ManageM ()
-  }
-
-noRiverManageAction :: RiverManageAction
-noRiverManageAction = RiverManageAction (const (pure ()))
-
-{- | Low-level river event handlers plus phase-safe plans prepared at each
-sequence boundary.
-
-Plan preparation runs in IO so a policy can keep state across sequences;
-the returned plans themselves cannot lift arbitrary IO.
--}
 data RiverRuntimeHandlers = RiverRuntimeHandlers
   { riverProtocolHandlers :: RiverWindowManagerHandlers
   , riverKeyBindings :: [RiverKeyBinding]
-  , handleRiverKeyBindingEvent :: RiverKeyBinding -> Object Xkb.RiverXkbBindingV1 -> Xkb.RiverXkbBindingV1Event OwnedFd -> IO RiverManageAction
+  , handleRiverKeyBindingEvent :: RiverKeyBinding -> Object Xkb.RiverXkbBindingV1 -> Xkb.RiverXkbBindingV1Event OwnedFd -> IO ()
   , prepareRiverManagePlan :: RiverRuntimeSnapshot -> IO (ManageM ())
   , prepareRiverRenderPlan :: RiverRuntimeSnapshot -> IO (RenderM RenderOutcome)
   }
@@ -229,7 +212,6 @@ openRiverSessionWith openWayland runtimeHandlers =
         xkbGlobalState <- newIORef Nothing
         layerShellGlobalState <- newIORef Nothing
         seatBindingsState <- newIORef Map.empty
-        manageActionsState <- newIORef []
         let checkedHandlers =
               sequenceCheckedHandlers
                 wayland
@@ -238,7 +220,6 @@ openRiverSessionWith openWayland runtimeHandlers =
                 xkbGlobalState
                 layerShellGlobalState
                 seatBindingsState
-                manageActionsState
                 runtimeHandlers
         result <- restore (bindRuntimeGlobals wayland checkedHandlers) `onException` closeWaylandSession wayland
         case result of
@@ -342,10 +323,9 @@ sequenceCheckedHandlers ::
   IORef (Maybe (Object Xkb.RiverXkbBindingsV1)) ->
   IORef (Maybe (Object LayerShell.RiverLayerShellV1)) ->
   IORef (Map ObjectId RiverSeatBindings) ->
-  IORef [RiverManageAction] ->
   RiverRuntimeHandlers ->
   RiverWindowManagerHandlers
-sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState layerShellGlobalState seatBindingsState manageActionsState runtimeHandlers =
+sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState layerShellGlobalState seatBindingsState runtimeHandlers =
   handlers
     { handleRiverWindowManagerEvent = handleManagerEvent
     , handleRiverWindowCreated = handleWindowCreated
@@ -508,11 +488,14 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
     tracked <- requireSeat seat
     when tracked $ do
       previous <- Map.lookup (objectId seat) <$> readIORef seatBindingsState
-      inventoryUpdated <- case event of
-        River.RiverSeatV1WindowInteraction windowId ->
-          updateInventory sequenceStatus inventoryState (activateRiverWindow windowId)
+      validInteraction <- case event of
+        River.RiverSeatV1WindowInteraction identifier -> do
+          window <- lookupRiverWindow identifier <$> readIORef inventoryState
+          recordStateResult $ case window of
+            Nothing -> Left (RiverRuntimeInventoryError (RiverInventoryWindowNotTracked identifier))
+            Just _ -> Right ()
         _ -> pure True
-      when inventoryUpdated $
+      when validInteraction $
         case event of
           River.RiverSeatV1Removed -> do
             removed <- removeSeat seat
@@ -589,13 +572,9 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
             , ()
             )
           createBindings xkbBindings seat rest
-  handleBindingEvent definition binding event = do
-    action <- handleRiverKeyBindingEvent runtimeHandlers definition binding event
-    atomicModifyIORef' manageActionsState $ \actions ->
-      (actions <> [action], ())
+  handleBindingEvent = handleRiverKeyBindingEvent runtimeHandlers
   runManagePlans = do
     snapshot <- readRuntimeSnapshot
-    actions <- readIORef manageActionsState
     policyPlan <- prepareRiverManagePlan runtimeHandlers snapshot
     let pending =
           [ bindingState
@@ -605,13 +584,11 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
           ]
         plan = do
           mapM_ prepareKeyBinding pending
-          mapM_ (\action -> prepareRiverManageAction action snapshot) actions
           policyPlan
     runManageM connection plan >>= \case
       Left errorValue -> pure (Left errorValue)
       Right () -> do
         markKeyBindingsInitialized
-        writeIORef manageActionsState []
         pure (Right ())
   readRuntimeSnapshot = do
     inventory <- readIORef inventoryState

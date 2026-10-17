@@ -484,12 +484,9 @@ dimension hints, once-only PID/output-name/identifier events, and river v4's
 printable-ASCII identifier rule. Complete output position and size state is
 exposed as a rectangle for placement planning.
 
-For the M0 focus policy, a newly created window becomes active and a
-`river_seat_v1.window_interaction` event activates its referenced live window.
-Closing the active window chooses the remaining window with the highest object
-ID, giving a deterministic fallback; closing any other window preserves the
-active choice. This is desired policy state rather than a claim about current
-compositor keyboard focus. The later StackSet core replaces the fallback rule.
+Workspace membership, desired focus, and close targeting belong to the pure
+StackSet core. Inventory retains observed protocol facts and live handles; it
+does not select an active window or a fallback after closure.
 
 The runtime applies inventory transitions before delivering creation or event
 callbacks, and returns validation failures as structured runtime errors without
@@ -512,23 +509,29 @@ structured inventory error. Only the latest area is kept. On
 `river_output_v1.removed` the runtime destroys the layer-shell output before
 the river output.
 
-### 7.9 M0 Full placement
+### 7.9 Scene planning and reconciliation
 
-`Seki.Run.Full` turns an inventory snapshot into the minimal M0 manage and
-render plans. It deterministically selects the complete output with the lowest
-object ID, requests server-side decoration, marks every window edge as tiled,
-and proposes that output's dimensions for every live window during manage. It
-then positions and shows every initialized window during render. The SSD and
-tiled requests prevent clients such as terminals from reserving CSD titlebar
-space or treating the Full placement as a floating resize and quantizing the
-configured window dimensions to their cell grid.
+`Seki.Internal.Core.Scene` plans layout selections using pure window IDs,
+workspace stacks, output usable areas, and parent relationships. Layout-omitted
+windows remain explicitly hidden. Content rectangles are inset by the border
+width so that content plus borders fit their tiles. Degenerate tiles produce
+no size proposal.
 
-Outputs that have not reported both position and dimensions are not placement
-targets. If no complete output exists, the manage plan emits no requests and
-the render plan hides every window, preventing stale placement from remaining
-visible after output removal. A window missing its node is also kept hidden as
-a defensive fallback, although the owned runtime normally attaches every node
-before a sequence can observe the window.
+`Seki.Run.Reconcile` joins those IDs to live inventory handles and compiles
+phase-safe plans. Each window has at most one outstanding dimension proposal.
+A newer dimensions revision settles it, even when the client repeats its size
+or accepts a size different from the proposal. The latest scene supplies the
+next target when a proposal is superseded. Closed or replaced object handles
+invalidate the cached state.
+
+Render reconciliation applies settled positions, complete family stacking,
+borders, and explicit visibility. A first-time selection remains hidden until
+its dimensions settle. An existing selection retains its last settled size
+while a resize is pending. Focus requests follow the shown state and respect
+layer-shell keyboard ownership. The runtime sends a requested `manage_dirty`
+only after `render_finish` succeeds. See
+[WP6 reconciliation](wp6-reconciliation.md) for the state transitions and live
+compositor evidence.
 
 ### 7.10 XKB bindings bootstrap
 
@@ -583,50 +586,44 @@ succeeds, and later manage sequences do not repeat its initial configuration.
 The phase API also exposes typed layout-override, enable, and disable operations
 for later submap support.
 
-### 7.12 Deferred binding actions
+### 7.12 Ordered policy events
 
-A typed binding callback runs when an XKB event is dispatched. It may start
-non-blocking IO immediately, such as launching a child process, and returns a
-`RiverManageAction` for any protocol state change. The action is a pure function
-from the runtime snapshot at the following manage boundary to a `ManageM` plan,
-so it does not retain a window or seat handle that may disappear between the key
-event and the sequence.
+A typed binding callback queues a core action in `Seki.Run.Policy` and returns
+without submitting phase-sensitive requests. Window and output lifecycle
+events and window interactions join the same queue, preserving their arrival
+order with key presses.
 
-The runtime queues actions in event order. At `manage_start` it runs pending
-binding initialization, queued actions evaluated against one runtime snapshot,
-and the configured user plan, in that order. The queue is cleared
-only when the combined plan succeeds. This keeps management requests inside the
-protocol phase while allowing process launch and other non-protocol work to stay
-outside it. The active-window policy above supplies the M0 close/focus target;
-the later StackSet core owns the full focus model.
+At `manage_start`, Policy drains that queue through the pure reducer. Actions
+produce state transitions and spawn, close, or focus intents. Close intents
+retain the pure window ID selected when the action ran and are resolved
+against live inventory before submission. A window that closed meanwhile
+receives no request. Runtime binding initialization precedes the policy's
+manage plan. The runtime has no second deferred-action queue.
 
-### 7.13 Concrete default policy
+### 7.13 Configurable default policy
 
-`Seki.Run.Default` assembles the first usable policy from the pieces above. Its
-xmonad-style defaults bind Mod4-Shift-Return to launching `foot` and
-Mod4-Shift-c to closing the active window, with both bindings pinned to XKB
-layout 0. Identical terminal and close definitions are rejected before runtime
-startup.
+The public `Seki` module supplies `Config`, pure actions, layouts, border
+configuration, default bindings, and the `seki` entry point. The executable is
+a small user of that API and runs `seki def`. Configuration is validated before
+opening a Wayland connection.
 
-The terminal process action runs on a worker thread and waits for the child
-there, keeping process creation and reaping outside river's manage/render
-sequences. `DefaultConfig` makes this action injectable for validation and later
-configuration work. Launch failures are reported to standard error without
-terminating the Wayland event loop.
+The default configuration provides nine workspaces and cycles Tall, Mirror
+Tall, and Full. Bindings derive their modifiers, terminal command, and workspace
+names from the final configuration record. Mod4-Shift-Return launches `foot`
+and Mod4-Shift-c closes the core's focused window. Layout messages, focus
+movement, master swapping, and workspace view/shift actions use the same pure
+Action and Policy path as a user configuration. Bindings use XKB layout 0 by
+default.
 
-The default manage plan applies Full dimensions and asks the first live seat to focus
-the active window. Its render plan positions and shows Full windows. A close
-press returns a deferred action that re-resolves the active window from the next
-runtime snapshot and submits `river_window_v1.close` during manage. Mock
-integration covers the complete binding initialization, focus, Full placement,
-render, and close request order.
+Spawn intents use the asynchronous launcher. Process creation and reaping do
+not block the event loop, and a launch failure is reported on standard error.
+An internal launcher seam supports process tracking in integration tests;
+public actions cannot lift arbitrary IO.
 
-`runDefault` validates configuration before touching Wayland, opens the default
-display, and owns the session through shutdown. The `seki` executable runs
-this entry point with the default policy, prints any structured configuration,
-startup, connection, inventory, or sequence error to standard error, and exits
-nonzero. This executable is the base for later configuration work; its current
-behavior is the target for nested-river M0 validation.
+The old independent Full policy has been removed. Integration tests construct
+the production policy with their chosen layout, bindings, borders, and launcher,
+so terminal, close, focus, and placement checks exercise the same runtime and
+reconciler as the default executable.
 
 ### 7.14 Fatal display errors
 

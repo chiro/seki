@@ -17,7 +17,6 @@ import Seki.Run.Inventory (
   RiverRectangle (..),
   RiverSize (..),
   RiverWindowState (..),
-  activateRiverWindow,
   addRiverOutput,
   addRiverWindow,
   applyRiverLayerShellOutputEvent,
@@ -28,7 +27,6 @@ import Seki.Run.Inventory (
   emptyRiverInventory,
   lookupRiverOutput,
   lookupRiverWindow,
-  riverInventoryActiveWindow,
   riverInventoryOutputs,
   riverInventoryWindows,
   riverOutputRectangle,
@@ -52,7 +50,6 @@ tests =
     "river inventory"
     [ testCase "accumulates persistent window state and removes closed windows" testWindowLifecycle
     , testCase "accepts an unspecified maximum dimensions hint" testUnspecifiedMaximumDimensions
-    , testCase "tracks the deterministic active window" testActiveWindow
     , testCase "accumulates output geometry and removes outputs" testOutputLifecycle
     , testCase "rejects duplicate IDs and stale object handles" testObjectIdentity
     , testCase "rejects invalid and repeated protocol state" testInvalidState
@@ -110,27 +107,6 @@ testWindowLifecycle = do
   expectLeft
     (RiverInventoryWindowNotTracked (objectId window))
     (applyRiverWindowEvent window (River.RiverWindowV1Title Nothing) closed)
-
-testActiveWindow :: Assertion
-testActiveWindow = do
-  first <- makeServerObject River.riverWindowV1Interface 0xff000040 False
-  second <- makeServerObject River.riverWindowV1Interface 0xff000041 False
-  inventory0 <- expectRight (addRiverWindow first emptyRiverInventory)
-  assertEqual "first window active" (Just (objectId first)) (activeWindowId inventory0)
-  inventory1 <- expectRight (addRiverWindow second inventory0)
-  assertEqual "new window active" (Just (objectId second)) (activeWindowId inventory1)
-  inventory2 <- expectRight (activateRiverWindow (objectId first) inventory1)
-  assertEqual "interaction activates window" (Just (objectId first)) (activeWindowId inventory2)
-  inventory3 <- expectRight (applyRiverWindowEvent first River.RiverWindowV1Closed inventory2)
-  assertEqual "survivor becomes active" (Just (objectId second)) (activeWindowId inventory3)
-  inventory4 <- expectRight (applyRiverWindowEvent second River.RiverWindowV1Closed inventory3)
-  assertEqual "no active window" Nothing (riverInventoryActiveWindow inventory4)
-  expectLeft
-    (RiverInventoryWindowNotTracked (objectId first))
-    (activateRiverWindow (objectId first) inventory4)
- where
-  activeWindowId inventory =
-    objectId . riverWindowObject <$> riverInventoryActiveWindow inventory
 
 testOutputLifecycle :: Assertion
 testOutputLifecycle = do

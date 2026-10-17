@@ -10,8 +10,7 @@ import Seki.Internal.Core.StackSetTest qualified as StackSetTest
 import Seki.Internal.Core.StateTest qualified as StateTest
 import Seki.Internal.Layout.FullTest qualified as FullLayoutTest
 import Seki.Internal.Layout.TallTest qualified as TallTest
-import Seki.Run.DefaultTest qualified as DefaultTest
-import Seki.Run.FullTest qualified as FullTest
+import Seki.Run.ConfigTest qualified as ConfigTest
 import Seki.Run.InventoryTest qualified as InventoryTest
 import Seki.Run.PhaseTest qualified as PhaseTest
 import Seki.Run.PolicyTest qualified as PolicyTest
@@ -37,4 +36,4 @@ import Seki.Wire.TransportTest qualified as TransportTest
 import Test.Tasty (defaultMain, testGroup)
 
 main :: IO ()
-main = defaultMain (testGroup "seki" [ReconcileTest.tests, ReconcileTraceTest.tests, SceneTest.tests, GeometryTest.tests, StackSetTest.tests, StateTest.tests, LayoutTest.tests, FullLayoutTest.tests, TallTest.tests, ActionTest.tests, CoreEventTest.tests, CodecTest.tests, ArgumentsTest.tests, TransportTest.tests, DriverTest.tests, BufferTest.tests, ObjectTableTest.tests, RequestTest.tests, EventTest.tests, ConnectionTest.tests, DispatchTest.tests, RegistryTest.tests, StartupTest.tests, RiverTest.tests, RuntimeTest.tests, SequenceTest.tests, PhaseTest.tests, InventoryTest.tests, FullTest.tests, DefaultTest.tests, PolicyTest.tests, ScannerTest.tests, GeneratorTest.tests, LayerSurfaceFixtureTest.tests])
+main = defaultMain (testGroup "seki" [ReconcileTest.tests, ReconcileTraceTest.tests, SceneTest.tests, GeometryTest.tests, StackSetTest.tests, StateTest.tests, LayoutTest.tests, FullLayoutTest.tests, TallTest.tests, ActionTest.tests, CoreEventTest.tests, CodecTest.tests, ArgumentsTest.tests, TransportTest.tests, DriverTest.tests, BufferTest.tests, ObjectTableTest.tests, RequestTest.tests, EventTest.tests, ConnectionTest.tests, DispatchTest.tests, RegistryTest.tests, StartupTest.tests, RiverTest.tests, RuntimeTest.tests, SequenceTest.tests, PhaseTest.tests, InventoryTest.tests, ConfigTest.tests, PolicyTest.tests, ScannerTest.tests, GeneratorTest.tests, LayerSurfaceFixtureTest.tests])

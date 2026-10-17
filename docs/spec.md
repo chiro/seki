@@ -266,6 +266,21 @@ Required functionality: river_window_manager_v1 **version 3** (depends on set_co
 
 ### 5.1 Configuration = Program (the shape of the public API)
 
+WP7 implements the M1 subset of this target API. `Config l` currently has
+`modMask`, `terminal`, `workspaces :: [String]`, `layoutHook`,
+`keys :: Config l -> Bindings l`, `borders`, and `bindingsUseFixedLayout`.
+`BorderConfig` contains a width and focused and unfocused premultiplied RGBA
+colors. `Action l a` is a pure action specialized to string workspace tags.
+`Bindings l` is an association list so duplicate key identities remain
+visible to validation. Hooks, pointer bindings, input rules, urgent colors,
+and size policies below describe later milestones.
+
+`def` provides nine tags and `Tall ||| Mirror Tall ||| Full`. A type-changing
+layout override also replaces `keys`, as in
+`def{layoutHook = Full, keys = defaultKeys}`. The executable is a program that
+imports only `Seki` and runs `seki def`. See the [README](../README.md) for the
+implemented configuration and default keys.
+
 As in xmonad, there is no configuration file. The user writes a Haskell program importing this library. A minimal Main.hs:
 
 ```haskell
