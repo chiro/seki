@@ -145,6 +145,23 @@ library scanner
     text >=2.0.2 && <2.2,
     xeno >=0.6 && <0.7
 
+library layer-surface-fixture
+  import:          warnings
+  visibility:      private
+  hs-source-dirs:
+    tools/layer-surface-fixture/src
+    tools/layer-surface-fixture/generated
+  exposed-modules:
+    Seki.Fixture.LayerSurface
+    Seki.Fixture.Protocol.WlrLayerShellUnstableV1
+  build-depends:
+    base >=4.18 && <4.19,
+    bytestring >=0.11.5 && <0.12,
+    seki:seki-wire,
+    text >=2.0.2 && <2.2,
+    transformers >=0.6.1 && <0.7,
+    unix >=2.8.4 && <2.9
+
 executable seki-scanner
   import:         warnings
   hs-source-dirs: tools/scanner/app
@@ -179,6 +196,7 @@ test-suite seki-test
   hs-source-dirs: test
   main-is:        Main.hs
   other-modules:
+    Seki.Fixture.LayerSurfaceTest
     Seki.Internal.Core.ActionTest
     Seki.Internal.Core.EventTest
     Seki.Internal.Core.GeometryGen
@@ -219,6 +237,7 @@ test-suite seki-test
     bytestring >=0.11.5 && <0.12,
     containers >=0.6.7 && <0.8,
     network >=3.1.4 && <3.3,
+    seki:layer-surface-fixture,
     seki:scanner,
     seki:seki-core,
     seki:seki-wire,
