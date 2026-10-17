@@ -33,6 +33,7 @@ tests =
     "Wayland binding generator"
     [ testCase "matches the committed Wayland binding" testGeneratedBindingFreshness
     , testCase "matches the committed river bindings" testGeneratedRiverBindingsFreshness
+    , testCase "matches the committed layer-surface fixture binding" testGeneratedFixtureBindingFreshness
     , testCase "produces identical output on repeated runs" testDeterministicGeneration
     , testCase "resolves cross-protocol enums to qualified modules" testCrossProtocolEnum
     , testCase "encodes static and dynamic new IDs" testRequestEncoders
@@ -59,6 +60,12 @@ testGeneratedRiverBindingsFreshness = do
   generatedLayerShell <- generateRiverLayerShell
   committedLayerShell <- TextIO.readFile generatedRiverLayerShellPath
   assertEqual "generated river layer-shell module" committedLayerShell generatedLayerShell
+
+testGeneratedFixtureBindingFreshness :: Assertion
+testGeneratedFixtureBindingFreshness = do
+  generated <- generateWlrLayerShell
+  committed <- TextIO.readFile generatedWlrLayerShellPath
+  assertEqual "generated wlr-layer-shell fixture module" committed generated
 
 testDeterministicGeneration :: Assertion
 testDeterministicGeneration = do
@@ -198,19 +205,19 @@ testLayerShellObjectReferences = do
 testWlrLayerShellReferences :: Assertion
 testWlrLayerShellReferences = do
   wayland <- expectProtocolFile waylandProtocolPath
-  xdgShell <- expectProtocolFile xdgShellProtocolPath
   wlrLayerShell <- expectProtocolFile wlrLayerShellProtocolPath
-  let config =
-        GenerationConfig
-          { generationModuleName = "Seki.Protocol.WlrLayerShellUnstableV1"
-          , generationSourcePath = Text.pack wlrLayerShellProtocolPath
-          , generationSourcePin = riverSourcePin
-          }
-  case generateProtocolModule config [wlrLayerShell, wayland] wlrLayerShell of
+  case generateProtocolModule wlrLayerShellConfig [wlrLayerShell, wayland] wlrLayerShell of
     Left _ -> pure ()
     Right _ -> assertFailure "generated wlr-layer-shell without the xdg_popup definition"
-  _ <- expectGenerated config [wlrLayerShell, wayland, xdgShell] wlrLayerShell
+  _ <- generateWlrLayerShell
   pure ()
+
+generateWlrLayerShell :: IO Text
+generateWlrLayerShell = do
+  wayland <- expectProtocolFile waylandProtocolPath
+  xdgShell <- expectProtocolFile xdgShellProtocolPath
+  wlrLayerShell <- expectProtocolFile wlrLayerShellProtocolPath
+  expectGenerated wlrLayerShellConfig [wlrLayerShell, wayland, xdgShell] wlrLayerShell
 
 generateRiverXkb :: IO Text
 generateRiverXkb = do
@@ -276,6 +283,14 @@ riverLayerShellConfig =
     , generationSourcePin = riverSourcePin
     }
 
+wlrLayerShellConfig :: GenerationConfig
+wlrLayerShellConfig =
+  GenerationConfig
+    { generationModuleName = "Seki.Fixture.Protocol.WlrLayerShellUnstableV1"
+    , generationSourcePath = Text.pack wlrLayerShellProtocolPath
+    , generationSourcePin = riverSourcePin
+    }
+
 riverSourcePin :: Text
 riverSourcePin = "river v0.4.5, commit f6d961773711dc29d3eb5b60bd14744a6a33894f"
 
@@ -305,6 +320,9 @@ riverLayerShellProtocolPath = "protocol/river/river-layer-shell-v1.xml"
 
 wlrLayerShellProtocolPath :: FilePath
 wlrLayerShellProtocolPath = "protocol/river/upstream/wlr-layer-shell-unstable-v1.xml"
+
+generatedWlrLayerShellPath :: FilePath
+generatedWlrLayerShellPath = "tools/layer-surface-fixture/generated/Seki/Fixture/Protocol/WlrLayerShellUnstableV1.hs"
 
 xdgShellProtocolPath :: FilePath
 xdgShellProtocolPath = "protocol/wayland-protocols/xdg-shell.xml"
