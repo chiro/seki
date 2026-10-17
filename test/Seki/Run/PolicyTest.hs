@@ -37,6 +37,7 @@ import Seki.Run.MockRiver (
   newFrameReader,
   receiveExpectedRequest,
   receiveKeyBindingRequest,
+  receiveLayerShellOutputRequest,
   receiveNewIdRequest,
   receiveRuntimeBinds,
   receiveSequenceCompletion,
@@ -116,9 +117,10 @@ testEventsAtManageStart =
     w2 <- requireObjectId 0xff000032
     mockDone <- runMock $ do
       reader <- newFrameReader
-      (managerId, _, _) <- handshake reader peer
+      (managerId, _, layerShellId) <- handshake reader peer
       sendFrames peer [newWindow managerId w1, newOutput managerId o1, manageStart managerId]
       _ <- receiveNewIdRequest reader peer w1 (Opcode 2)
+      _ <- receiveLayerShellOutputRequest reader peer layerShellId o1
       finishManage reader peer managerId
       sendFrames peer [newWindow managerId w2, manageStart managerId]
       _ <- receiveNewIdRequest reader peer w2 (Opcode 2)
@@ -146,10 +148,11 @@ testSeatEvents =
     s1 <- requireObjectId 0xff000043
     mockDone <- runMock $ do
       reader <- newFrameReader
-      (managerId, _, _) <- handshake reader peer
+      (managerId, _, layerShellId) <- handshake reader peer
       sendFrames peer [newWindow managerId w1, newWindow managerId w2, newOutput managerId o1, newSeat managerId s1, manageStart managerId]
       _ <- receiveNewIdRequest reader peer w1 (Opcode 2)
       _ <- receiveNewIdRequest reader peer w2 (Opcode 2)
+      _ <- receiveLayerShellOutputRequest reader peer layerShellId o1
       finishManage reader peer managerId
       sendFrames
         peer
@@ -182,8 +185,9 @@ testBindingOrder =
           ]
     mockDone <- runMock $ do
       reader <- newFrameReader
-      (managerId, xkbBindingsId, _) <- handshake reader peer
+      (managerId, xkbBindingsId, layerShellId) <- handshake reader peer
       sendFrames peer [newOutput managerId o1, newSeat managerId s1]
+      _ <- receiveLayerShellOutputRequest reader peer layerShellId o1
       bindingIds <- mapM (receiveKeyBindingRequest reader peer xkbBindingsId s1 . fst) bindings
       sendFrames peer [manageStart managerId]
       mapM_ (\b -> receiveExpectedRequest reader peer b (Opcode 2) (pure ())) bindingIds
@@ -209,9 +213,10 @@ testOneQueue =
     let bindings = [(keyBinding 0x63, kill)]
     mockDone <- runMock $ do
       reader <- newFrameReader
-      (managerId, xkbBindingsId, _) <- handshake reader peer
+      (managerId, xkbBindingsId, layerShellId) <- handshake reader peer
       sendFrames peer [newWindow managerId w1, newOutput managerId o1, newSeat managerId s1]
       _ <- receiveNewIdRequest reader peer w1 (Opcode 2)
+      _ <- receiveLayerShellOutputRequest reader peer layerShellId o1
       killId <- receiveKeyBindingRequest reader peer xkbBindingsId s1 (keyBinding 0x63)
       sendFrames peer [manageStart managerId]
       receiveExpectedRequest reader peer killId (Opcode 2) (pure ())
@@ -233,9 +238,10 @@ testCloseRequests =
     let bindings = [(keyBinding 0x63, kill)]
     mockDone <- runMock $ do
       reader <- newFrameReader
-      (managerId, xkbBindingsId, _) <- handshake reader peer
+      (managerId, xkbBindingsId, layerShellId) <- handshake reader peer
       sendFrames peer [newWindow managerId w1, newOutput managerId o1, newSeat managerId s1]
       nodeId <- receiveNewIdRequest reader peer w1 (Opcode 2)
+      _ <- receiveLayerShellOutputRequest reader peer layerShellId o1
       killId <- receiveKeyBindingRequest reader peer xkbBindingsId s1 (keyBinding 0x63)
       sendFrames peer [manageStart managerId]
       receiveExpectedRequest reader peer killId (Opcode 2) (pure ())

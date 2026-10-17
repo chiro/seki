@@ -16,6 +16,8 @@ module Seki.Run.MockRiver (
   receiveSequenceCompletion,
   receiveExpectedRequest,
   receiveNewIdRequest,
+  receiveLayerShellOutputRequest,
+  receiveLayerShellSeatRequest,
   registryGlobalFrame,
   callbackDoneFrame,
   encodedFrame,
@@ -220,6 +222,35 @@ receiveNewIdRequest reader peer sender opcode = do
   assertEqual "new-ID request sender" sender (rawFrameSender frame)
   assertEqual "new-ID request opcode" opcode (rawFrameOpcode frame)
   decodeNewId frame
+
+-- | Receive @get_output@ for the given river output and return the new object's ID.
+receiveLayerShellOutputRequest :: FrameReader -> Transport -> ObjectId -> ObjectId -> IO ObjectId
+receiveLayerShellOutputRequest reader peer layerShellId =
+  receiveLayerShellChildRequest reader peer layerShellId "get_output" (Opcode 1)
+
+-- | Receive @get_seat@ for the given river seat and return the new object's ID.
+receiveLayerShellSeatRequest :: FrameReader -> Transport -> ObjectId -> ObjectId -> IO ObjectId
+receiveLayerShellSeatRequest reader peer layerShellId =
+  receiveLayerShellChildRequest reader peer layerShellId "get_seat" (Opcode 2)
+
+receiveLayerShellChildRequest ::
+  FrameReader ->
+  Transport ->
+  ObjectId ->
+  String ->
+  Opcode ->
+  ObjectId ->
+  IO ObjectId
+receiveLayerShellChildRequest reader peer layerShellId label opcode riverObjectId = do
+  frame <- receiveFrame reader peer
+  assertEqual (label <> " sender") layerShellId (rawFrameSender frame)
+  assertEqual (label <> " opcode") opcode (rawFrameOpcode frame)
+  case runCompleteArgumentDecoder ((,) <$> getNewId <*> getObject) (rawFramePayload frame) ([] :: [()]) of
+    Done (childId, actualRiverObjectId) remaining []
+      | ByteString.null remaining -> do
+          assertEqual (label <> " river object") riverObjectId actualRiverObjectId
+          pure childId
+    result -> assertFailure ("unexpected " <> label <> " payload: " <> show result)
 
 registryGlobalFrame :: ObjectId -> Word32 -> Text -> Word32 -> IO ByteString
 registryGlobalFrame registryId name interfaceName version =

@@ -4,15 +4,22 @@ module Seki.Run.LayerShell (
   RiverLayerShellBootstrapError (..),
   selectRiverLayerShellGlobal,
   bindRiverLayerShell,
+  createRiverLayerShellOutput,
 )
 where
 
 import Data.Bifunctor (first)
 import Data.Word (Word32)
 import Seki.Protocol.RiverLayerShellV1 qualified as LayerShell
+import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.Wayland qualified as Wayland
-import Seki.Wire.Connection (Connection, ConnectionError)
-import Seki.Wire.Connection.ObjectTable (Object)
+import Seki.Wire.Connection (
+  Connection,
+  ConnectionError,
+  eventRoute,
+  submitNewObjectRequestWithRoute,
+ )
+import Seki.Wire.Connection.ObjectTable (Object, objectId, objectVersion)
 import Seki.Wire.Connection.Registry (
   Global,
   GlobalCatalog,
@@ -22,6 +29,7 @@ import Seki.Wire.Connection.Registry (
   globalName,
   selectGlobals,
  )
+import Seki.Wire.Transport (OwnedFd)
 
 {- | The version seki binds. The registry rejects version 0 announcements, so
 every announced layer-shell global satisfies it and there is no too-old error.
@@ -66,3 +74,20 @@ bindRiverLayerShell connection registry catalog =
     Right global ->
       first RiverLayerShellBindError
         <$> bindGlobal connection registry global
+
+-- | Send @get_output@ for one river output and install its event route atomically.
+createRiverLayerShellOutput ::
+  Connection ->
+  Object LayerShell.RiverLayerShellV1 ->
+  Object River.RiverOutputV1 ->
+  (LayerShell.RiverLayerShellOutputV1Event OwnedFd -> IO ()) ->
+  IO (Either ConnectionError (Object LayerShell.RiverLayerShellOutputV1))
+createRiverLayerShellOutput connection layerShell output handler =
+  submitNewObjectRequestWithRoute
+    connection
+    LayerShell.riverLayerShellV1Interface
+    layerShell
+    LayerShell.riverLayerShellOutputV1Interface
+    (objectVersion layerShell)
+    (\child -> LayerShell.encodeRiverLayerShellV1GetOutput (objectId child) (objectId output))
+    (eventRoute LayerShell.decodeRiverLayerShellOutputV1Event (const handler))

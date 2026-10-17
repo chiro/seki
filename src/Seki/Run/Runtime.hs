@@ -25,7 +25,7 @@ where
 
 import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
 import Control.Exception (finally, mask, onException)
-import Control.Monad (when)
+import Control.Monad (void, when)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -35,19 +35,24 @@ import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Run.Inventory (
   RiverInventory,
   RiverInventoryError,
+  RiverOutputState (..),
   RiverWindowState (..),
   activateRiverWindow,
   addRiverOutput,
   addRiverWindow,
+  applyRiverLayerShellOutputEvent,
   applyRiverOutputEvent,
   applyRiverWindowEvent,
+  attachRiverOutputLayerShell,
   attachRiverWindowNode,
   emptyRiverInventory,
+  lookupRiverOutput,
   lookupRiverWindow,
  )
 import Seki.Run.LayerShell (
   RiverLayerShellBootstrapError,
   bindRiverLayerShell,
+  createRiverLayerShellOutput,
   selectRiverLayerShellGlobal,
  )
 import Seki.Run.Phase (
@@ -169,6 +174,7 @@ data RiverRuntimeError
   | RiverRuntimeSeatNotTracked ObjectId
   | RiverRuntimeSeatHandleMismatch ObjectId
   | RiverRuntimeXkbGlobalUnavailable
+  | RiverRuntimeLayerShellGlobalUnavailable
   | RiverRuntimeSequenceError RiverSequenceError
   | RiverRuntimeEventLoopAlreadyOwned
   deriving (Eq, Show)
@@ -200,6 +206,7 @@ openRiverSessionWith openWayland runtimeHandlers =
         sequenceStatus <- newIORef (Right initialRiverSequenceState)
         inventoryState <- newIORef emptyRiverInventory
         xkbGlobalState <- newIORef Nothing
+        layerShellGlobalState <- newIORef Nothing
         seatBindingsState <- newIORef Map.empty
         manageActionsState <- newIORef []
         let checkedHandlers =
@@ -208,6 +215,7 @@ openRiverSessionWith openWayland runtimeHandlers =
                 sequenceStatus
                 inventoryState
                 xkbGlobalState
+                layerShellGlobalState
                 seatBindingsState
                 manageActionsState
                 runtimeHandlers
@@ -216,6 +224,7 @@ openRiverSessionWith openWayland runtimeHandlers =
           Left errorValue -> closeWaylandSession wayland >> pure (Left errorValue)
           Right (manager, xkbBindings, layerShell) -> do
             writeIORef xkbGlobalState (Just xkbBindings)
+            writeIORef layerShellGlobalState (Just layerShell)
             eventLoopClaim <- newMVar False
             pure
               ( Right
@@ -310,11 +319,12 @@ sequenceCheckedHandlers ::
   IORef (Either RiverRuntimeError RiverSequenceState) ->
   IORef RiverInventory ->
   IORef (Maybe (Object Xkb.RiverXkbBindingsV1)) ->
+  IORef (Maybe (Object LayerShell.RiverLayerShellV1)) ->
   IORef (Map ObjectId RiverSeatBindings) ->
   IORef [RiverManageAction] ->
   RiverRuntimeHandlers ->
   RiverWindowManagerHandlers
-sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState seatBindingsState manageActionsState runtimeHandlers =
+sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState layerShellGlobalState seatBindingsState manageActionsState runtimeHandlers =
   handlers
     { handleRiverWindowManagerEvent = handleManagerEvent
     , handleRiverWindowCreated = handleWindowCreated
@@ -381,8 +391,34 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState sea
         _ -> pure ()
   handleOutputCreated output = do
     added <- updateInventory sequenceStatus inventoryState (addRiverOutput output)
-    when added (handleRiverOutputCreated handlers output)
+    when added $
+      readIORef layerShellGlobalState >>= \case
+        Nothing ->
+          recordRuntimeError sequenceStatus RiverRuntimeLayerShellGlobalUnavailable
+        Just layerShell ->
+          createRiverLayerShellOutput
+            connection
+            layerShell
+            output
+            (handleLayerShellOutputEvent output)
+            >>= \case
+              Left errorValue ->
+                recordRuntimeError sequenceStatus (RiverRuntimeConnectionError errorValue)
+              Right layerShellOutput -> do
+                attached <-
+                  updateInventory
+                    sequenceStatus
+                    inventoryState
+                    (attachRiverOutputLayerShell output layerShellOutput)
+                when attached (handleRiverOutputCreated handlers output)
+  handleLayerShellOutputEvent output event =
+    void $
+      updateInventory
+        sequenceStatus
+        inventoryState
+        (applyRiverLayerShellOutputEvent output event)
   handleOutputEvent output event = do
+    previous <- lookupRiverOutput (objectId output) <$> readIORef inventoryState
     updated <-
       updateInventory
         sequenceStatus
@@ -392,13 +428,29 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState sea
       handleRiverOutputEvent handlers output event
       case event of
         River.RiverOutputV1Removed ->
-          submitRequest
-            connection
-            River.riverOutputV1Interface
-            output
-            River.encodeRiverOutputV1Destroy
-            >>= recordConnectionResult
+          destroyLayerShellOutput (previous >>= riverOutputLayerShell) >>= \case
+            False -> pure ()
+            True ->
+              submitRequest
+                connection
+                River.riverOutputV1Interface
+                output
+                River.encodeRiverOutputV1Destroy
+                >>= recordConnectionResult
         _ -> pure ()
+  destroyLayerShellOutput = \case
+    Nothing -> pure True
+    Just layerShellOutput ->
+      submitRequest
+        connection
+        LayerShell.riverLayerShellOutputV1Interface
+        layerShellOutput
+        LayerShell.encodeRiverLayerShellOutputV1Destroy
+        >>= \case
+          Left errorValue -> do
+            recordRuntimeError sequenceStatus (RiverRuntimeConnectionError errorValue)
+            pure False
+          Right () -> pure True
   handleSeatCreated seat = do
     reserved <- reserveSeat seat
     when reserved $
