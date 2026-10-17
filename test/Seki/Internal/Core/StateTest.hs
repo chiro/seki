@@ -4,10 +4,13 @@ import Data.Either (isRight)
 import Data.List (find, nub)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (listToMaybe)
+import Seki.Internal.Core.Geometry (Point (..), Rect, mkRect, mkSize)
 import Seki.Internal.Core.StackSet (
   OutputId (..),
   Screen (..),
+  Stack (..),
   StackSet (..),
+  WindowId (..),
   Workspace (..),
   screens,
   tag,
@@ -18,8 +21,11 @@ import Seki.Internal.Core.State (
   HeadlessWorkspaces (..),
   WorkspaceTagError (..),
   addOutput,
+  focusWindowIn,
+  manageWindow,
   newCoreState,
   removeOutput,
+  unmanageWindow,
  )
 import Test.QuickCheck (Gen, Property, arbitrary, checkCoverage, conjoin, cover, elements, forAll, property, suchThatMap, (===))
 import Test.Tasty (TestTree, localOption, testGroup)
@@ -87,6 +93,49 @@ tests =
         , testCase "goes headless on the last output, remembering its workspace and the hidden order" $
             (removeOutput o2 . removeOutput o1 . addOutput o2 . addOutput o1) initial
               @?= HeadlessState (HeadlessWorkspaces (ws 'b') [ws 'a', ws 'c'] Map.empty)
+        ]
+    , testGroup
+        "managing windows"
+        [ testCase "focuses a new window above the current focus while attached" $
+            (manageWindow w2 . manageWindow w1) full
+              @?= AttachedState (StackSet (Screen (wsWith 'a' (Stack w2 [] [w1])) o1) [Screen (ws 'b') o2, Screen (ws 'c') o3] [] Map.empty) []
+        , testCase "puts a window managed while headless on the remembered workspace" $
+            (manageWindow w2 . manageWindow w1) initial
+              @?= HeadlessState (HeadlessWorkspaces (wsWith 'a' (Stack w2 [] [w1])) [ws 'b', ws 'c'] Map.empty)
+        , testCase "shows a window managed while headless on the first output" $
+            addOutput o1 (manageWindow w1 initial)
+              @?= AttachedState (StackSet (Screen (wsWith 'a' (Stack w1 [] [])) o1) [] [ws 'b', ws 'c'] Map.empty) []
+        , testCase "ignores a window already on a hidden workspace while attached" $
+            let st = AttachedState (StackSet (Screen (ws 'a') o1) [] [wsWith 'b' (Stack w1 [] []), ws 'c'] Map.empty) []
+             in manageWindow w1 st @?= st
+        , testCase "ignores a window already on a hidden workspace while headless" $
+            let st = HeadlessState (HeadlessWorkspaces (ws 'a') [wsWith 'b' (Stack w1 [] []), ws 'c'] Map.empty)
+             in manageWindow w1 st @?= st
+        ]
+    , testGroup
+        "unmanaging windows"
+        [ testCase "removes a window and its floating rectangle while attached" $
+            unmanageWindow w2 (AttachedState (StackSet (Screen (wsWith 'a' (Stack w2 [] [w1])) o1) [] [ws 'b', ws 'c'] (Map.singleton w2 floatRect)) [])
+              @?= AttachedState (StackSet (Screen (wsWith 'a' (Stack w1 [] [])) o1) [] [ws 'b', ws 'c'] Map.empty) []
+        , testCase "removes a window and its floating rectangle while headless" $
+            unmanageWindow w2 (HeadlessState (HeadlessWorkspaces (wsWith 'a' (Stack w2 [] [w1])) [wsWith 'b' (Stack w3 [] [])] (Map.singleton w2 floatRect)))
+              @?= HeadlessState (HeadlessWorkspaces (wsWith 'a' (Stack w1 [] [])) [wsWith 'b' (Stack w3 [] [])] Map.empty)
+        , testCase "removes a window from a hidden workspace while headless" $
+            unmanageWindow w3 (HeadlessState (HeadlessWorkspaces (wsWith 'a' (Stack w1 [] [])) [wsWith 'b' (Stack w3 [] [])] Map.empty))
+              @?= HeadlessState (HeadlessWorkspaces (wsWith 'a' (Stack w1 [] [])) [ws 'b'] Map.empty)
+        , testCase "ignores an unknown window" $
+            let st = manageWindow w1 full in unmanageWindow w2 st @?= st
+        ]
+    , testGroup
+        "focusing a window"
+        [ testCase "makes the output showing the window current" $
+            focusWindowIn w2 (AttachedState (StackSet (Screen (wsWith 'a' (Stack w1 [] [])) o1) [Screen (wsWith 'b' (Stack w3 [] [w2])) o2] [] Map.empty) [])
+              @?= AttachedState (StackSet (Screen (wsWith 'b' (Stack w2 [w3] [])) o2) [Screen (wsWith 'a' (Stack w1 [] [])) o1] [] Map.empty) []
+        , testCase "ignores an unknown window" $
+            let st = manageWindow w1 full in focusWindowIn w2 st @?= st
+        , testCase "changes nothing while headless" $
+            let st = HeadlessState (HeadlessWorkspaces (wsWith 'a' (Stack w2 [] [w1])) [ws 'b'] Map.empty)
+             in focusWindowIn w1 st @?= st
         ]
     , testGroup
         "hotplug properties"
@@ -170,6 +219,17 @@ o5 = OutputId 5
 
 ws :: Char -> Workspace Char ()
 ws t = Workspace t () Nothing
+
+wsWith :: Char -> Stack WindowId -> Workspace Char ()
+wsWith t s = Workspace t () (Just s)
+
+w1, w2, w3 :: WindowId
+w1 = WindowId 1
+w2 = WindowId 2
+w3 = WindowId 3
+
+floatRect :: Rect
+floatRect = either (error . show) id (mkSize 100 100 >>= mkRect (Point 10 10))
 
 initial :: CoreState Char ()
 initial = either (error . show) id (newCoreState () "abc")

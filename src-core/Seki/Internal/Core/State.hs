@@ -30,11 +30,28 @@ module Seki.Internal.Core.State (
   newCoreState,
   addOutput,
   removeOutput,
+  manageWindow,
+  unmanageWindow,
+  focusWindowIn,
 ) where
 
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Seki.Internal.Core.StackSet (FloatGeom, OutputId, Screen (..), StackSet (..), WindowId, Workspace (..), screens)
+import Seki.Internal.Core.StackSet (
+  FloatGeom,
+  OutputId,
+  Screen (..),
+  Stack (..),
+  StackSet (..),
+  WindowId,
+  Workspace (..),
+  delete,
+  focusWindow,
+  insertUp,
+  integrate',
+  screens,
+ )
+import Seki.Internal.Core.StackSet qualified as StackSet
 
 -- | The core's workspaces, with or without outputs to show them on.
 data CoreState i l
@@ -99,3 +116,30 @@ removeOutput o st@(AttachedState ss unassigned)
          in case before ++ after ++ assigned of
               [] -> HeadlessState (HeadlessWorkspaces w (hidden ss) (floating ss))
               c : vs -> AttachedState ss{current = c, visible = vs, hidden = drop n freed} (drop n unassigned)
+
+{- | xmonad's manage: insert a window above the current workspace's focus and
+focus it. Headless, the remembered current workspace takes it, so it shows
+when an output arrives. A window already present anywhere changes nothing.
+-}
+manageWindow :: WindowId -> CoreState i l -> CoreState i l
+manageWindow w (AttachedState ss unassigned) = AttachedState (insertUp w ss) unassigned
+manageWindow w st@(HeadlessState hw@(HeadlessWorkspaces c hs _))
+  | any (elem w . integrate' . stack) (c : hs) = st
+  | otherwise = HeadlessState hw{headlessCurrent = c{stack = Just (maybe (Stack w [] []) above (stack c))}}
+ where
+  above (Stack t l r) = Stack w l (t : r)
+
+-- | xmonad's delete, from every workspace and the floating map, in either state.
+unmanageWindow :: WindowId -> CoreState i l -> CoreState i l
+unmanageWindow w (AttachedState ss unassigned) = AttachedState (delete w ss) unassigned
+unmanageWindow w (HeadlessState (HeadlessWorkspaces c hs f)) =
+  HeadlessState (HeadlessWorkspaces (remove c) (map remove hs) (Map.delete w f))
+ where
+  remove ws = ws{stack = stack ws >>= StackSet.filter (/= w)}
+
+{- | Focus a window and view its workspace, making its output current. Headless
+or for an unknown window, nothing changes.
+-}
+focusWindowIn :: (Eq i) => WindowId -> CoreState i l -> CoreState i l
+focusWindowIn w (AttachedState ss unassigned) = AttachedState (focusWindow w ss) unassigned
+focusWindowIn _ st@HeadlessState{} = st
