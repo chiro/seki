@@ -109,6 +109,7 @@ data FixtureInput
 -- | Which round trip a sync callback closes; a stop can overtake the readiness sync.
 data SyncPurpose
   = ReadinessSync
+  | DrainSync
   | TeardownSync
 
 newtype FixtureControl = FixtureControl (Chan FixtureInput)
@@ -202,6 +203,7 @@ data Phase
   = AwaitingConfigure
   | AwaitingReadySync MappedBuffer FixtureReady
   | Running MappedBuffer
+  | Draining (Maybe MappedBuffer) FixtureStop
   | AwaitingTeardownSync FixtureStop
 
 data MappedBuffer = MappedBuffer
@@ -212,6 +214,7 @@ data MappedBuffer = MappedBuffer
 data Transition
   = MapBuffer Word32 Word32
   | ReportReady MappedBuffer FixtureReady
+  | Drain (Maybe MappedBuffer) FixtureStop
   | TearDown (Maybe MappedBuffer) FixtureStop
   | Finish FixtureStop
   | Fail FixtureError
@@ -220,10 +223,12 @@ data Transition
 transition :: Phase -> FixtureInput -> Transition
 transition _ (InputConnectionEnded (Left errorValue)) = Fail (FixtureConnectionError errorValue)
 transition _ (InputConnectionEnded (Right ())) = Fail FixtureConnectionFinished
+transition (Draining mapped stop) (InputSyncDone DrainSync) = TearDown mapped stop
+transition (Draining _ _) _ = Ignore
 transition (AwaitingTeardownSync stop) (InputSyncDone TeardownSync) = Finish stop
 transition (AwaitingTeardownSync _) _ = Ignore
-transition phase InputStop = TearDown (phaseBuffer phase) StoppedByRequest
-transition phase InputClosed = TearDown (phaseBuffer phase) ClosedByCompositor
+transition phase InputStop = Drain (phaseBuffer phase) StoppedByRequest
+transition phase InputClosed = Drain (phaseBuffer phase) ClosedByCompositor
 transition AwaitingConfigure (InputConfigure serial width) = MapBuffer serial width
 transition (AwaitingReadySync mapped ready) (InputSyncDone ReadinessSync) = ReportReady mapped ready
 transition _ _ = Ignore
@@ -233,6 +238,7 @@ phaseBuffer = \case
   AwaitingConfigure -> Nothing
   AwaitingReadySync mapped _ -> Just mapped
   Running mapped -> Just mapped
+  Draining mapped _ -> mapped
   AwaitingTeardownSync _ -> Nothing
 
 runPhase :: Fixture -> Phase -> ExceptIO FixtureStop
@@ -243,6 +249,9 @@ runPhase fixture phase = do
     ReportReady mapped ready -> do
       lift (fixtureReportReady fixture ready)
       runPhase fixture (Running mapped)
+    Drain mapped stop -> do
+      requestSync fixture DrainSync
+      runPhase fixture (Draining mapped stop)
     TearDown mapped stop -> tearDown fixture mapped stop >>= runPhase fixture
     Finish stop -> pure stop
     Fail errorValue -> throwE errorValue
@@ -250,7 +259,13 @@ runPhase fixture phase = do
  where
   FixtureControl inputs = fixtureControl fixture
 
--- | Destroy every object the fixture created, role object before its surface.
+{- | Destroy every object the fixture created.
+
+seki's connection treats an event for a destroyed object as fatal, where
+libwayland would drop it. Teardown therefore first drains every event already
+in flight with a sync, then destroys the buffer before the surface so that
+destroying the surface gives the compositor no buffer to release.
+-}
 tearDown :: Fixture -> Maybe MappedBuffer -> FixtureStop -> ExceptIO Phase
 tearDown fixture mapped stop = do
   for_ mapped $ \buffers -> do
