@@ -16,6 +16,7 @@ module Seki.Run.Runtime (
   RiverManageAction (..),
   noRiverManageAction,
   RiverRuntimeHandlers (..),
+  RenderOutcome (..),
   RiverRuntimeError (..),
   openRiverSession,
   openRiverSessionAt,
@@ -132,6 +133,7 @@ data RiverKeyBindingState = RiverKeyBindingState
 data RiverSeatBindings = RiverSeatBindings
   { riverBindingsSeat :: Object River.RiverSeatV1
   , riverSeatLayerShell :: Object LayerShell.RiverLayerShellSeatV1
+  , riverSeatLayerFocusRevision :: Integer
   , riverSeatLayerFocus :: RiverLayerFocus
   , riverSeatKeyBindings :: [RiverKeyBindingState]
   }
@@ -148,6 +150,9 @@ data RiverLayerFocus
   | RiverLayerFocusExclusive
   | RiverLayerFocusNonExclusive
   deriving (Eq, Show)
+
+-- | The runtime requests another manage sequence only after render_finish succeeds.
+newtype RenderOutcome = RenderOutcome {renderNeedsManage :: Bool} deriving (Eq, Show)
 
 -- | Pure inputs available to runtime manage and render planning.
 data RiverRuntimeSnapshot = RiverRuntimeSnapshot
@@ -175,7 +180,7 @@ data RiverRuntimeHandlers = RiverRuntimeHandlers
   , riverKeyBindings :: [RiverKeyBinding]
   , handleRiverKeyBindingEvent :: RiverKeyBinding -> Object Xkb.RiverXkbBindingV1 -> Xkb.RiverXkbBindingV1Event OwnedFd -> IO RiverManageAction
   , prepareRiverManagePlan :: RiverRuntimeSnapshot -> IO (ManageM ())
-  , prepareRiverRenderPlan :: RiverRuntimeSnapshot -> IO (RenderM ())
+  , prepareRiverRenderPlan :: RiverRuntimeSnapshot -> IO (RenderM RenderOutcome)
   }
 
 data RiverRuntimeError
@@ -360,7 +365,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
         manager
         event
         startManageSequence
-        runManagePlans
+        (fmap (fmap (const (RenderOutcome False))) runManagePlans)
     River.RiverWindowManagerV1RenderStart ->
       runSequence
         (waylandConnection wayland)
@@ -497,7 +502,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
         case Map.lookup (objectId seat) seats of
           Nothing -> (seats, Left (RiverRuntimeSeatNotTracked (objectId seat)))
           Just state ->
-            (Map.insert (objectId seat) state{riverSeatLayerFocus = focus} seats, Right ())
+            (Map.insert (objectId seat) state{riverSeatLayerFocus = focus, riverSeatLayerFocusRevision = riverSeatLayerFocusRevision state + 1} seats, Right ())
     void (recordStateResult result)
   handleSeatEvent seat event = do
     tracked <- requireSeat seat
@@ -531,7 +536,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
           else
             ( Map.insert
                 (objectId seat)
-                (RiverSeatBindings seat layerShellSeat RiverLayerFocusNone [])
+                (RiverSeatBindings seat layerShellSeat 0 RiverLayerFocusNone [])
                 seats
             , Right ()
             )
@@ -728,7 +733,7 @@ runSequence ::
   Object River.RiverWindowManagerV1 ->
   River.RiverWindowManagerV1Event OwnedFd ->
   (RiverSequenceState -> Either RiverSequenceError RiverSequenceState) ->
-  IO (Either ConnectionError ()) ->
+  IO (Either ConnectionError RenderOutcome) ->
   IO ()
 runSequence connection sequenceStatus handlers manager event startSequence runPlan = do
   started <-
@@ -746,7 +751,7 @@ runSequence connection sequenceStatus handlers manager event startSequence runPl
       runPlan >>= \case
         Left errorValue ->
           writeIORef sequenceStatus (Left (RiverRuntimeConnectionError errorValue))
-        Right () ->
+        Right outcome ->
           case completeRiverSequence active of
             Left errorValue ->
               writeIORef sequenceStatus (Left (RiverRuntimeSequenceError errorValue))
@@ -754,7 +759,12 @@ runSequence connection sequenceStatus handlers manager event startSequence runPl
               submitSequenceCompletion connection manager completion >>= \case
                 Left errorValue ->
                   writeIORef sequenceStatus (Left (RiverRuntimeConnectionError errorValue))
-                Right () -> writeIORef sequenceStatus (Right next)
+                Right () -> do
+                  writeIORef sequenceStatus (Right next)
+                  when (renderNeedsManage outcome) $
+                    submitRequest connection River.riverWindowManagerV1Interface manager River.encodeRiverWindowManagerV1ManageDirty >>= \case
+                      Left errorValue -> writeIORef sequenceStatus (Left (RiverRuntimeConnectionError errorValue))
+                      Right () -> pure ()
 
 submitSequenceCompletion ::
   Connection ->

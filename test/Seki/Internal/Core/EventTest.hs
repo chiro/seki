@@ -71,7 +71,7 @@ reducerTests =
           @?= ( AttachedState
                   (StackSet (Screen (wsWith 'b' (Stack w2 [] [])) o2) [Screen (wsWith 'a' (Stack w1 [] [])) o1] [ws 'c'] Map.empty)
                   []
-              , []
+              , [ReclaimFocus, ReclaimFocus]
               )
     , testCase "ignores interaction with an unknown window" $
         let (st, _) = drainCore onTwoOutputs initial

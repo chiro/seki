@@ -12,6 +12,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
 import Data.Word (Word32)
 import Seki.Internal.Core.Action (Action, kill, spawn, windows)
+import Seki.Internal.Core.Scene (BorderColor (..), SceneStyle (..), defaultSceneStyle)
 import Seki.Internal.Core.StackSet (
   OutputId (..),
   Screen (..),
@@ -37,12 +38,12 @@ import Seki.Run.MockRiver (
   expectRight,
   newFrameReader,
   receiveExpectedRequest,
+  receiveFrame,
   receiveKeyBindingRequest,
   receiveLayerShellOutputRequest,
   receiveLayerShellSeatRequest,
   receiveNewIdRequest,
   receiveRuntimeBinds,
-  receiveSequenceCompletion,
   receiveStartupRequests,
   registryGlobalFrame,
   requireObjectId,
@@ -69,7 +70,7 @@ import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Arguments (putNewId, putObject)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit, objectId)
 import Seki.Wire.Transport (ConnectionTarget, Transport, closeTransport)
-import Seki.Wire.Types (ObjectId, Opcode (..), objectIdValue)
+import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..), objectIdValue)
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Files (createNamedPipe, fileExist)
 import System.Posix.IO (OpenFileFlags (..), OpenMode (WriteOnly), closeFd, defaultFileFlags, fdWrite, openFd)
@@ -104,7 +105,11 @@ data Drain = Drain
 testConfigErrors :: Assertion
 testConfigErrors = do
   let binding = keyBinding 0x61
-      config tags bindings = PolicyConfig Full tags bindings (\_ -> pure ())
+      config tags bindings = PolicyConfig Full tags bindings defaultSceneStyle (\_ -> pure ())
+  let invalidWidth = defaultSceneStyle{sceneBorderWidth = -1}
+      invalidColor = defaultSceneStyle{sceneFocusedColor = BorderColor 2 0 0 1}
+  assertError (PolicyInvalidSceneStyle invalidWidth) =<< newPolicy (config [1] []){policySceneStyle = invalidWidth}
+  assertError (PolicyInvalidSceneStyle invalidColor) =<< newPolicy (config [1] []){policySceneStyle = invalidColor}
   assertError (PolicyTagError NoWorkspaceTags) =<< newPolicy (config [] [])
   assertError (PolicyTagError (DuplicateWorkspaceTag 2)) =<< newPolicy (config [1, 2, 2] [])
   assertError (PolicyBindingConflict binding)
@@ -356,7 +361,7 @@ runPolicy ::
 runPolicy target mockDone bindings = do
   launches <- newIORef []
   drains <- newIORef []
-  policy <- expectRight =<< newPolicy (PolicyConfig Full [1, 2, 3] bindings (record launches))
+  policy <- expectRight =<< newPolicy (PolicyConfig Full [1, 2, 3] bindings defaultSceneStyle (record launches))
   let handlers = policyRuntimeHandlers policy
       observed =
         handlers
@@ -397,15 +402,23 @@ handshake reader peer = do
 -- | Complete a manage sequence and the render sequence river requires after it.
 finishManage :: FrameReader -> Transport -> ObjectId -> IO ()
 finishManage reader peer managerId = do
-  receiveSequenceCompletion reader peer managerId (Opcode 2)
+  consumeUntil reader peer managerId (Opcode 2)
   sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
-  receiveSequenceCompletion reader peer managerId (Opcode 4)
+  consumeUntil reader peer managerId (Opcode 4)
 
--- | As 'finishManage', after the policy's @set_default@ for the current output.
 finishManageDefault :: FrameReader -> Transport -> ObjectId -> ObjectId -> IO ()
 finishManageDefault reader peer managerId layerShellOutput = do
-  receiveExpectedRequest reader peer layerShellOutput (Opcode 1) (pure ())
+  consumeUntil reader peer layerShellOutput (Opcode 1)
   finishManage reader peer managerId
+
+consumeUntil :: FrameReader -> Transport -> ObjectId -> Opcode -> IO ()
+consumeUntil reader peer sender opcode = do
+  frame <- receiveFrame reader peer
+  if rawFrameSender frame == sender && rawFrameOpcode frame == opcode
+    then pure ()
+    else do
+      assertBool "scene requests belong to windows, nodes, or seats" (rawFrameSender frame /= sender)
+      consumeUntil reader peer sender opcode
 
 newWindow, newOutput, newSeat :: ObjectId -> ObjectId -> IO Char8.ByteString
 newWindow managerId w = encodedFrame managerId (Opcode 6) (putNewId w)

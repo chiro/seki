@@ -187,7 +187,7 @@ protocol objects.
 | `Seki.Core.Scene` | `DesiredScene` and pure planning |
 | `Seki.Run.LayerShell` | layer-shell global binding and per-output/per-seat objects |
 | `Seki.Run.Reconcile` | persistent proposal/applied state and phase-safe diffs |
-| `Seki.Run.Policy` | Queues river events and key-binding actions, drains them into core state at `manage_start`, and runs their intents; scenes arrive with WP6 |
+| `Seki.Run.Policy` | Queues river events and key-binding actions, drains them into core state at `manage_start`, plans scenes, and runs intents and reconciliation |
 
 `Seki.Run.Full` remains available while the M1 policy is developed, then
 becomes a compatibility implementation or delegates to the new `Full` planner.
@@ -384,9 +384,11 @@ it, and returning from `Full` to `Tall` sends no proposal to the windows that
 A proposal is settled only after a newer dimensions revision is observed.
 While a new window has no settled dimensions it remains explicitly hidden.
 When the layout selects an existing window whose dimensions are not yet
-settled for its new rectangle, a WP6 prototype on real river decides what is
-shown until they settle: either the window at its last settled size, or the
-previous selection until the swap can complete.
+settled for its new rectangle, show that selection at its last settled size
+and the desired top-left. A WP6 prototype on river 0.5.0 compared this with
+retaining the previous selection. Both rendered correctly with a deliberately
+delayed client. Showing the new selection keeps it aligned with StackSet
+focus. See [WP6 reconciliation](wp6-reconciliation.md) for the experiment.
 If the desired dimensions change while a proposal is in flight, retain only
 the latest desired rectangle, finish the current render sequence safely, and
 request another manage sequence with `manage_dirty` after sequence completion.
@@ -879,8 +881,9 @@ entries initially.
   Rejected: showing every Full window at the full rectangle, which makes
   focus cycling a restack but lets a smaller or transparent focused window
   expose the windows beneath it and keeps covered windows rendering. The
-  display during an unsettled selection change is left to a WP6 real-river
-  prototype (section 3.6). Updated: plan sections 2.3, 3.5, 3.6, WP3, WP6,
+  WP6 real-river prototype selected display at the new selection's last
+  settled size during an unsettled change (section 3.6). Updated: plan
+  sections 2.3, 3.5, 3.6, WP3, WP6,
   and exit criteria; `spec.md` sections 3.1 and 3.4. Section 3.3 already
   allows a provisional or hidden placement and needed no change.
 - **Additional regression:** Tall → Full → Tall sends no dimension proposal to

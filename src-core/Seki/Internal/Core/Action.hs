@@ -27,6 +27,7 @@ data Intent
     Spawn String
   | -- | Ask river to close the window.
     CloseWindow WindowId
+  | ReclaimFocus
   deriving (Eq, Show)
 
 -- | A state change on 'CoreState' that also records 'Intent's in order.
@@ -55,15 +56,22 @@ modify f = Action (\s -> ((), f s, []))
 record :: (CoreState i l -> [Intent]) -> Action i l ()
 record f = Action (\s -> ((), s, f s))
 
--- | Change the attached StackSet. Headless there is none, so nothing changes.
+{- | Change the attached StackSet and reclaim non-exclusive layer focus.
+Even an identity change requests focus. Headless state has no StackSet to change.
+-}
 windows :: (StackSet i l -> StackSet i l) -> Action i l ()
-windows f = modify $ \case
+windows f = do
+  record (const [ReclaimFocus])
+  modifyWindows f
+
+modifyWindows :: (StackSet i l -> StackSet i l) -> Action i l ()
+modifyWindows f = modify $ \case
   AttachedState ss unassigned -> AttachedState (f ss) unassigned
   st@HeadlessState{} -> st
 
 -- | Send a message to the current workspace's layout; nothing happens headless.
 sendMessage :: (LayoutClass l, Message m) => m -> Action i l ()
-sendMessage m = windows (messageCurrentLayout (SomeMessage m))
+sendMessage m = modifyWindows (messageCurrentLayout (SomeMessage m))
 
 -- | Launch a shell command once the action has run.
 spawn :: String -> Action i l ()

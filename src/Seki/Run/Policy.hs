@@ -26,18 +26,22 @@ import Control.Concurrent (forkIO, threadDelay)
 import Control.Exception (IOException, try)
 import Control.Monad (void)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
 import Data.Word (Word32)
 import Seki.Internal.Core.Action (Action, Intent (..))
 import Seki.Internal.Core.Event (CoreEvent (..), drainCore)
-import Seki.Internal.Core.StackSet (OutputId (..), Screen (..), StackSet (..), WindowId (..))
+import Seki.Internal.Core.Layout (LayoutClass)
+import Seki.Internal.Core.Scene (BorderColor (..), DesiredScene (..), SceneStyle (..), planScene)
+import Seki.Internal.Core.StackSet (OutputId (..), WindowId (..))
 import Seki.Internal.Core.State (CoreState (..), WorkspaceTagError, newCoreState)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
-import Seki.Run.Inventory (RiverOutputState (..), RiverWindowState (..), lookupRiverOutput, lookupRiverWindow)
-import Seki.Run.Phase (ManageM, closeWindow, setDefaultLayerShellOutput)
+import Seki.Run.Inventory (RiverOutputState (..), RiverWindowState (..), lookupRiverWindow, riverInventoryOutputs, riverInventoryWindows, riverOutputRectangle)
+import Seki.Run.Phase (ManageM, RenderM, closeWindow)
+import Seki.Run.Reconcile (ReconcileState, emptyReconcileState, reconcileManage, reconcileRender)
 import Seki.Run.River (RiverWindowManagerHandlers (..))
-import Seki.Run.Runtime (RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..), noRiverManageAction)
+import Seki.Run.Runtime (RenderOutcome, RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..), noRiverManageAction)
 import Seki.Run.Xkb (RiverKeyBinding)
 import Seki.Wire.Connection.ObjectTable (Object, objectId)
 import Seki.Wire.Types (mkObjectId, objectIdValue)
@@ -49,36 +53,45 @@ data PolicyConfig i l = PolicyConfig
   { policyLayout :: l
   , policyTags :: [i]
   , policyBindings :: [(RiverKeyBinding, Action i l ())]
+  , policySceneStyle :: SceneStyle
   , policyLaunch :: String -> IO ()
   -- ^ Runs while a manage sequence is prepared, so it must not block; see 'launchDetached'.
   }
 
 data PolicyError i
-  = PolicyTagError (WorkspaceTagError i)
+  = PolicyInvalidSceneStyle SceneStyle
+  | PolicyTagError (WorkspaceTagError i)
   | PolicyBindingConflict RiverKeyBinding
   deriving (Eq, Show)
 
 data Policy i l = Policy
   { policyConfig :: PolicyConfig i l
   , policyState :: IORef (CoreState i l)
+  , policyReconcile :: IORef ReconcileState
+  , policyScene :: IORef DesiredScene
   , policyQueue :: IORef [CoreEvent i l]
   -- ^ Newest first.
   }
 
--- | Validate the tags and bindings before any Wayland connection is made.
+-- | Validate tags, bindings, border width, and premultiplied colors before connecting.
 newPolicy :: (Eq i) => PolicyConfig i l -> IO (Either (PolicyError i) (Policy i l))
-newPolicy config = case newCoreState (policyLayout config) (policyTags config) of
-  Left e -> pure (Left (PolicyTagError e))
-  Right st -> case firstRepeat [] (map fst (policyBindings config)) of
-    Just binding -> pure (Left (PolicyBindingConflict binding))
-    Nothing -> Right <$> (Policy config <$> newIORef st <*> newIORef [])
+newPolicy config
+  | not validStyle = pure (Left (PolicyInvalidSceneStyle style))
+  | otherwise = case newCoreState (policyLayout config) (policyTags config) of
+      Left e -> pure (Left (PolicyTagError e))
+      Right st -> case firstRepeat [] (map fst (policyBindings config)) of
+        Just binding -> pure (Left (PolicyBindingConflict binding))
+        Nothing -> Right <$> (Policy config <$> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] Nothing Nothing) <*> newIORef [])
  where
+  style = policySceneStyle config
+  validStyle = sceneBorderWidth style >= 0 && validColor (sceneFocusedColor style) && validColor (sceneUnfocusedColor style)
+  validColor (BorderColor r g b a) = all (<= a) [r, g, b]
   firstRepeat _ [] = Nothing
   firstRepeat seen (x : xs)
     | x `elem` seen = Just x
     | otherwise = firstRepeat (x : seen) xs
 
-policyRuntimeHandlers :: (Eq i) => Policy i l -> RiverRuntimeHandlers
+policyRuntimeHandlers :: (Eq i, LayoutClass l) => Policy i l -> RiverRuntimeHandlers
 policyRuntimeHandlers policy =
   RiverRuntimeHandlers
     { riverProtocolHandlers =
@@ -104,30 +117,46 @@ policyRuntimeHandlers policy =
           _ -> pure ()
         pure noRiverManageAction
     , prepareRiverManagePlan = prepareManagePlan policy
-    , prepareRiverRenderPlan = \_ -> pure (pure ())
+    , prepareRiverRenderPlan = prepareRenderPlan policy
     }
  where
   bindings = policyBindings (policyConfig policy)
   enqueue event = atomicModifyIORef' (policyQueue policy) (\queue -> (event : queue, ()))
 
-prepareManagePlan :: (Eq i) => Policy i l -> RiverRuntimeSnapshot -> IO (ManageM ())
+prepareManagePlan :: (Eq i, LayoutClass l) => Policy i l -> RiverRuntimeSnapshot -> IO (ManageM ())
 prepareManagePlan policy snapshot = do
   events <- reverse <$> atomicModifyIORef' (policyQueue policy) ([],)
   (st, intents) <- drainCore events <$> readIORef (policyState policy)
   writeIORef (policyState policy) st
   mapM_ (policyLaunch (policyConfig policy)) [cmd | Spawn cmd <- intents]
+  let scene =
+        planScene
+          (policySceneStyle (policyConfig policy))
+          st
+          (Map.fromList [(outputIdOf (riverOutputObject o), area) | o <- riverInventoryOutputs inventory, Just _ <- [riverOutputRectangle o], Just area <- [riverOutputUsableArea o]])
+          (Map.fromList [(windowIdOf (riverWindowObject w), WindowId . objectIdValue <$> riverWindowParent w) | w <- riverInventoryWindows inventory])
+      reclaim = ReclaimFocus `elem` intents || any isInteraction events
+  writeIORef (policyScene policy) scene
+  previous <- readIORef (policyReconcile policy)
+  let (next, plan) = reconcileManage reclaim scene snapshot previous
+  writeIORef (policyReconcile policy) next
   pure $ do
     mapM_ closeWindow (mapMaybe liveWindow [w | CloseWindow w <- intents])
-    mapM_ setDefaultLayerShellOutput (currentLayerShellOutput st)
+    plan
  where
   inventory = riverRuntimeInventory snapshot
   liveWindow (WindowId w) =
     riverWindowObject <$> (mkObjectId w >>= (`lookupRiverWindow` inventory))
-  currentLayerShellOutput = \case
-    HeadlessState _ -> Nothing
-    AttachedState ss _ ->
-      let OutputId o = output (current ss)
-       in mkObjectId o >>= (`lookupRiverOutput` inventory) >>= riverOutputLayerShell
+  isInteraction WindowInteraction{} = True
+  isInteraction _ = False
+
+prepareRenderPlan :: Policy i l -> RiverRuntimeSnapshot -> IO (RenderM RenderOutcome)
+prepareRenderPlan policy snapshot = do
+  scene <- readIORef (policyScene policy)
+  previous <- readIORef (policyReconcile policy)
+  let (next, plan) = reconcileRender (policySceneStyle (policyConfig policy)) scene snapshot previous
+  writeIORef (policyReconcile policy) next
+  pure plan
 
 readPolicyState :: Policy i l -> IO (CoreState i l)
 readPolicyState = readIORef . policyState
