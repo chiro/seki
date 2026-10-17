@@ -1,6 +1,6 @@
 # Real-river Integration Tests
 
-Status: **release gate for M0 and later work** / Last updated: 2026-10-17
+Status: **release gate for M0 and later work** / Last updated: 2026-10-18
 
 The `seki-integration` Cabal component exercises seki against a real river
 compositor and real Wayland, Xwayland, and input-method clients. It runs river
@@ -66,6 +66,15 @@ nix develop --no-write-lock-file .#unit --command cabal test all
 | `two-output-full` | Two distinct headless outputs and deterministic selection of the complete output with the lowest river object ID | `wlr-randr` |
 | `xwayland` | Xwayland availability, Xterm management and app ID, X input focus, and close lifecycle | `xterm`, `xdotool` |
 | `fcitx5-mozc` | Private D-Bus and fcitx5 startup, required Wayland IME protocols, Mozc selection, and an exact `日本語` commit into native foot | `dbus-daemon`, `dbus-test-tool`, `gdbus`, `fcitx5`, `fcitx5-remote`, Mozc |
+| `m1-tall-three` | Three Tall clients, exact content pixels, positions, and complete borders | `wlr-randr` |
+| `m1-tall-messages` | Tall shrink, expand, and master-count geometry | `wlr-randr` |
+| `m1-focus-borders` | Focus movement, focused borders, and key delivery to exactly one native client | `wlr-randr` |
+| `m1-swap-master` | Master swap preserves focus and client input | `wlr-randr` |
+| `m1-layout-cycle` | Tall, Mirror Tall, Full, focus changes in Full, and restored Tall | `wlr-randr` |
+| `m1-workspace-visibility` | Shift, visible and empty workspaces, keyboard focus, and restoration | `wlr-randr` |
+| `m1-greedy-view` | Two output workspace exchange with distinct layouts and key delivery | `wlr-randr` |
+| `m1-layer-exclusive-zone` | Native layer fixture map and teardown change usable area and actual client pixels | `wlr-randr` |
+| `m1-output-readd` | Actual WM output removal and addition through two, one, zero, one, and two outputs preserve stacks, layouts, focus, and window identities | `wlr-randr` |
 
 All scenarios also use the core river, foot, and synthetic-input fixture as
 needed. The CI shell in `flake.nix` provides the complete dependency set,
@@ -105,12 +114,49 @@ then terminates remaining children with bounded TERM/KILL waits. Cleanup runs
 after success, failure, timeout, and asynchronous exceptions. It never searches
 for or kills processes globally by executable name.
 
+## Native window and capture fixture
+
+`Seki.Fixture.Probe` owns colored xdg-shell clients on the explicit private
+socket. Its actor acknowledges configures and tracks keyboard enter, leave,
+and actual key presses by client identity. One owned `wtype -s 60000` process
+keeps a virtual keyboard present for the fixture lifetime. It sends no keys.
+Separate short `wtype` commands drive the production policy bindings and input.
+The actor waits for observed events rather than a startup delay.
+
+Each screenshot uses a fresh native connection and the pinned
+ext-image-capture-source and ext-image-copy-capture protocols. Capture selects
+`wl_output.name`, excludes cursors, and reads real compositor SHM bytes after
+frame readiness. The fixture accepts only normal transform and unit scale.
+Each allocation is limited to 16 MiB and each connection to 128 allocations.
+Window buffers survive until release or connection close. Captures keep their
+local descriptor until the frame bytes have been read.
+
+The nine scenarios use literal content rectangles for 800 by 600 outputs.
+The oracle checks exact color counts and bounds, every pixel of all four
+border strips, and omitted colors on every enabled output. It imports no
+production layout or scene calculation. Capture protocol failures fail at
+once. Only a disagreement in rendered pixels is polled.
+
+The output lifecycle case uses `wlr-randr --off` and `--on` and waits for actual
+river inventory removal and addition. This exercises WM output lifecycle,
+including complete headless recovery. It does not emulate physical DRM unplug.
+Per-workspace stacks, layouts, and focus survive, even when the first restored
+head receives the last removed workspace.
+
+On pixel failure, the suite writes the last actual image per output as a PPM
+under `SEKI_INTEGRATION_ARTIFACT_DIR`. Each named scenario retains at most two
+frames. Inventory and bounded child logs remain in the combined suite log.
+The scanner freshness test verifies all committed native fixture bindings.
+
+The release wrapper forwards optional arguments to Cabal. For an installed
+local compiler, for example, run `ci/run-integration.sh -w ghc-9.6.7 --offline`.
+The default command continues to use the pinned compiler from `cabal.project`.
+
 ## Layer-surface fixture
 
 `seki-layer-surface-fixture` is the exclusive-zone client for WP8's
-layer-shell scenario (`docs/m1-plan.md`, WP8 item 8). No manifest entry uses
-it yet. It is a native Haskell wlr-layer-shell client built on seki's own
-Wayland transport, so it does not link `libwayland` and does not depend on a
+layer-shell scenario (`m1-layer-exclusive-zone`). It is a native Haskell
+wlr-layer-shell client built on seki's own Wayland transport, so it does not link `libwayland` and does not depend on a
 desktop bar.
 
 ```console
@@ -172,6 +218,15 @@ native-wayland-full=passed
 two-output-full=passed
 xwayland=passed
 fcitx5-mozc=passed
+m1-tall-three=passed
+m1-tall-messages=passed
+m1-focus-borders=passed
+m1-swap-master=passed
+m1-layout-cycle=passed
+m1-workspace-visibility=passed
+m1-greedy-view=passed
+m1-layer-exclusive-zone=passed
+m1-output-readd=passed
 ```
 
 `ci/run-integration.sh` byte-compares the generated file with
@@ -228,7 +283,8 @@ in a way that can hide deterministic failures.
 
 When adding, removing, or renaming a scenario:
 
-1. update the ordered scenario list in `integration/Main.hs`;
+1. update the ordered scenario lists in `integration/Seki/Integration/Harness.hs`
+   and `integration/Seki/Integration/M1.hs`;
 2. update `ci/expected-integration-manifest.txt` in the same order;
 3. add required programs and runtime data to the `ci` shell in `flake.nix`;
 4. add important component versions to
@@ -244,7 +300,7 @@ tests and the complete release check.
 ## Limitations
 
 - The headless backend does not test DRM/KMS, physical input devices, a GPU
-  driver, rendering fidelity, or screenshots.
+  driver, or hardware rendering fidelity.
 - `wtype` creates a virtual keyboard with its own keymap. The integration
   suite therefore uses unmodified function keys for action dispatch rather
   than claiming to reproduce every physical XKB modifier path.

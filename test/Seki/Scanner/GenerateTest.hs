@@ -34,6 +34,7 @@ tests =
     [ testCase "matches the committed Wayland binding" testGeneratedBindingFreshness
     , testCase "matches the committed river bindings" testGeneratedRiverBindingsFreshness
     , testCase "matches the committed layer-surface fixture binding" testGeneratedFixtureBindingFreshness
+    , testCase "matches the committed native probe bindings" testProbeBindingsFreshness
     , testCase "produces identical output on repeated runs" testDeterministicGeneration
     , testCase "resolves cross-protocol enums to qualified modules" testCrossProtocolEnum
     , testCase "encodes static and dynamic new IDs" testRequestEncoders
@@ -333,3 +334,26 @@ protocolPaths =
   , riverWindowProtocolPath
   , riverXkbProtocolPath
   ]
+
+testProbeBindingsFreshness :: Assertion
+testProbeBindingsFreshness = do
+  wayland <- expectProtocolFile waylandProtocolPath
+  foreignList <- expectProtocolFile "protocol/wayland-protocols/ext-foreign-toplevel-list-v1.xml"
+  source <- expectProtocolFile "protocol/wayland-protocols/ext-image-capture-source-v1.xml"
+  mapM_
+    (check wayland foreignList source)
+    [("XdgShell", "xdg-shell"), ("ExtImageCaptureSourceV1", "ext-image-capture-source-v1"), ("ExtImageCopyCaptureV1", "ext-image-copy-capture-v1")]
+ where
+  check wayland foreignList source (moduleSuffix, stem) = do
+    let path = "protocol/wayland-protocols/" <> stem <> ".xml"
+        config =
+          GenerationConfig
+            { generationModuleName = "Seki.Fixture.Protocol." <> Text.pack moduleSuffix
+            , generationSourcePath = Text.pack path
+            , generationSourcePin = "wayland-protocols 1.49, commit ee78491a237eaff9389a0ccf8680521d074407d3"
+            }
+    target <- expectProtocolFile path
+    let references = if stem == "ext-image-copy-capture-v1" then [wayland, foreignList, source] else [wayland, foreignList]
+    generated <- expectGenerated config (target : references) target
+    committed <- TextIO.readFile ("tools-generated/layer-surface-fixture/Seki/Fixture/Protocol/" <> moduleSuffix <> ".hs")
+    assertEqual (moduleSuffix <> " generated binding") committed generated

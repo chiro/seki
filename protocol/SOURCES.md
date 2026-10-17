@@ -43,12 +43,20 @@ mirror and can be used when Codeberg is unavailable.
 
 ## wayland-protocols
 
-- File: `wayland-protocols/xdg-shell.xml`
+- Files:
+  - `wayland-protocols/xdg-shell.xml`
+  - `wayland-protocols/ext-image-capture-source-v1.xml`
+  - `wayland-protocols/ext-image-copy-capture-v1.xml`
+  - `wayland-protocols/ext-foreign-toplevel-list-v1.xml`
 - Upstream: <https://gitlab.freedesktop.org/wayland/wayland-protocols>
 - Tag: `1.49`
 - Commit: `ee78491a237eaff9389a0ccf8680521d074407d3`
 - Source: <https://gitlab.freedesktop.org/wayland/wayland-protocols/-/blob/1.49/stable/xdg-shell/xdg-shell.xml>
 - License: MIT-style; full notice is embedded in the XML
-- Use: reference only. `wlr-layer-shell-unstable-v1.xml` names `xdg_popup`, so
-  the scanner needs this definition to validate it; no binding is generated
-  from it.
+- Use: the native integration fixture binds xdg-shell and the two image capture
+  protocols. The scanner also uses xdg-shell to resolve layer-shell's `xdg_popup`.
+  ext-foreign-toplevel-list is a reference for capture-source validation only.
+- Staging sources at the same tag and commit:
+  - <https://gitlab.freedesktop.org/wayland/wayland-protocols/-/blob/1.49/staging/ext-image-capture-source/ext-image-capture-source-v1.xml>
+  - <https://gitlab.freedesktop.org/wayland/wayland-protocols/-/blob/1.49/staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml>
+  - <https://gitlab.freedesktop.org/wayland/wayland-protocols/-/blob/1.49/staging/ext-foreign-toplevel-list/ext-foreign-toplevel-list-v1.xml>

@@ -22,7 +22,7 @@ trap finalize_log EXIT
 cd -- "$repository_root"
 
 set +e
-cabal build seki-integration 2>&1 | tee -a "$raw_log"
+cabal build seki-integration "$@" 2>&1 | tee -a "$raw_log"
 build_status=${PIPESTATUS[0]}
 set -e
 if ((build_status != 0)); then
@@ -30,10 +30,11 @@ if ((build_status != 0)); then
   exit "$build_status"
 fi
 
-integration_executable=$(cabal list-bin seki-integration 2>>"$raw_log")
+integration_executable=$(cabal list-bin seki-integration "$@" 2>>"$raw_log")
 
 set +e
 SEKI_RUN_INTEGRATION=1 \
+  SEKI_INTEGRATION_ARTIFACT_DIR="$artifact_directory" \
   SEKI_INTEGRATION_MANIFEST="$manifest" \
   timeout 120s "$integration_executable" 2>&1 | tee -a "$raw_log"
 suite_status=${PIPESTATUS[0]}
