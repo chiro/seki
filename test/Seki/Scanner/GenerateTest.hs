@@ -322,7 +322,7 @@ wlrLayerShellProtocolPath :: FilePath
 wlrLayerShellProtocolPath = "protocol/river/upstream/wlr-layer-shell-unstable-v1.xml"
 
 generatedWlrLayerShellPath :: FilePath
-generatedWlrLayerShellPath = "tools/layer-surface-fixture/generated/Seki/Fixture/Protocol/WlrLayerShellUnstableV1.hs"
+generatedWlrLayerShellPath = "tools-generated/layer-surface-fixture/Seki/Fixture/Protocol/WlrLayerShellUnstableV1.hs"
 
 xdgShellProtocolPath :: FilePath
 xdgShellProtocolPath = "protocol/wayland-protocols/xdg-shell.xml"

@@ -150,7 +150,7 @@ library layer-surface-fixture
   visibility:      private
   hs-source-dirs:
     tools/layer-surface-fixture/src
-    tools/layer-surface-fixture/generated
+    tools-generated/layer-surface-fixture
   exposed-modules:
     Seki.Fixture.LayerSurface
     Seki.Fixture.Protocol.WlrLayerShellUnstableV1
