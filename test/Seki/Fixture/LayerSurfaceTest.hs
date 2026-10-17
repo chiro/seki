@@ -72,6 +72,8 @@ tests =
     , testCase "requests a top-anchored exclusive-zone layer surface" testSurfaceSetup
     , testCase "acks the configure serial before attaching a buffer" testConfigureAck
     , testCase "attaches a shared-memory buffer matching the configure" testBufferAttachment
+    , testCase "withholds readiness until the sync round trip completes" testNoReadyBeforeSync
+    , testCase "reports readiness once the sync round trip completes" testReadyAfterSync
     ]
 
 testBindsGlobals :: Assertion
@@ -147,6 +149,29 @@ testBufferAttachment = do
       expectBufferCommit mock objects 1280 40
   assertStoppedByConnection result
 
+testNoReadyBeforeSync :: Assertion
+testNoReadyBeforeSync = do
+  (result, _) <- withFixture defaultConfig (mapFixtureSurface 32)
+  assertStoppedByConnection result
+  assertEqual "no readiness without the sync reply" [] (fixtureReadies result)
+
+testReadyAfterSync :: Assertion
+testReadyAfterSync = do
+  (result, _) <-
+    withFixture defaultConfig $ \mock -> do
+      (_, buffers) <- mapFixtureSurface 32 mock
+      sendFrames (mockPeer mock) [callbackDoneFrame (bufferSyncCallback buffers) 2]
+  assertStoppedByConnection result
+  assertEqual "readiness after the sync reply" [FixtureReady 1280 32] (fixtureReadies result)
+
+mapFixtureSurface :: Word32 -> Mock -> IO (Objects, BufferObjects)
+mapFixtureSurface height mock = do
+  objects <- expectSurfaceSetup height mock
+  sendConfigure mock objects 9 1280 height
+  expectRequest mock "ack_configure" (objectsLayerSurface objects) (Opcode 6) (putUint 9)
+  buffers <- expectBufferCommit mock objects 1280 height
+  pure (objects, buffers)
+
 data BufferObjects = BufferObjects
   { bufferPool :: ObjectId
   , bufferBuffer :: ObjectId
@@ -201,8 +226,9 @@ standardGlobals =
   , (4, "wl_seat", 9)
   ]
 
-newtype FixtureResult = FixtureResult
+data FixtureResult = FixtureResult
   { fixtureOutcome :: Either FixtureError FixtureStop
+  , fixtureReadies :: [FixtureReady]
   }
 
 assertStoppedByConnection :: FixtureResult -> Assertion
@@ -232,7 +258,8 @@ runScript config script = do
     value <- script control mock
     pure (outcomeVar, value)
   outcome <- expectMockSuccess outcomeVar
-  pure (FixtureResult outcome, value)
+  readyValues <- reverse <$> readIORef readies
+  pure (FixtureResult outcome readyValues, value)
 
 startFixture ::
   FixtureControl ->

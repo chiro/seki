@@ -127,7 +127,7 @@ runLayerSurfaceFixture ::
   ConnectionTarget ->
   (FixtureReady -> IO ()) ->
   IO (Either FixtureError FixtureStop)
-runLayerSurfaceFixture control@(FixtureControl inputs) config target _ =
+runLayerSurfaceFixture control@(FixtureControl inputs) config target reportReady =
   openWaylandSessionAt target defaultObjectLimit >>= \case
     Left errorValue -> pure (Left (FixtureStartupError errorValue))
     Right opened ->
@@ -137,7 +137,7 @@ runLayerSurfaceFixture control@(FixtureControl inputs) config target _ =
           globals <- except (selectFixtureGlobals catalog)
           bound <- bindFixtureGlobals session globals
           surfaces <- requestLayerSurface (waylandConnection session) control config bound
-          let fixture = Fixture session config bound surfaces control
+          let fixture = Fixture session config bound surfaces control reportReady
           ExceptT $
             bracket
               (forkIO (dispatchInputs (waylandConnection session) inputs))
@@ -150,11 +150,13 @@ data Fixture = Fixture
   , fixtureGlobals :: BoundGlobals
   , fixtureSurfaces :: SurfaceObjects
   , fixtureControl :: FixtureControl
+  , fixtureReportReady :: FixtureReady -> IO ()
   }
 
 data Phase
   = AwaitingConfigure
   | AwaitingReadySync MappedBuffer FixtureReady
+  | Running MappedBuffer
 
 data MappedBuffer = MappedBuffer
   { mappedPool :: Object Wayland.WlShmPool
@@ -168,6 +170,9 @@ runPhase fixture phase = do
     (_, InputConnectionEnded (Left errorValue)) -> throwE (FixtureConnectionError errorValue)
     (_, InputConnectionEnded (Right ())) -> throwE FixtureConnectionFinished
     (AwaitingConfigure, InputConfigure serial width) -> mapBuffer fixture serial width >>= runPhase fixture
+    (AwaitingReadySync mapped ready, InputSyncDone) -> do
+      lift (fixtureReportReady fixture ready)
+      runPhase fixture (Running mapped)
     _ -> runPhase fixture phase
  where
   FixtureControl inputs = fixtureControl fixture
