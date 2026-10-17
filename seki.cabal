@@ -19,8 +19,11 @@ extra-source-files:
   fourmolu.yaml
   protocol/SHA256SUMS
   protocol/SOURCES.md
+  protocol/river/river-layer-shell-v1.xml
   protocol/river/river-window-management-v1.xml
   protocol/river/river-xkb-bindings-v1.xml
+  protocol/river/upstream/wlr-layer-shell-unstable-v1.xml
+  protocol/wayland-protocols/xdg-shell.xml
   protocol/wayland/wayland.xml
 extra-doc-files:
   README.md
@@ -86,6 +89,7 @@ library seki-wire
   c-sources:       cbits/seki_wayland_transport.c
   cc-options:      -Wall -Wextra -Wpedantic
   exposed-modules:
+    Seki.Protocol.RiverLayerShellV1
     Seki.Protocol.RiverWindowManagementV1
     Seki.Protocol.RiverXkbBindingsV1
     Seki.Protocol.Wayland

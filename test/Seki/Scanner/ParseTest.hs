@@ -80,9 +80,9 @@ testVendoredProtocols = do
   protocols <- mapM expectProtocolFile protocolPaths
   assertEqual
     "protocol names"
-    ["wayland", "river_window_management_v1", "river_xkb_bindings_v1"]
+    ["wayland", "river_window_management_v1", "river_xkb_bindings_v1", "river_layer_shell_v1", "xdg_shell", "wlr_layer_shell_unstable_v1"]
     (map protocolName protocols)
-  assertEqual "interface counts" [23, 8, 3] (map (length . protocolInterfaces) protocols)
+  assertEqual "interface counts" [23, 8, 3, 3, 5, 2] (map (length . protocolInterfaces) protocols)
   assertBool "all references resolve" (isRight (validateProtocols protocols))
   wayland <- requireHead "wayland protocol" protocols
   callback <- requireInterface "wl_callback" wayland
@@ -194,6 +194,9 @@ protocolPaths =
   [ "protocol/wayland/wayland.xml"
   , "protocol/river/river-window-management-v1.xml"
   , "protocol/river/river-xkb-bindings-v1.xml"
+  , "protocol/river/river-layer-shell-v1.xml"
+  , "protocol/wayland-protocols/xdg-shell.xml"
+  , "protocol/river/upstream/wlr-layer-shell-unstable-v1.xml"
   ]
 
 protocolWithArgument :: String -> ByteString

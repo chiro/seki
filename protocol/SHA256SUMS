@@ -1,3 +1,6 @@
 08fb558d96742b41eab330c386f7b0c17d82169e69edad612ea89c17d6b1d53e  protocol/wayland/wayland.xml
 16c311631fcfc63d898c27aa23d2dbc7257533ba0f7b45b84bb8a4f87cd470c3  protocol/river/river-window-management-v1.xml
 9c4ab162d8498569a33bd14520e826302f410f0fbdf8f20147a570b7500188af  protocol/river/river-xkb-bindings-v1.xml
+b25919ad9bb60e4fd1937d9bb69729dca726d16bd9e32472e7434afabfe39fa1  protocol/river/river-layer-shell-v1.xml
+39b633b06d3c6834ac8f9840d38f585d87cdd730f0742cd51f5f91c7dfab2a68  protocol/river/upstream/wlr-layer-shell-unstable-v1.xml
+7ba7f9c8473deee674cb1f154a18abd0bb0cc072604fc055b0c15e459fc4c7df  protocol/wayland-protocols/xdg-shell.xml

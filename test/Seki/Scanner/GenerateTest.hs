@@ -38,6 +38,8 @@ tests =
     , testCase "encodes static and dynamic new IDs" testRequestEncoders
     , testCase "decodes typed registry events and lifecycle metadata" testEventDecoders
     , testCase "compiles representative cross-protocol river bindings" testRiverBindings
+    , testCase "types layer-shell children by the river objects they extend" testLayerShellObjectReferences
+    , testCase "resolves wlr-layer-shell's xdg_popup only with xdg-shell" testWlrLayerShellReferences
     ]
 
 testGeneratedBindingFreshness :: Assertion
@@ -54,6 +56,9 @@ testGeneratedRiverBindingsFreshness = do
   generatedXkb <- generateRiverXkb
   committedXkb <- TextIO.readFile generatedRiverXkbPath
   assertEqual "generated river XKB module" committedXkb generatedXkb
+  generatedLayerShell <- generateRiverLayerShell
+  committedLayerShell <- TextIO.readFile generatedRiverLayerShellPath
+  assertEqual "generated river layer-shell module" committedLayerShell generatedLayerShell
 
 testDeterministicGeneration :: Assertion
 testDeterministicGeneration = do
@@ -173,6 +178,40 @@ generateRiverWindow = do
   xkbBindings <- expectProtocolFile riverXkbProtocolPath
   expectGenerated riverWindowConfig [windowManagement, wayland, xkbBindings] windowManagement
 
+generateRiverLayerShell :: IO Text
+generateRiverLayerShell = do
+  wayland <- expectProtocolFile waylandProtocolPath
+  windowManagement <- expectProtocolFile riverWindowProtocolPath
+  layerShell <- expectProtocolFile riverLayerShellProtocolPath
+  expectGenerated riverLayerShellConfig [layerShell, wayland, windowManagement] layerShell
+
+testLayerShellObjectReferences :: Assertion
+testLayerShellObjectReferences = do
+  generated <- generateRiverLayerShell
+  assertBool
+    "get_output takes the river output it extends"
+    ("encodeRiverLayerShellV1GetOutput :: Wire.ObjectId -> Wire.ObjectId -> Binding.RequestEncoder fd" `Text.isInfixOf` generated)
+  assertBool
+    "get_seat takes the river seat it extends"
+    ("encodeRiverLayerShellV1GetSeat :: Wire.ObjectId -> Wire.ObjectId -> Binding.RequestEncoder fd" `Text.isInfixOf` generated)
+
+testWlrLayerShellReferences :: Assertion
+testWlrLayerShellReferences = do
+  wayland <- expectProtocolFile waylandProtocolPath
+  xdgShell <- expectProtocolFile xdgShellProtocolPath
+  wlrLayerShell <- expectProtocolFile wlrLayerShellProtocolPath
+  let config =
+        GenerationConfig
+          { generationModuleName = "Seki.Protocol.WlrLayerShellUnstableV1"
+          , generationSourcePath = Text.pack wlrLayerShellProtocolPath
+          , generationSourcePin = riverSourcePin
+          }
+  case generateProtocolModule config [wlrLayerShell, wayland] wlrLayerShell of
+    Left _ -> pure ()
+    Right _ -> assertFailure "generated wlr-layer-shell without the xdg_popup definition"
+  _ <- expectGenerated config [wlrLayerShell, wayland, xdgShell] wlrLayerShell
+  pure ()
+
 generateRiverXkb :: IO Text
 generateRiverXkb = do
   wayland <- expectProtocolFile waylandProtocolPath
@@ -229,6 +268,14 @@ riverWindowConfig =
     , generationSourcePin = riverSourcePin
     }
 
+riverLayerShellConfig :: GenerationConfig
+riverLayerShellConfig =
+  GenerationConfig
+    { generationModuleName = "Seki.Protocol.RiverLayerShellV1"
+    , generationSourcePath = Text.pack riverLayerShellProtocolPath
+    , generationSourcePin = riverSourcePin
+    }
+
 riverSourcePin :: Text
 riverSourcePin = "river v0.4.5, commit f6d961773711dc29d3eb5b60bd14744a6a33894f"
 
@@ -249,6 +296,18 @@ riverWindowProtocolPath = "protocol/river/river-window-management-v1.xml"
 
 riverXkbProtocolPath :: FilePath
 riverXkbProtocolPath = "protocol/river/river-xkb-bindings-v1.xml"
+
+generatedRiverLayerShellPath :: FilePath
+generatedRiverLayerShellPath = "src-generated/Seki/Protocol/RiverLayerShellV1.hs"
+
+riverLayerShellProtocolPath :: FilePath
+riverLayerShellProtocolPath = "protocol/river/river-layer-shell-v1.xml"
+
+wlrLayerShellProtocolPath :: FilePath
+wlrLayerShellProtocolPath = "protocol/river/upstream/wlr-layer-shell-unstable-v1.xml"
+
+xdgShellProtocolPath :: FilePath
+xdgShellProtocolPath = "protocol/wayland-protocols/xdg-shell.xml"
 
 protocolPaths :: [FilePath]
 protocolPaths =
