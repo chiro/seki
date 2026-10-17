@@ -33,9 +33,8 @@ import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.Char (ord)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
-import Data.List (intercalate, minimumBy, nub, sort)
-import Data.Maybe (isJust)
-import Data.Ord (comparing)
+import Data.List (intercalate, nub, sort)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Word (Word16, Word32)
@@ -59,12 +58,12 @@ import Network.Socket (
   socketToHandle,
  )
 import Network.Socket.ByteString qualified as SocketByteString
+import Seki.Internal.Core.Action (kill, spawn)
+import Seki.Internal.Core.Scene (SceneStyle (..), defaultSceneStyle)
+import Seki.Internal.Core.StackSet qualified as StackSet
+import Seki.Internal.Core.State (CoreState (..))
+import Seki.Internal.Layout.Full (Full (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
-import Seki.Run.Default (
-  DefaultConfig (..),
-  defaultRuntimeHandlers,
- )
-import Seki.Run.Full (selectFullOutputRectangle)
 import Seki.Run.Inventory (
   RiverInventory,
   RiverOutputState (..),
@@ -75,6 +74,7 @@ import Seki.Run.Inventory (
   riverInventoryWindows,
   riverOutputRectangle,
  )
+import Seki.Run.Policy (Policy, PolicyConfig (..), newPolicy, policyRuntimeHandlers, readPolicyState)
 import Seki.Run.Runtime (
   RiverKeyBindingState (..),
   RiverRuntimeError,
@@ -95,6 +95,7 @@ import Seki.Wire.Connection.Registry (
   announcedGlobals,
  )
 import Seki.Wire.Transport (ConnectionTarget (UnixSocketPath))
+import Seki.Wire.Types (mkObjectId)
 import System.Directory (
   canonicalizePath,
   createDirectory,
@@ -192,6 +193,7 @@ data RiverFixture = RiverFixture
   , fixtureProbeListener :: Socket
   , fixtureProbeSocketPath :: FilePath
   , fixtureTerminalProcess :: MVar ManagedProcess
+  , fixturePolicy :: Policy String Full
   , fixtureRiverSession :: RiverSession
   , fixtureSessionResult :: MVar (Either RiverRuntimeError ())
   }
@@ -337,10 +339,10 @@ withRiverFixture scenarioName outputCount enableXwayland probeMode prerequisites
               waylandSocketPath = runtimeDirectory </> nestedWaylandDisplay displayNames
           withUnixListener probeSocketPath $ \probeListener -> do
             terminalProcess <- newEmptyMVar
-            handlers <-
-              requireRight "build default runtime handlers" $
-                defaultRuntimeHandlers
-                  (integrationConfig probeMode executable footConfigPath probeSocketPath clientEnvironment terminalProcess)
+            policy <-
+              newPolicy (integrationConfig probeMode executable footConfigPath probeSocketPath clientEnvironment terminalProcess)
+                >>= requireRight "build production policy"
+            let handlers = policyRuntimeHandlers policy
             session <- do
               opened <-
                 timeout startupTimeoutMicroseconds $
@@ -371,6 +373,7 @@ withRiverFixture scenarioName outputCount enableXwayland probeMode prerequisites
                       , fixtureProbeListener = probeListener
                       , fixtureProbeSocketPath = probeSocketPath
                       , fixtureTerminalProcess = terminalProcess
+                      , fixturePolicy = policy
                       , fixtureRiverSession = session
                       , fixtureSessionResult = sessionResult
                       }
@@ -389,12 +392,14 @@ integrationConfig ::
   FilePath ->
   [(String, String)] ->
   MVar ManagedProcess ->
-  DefaultConfig
+  PolicyConfig String Full
 integrationConfig probeMode executable footConfigPath probeSocketPath clientEnvironment terminalProcess =
-  DefaultConfig
-    { defaultTerminalBinding = functionKeyBinding 0xffbe
-    , defaultCloseBinding = functionKeyBinding 0xffbf
-    , defaultTerminalProcess = do
+  PolicyConfig
+    { policyLayout = Full
+    , policyTags = ["1"]
+    , policyBindings = [(functionKeyBinding 0xffbe, spawn "integration-terminal"), (functionKeyBinding 0xffbf, kill)]
+    , policySceneStyle = defaultSceneStyle{sceneBorderWidth = 0}
+    , policyLaunch = \_ -> do
         process <-
           startManagedProcess
             "foot"
@@ -491,7 +496,7 @@ runTwoOutputAssertions fixture = do
       session
       sessionResult
       configuredTwoOutputObservation
-  selectedRectangle <- assertLowestObjectOutputSelected configured
+  selectedRectangle <- assertCurrentOutputSelected (fixturePolicy fixture) configured
   announce ("two-output-full: selected lowest-ID rectangle " <> show selectedRectangle)
   runInputDriver clientEnvironment ["-s", "100", "-k", "F1"]
   footProcess <- waitForMVar "two-output foot process launch" terminalProcess
@@ -941,17 +946,18 @@ rectanglesMatch expected actual =
   length expected == length actual
     && all (`elem` actual) expected
 
-assertLowestObjectOutputSelected :: RuntimeObservation -> IO RiverRectangle
-assertLowestObjectOutputSelected observation = do
-  let inventory = observationInventory observation
-      outputs = completeOutputs inventory
-      lowestOutput = minimumBy (comparing (ObjectTable.objectId . riverOutputObject)) outputs
-      expected = riverOutputRectangle lowestOutput
-      actual = selectFullOutputRectangle inventory
-  assertEqual "lowest-object-ID Full selection" expected actual
-  case actual of
-    Nothing -> failIntegration "two configured outputs produced no Full selection"
-    Just rectangle -> pure rectangle
+assertCurrentOutputSelected :: Policy String Full -> RuntimeObservation -> IO RiverRectangle
+assertCurrentOutputSelected policy observation = do
+  state <- readPolicyState policy
+  case state of
+    HeadlessState{} -> failIntegration "production policy has no current output"
+    AttachedState stackSet _ ->
+      case [ rectangle | output <- completeOutputs (observationInventory observation), ObjectTable.objectId (riverOutputObject output) == outputObjectId (StackSet.output (StackSet.current stackSet)), Just rectangle <- [riverOutputRectangle output]
+           ] of
+        [rectangle] -> pure rectangle
+        _ -> failIntegration "current core output has no rectangle"
+ where
+  outputObjectId (StackSet.OutputId identifier) = fromMaybe (error "invalid output ID") (mkObjectId identifier)
 
 windowMatchesRectangle :: RiverRectangle -> RuntimeObservation -> Bool
 windowMatchesRectangle rectangle observation =
@@ -978,8 +984,8 @@ completeOutputs inventory =
 
 selectManagedFoot :: RuntimeObservation -> IO (RiverRectangle, RiverWindowState)
 selectManagedFoot observation =
-  case (selectFullOutputRectangle inventory, riverInventoryWindows inventory) of
-    (Just rectangle, [window]) -> pure (rectangle, window)
+  case (completeOutputRectangles inventory, riverInventoryWindows inventory) of
+    ([rectangle], [window]) -> pure (rectangle, window)
     state -> failIntegration ("unexpected managed foot state: " <> show state)
  where
   inventory = observationInventory observation

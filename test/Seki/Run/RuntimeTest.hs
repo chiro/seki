@@ -7,18 +7,13 @@ import Data.IORef (modifyIORef', newIORef, readIORef)
 import Seki.Internal.Core.Geometry (GeometryError (..), Point (..), mkRect, mkSize)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
-import Seki.Run.Default (DefaultConfig (..), defaultConfig, defaultRuntimeHandlers)
-import Seki.Run.Full (prepareFullManagePlan, prepareFullRenderPlan)
 import Seki.Run.Inventory (
   RiverInventoryError (..),
   RiverOutputState (..),
-  RiverRectangle (..),
   RiverSize (..),
   RiverWindowState (..),
-  riverInventoryActiveWindow,
   riverInventoryOutputs,
   riverInventoryWindows,
-  riverOutputRectangle,
  )
 import Seki.Run.LayerShell (RiverLayerShellBootstrapError (..))
 import Seki.Run.MockRiver (
@@ -49,13 +44,11 @@ import Seki.Run.River (RiverBootstrapError (..), RiverWindowManagerHandlers (..)
 import Seki.Run.Runtime (
   RenderOutcome (..),
   RiverLayerFocus (..),
-  RiverManageAction (..),
   RiverRuntimeError (..),
   RiverRuntimeHandlers (..),
   RiverRuntimeSnapshot (..),
   RiverSeatBindings (..),
   closeRiverSession,
-  noRiverManageAction,
   openRiverSessionAt,
   readRiverInventory,
   readRiverSeatBindings,
@@ -86,12 +79,9 @@ tests =
   testGroup
     "river runtime"
     [ testCase "opens, binds, dispatches, and closes an owned runtime" testOwnedRuntime
-    , testCase "executes phase plans before sequence completion" testPhasePlans
-    , testCase "Full placement hides windows without an output" testFullWithoutOutput
-    , testCase "runs the default focus and close policy" testDefaultPolicy
-    , testCase "tracks the window selected by seat interaction" testSeatInteractionFocus
     , testCase "retires removed inventory objects and their nodes" testInventoryRemoval
     , testCase "does not finish a sequence after a phase-plan failure" testPhasePlanFailure
+    , testCase "rejects window interactions for untracked windows" testUnknownInteraction
     , testCase "promotes inventory failures before user event delivery" testInventoryFailure
     , testCase "promotes window-node acquisition failures" testNodeAcquisitionFailure
     , testCase "owns per-seat XKB binding objects" testSeatBindingLifecycle
@@ -164,217 +154,6 @@ testOwnedRuntime =
       =<< runRiverSession session
     closeRiverSession session
 
-testPhasePlans :: Assertion
-testPhasePlans =
-  withRuntimePair $ \target peer -> do
-    mockDone <- runMock $ do
-      reader <- newFrameReader
-      (registryId, callbackId) <- receiveStartupRequests reader peer
-      sendFrames
-        peer
-        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
-        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
-        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
-        , callbackDoneFrame callbackId 93
-        ]
-      (managerId, _, layerShellId) <- receiveRuntimeBinds reader peer
-      windowId <- requireObjectId 0xff000001
-      outputId <- requireObjectId 0xff000002
-      sendFrames
-        peer
-        [ encodedFrame managerId (Opcode 6) (putNewId windowId)
-        , encodedFrame managerId (Opcode 7) (putNewId outputId)
-        , encodedFrame outputId (Opcode 2) (putInt (-1920) >> putInt 30)
-        , encodedFrame outputId (Opcode 3) (putInt 1280 >> putInt 720)
-        , encodedFrame managerId (Opcode 2) (pure ())
-        ]
-      nodeId <- receiveNewIdRequest reader peer windowId (Opcode 2)
-      _ <- receiveLayerShellOutputRequest reader peer layerShellId outputId
-      receiveExpectedRequest reader peer windowId (Opcode 7) (pure ())
-      receiveExpectedRequest reader peer windowId (Opcode 9) (putUint 15)
-      receiveExpectedRequest reader peer windowId (Opcode 3) (putInt 1280 >> putInt 720)
-      receiveExpectedRequest reader peer managerId (Opcode 2) (pure ())
-      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
-      receiveExpectedRequest reader peer nodeId (Opcode 1) (putInt (-1920) >> putInt 30)
-      receiveExpectedRequest reader peer windowId (Opcode 5) (pure ())
-      receiveExpectedRequest reader peer managerId (Opcode 4) (pure ())
-      closeTransport peer
-    let handlers =
-          RiverRuntimeHandlers
-            { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
-            , riverKeyBindings = []
-            , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
-            , prepareRiverManagePlan = pure . prepareFullManagePlan . riverRuntimeInventory
-            , prepareRiverRenderPlan = pure . fmap (const (RenderOutcome False)) . prepareFullRenderPlan . riverRuntimeInventory
-            }
-    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
-    assertEqual "phase-plan lifecycle" (Right ()) =<< runRiverSession session
-    expectMockSuccess mockDone
-    inventory <- readRiverInventory session
-    case (riverInventoryWindows inventory, riverInventoryOutputs inventory) of
-      ([window], [output]) -> do
-        case riverWindowNode window of
-          Nothing -> assertFailure "window node missing"
-          Just _ -> pure ()
-        assertEqual
-          "tracked output rectangle"
-          (Just (RiverRectangle (-1920) 30 1280 720))
-          (riverOutputRectangle output)
-        assertEqual
-          "new window active"
-          (Just (objectId (riverWindowObject window)))
-          (objectId . riverWindowObject <$> riverInventoryActiveWindow inventory)
-      _ -> assertFailure "unexpected runtime inventory"
-
-testFullWithoutOutput :: Assertion
-testFullWithoutOutput =
-  withRuntimePair $ \target peer -> do
-    mockDone <- runMock $ do
-      reader <- newFrameReader
-      (registryId, callbackId) <- receiveStartupRequests reader peer
-      sendFrames
-        peer
-        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
-        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
-        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
-        , callbackDoneFrame callbackId 95
-        ]
-      (managerId, _, _) <- receiveRuntimeBinds reader peer
-      windowId <- requireObjectId 0xff000004
-      sendFrames
-        peer
-        [ encodedFrame managerId (Opcode 6) (putNewId windowId)
-        , encodedFrame managerId (Opcode 2) (pure ())
-        ]
-      _ <- receiveNewIdRequest reader peer windowId (Opcode 2)
-      receiveExpectedRequest reader peer managerId (Opcode 2) (pure ())
-      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
-      receiveExpectedRequest reader peer windowId (Opcode 4) (pure ())
-      receiveExpectedRequest reader peer managerId (Opcode 4) (pure ())
-      closeTransport peer
-    let handlers =
-          RiverRuntimeHandlers
-            { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
-            , riverKeyBindings = []
-            , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
-            , prepareRiverManagePlan = pure . prepareFullManagePlan . riverRuntimeInventory
-            , prepareRiverRenderPlan = pure . fmap (const (RenderOutcome False)) . prepareFullRenderPlan . riverRuntimeInventory
-            }
-    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
-    assertEqual "headless Full lifecycle" (Right ()) =<< runRiverSession session
-    expectMockSuccess mockDone
-
-testDefaultPolicy :: Assertion
-testDefaultPolicy =
-  withRuntimePair $ \target peer -> do
-    let config = defaultConfig{defaultTerminalProcess = pure ()}
-        terminalBinding = defaultTerminalBinding config
-        closeBinding = defaultCloseBinding config
-    mockDone <- runMock $ do
-      reader <- newFrameReader
-      (registryId, callbackId) <- receiveStartupRequests reader peer
-      sendFrames
-        peer
-        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
-        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
-        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
-        , callbackDoneFrame callbackId 100
-        ]
-      (managerId, xkbBindingsId, layerShellId) <- receiveRuntimeBinds reader peer
-      windowId <- requireObjectId 0xff000010
-      outputId <- requireObjectId 0xff000011
-      seatId <- requireObjectId 0xff000012
-      sendFrames
-        peer
-        [ encodedFrame managerId (Opcode 6) (putNewId windowId)
-        , encodedFrame managerId (Opcode 7) (putNewId outputId)
-        , encodedFrame outputId (Opcode 2) (putInt 40 >> putInt 20)
-        , encodedFrame outputId (Opcode 3) (putInt 1600 >> putInt 900)
-        , encodedFrame managerId (Opcode 8) (putNewId seatId)
-        ]
-      nodeId <- receiveNewIdRequest reader peer windowId (Opcode 2)
-      _ <- receiveLayerShellOutputRequest reader peer layerShellId outputId
-      _ <- receiveLayerShellSeatRequest reader peer layerShellId seatId
-      terminalId <- receiveKeyBindingRequest reader peer xkbBindingsId seatId terminalBinding
-      closeId <- receiveKeyBindingRequest reader peer xkbBindingsId seatId closeBinding
-      sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
-      receiveExpectedRequest reader peer terminalId (Opcode 1) (putUint 0)
-      receiveExpectedRequest reader peer terminalId (Opcode 2) (pure ())
-      receiveExpectedRequest reader peer closeId (Opcode 1) (putUint 0)
-      receiveExpectedRequest reader peer closeId (Opcode 2) (pure ())
-      receiveExpectedRequest reader peer windowId (Opcode 7) (pure ())
-      receiveExpectedRequest reader peer windowId (Opcode 9) (putUint 15)
-      receiveExpectedRequest reader peer windowId (Opcode 3) (putInt 1600 >> putInt 900)
-      receiveExpectedRequest reader peer seatId (Opcode 1) (putObject windowId)
-      receiveSequenceCompletion reader peer managerId (Opcode 2)
-      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
-      receiveExpectedRequest reader peer nodeId (Opcode 1) (putInt 40 >> putInt 20)
-      receiveExpectedRequest reader peer windowId (Opcode 5) (pure ())
-      receiveSequenceCompletion reader peer managerId (Opcode 4)
-      sendFrames
-        peer
-        [ encodedFrame closeId (Opcode 0) (pure ())
-        , encodedFrame managerId (Opcode 2) (pure ())
-        ]
-      receiveExpectedRequest reader peer windowId (Opcode 1) (pure ())
-      receiveExpectedRequest reader peer windowId (Opcode 7) (pure ())
-      receiveExpectedRequest reader peer windowId (Opcode 9) (putUint 15)
-      receiveExpectedRequest reader peer windowId (Opcode 3) (putInt 1600 >> putInt 900)
-      receiveExpectedRequest reader peer seatId (Opcode 1) (putObject windowId)
-      receiveSequenceCompletion reader peer managerId (Opcode 2)
-      closeTransport peer
-    handlers <- expectRight (defaultRuntimeHandlers config)
-    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
-    assertEqual "default policy lifecycle" (Right ()) =<< runRiverSession session
-    expectMockSuccess mockDone
-
-testSeatInteractionFocus :: Assertion
-testSeatInteractionFocus =
-  withRuntimePair $ \target peer -> do
-    firstWindowId <- requireObjectId 0xff000020
-    secondWindowId <- requireObjectId 0xff000021
-    mockDone <- runMock $ do
-      reader <- newFrameReader
-      (registryId, callbackId) <- receiveStartupRequests reader peer
-      sendFrames
-        peer
-        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
-        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
-        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
-        , callbackDoneFrame callbackId 99
-        ]
-      (managerId, _, layerShellId) <- receiveRuntimeBinds reader peer
-      seatId <- requireObjectId 0xff000022
-      sendFrames
-        peer
-        [ encodedFrame managerId (Opcode 6) (putNewId firstWindowId)
-        , encodedFrame managerId (Opcode 6) (putNewId secondWindowId)
-        , encodedFrame managerId (Opcode 8) (putNewId seatId)
-        ]
-      _ <- receiveNewIdRequest reader peer firstWindowId (Opcode 2)
-      _ <- receiveNewIdRequest reader peer secondWindowId (Opcode 2)
-      _ <- receiveLayerShellSeatRequest reader peer layerShellId seatId
-      sendFrames
-        peer
-        [ encodedFrame seatId (Opcode 4) (putObject firstWindowId)
-        , encodedFrame managerId (Opcode 2) (pure ())
-        ]
-      receiveSequenceCompletion reader peer managerId (Opcode 2)
-      closeTransport peer
-    session <-
-      expectRight
-        =<< openRiverSessionAt
-          target
-          defaultObjectLimit
-          (runtimeHandlers (\_ -> pure ()))
-    assertEqual "interaction lifecycle" (Right ()) =<< runRiverSession session
-    expectMockSuccess mockDone
-    inventory <- readRiverInventory session
-    assertEqual
-      "interacted window active"
-      (Just firstWindowId)
-      (objectId . riverWindowObject <$> riverInventoryActiveWindow inventory)
-
 testInventoryRemoval :: Assertion
 testInventoryRemoval =
   withRuntimePair $ \target peer -> do
@@ -425,7 +204,7 @@ testInventoryRemoval =
                         _ -> pure ()
                   }
             , riverKeyBindings = []
-            , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
+            , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , prepareRiverManagePlan = \_ -> pure (pure ())
             , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome False))
             }
@@ -467,7 +246,7 @@ testPhasePlanFailure =
           RiverRuntimeHandlers
             { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
             , riverKeyBindings = []
-            , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
+            , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , prepareRiverManagePlan = \snapshot ->
                 pure $ case riverInventoryWindows (riverRuntimeInventory snapshot) of
                   window : _ -> setWindowDimensionBounds (riverWindowObject window) 1920 1080
@@ -512,7 +291,7 @@ testInventoryFailure =
                       \_ _ -> modifyIORef' deliveredWindowEvents (+ 1)
                   }
             , riverKeyBindings = []
-            , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
+            , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , prepareRiverManagePlan = \_ -> pure (pure ())
             , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome False))
             }
@@ -526,6 +305,41 @@ testInventoryFailure =
       )
       =<< runRiverSession session
     assertEqual "invalid event withheld" 0 =<< readIORef deliveredWindowEvents
+    expectMockSuccess mockDone
+
+testUnknownInteraction :: Assertion
+testUnknownInteraction =
+  withRuntimePair $ \target peer -> do
+    seatId <- requireObjectId 0xff000070
+    unknownId <- requireObjectId 0xff000071
+    delivered <- newIORef (0 :: Int)
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
+        , callbackDoneFrame callbackId 99
+        ]
+      (managerId, _, layerShellId) <- receiveRuntimeBinds reader peer
+      sendFrames peer [encodedFrame managerId (Opcode 8) (putNewId seatId)]
+      _ <- receiveLayerShellSeatRequest reader peer layerShellId seatId
+      sendFrames peer [encodedFrame seatId (Opcode 4) (putObject unknownId)]
+      receiveChunk peer 8 >>= \case
+        Right Nothing -> pure ()
+        _ -> assertFailure "runtime remained open after an unknown interaction"
+    let handlers =
+          (runtimeHandlers (\_ -> pure ()))
+            { riverProtocolHandlers =
+                (protocolHandlers (\_ -> pure ()))
+                  { handleRiverSeatEvent = \_ _ -> modifyIORef' delivered (+ 1)
+                  }
+            }
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
+    assertEqual "unknown interaction" (Left (RiverRuntimeInventoryError (RiverInventoryWindowNotTracked unknownId))) =<< runRiverSession session
+    assertEqual "invalid interaction withheld" 0 =<< readIORef delivered
     expectMockSuccess mockDone
 
 testNodeAcquisitionFailure :: Assertion
@@ -559,7 +373,7 @@ testNodeAcquisitionFailure =
                       \_ -> modifyIORef' deliveredCreations (+ 1)
                   }
             , riverKeyBindings = []
-            , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
+            , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , prepareRiverManagePlan = \_ -> pure (pure ())
             , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome False))
             }
@@ -575,6 +389,7 @@ testSeatBindingLifecycle =
   withRuntimePair $ \target peer -> do
     seatCallbacks <- newIORef (0 :: Int)
     bindingPresses <- newIORef []
+    disabledBindings <- newIORef []
     let terminalBinding =
           RiverKeyBinding
             { riverKeyBindingKeysym = 0xff0d
@@ -649,9 +464,12 @@ testSeatBindingLifecycle =
                 \definition binding event -> case event of
                   Xkb.RiverXkbBindingV1Pressed -> do
                     modifyIORef' bindingPresses (<> [definition])
-                    pure (RiverManageAction (\_ -> disableKeyBinding binding))
-                  _ -> pure noRiverManageAction
-            , prepareRiverManagePlan = \_ -> pure (pure ())
+                    modifyIORef' disabledBindings (<> [binding])
+                  _ -> pure ()
+            , prepareRiverManagePlan = \_ -> do
+                bindings <- readIORef disabledBindings
+                modifyIORef' disabledBindings (const [])
+                pure (mapM_ disableKeyBinding bindings)
             , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome False))
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
@@ -982,7 +800,7 @@ runtimeHandlers managerHandler =
   RiverRuntimeHandlers
     { riverProtocolHandlers = protocolHandlers managerHandler
     , riverKeyBindings = []
-    , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
+    , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
     , prepareRiverManagePlan = \_ -> pure (pure ())
     , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome False))
     }

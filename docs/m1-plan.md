@@ -189,8 +189,10 @@ protocol objects.
 | `Seki.Run.Reconcile` | persistent proposal/applied state and phase-safe diffs |
 | `Seki.Run.Policy` | Queues river events and key-binding actions, drains them into core state at `manage_start`, plans scenes, and runs intents and reconciliation |
 
-`Seki.Run.Full` remains available while the M1 policy is developed, then
-becomes a compatibility implementation or delegates to the new `Full` planner.
+WP7 removes `Seki.Run.Full` and `Seki.Run.Default` after migrating the
+executable, integration fixture, and tests to `Seki.Run.Policy`. Inventory
+tracks protocol facts without choosing focus. The policy's core-event queue
+owns the ordering of callbacks and key actions.
 
 The Cabal component graph must stay acyclic when the pure core becomes public.
 Introduce an internal `seki-core` library, make `seki-wire` depend on it, and
@@ -607,6 +609,21 @@ Tests:
   `RenderM` and render-only operations cannot appear in `ManageM`.
 
 ### WP7 — Default runtime and minimal public API
+
+Implemented by the canonical pure configuration in `Seki.Internal.Config`,
+the boundary adapter in `Seki.Run.Config`, and the public `Seki` front door.
+The executable and release integration suite both use `Seki.Run.Policy`.
+The former M0 Full/Default policies, inventory focus selection, and runtime
+deferred-action queue are removed. Protocol callbacks and key actions enter
+the policy's one core-event queue.
+
+`seki-core` owns configuration and actions. `seki-wire` depends on core and
+validates the lowered configuration before connecting. The public library
+depends on both components; user code imports no wire types.
+
+The public compile fixture covers a custom layout and custom bindings. A
+layout type change also replaces `keys`, for example
+`def{layoutHook = Full, keys = defaultKeys}`.
 
 Deliverables:
 

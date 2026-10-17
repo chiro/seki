@@ -25,6 +25,7 @@ where
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Exception (IOException, try)
 import Control.Monad (void)
+import Data.Bits (complement, (.&.))
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
@@ -41,8 +42,8 @@ import Seki.Run.Inventory (RiverOutputState (..), RiverWindowState (..), lookupR
 import Seki.Run.Phase (ManageM, RenderM, closeWindow)
 import Seki.Run.Reconcile (ReconcileState, emptyReconcileState, reconcileManage, reconcileRender)
 import Seki.Run.River (RiverWindowManagerHandlers (..))
-import Seki.Run.Runtime (RenderOutcome, RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..), noRiverManageAction)
-import Seki.Run.Xkb (RiverKeyBinding)
+import Seki.Run.Runtime (RenderOutcome, RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
+import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable (Object, objectId)
 import Seki.Wire.Types (mkObjectId, objectIdValue)
 import System.Exit (ExitCode)
@@ -62,6 +63,7 @@ data PolicyError i
   = PolicyInvalidSceneStyle SceneStyle
   | PolicyTagError (WorkspaceTagError i)
   | PolicyBindingConflict RiverKeyBinding
+  | PolicyInvalidModifiers RiverKeyBinding
   deriving (Eq, Show)
 
 data Policy i l = Policy
@@ -73,16 +75,19 @@ data Policy i l = Policy
   -- ^ Newest first.
   }
 
--- | Validate tags, bindings, border width, and premultiplied colors before connecting.
+-- | Validate tags, binding identities and modifiers, border width, and premultiplied colors before connecting.
 newPolicy :: (Eq i) => PolicyConfig i l -> IO (Either (PolicyError i) (Policy i l))
 newPolicy config
   | not validStyle = pure (Left (PolicyInvalidSceneStyle style))
+  | binding : _ <- filter invalidModifiers (map fst (policyBindings config)) = pure (Left (PolicyInvalidModifiers binding))
   | otherwise = case newCoreState (policyLayout config) (policyTags config) of
       Left e -> pure (Left (PolicyTagError e))
       Right st -> case firstRepeat [] (map fst (policyBindings config)) of
         Just binding -> pure (Left (PolicyBindingConflict binding))
         Nothing -> Right <$> (Policy config <$> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] Nothing Nothing) <*> newIORef [])
  where
+  -- River excludes capslock and numlock bits from its modifier enum.
+  invalidModifiers binding = River.riverSeatV1ModifiersFlagsValue (riverKeyBindingModifiers binding) .&. complement 0xed /= 0
   style = policySceneStyle config
   validStyle = sceneBorderWidth style >= 0 && validColor (sceneFocusedColor style) && validColor (sceneUnfocusedColor style)
   validColor (BorderColor r g b a) = all (<= a) [r, g, b]
@@ -111,11 +116,10 @@ policyRuntimeHandlers policy =
               _ -> pure ()
           }
     , riverKeyBindings = map fst bindings
-    , handleRiverKeyBindingEvent = \definition _ event -> do
+    , handleRiverKeyBindingEvent = \definition _ event ->
         case (event, lookup definition bindings) of
           (Xkb.RiverXkbBindingV1Pressed, Just action) -> enqueue (RunAction action)
           _ -> pure ()
-        pure noRiverManageAction
     , prepareRiverManagePlan = prepareManagePlan policy
     , prepareRiverRenderPlan = prepareRenderPlan policy
     }

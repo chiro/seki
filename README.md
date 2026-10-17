@@ -3,9 +3,8 @@
 A tiling window manager for [river](https://codeberg.org/river/river), written
 in Haskell and aiming for xmonad's semantics and configuration model.
 
-> **Status: M0 is complete; M1 core development is next.**
-> This is a validated protocol and Full-layout prototype, not yet a daily-use
-> window manager. See the [milestones](docs/spec.md#62-milestones).
+> **Status: M1 core and configuration are implemented through WP7.**
+> The real-river M1 scenarios and release measurements remain in WP8 and WP9. See the [milestones](docs/spec.md#62-milestones).
 
 ## Current status
 
@@ -18,8 +17,8 @@ The current implementation provides:
   generator;
 - typed river startup, window/output/seat inventory, and manage/render phase
   handling;
-- a Full policy that places all windows on one output; and
-- Mod4-Shift-Return to launch `foot` and Mod4-Shift-c to close the active
+- a pure StackSet policy with nine workspaces, Tall, Mirror Tall, and Full; and
+- Mod4-Shift-Return to launch `foot` and Mod4-Shift-c to close the focused
   window.
 
 The release integration suite exercises the native Wayland path, two outputs,
@@ -36,8 +35,7 @@ these goals:
 - **The core is pure.** `StackSet`, the layout algebra (`|||`, `Mirror`, layout modifiers), and `ManageHook` are based on xmonad, with its semantics and QuickCheck properties retained where applicable. Layout is a pure function; only the reconciler touches IO.
 - **Workspaces use xmonad-style semantics.** They form a shared pool across outputs, with `greedyView` as the default. River itself has no workspace abstraction, so seki implements this policy in the window manager.
 
-The following illustrates the target configuration API. It is not implemented
-in M0 and may change as M1–M3 are delivered.
+A configuration program imports `Seki` and runs `seki def`. The current M1 API supports these overrides.
 
 ```haskell
 import Seki
@@ -48,13 +46,40 @@ main = seki def
   , terminal   = "foot"
   , workspaces = map show [1..9 :: Int]
   , layoutHook = tall ||| Mirror tall ||| Full
-  , manageHook = composeAll
-      [ appId =? Just "org.pulseaudio.pavucontrol" --> doFloat
-      , isDialog                                   --> doFloat ]
   , keys       = defaultKeys
   }
   where tall = Tall 1 (3/100) (1/2)
 ```
+
+The default modifier is Mod4. Mod-Shift-Return launches `terminal`, and
+Mod-Shift-c closes the focused window. Mod-Space cycles layouts. Mod-j and
+Mod-k move focus, and Mod-Return swaps the focused window with the master.
+Mod-h and Mod-l resize the master area. Mod-comma and Mod-period change the
+master count. Mod-1 through Mod-9 select workspaces with `greedyView`; adding
+Shift moves the focused window there.
+
+`keys` receives the final configuration, so changing `modMask`, `terminal`,
+or `workspaces` also changes `defaultKeys`. Bindings use XKB keysym numbers,
+with `Keysym 0xff0d` representing Return. Combine `Mods` with `(.|.)`, which `Seki` exports. River excludes locked modifiers, so bit 16 and unknown modifier
+bits fail validation before connection. Named modifiers are `Shift`, `Control`,
+`Mod1`, `Mod3`, `Mod4`, and `Mod5`. `bindingsUseFixedLayout = True`
+matches group zero regardless of the active keyboard layout.
+
+When changing the layout's type, replace the layout-dependent key function
+in the same record update, as in `def{layoutHook = Full, keys = defaultKeys}`.
+Custom bindings are an association list of `(KeyBinding, Action l ())` pairs.
+Duplicate identities, empty workspace lists or duplicate tags, negative borders,
+and colors whose RGB channels exceed alpha fail before Wayland startup.
+`BorderColor` channels are unsigned 32-bit premultiplied RGBA values.
+
+`Action` is pure. Use `windows`, `sendMessage`, `spawn`, and `kill` to change
+state or record effects. Arbitrary IO is not part of the configuration API.
+Import `Seki.Core.StackSet` qualified for its full operation set; `Seki`
+exports selected operations without conflicting with `Config.workspaces`.
+
+The pure configuration lives in `seki-core`. The private `seki-wire`
+component lowers keys and styles into the production policy. The public
+library depends on both, and the executable imports only `Seki`.
 
 ## Architectural consequences
 
@@ -124,7 +149,7 @@ cabal run seki
 ```
 
 The current defaults use Mod4-Shift-Return to launch `foot` and Mod4-Shift-c to
-close the active window.
+close the focused window.
 
 Validate the pinned protocol set and regenerate the committed bindings with:
 
