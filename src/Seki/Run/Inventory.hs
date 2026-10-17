@@ -18,9 +18,11 @@ module Seki.Run.Inventory (
   addRiverWindow,
   addRiverOutput,
   attachRiverWindowNode,
+  attachRiverOutputLayerShell,
   activateRiverWindow,
   applyRiverWindowEvent,
   applyRiverOutputEvent,
+  applyRiverLayerShellOutputEvent,
 )
 where
 
@@ -30,6 +32,8 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Word (Word32)
+import Seki.Internal.Core.Geometry (GeometryError, Point (..), Rect, mkRect, mkSize)
+import Seki.Protocol.RiverLayerShellV1 qualified as LayerShell
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Wire.Connection.ObjectTable (Object, objectId)
 import Seki.Wire.Types (ObjectId)
@@ -82,6 +86,10 @@ data RiverOutputState = RiverOutputState
   , riverOutputWlOutputName :: Maybe Word32
   , riverOutputPosition :: Maybe RiverPoint
   , riverOutputDimensions :: Maybe RiverSize
+  , riverOutputLayerShell :: Maybe (Object LayerShell.RiverLayerShellOutputV1)
+  , riverOutputUsableArea :: Maybe Rect
+  -- ^ The latest @non_exclusive_area@, in global coordinates. The planner
+  -- reads it; it stays 'Nothing' until river sends the first one.
   }
   deriving (Eq, Show)
 
@@ -106,6 +114,8 @@ data RiverInventoryError
   | RiverInventoryRepeatedWindowIdentifier ObjectId
   | RiverInventoryRepeatedOutputName ObjectId
   | RiverInventoryWindowNodeAlreadyAttached ObjectId
+  | RiverInventoryOutputLayerShellAlreadyAttached ObjectId
+  | RiverInventoryInvalidUsableArea ObjectId GeometryError
   deriving (Eq, Show)
 
 emptyRiverInventory :: RiverInventory
@@ -180,6 +190,8 @@ addRiverOutput output inventory = do
           , riverOutputWlOutputName = Nothing
           , riverOutputPosition = Nothing
           , riverOutputDimensions = Nothing
+          , riverOutputLayerShell = Nothing
+          , riverOutputUsableArea = Nothing
           }
   pure
     inventory
@@ -206,6 +218,30 @@ attachRiverWindowNode window node inventory = do
           }
  where
   identifier = objectId window
+
+attachRiverOutputLayerShell ::
+  Object River.RiverOutputV1 ->
+  Object LayerShell.RiverLayerShellOutputV1 ->
+  RiverInventory ->
+  Either RiverInventoryError RiverInventory
+attachRiverOutputLayerShell output layerShell inventory = do
+  current <- requireOutput output inventory
+  case riverOutputLayerShell current of
+    Just _ -> Left (RiverInventoryOutputLayerShellAlreadyAttached (objectId output))
+    Nothing -> Right (updateOutput current{riverOutputLayerShell = Just layerShell} inventory)
+
+applyRiverLayerShellOutputEvent ::
+  Object River.RiverOutputV1 ->
+  LayerShell.RiverLayerShellOutputV1Event fd ->
+  RiverInventory ->
+  Either RiverInventoryError RiverInventory
+applyRiverLayerShellOutputEvent output event inventory = do
+  current <- requireOutput output inventory
+  case event of
+    LayerShell.RiverLayerShellOutputV1NonExclusiveArea x y width height ->
+      case mkSize width height >>= mkRect (Point x y) of
+        Left errorValue -> Left (RiverInventoryInvalidUsableArea (objectId output) errorValue)
+        Right area -> Right (updateOutput current{riverOutputUsableArea = Just area} inventory)
 
 applyRiverWindowEvent ::
   Object River.RiverWindowV1 ->
@@ -290,6 +326,13 @@ applyRiverOutputEvent output event inventory = do
       inventory
         { inventoryOutputs = Map.insert identifier state (inventoryOutputs inventory)
         }
+
+updateOutput :: RiverOutputState -> RiverInventory -> RiverInventory
+updateOutput state inventory =
+  inventory
+    { inventoryOutputs =
+        Map.insert (objectId (riverOutputObject state)) state (inventoryOutputs inventory)
+    }
 
 ensureObjectUntracked :: ObjectId -> RiverInventory -> Either RiverInventoryError ()
 ensureObjectUntracked identifier inventory

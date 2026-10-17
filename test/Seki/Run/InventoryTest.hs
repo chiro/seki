@@ -2,7 +2,10 @@
 
 module Seki.Run.InventoryTest (tests) where
 
+import Data.Int (Int32)
 import Data.Word (Word32)
+import Seki.Internal.Core.Geometry (GeometryError (..), Point (..), Rect, mkRect, mkSize)
+import Seki.Protocol.RiverLayerShellV1 qualified as LayerShell
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.Wayland qualified as Wayland
 import Seki.Run.Inventory (
@@ -17,8 +20,10 @@ import Seki.Run.Inventory (
   activateRiverWindow,
   addRiverOutput,
   addRiverWindow,
+  applyRiverLayerShellOutputEvent,
   applyRiverOutputEvent,
   applyRiverWindowEvent,
+  attachRiverOutputLayerShell,
   attachRiverWindowNode,
   emptyRiverInventory,
   lookupRiverOutput,
@@ -51,6 +56,9 @@ tests =
     , testCase "accumulates output geometry and removes outputs" testOutputLifecycle
     , testCase "rejects duplicate IDs and stale object handles" testObjectIdentity
     , testCase "rejects invalid and repeated protocol state" testInvalidState
+    , testCase "attaches one layer-shell output per output" testOutputLayerShell
+    , testCase "keeps the latest usable area exactly" testUsableArea
+    , testCase "rejects usable areas outside core geometry" testInvalidUsableArea
     ]
 
 testUnspecifiedMaximumDimensions :: Assertion
@@ -202,6 +210,57 @@ testInvalidState = do
   expectLeft
     (RiverInventoryRepeatedOutputName (objectId output))
     (applyRiverOutputEvent output (River.RiverOutputV1WlOutput 2) withOutputName)
+
+testOutputLayerShell :: Assertion
+testOutputLayerShell = do
+  output <- makeServerObject River.riverOutputV1Interface 0xff000050 False
+  layerShell <- makeClientObject LayerShell.riverLayerShellOutputV1Interface
+  inventory0 <- expectRight (addRiverOutput output emptyRiverInventory)
+  assertEqual "no layer-shell output before attachment" (Just Nothing) (riverOutputLayerShell <$> lookupRiverOutput (objectId output) inventory0)
+  attached <- expectRight (attachRiverOutputLayerShell output layerShell inventory0)
+  assertEqual "attached layer-shell output" (Just (Just layerShell)) (riverOutputLayerShell <$> lookupRiverOutput (objectId output) attached)
+  expectLeft
+    (RiverInventoryOutputLayerShellAlreadyAttached (objectId output))
+    (attachRiverOutputLayerShell output layerShell attached)
+
+testUsableArea :: Assertion
+testUsableArea = do
+  output <- makeServerObject River.riverOutputV1Interface 0xff000051 False
+  inventory0 <- expectRight (addRiverOutput output emptyRiverInventory)
+  assertEqual "no usable area before the first event" (Just Nothing) (usableArea output inventory0)
+  mapM_
+    ( \(x, y, width, height) -> do
+        next <- expectRight (applyRiverLayerShellOutputEvent output (LayerShell.RiverLayerShellOutputV1NonExclusiveArea x y width height) inventory0)
+        expected <- expectRight (mkSize width height >>= mkRect (Point x y))
+        assertEqual ("usable area " <> show (x, y, width, height)) (Just (Just expected)) (usableArea output next)
+    )
+    [ (0, 30, 1920, 1050)
+    , (-1920, -1080, 1920, 1080)
+    , (100, 200, 0, 0)
+    , (maxBound - 10, 0, 10, 5)
+    ]
+  first <- expectRight (applyRiverLayerShellOutputEvent output (LayerShell.RiverLayerShellOutputV1NonExclusiveArea 0 30 1920 1050) inventory0)
+  second <- expectRight (applyRiverLayerShellOutputEvent output (LayerShell.RiverLayerShellOutputV1NonExclusiveArea 0 0 1920 1080) first)
+  replacement <- expectRight (mkSize 1920 1080 >>= mkRect (Point 0 0))
+  assertEqual "a later area replaces the earlier one" (Just (Just replacement)) (usableArea output second)
+
+testInvalidUsableArea :: Assertion
+testInvalidUsableArea = do
+  output <- makeServerObject River.riverOutputV1Interface 0xff000052 False
+  inventory0 <- expectRight (addRiverOutput output emptyRiverInventory)
+  expectLeft
+    (RiverInventoryInvalidUsableArea (objectId output) (NegativeSize (-1) 1080))
+    (applyRiverLayerShellOutputEvent output (LayerShell.RiverLayerShellOutputV1NonExclusiveArea 0 0 (-1) 1080) inventory0)
+  expectLeft
+    (RiverInventoryInvalidUsableArea (objectId output) (RectOutOfRange (fromIntegral (maxBound - 10 :: Int32)) 0 11 5))
+    (applyRiverLayerShellOutputEvent output (LayerShell.RiverLayerShellOutputV1NonExclusiveArea (maxBound - 10) 0 11 5) inventory0)
+  removed <- expectRight (applyRiverOutputEvent output River.RiverOutputV1Removed inventory0)
+  expectLeft
+    (RiverInventoryOutputNotTracked (objectId output))
+    (applyRiverLayerShellOutputEvent output (LayerShell.RiverLayerShellOutputV1NonExclusiveArea 0 0 1 1) removed)
+
+usableArea :: Object River.RiverOutputV1 -> RiverInventory -> Maybe (Maybe Rect)
+usableArea output inventory = riverOutputUsableArea <$> lookupRiverOutput (objectId output) inventory
 
 applyWindowEvents ::
   Object River.RiverWindowV1 ->
