@@ -95,6 +95,7 @@ library seki-wire
     Seki.Protocol.Wayland
     Seki.Run.Full
     Seki.Run.Inventory
+    Seki.Run.LayerShell
     Seki.Run.Default
     Seki.Run.Phase
     Seki.Run.Policy

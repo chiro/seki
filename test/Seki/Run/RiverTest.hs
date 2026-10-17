@@ -12,6 +12,12 @@ import Data.Word (Word32)
 import Network.Socket (Family (AF_UNIX), Socket, SocketType (Stream), close, defaultProtocol, socketPair, withFdSocket)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.Wayland qualified as Wayland
+import Seki.Run.LayerShell (
+  RiverLayerShellBootstrapError (..),
+  bindRiverLayerShell,
+  riverLayerShellRequiredVersion,
+  selectRiverLayerShellGlobal,
+ )
 import Seki.Run.River (
   RiverBootstrapError (..),
   RiverWindowManagerHandlers (..),
@@ -78,6 +84,8 @@ tests =
     , testCase "binds and routes manager-created windows, outputs, and seats" testManagerBinding
     , testCase "selects and binds the unique XKB bindings global" testXkbBinding
     , testCase "rejects missing, ambiguous, and obsolete XKB globals" testXkbSelectionErrors
+    , testCase "selects and binds the unique layer-shell global" testLayerShellBinding
+    , testCase "rejects missing and ambiguous layer-shell globals" testLayerShellSelectionErrors
     ]
 
 testManagerSelection :: Assertion
@@ -237,6 +245,56 @@ testXkbSelectionErrors = do
         [globalNameFromWord 3, globalNameFromWord 8]
     )
     (selectRiverXkbBindingsGlobal ambiguous)
+
+testLayerShellBinding :: Assertion
+testLayerShellBinding =
+  withConnectionPair $ \connection display peer -> do
+    registry <-
+      expectRight
+        =<< submitNewObjectRequest
+          connection
+          Wayland.wlDisplayInterface
+          display
+          Wayland.wlRegistryInterface
+          1
+          (Wayland.encodeWlDisplayGetRegistry . objectId)
+    _ <- receiveFrame peer
+    catalog <- catalogWith [(23, "river_layer_shell_v1", 5)]
+    selected <- expectRight (selectRiverLayerShellGlobal catalog)
+    assertEqual "generated version cap" 1 (globalVersion selected)
+    assertEqual "required feature version" 1 riverLayerShellRequiredVersion
+
+    layerShell <- expectRight =<< bindRiverLayerShell connection registry catalog
+    bindFrame <- receiveFrame peer
+    assertEqual "registry bind sender" (objectId registry) (rawFrameSender bindFrame)
+    assertEqual "registry bind opcode" (Opcode 0) (rawFrameOpcode bindFrame)
+    case runCompleteArgumentDecoder ((,) <$> getUint <*> getDynamicNewId) (rawFramePayload bindFrame) ([] :: [()]) of
+      Done (name, dynamicId) remaining [] -> do
+        assertEqual "layer-shell global name" 23 name
+        assertEqual
+          "typed layer-shell bind"
+          DynamicNewId
+            { dynamicNewIdInterface = "river_layer_shell_v1"
+            , dynamicNewIdVersion = 1
+            , dynamicNewIdObject = objectId layerShell
+            }
+          dynamicId
+        assertEqual "complete bind payload" ByteString.empty remaining
+      result -> assertFailure ("unexpected layer-shell bind payload: " <> show result)
+
+testLayerShellSelectionErrors :: Assertion
+testLayerShellSelectionErrors = do
+  expectLeft RiverLayerShellGlobalMissing (selectRiverLayerShellGlobal emptyGlobalCatalog)
+  ambiguous <-
+    catalogWith
+      [ (8, "river_layer_shell_v1", 1)
+      , (3, "river_layer_shell_v1", 1)
+      ]
+  expectLeft
+    ( RiverLayerShellGlobalsAmbiguous
+        [globalNameFromWord 3, globalNameFromWord 8]
+    )
+    (selectRiverLayerShellGlobal ambiguous)
 
 catalogWith :: [(Word32, Text, Word32)] -> IO GlobalCatalog
 catalogWith = go emptyGlobalCatalog
