@@ -3,10 +3,12 @@
 
 module Seki.Fixture.LayerSurfaceTest (tests) where
 
+import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar (MVar)
 import Control.Exception (SomeException)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
+import Data.Either (isLeft)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import Data.Word (Word32)
@@ -17,8 +19,11 @@ import Seki.Fixture.LayerSurface (
   FixtureReady (..),
   FixtureStop (..),
   newFixtureControl,
+  parseFixtureArguments,
+  readyLine,
   requestStop,
   runLayerSurfaceFixture,
+  stopOnEndOfInput,
  )
 import Seki.Run.MockRiver (
   callbackDoneFrame,
@@ -59,10 +64,12 @@ import Seki.Wire.Transport (
   withOwnedFd,
  )
 import Seki.Wire.Types (FrameDecode (..), ObjectId, Opcode (..), RawFrame (..))
+import System.IO (hClose)
 import System.Posix.Files (fileSize, getFdStatus)
+import System.Posix.IO (closeFd, createPipe, fdToHandle)
 import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (Assertion, assertEqual, assertFailure, testCase)
+import Test.Tasty.HUnit (Assertion, assertBool, assertEqual, assertFailure, testCase)
 
 tests :: TestTree
 tests =
@@ -79,6 +86,9 @@ tests =
     , testCase "tears down in order and exits cleanly when the compositor closes it" testClosedTeardown
     , testCase "tears down the unmapped surface when closed before configure" testClosedBeforeConfigure
     , testCase "waits for the teardown sync, not the readiness sync" testTeardownWaitsForItsOwnSync
+    , testCase "stops when its input reaches end of file" testStopOnEndOfInput
+    , testCase "formats the readiness line" testReadyLine
+    , testCase "parses the bar height argument" testArguments
     ]
 
 testBindsGlobals :: Assertion
@@ -215,6 +225,30 @@ testTeardownWaitsForItsOwnSync = do
       sendFrames (mockPeer mock) [callbackDoneFrame (bufferSyncCallback buffers) 2]
   assertStoppedByConnection result
   assertEqual "no readiness once stopping" [] (fixtureReadies result)
+
+testStopOnEndOfInput :: Assertion
+testStopOnEndOfInput = do
+  (readEnd, writeEnd) <- createPipe
+  input <- fdToHandle readEnd
+  (result, _) <-
+    withFixtureControl defaultConfig $ \control mock -> do
+      _ <- forkIO (stopOnEndOfInput input control)
+      (objects, buffers) <- mapFixtureSurface 32 mock
+      closeFd writeEnd
+      expectMappedTeardown mock objects buffers >>= completeTeardown mock
+  hClose input
+  assertEqual "stopped cleanly" (Right StoppedByRequest) (fixtureOutcome result)
+
+testReadyLine :: Assertion
+testReadyLine = assertEqual "ready line" "ready 1280 32" (readyLine (FixtureReady 1280 32))
+
+testArguments :: Assertion
+testArguments = do
+  assertEqual "default height" (Right (FixtureConfig 32)) (parseFixtureArguments [])
+  assertEqual "explicit height" (Right (FixtureConfig 48)) (parseFixtureArguments ["48"])
+  mapM_
+    (\arguments -> assertBool ("rejects " <> show arguments) (isLeft (parseFixtureArguments arguments)))
+    [["0"], ["-4"], ["tall"], ["2147483648"], ["32", "48"]]
 
 expectMappedTeardown :: Mock -> Objects -> BufferObjects -> IO ObjectId
 expectMappedTeardown mock objects buffers = do

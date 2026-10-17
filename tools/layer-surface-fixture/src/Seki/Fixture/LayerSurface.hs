@@ -10,8 +10,11 @@ module Seki.Fixture.LayerSurface (
   FixtureError (..),
   FixtureControl,
   newFixtureControl,
+  parseFixtureArguments,
+  readyLine,
   requestStop,
   runLayerSurfaceFixture,
+  stopOnEndOfInput,
 )
 where
 
@@ -61,11 +64,13 @@ import Seki.Wire.Connection.Registry (
   selectGlobals,
  )
 import Seki.Wire.Transport (ConnectionTarget, OwnedFd, adoptFd, withOwnedFd)
+import System.IO (Handle)
 import System.IO.Error (isAlreadyExistsError)
 import System.Posix.IO.ByteString (fdWrite)
 import System.Posix.Process (getProcessID)
 import System.Posix.SharedMem (ShmOpenFlags (..), shmOpen, shmUnlink)
 import System.Posix.Types (Fd)
+import Text.Read (readMaybe)
 
 newtype FixtureConfig = FixtureConfig
   { fixtureHeight :: Word32
@@ -110,6 +115,34 @@ newtype FixtureControl = FixtureControl (Chan FixtureInput)
 
 newFixtureControl :: IO FixtureControl
 newFixtureControl = FixtureControl <$> newChan
+
+{- | Read and discard input until end of file, then request a stop. A read
+error counts as end of file, since the harness can no longer reach the fixture.
+-}
+stopOnEndOfInput :: Handle -> FixtureControl -> IO ()
+stopOnEndOfInput input control = do
+  chunk <- try @IOException (ByteString.hGetSome input 4096)
+  case chunk of
+    Right bytes | not (ByteString.null bytes) -> stopOnEndOfInput input control
+    _ -> requestStop control
+
+-- | The one stdout line the harness waits for.
+readyLine :: FixtureReady -> String
+readyLine ready = "ready " <> show (readyWidth ready) <> " " <> show (readyHeight ready)
+
+-- | Parse the optional bar height in pixels, which is also the exclusive zone.
+parseFixtureArguments :: [String] -> Either String FixtureConfig
+parseFixtureArguments = \case
+  [] -> Right (FixtureConfig defaultHeight)
+  [value]
+    | Just height <- readMaybe value
+    , height >= 1
+    , height <= toInteger (maxBound :: Int32) ->
+        Right (FixtureConfig (fromInteger height))
+  _ -> Left "usage: seki-layer-surface-fixture [HEIGHT], where HEIGHT is a positive pixel count"
+
+defaultHeight :: Word32
+defaultHeight = 32
 
 -- | Ask a running fixture to tear down and exit cleanly. Safe from any thread.
 requestStop :: FixtureControl -> IO ()
