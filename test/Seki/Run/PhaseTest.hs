@@ -8,6 +8,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Network.Socket (Family (AF_UNIX), Socket, SocketType (Stream), close, defaultProtocol, socketPair, withFdSocket)
+import Seki.Protocol.RiverLayerShellV1 qualified as LayerShell
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Run.Phase (
@@ -22,6 +23,7 @@ import Seki.Run.Phase (
   proposeWindowDimensions,
   runManageM,
   runRenderM,
+  setDefaultLayerShellOutput,
   setKeyBindingLayoutOverride,
   setNodePosition,
   setWindowBorders,
@@ -56,6 +58,7 @@ tests =
     "river phase plans"
     [ testCase "submits manage requests in plan order" testManagePlan
     , testCase "submits XKB binding configuration in plan order" testKeyBindingManagePlan
+    , testCase "submits the default layer-shell output in a manage plan" testLayerShellManagePlan
     , testCase "submits window render requests in plan order" testWindowRenderPlan
     , testCase "submits node render requests in plan order" testNodeRenderPlan
     , testCase "stops a plan at the first request failure" testPlanFailure
@@ -93,6 +96,13 @@ testKeyBindingManagePlan =
     expectRequest reader peer binding (Opcode 1) (putUint 0)
     expectRequest reader peer binding (Opcode 2) (pure ())
     expectRequest reader peer binding (Opcode 3) (pure ())
+
+testLayerShellManagePlan :: Assertion
+testLayerShellManagePlan =
+  withInterfaceConnection LayerShell.riverLayerShellOutputV1Interface $ \connection layerShellOutput peer -> do
+    assertEqual "layer-shell plan" (Right ()) =<< runManageM connection (setDefaultLayerShellOutput layerShellOutput)
+    reader <- newFrameReader
+    expectRequest reader peer layerShellOutput (Opcode 1) (pure ())
 
 testWindowRenderPlan :: Assertion
 testWindowRenderPlan =

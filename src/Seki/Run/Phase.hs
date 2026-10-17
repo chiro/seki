@@ -19,6 +19,7 @@ module Seki.Run.Phase (
   disableKeyBinding,
   focusWindow,
   clearFocus,
+  setDefaultLayerShellOutput,
   hideWindow,
   showWindow,
   setWindowBorders,
@@ -36,6 +37,7 @@ import Data.Int (Int32)
 import Data.Sequence (Seq, (><))
 import Data.Sequence qualified as Seq
 import Data.Word (Word32)
+import Seki.Protocol.RiverLayerShellV1 qualified as LayerShell
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Wire.Binding (Interface, RequestEncoder)
@@ -185,6 +187,14 @@ focusWindow seat window =
 clearFocus :: Object River.RiverSeatV1 -> ManageM ()
 clearFocus seat =
   phaseRequest River.riverSeatV1Interface seat River.encodeRiverSeatV1ClearFocus
+
+-- | Make this output the default for layer surfaces that name no output.
+setDefaultLayerShellOutput :: Object LayerShell.RiverLayerShellOutputV1 -> ManageM ()
+setDefaultLayerShellOutput layerShellOutput =
+  phaseRequest
+    LayerShell.riverLayerShellOutputV1Interface
+    layerShellOutput
+    LayerShell.encodeRiverLayerShellOutputV1SetDefault
 
 hideWindow :: Object River.RiverWindowV1 -> RenderM ()
 hideWindow window =
