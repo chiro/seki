@@ -116,7 +116,7 @@ testEventsAtManageStart =
     w2 <- requireObjectId 0xff000032
     mockDone <- runMock $ do
       reader <- newFrameReader
-      (managerId, _) <- handshake reader peer
+      (managerId, _, _) <- handshake reader peer
       sendFrames peer [newWindow managerId w1, newOutput managerId o1, manageStart managerId]
       _ <- receiveNewIdRequest reader peer w1 (Opcode 2)
       finishManage reader peer managerId
@@ -146,7 +146,7 @@ testSeatEvents =
     s1 <- requireObjectId 0xff000043
     mockDone <- runMock $ do
       reader <- newFrameReader
-      (managerId, _) <- handshake reader peer
+      (managerId, _, _) <- handshake reader peer
       sendFrames peer [newWindow managerId w1, newWindow managerId w2, newOutput managerId o1, newSeat managerId s1, manageStart managerId]
       _ <- receiveNewIdRequest reader peer w1 (Opcode 2)
       _ <- receiveNewIdRequest reader peer w2 (Opcode 2)
@@ -182,7 +182,7 @@ testBindingOrder =
           ]
     mockDone <- runMock $ do
       reader <- newFrameReader
-      (managerId, xkbBindingsId) <- handshake reader peer
+      (managerId, xkbBindingsId, _) <- handshake reader peer
       sendFrames peer [newOutput managerId o1, newSeat managerId s1]
       bindingIds <- mapM (receiveKeyBindingRequest reader peer xkbBindingsId s1 . fst) bindings
       sendFrames peer [manageStart managerId]
@@ -209,7 +209,7 @@ testOneQueue =
     let bindings = [(keyBinding 0x63, kill)]
     mockDone <- runMock $ do
       reader <- newFrameReader
-      (managerId, xkbBindingsId) <- handshake reader peer
+      (managerId, xkbBindingsId, _) <- handshake reader peer
       sendFrames peer [newWindow managerId w1, newOutput managerId o1, newSeat managerId s1]
       _ <- receiveNewIdRequest reader peer w1 (Opcode 2)
       killId <- receiveKeyBindingRequest reader peer xkbBindingsId s1 (keyBinding 0x63)
@@ -233,7 +233,7 @@ testCloseRequests =
     let bindings = [(keyBinding 0x63, kill)]
     mockDone <- runMock $ do
       reader <- newFrameReader
-      (managerId, xkbBindingsId) <- handshake reader peer
+      (managerId, xkbBindingsId, _) <- handshake reader peer
       sendFrames peer [newWindow managerId w1, newOutput managerId o1, newSeat managerId s1]
       nodeId <- receiveNewIdRequest reader peer w1 (Opcode 2)
       killId <- receiveKeyBindingRequest reader peer xkbBindingsId s1 (keyBinding 0x63)
@@ -311,13 +311,14 @@ nodeWindows snapshot =
   , isJust (riverWindowNode w)
   ]
 
-handshake :: FrameReader -> Transport -> IO (ObjectId, ObjectId)
+handshake :: FrameReader -> Transport -> IO (ObjectId, ObjectId, ObjectId)
 handshake reader peer = do
   (registryId, callbackId) <- receiveStartupRequests reader peer
   sendFrames
     peer
     [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
     , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+    , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
     , callbackDoneFrame callbackId 1
     ]
   receiveRuntimeBinds reader peer

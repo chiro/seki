@@ -6,6 +6,7 @@ module Seki.Run.Runtime (
   riverWaylandSession,
   riverWindowManager,
   riverXkbBindings,
+  riverLayerShell,
   readRiverInventory,
   RiverKeyBindingState (..),
   RiverSeatBindings (..),
@@ -28,6 +29,7 @@ import Control.Monad (when)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Seki.Protocol.RiverLayerShellV1 qualified as LayerShell
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Run.Inventory (
@@ -42,6 +44,11 @@ import Seki.Run.Inventory (
   attachRiverWindowNode,
   emptyRiverInventory,
   lookupRiverWindow,
+ )
+import Seki.Run.LayerShell (
+  RiverLayerShellBootstrapError,
+  bindRiverLayerShell,
+  selectRiverLayerShellGlobal,
  )
 import Seki.Run.Phase (
   ManageM,
@@ -101,6 +108,7 @@ data RiverSession = RiverSession
   { riverWaylandSession :: WaylandSession
   , riverWindowManager :: Object River.RiverWindowManagerV1
   , riverXkbBindings :: Object Xkb.RiverXkbBindingsV1
+  , riverLayerShell :: Object LayerShell.RiverLayerShellV1
   , riverEventLoopClaim :: MVar Bool
   , riverSequenceStatus :: IORef (Either RiverRuntimeError RiverSequenceState)
   , riverInventoryState :: IORef RiverInventory
@@ -153,6 +161,7 @@ data RiverRuntimeError
   = RiverRuntimeStartupError WaylandStartupError
   | RiverRuntimeBootstrapError RiverBootstrapError
   | RiverRuntimeXkbBootstrapError RiverXkbBootstrapError
+  | RiverRuntimeLayerShellBootstrapError RiverLayerShellBootstrapError
   | RiverRuntimeConnectionError ConnectionError
   | RiverRuntimeRegistryError RegistryError
   | RiverRuntimeInventoryError RiverInventoryError
@@ -205,7 +214,7 @@ openRiverSessionWith openWayland runtimeHandlers =
         result <- restore (bindRuntimeGlobals wayland checkedHandlers) `onException` closeWaylandSession wayland
         case result of
           Left errorValue -> closeWaylandSession wayland >> pure (Left errorValue)
-          Right (manager, xkbBindings) -> do
+          Right (manager, xkbBindings, layerShell) -> do
             writeIORef xkbGlobalState (Just xkbBindings)
             eventLoopClaim <- newMVar False
             pure
@@ -214,6 +223,7 @@ openRiverSessionWith openWayland runtimeHandlers =
                       wayland
                       manager
                       xkbBindings
+                      layerShell
                       eventLoopClaim
                       sequenceStatus
                       inventoryState
@@ -229,6 +239,7 @@ bindRuntimeGlobals ::
         RiverRuntimeError
         ( Object River.RiverWindowManagerV1
         , Object Xkb.RiverXkbBindingsV1
+        , Object LayerShell.RiverLayerShellV1
         )
     )
 bindRuntimeGlobals wayland handlers =
@@ -238,13 +249,18 @@ bindRuntimeGlobals wayland handlers =
       Left errorValue -> pure (Left (RiverRuntimeBootstrapError errorValue))
       Right _ -> case selectRiverXkbBindingsGlobal catalog of
         Left errorValue -> pure (Left (RiverRuntimeXkbBootstrapError errorValue))
-        Right _ ->
-          bindRiverWindowManager connection registry catalog handlers >>= \case
-            Left errorValue -> pure (Left (RiverRuntimeBootstrapError errorValue))
-            Right manager ->
-              bindRiverXkbBindings connection registry catalog >>= \case
-                Left errorValue -> pure (Left (RiverRuntimeXkbBootstrapError errorValue))
-                Right xkbBindings -> pure (Right (manager, xkbBindings))
+        Right _ -> case selectRiverLayerShellGlobal catalog of
+          Left errorValue -> pure (Left (RiverRuntimeLayerShellBootstrapError errorValue))
+          Right _ ->
+            bindRiverWindowManager connection registry catalog handlers >>= \case
+              Left errorValue -> pure (Left (RiverRuntimeBootstrapError errorValue))
+              Right manager ->
+                bindRiverXkbBindings connection registry catalog >>= \case
+                  Left errorValue -> pure (Left (RiverRuntimeXkbBootstrapError errorValue))
+                  Right xkbBindings ->
+                    bindRiverLayerShell connection registry catalog >>= \case
+                      Left errorValue -> pure (Left (RiverRuntimeLayerShellBootstrapError errorValue))
+                      Right layerShell -> pure (Right (manager, xkbBindings, layerShell))
  where
   connection = waylandConnection wayland
   registry = waylandRegistry wayland

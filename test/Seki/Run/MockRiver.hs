@@ -104,7 +104,8 @@ decodeNewId frame = case runCompleteArgumentDecoder getNewId (rawFramePayload fr
     | ByteString.null remaining -> pure identifier
   result -> assertFailure ("unexpected new_id payload: " <> show result)
 
-receiveRuntimeBinds :: FrameReader -> Transport -> IO (ObjectId, ObjectId)
+-- | Receive the manager, XKB, and layer-shell binds, returning their IDs in that order.
+receiveRuntimeBinds :: FrameReader -> Transport -> IO (ObjectId, ObjectId, ObjectId)
 receiveRuntimeBinds reader peer =
   receiveRuntimeBindsAtManagerVersion reader peer 4
 
@@ -112,7 +113,7 @@ receiveRuntimeBindsAtManagerVersion ::
   FrameReader ->
   Transport ->
   Word32 ->
-  IO (ObjectId, ObjectId)
+  IO (ObjectId, ObjectId, ObjectId)
 receiveRuntimeBindsAtManagerVersion reader peer managerVersion = do
   managerId <-
     receiveGlobalBind
@@ -130,7 +131,15 @@ receiveRuntimeBindsAtManagerVersion reader peer managerVersion = do
       8
       "river_xkb_bindings_v1"
       3
-  pure (managerId, xkbBindingsId)
+  layerShellId <-
+    receiveGlobalBind
+      reader
+      peer
+      "layer shell"
+      9
+      "river_layer_shell_v1"
+      1
+  pure (managerId, xkbBindingsId, layerShellId)
 
 receiveGlobalBind ::
   FrameReader ->

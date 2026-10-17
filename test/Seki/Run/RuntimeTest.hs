@@ -18,6 +18,7 @@ import Seki.Run.Inventory (
   riverInventoryWindows,
   riverOutputRectangle,
  )
+import Seki.Run.LayerShell (RiverLayerShellBootstrapError (..))
 import Seki.Run.MockRiver (
   callbackDoneFrame,
   encodedFrame,
@@ -26,6 +27,7 @@ import Seki.Run.MockRiver (
   expectRight,
   newFrameReader,
   receiveExpectedRequest,
+  receiveGlobalBind,
   receiveKeyBindingRequest,
   receiveNewIdRequest,
   receiveRuntimeBinds,
@@ -50,6 +52,7 @@ import Seki.Run.Runtime (
   openRiverSessionAt,
   readRiverInventory,
   readRiverSeatBindings,
+  riverLayerShell,
   riverWaylandSession,
   riverWindowManager,
   riverXkbBindings,
@@ -88,6 +91,9 @@ tests =
     , testCase "rejects an out-of-order manager sequence event" testSequenceOrderError
     , testCase "closes startup when the manager global is missing" testMissingManager
     , testCase "closes startup when the XKB bindings global is missing" testMissingXkb
+    , testCase "closes startup when the layer-shell global is missing" testMissingLayerShell
+    , testCase "closes startup when the layer-shell global announces version 0" testZeroVersionLayerShell
+    , testCase "closes startup when the layer-shell bind fails" testLayerShellBindFailure
     , testCase "promotes live registry failures from the event loop" testLiveRegistryFailure
     ]
 
@@ -102,9 +108,10 @@ testOwnedRuntime =
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
         , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
         , callbackDoneFrame callbackId 91
         ]
-      (managerId, xkbBindingsId) <- receiveRuntimeBinds reader peer
+      (managerId, xkbBindingsId, layerShellId) <- receiveRuntimeBinds reader peer
       sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
       receiveSequenceCompletion reader peer managerId (Opcode 2)
       sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
@@ -116,7 +123,7 @@ testOwnedRuntime =
       sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
       receiveSequenceCompletion reader peer managerId (Opcode 4)
       closeTransport peer
-      pure (managerId, xkbBindingsId)
+      pure (managerId, xkbBindingsId, layerShellId)
     session <-
       expectRight
         =<< openRiverSessionAt
@@ -124,9 +131,10 @@ testOwnedRuntime =
           defaultObjectLimit
           (runtimeHandlers (\event -> modifyIORef' managerEvents (<> [event])))
     assertEqual "clean event-loop EOF" (Right ()) =<< runRiverSession session
-    (managerId, xkbBindingsId) <- expectMockSuccess mockDone
+    (managerId, xkbBindingsId, layerShellId) <- expectMockSuccess mockDone
     assertEqual "bound manager object" managerId (objectId (riverWindowManager session))
     assertEqual "bound XKB object" xkbBindingsId (objectId (riverXkbBindings session))
+    assertEqual "bound layer-shell object" layerShellId (objectId (riverLayerShell session))
     assertEqual
       "typed manager events"
       [ River.RiverWindowManagerV1ManageStart
@@ -156,9 +164,10 @@ testPhasePlans =
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
         , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
         , callbackDoneFrame callbackId 93
         ]
-      (managerId, _) <- receiveRuntimeBinds reader peer
+      (managerId, _, _) <- receiveRuntimeBinds reader peer
       windowId <- requireObjectId 0xff000001
       outputId <- requireObjectId 0xff000002
       sendFrames
@@ -216,9 +225,10 @@ testFullWithoutOutput =
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
         , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
         , callbackDoneFrame callbackId 95
         ]
-      (managerId, _) <- receiveRuntimeBinds reader peer
+      (managerId, _, _) <- receiveRuntimeBinds reader peer
       windowId <- requireObjectId 0xff000004
       sendFrames
         peer
@@ -256,9 +266,10 @@ testDefaultPolicy =
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
         , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
         , callbackDoneFrame callbackId 100
         ]
-      (managerId, xkbBindingsId) <- receiveRuntimeBinds reader peer
+      (managerId, xkbBindingsId, _) <- receiveRuntimeBinds reader peer
       windowId <- requireObjectId 0xff000010
       outputId <- requireObjectId 0xff000011
       seatId <- requireObjectId 0xff000012
@@ -316,9 +327,10 @@ testSeatInteractionFocus =
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
         , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
         , callbackDoneFrame callbackId 99
         ]
-      (managerId, _) <- receiveRuntimeBinds reader peer
+      (managerId, _, _) <- receiveRuntimeBinds reader peer
       seatId <- requireObjectId 0xff000022
       sendFrames
         peer
@@ -360,9 +372,10 @@ testInventoryRemoval =
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
         , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
         , callbackDoneFrame callbackId 97
         ]
-      (managerId, _) <- receiveRuntimeBinds reader peer
+      (managerId, _, _) <- receiveRuntimeBinds reader peer
       windowId <- requireObjectId 0xff000005
       outputId <- requireObjectId 0xff000006
       sendFrames
@@ -418,9 +431,10 @@ testPhasePlanFailure =
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 3
         , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
         , callbackDoneFrame callbackId 94
         ]
-      (managerId, _) <- receiveRuntimeBindsAtManagerVersion reader peer 3
+      (managerId, _, _) <- receiveRuntimeBindsAtManagerVersion reader peer 3
       windowId <- requireObjectId 0xff000002
       sendFrames
         peer
@@ -462,9 +476,10 @@ testInventoryFailure =
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
         , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
         , callbackDoneFrame callbackId 95
         ]
-      (managerId, _) <- receiveRuntimeBinds reader peer
+      (managerId, _, _) <- receiveRuntimeBinds reader peer
       sendFrames peer [encodedFrame managerId (Opcode 6) (putNewId windowId)]
       _ <- receiveNewIdRequest reader peer windowId (Opcode 2)
       sendFrames peer [encodedFrame windowId (Opcode 2) (putInt 0 >> putInt 100)]
@@ -509,9 +524,10 @@ testNodeAcquisitionFailure =
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
         , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
         , callbackDoneFrame callbackId 96
         ]
-      (managerId, _) <- receiveRuntimeBinds reader peer
+      (managerId, _, _) <- receiveRuntimeBinds reader peer
       windowId <- requireObjectId 0xff000004
       sendFrames peer [encodedFrame managerId (Opcode 6) (putNewId windowId)]
       receiveChunk peer 8 >>= \case
@@ -562,9 +578,10 @@ testSeatBindingLifecycle =
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
         , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
         , callbackDoneFrame callbackId 98
         ]
-      (managerId, xkbBindingsId) <- receiveRuntimeBinds reader peer
+      (managerId, xkbBindingsId, _) <- receiveRuntimeBinds reader peer
       seatId <- requireObjectId 0xff000007
       sendFrames peer [encodedFrame managerId (Opcode 8) (putNewId seatId)]
       terminalId <- receiveKeyBindingRequest reader peer xkbBindingsId seatId terminalBinding
@@ -637,9 +654,10 @@ testSequenceOrderError =
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
         , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
         , callbackDoneFrame callbackId 92
         ]
-      (managerId, _) <- receiveRuntimeBinds reader peer
+      (managerId, _, _) <- receiveRuntimeBinds reader peer
       sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
     session <-
       expectRight
@@ -671,6 +689,7 @@ testMissingManager =
         peer
         [ registryGlobalFrame registryId 3 "wl_output" 4
         , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
         , callbackDoneFrame callbackId 1
         ]
       expectNoBootstrapBind peer
@@ -688,12 +707,75 @@ testMissingXkb =
       sendFrames
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
         , callbackDoneFrame callbackId 1
         ]
       expectNoBootstrapBind peer
     expectRuntimeLeft
       (RiverRuntimeXkbBootstrapError RiverXkbBindingsGlobalMissing)
       =<< openRiverSessionAt target defaultObjectLimit (runtimeHandlers (\_ -> pure ()))
+    expectMockSuccess mockDone
+
+testMissingLayerShell :: Assertion
+testMissingLayerShell =
+  withRuntimePair $ \target peer -> do
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , callbackDoneFrame callbackId 1
+        ]
+      expectNoBootstrapBind peer
+    expectRuntimeLeft
+      (RiverRuntimeLayerShellBootstrapError RiverLayerShellGlobalMissing)
+      =<< openRiverSessionAt target defaultObjectLimit (runtimeHandlers (\_ -> pure ()))
+    expectMockSuccess mockDone
+
+-- | Version 1 is the lowest a registry can announce, so a lower one fails startup.
+testZeroVersionLayerShell :: Assertion
+testZeroVersionLayerShell =
+  withRuntimePair $ \target peer -> do
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 0
+        , callbackDoneFrame callbackId 1
+        ]
+      expectNoBootstrapBind peer
+    openRiverSessionAt target defaultObjectLimit (runtimeHandlers (\_ -> pure ())) >>= \case
+      Left (RiverRuntimeStartupError _) -> pure ()
+      Left other -> assertFailure ("expected a startup error, got: " <> show other)
+      Right _ -> assertFailure "expected the version 0 global to fail startup"
+    expectMockSuccess mockDone
+
+testLayerShellBindFailure :: Assertion
+testLayerShellBindFailure =
+  withRuntimePair $ \target peer -> do
+    limit <- expectRight (makeObjectLimit 5)
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
+        , callbackDoneFrame callbackId 1
+        ]
+      _ <- receiveGlobalBind reader peer "manager" 7 "river_window_manager_v1" 4
+      _ <- receiveGlobalBind reader peer "XKB" 8 "river_xkb_bindings_v1" 3
+      expectNoBootstrapBind peer
+    openRiverSessionAt target limit (runtimeHandlers (\_ -> pure ())) >>= \case
+      Left (RiverRuntimeLayerShellBootstrapError (RiverLayerShellBindError _)) -> pure ()
+      Left other -> assertFailure ("expected a layer-shell bind error, got: " <> show other)
+      Right _ -> assertFailure "expected the layer-shell bind to fail"
     expectMockSuccess mockDone
 
 testLiveRegistryFailure :: Assertion
@@ -706,6 +788,7 @@ testLiveRegistryFailure =
         peer
         [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
         , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
         , callbackDoneFrame callbackId 2
         ]
       _ <- receiveRuntimeBinds reader peer
