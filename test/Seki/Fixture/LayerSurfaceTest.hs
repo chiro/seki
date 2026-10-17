@@ -22,9 +22,12 @@ import Seki.Fixture.LayerSurface (
 import Seki.Run.MockRiver (
   callbackDoneFrame,
   decodeNewId,
+  encodedFrame,
   encodedPayload,
   expectMockSuccess,
+  expectRight,
   registryGlobalFrame,
+  requireObjectId,
   runMock,
   sendFrames,
   withRuntimePair,
@@ -45,8 +48,17 @@ import Seki.Wire.Arguments (
  )
 import Seki.Wire.Binding (DynamicNewId (..), getDynamicNewId)
 import Seki.Wire.Codec (decodeFrame)
-import Seki.Wire.Transport (ConnectionTarget, OwnedFd, ReceivedChunk (..), Transport, receiveChunk)
+import Seki.Wire.Transport (
+  ConnectionTarget,
+  OwnedFd,
+  ReceivedChunk (..),
+  Transport,
+  closeOwnedFd,
+  receiveChunk,
+  withOwnedFd,
+ )
 import Seki.Wire.Types (FrameDecode (..), ObjectId, Opcode (..), RawFrame (..))
+import System.Posix.Files (fileSize, getFdStatus)
 import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertEqual, assertFailure, testCase)
@@ -58,6 +70,8 @@ tests =
     [ testCase "binds the compositor, shm, and layer-shell globals at version 1" testBindsGlobals
     , testCase "fails clearly when a required global is missing" testMissingGlobal
     , testCase "requests a top-anchored exclusive-zone layer surface" testSurfaceSetup
+    , testCase "acks the configure serial before attaching a buffer" testConfigureAck
+    , testCase "attaches a shared-memory buffer matching the configure" testBufferAttachment
     ]
 
 testBindsGlobals :: Assertion
@@ -80,14 +94,20 @@ testMissingGlobal = do
 
 testSurfaceSetup :: Assertion
 testSurfaceSetup = do
-  (result, _) <- withFixture FixtureConfig{fixtureHeight = 40} expectSurfaceSetup
+  (result, _) <- withFixture FixtureConfig{fixtureHeight = 40} (expectSurfaceSetup 40)
   assertStoppedByConnection result
 
-expectSurfaceSetup :: Mock -> IO ()
-expectSurfaceSetup mock = do
+data Objects = Objects
+  { objectsShm :: ObjectId
+  , objectsSurface :: ObjectId
+  , objectsLayerSurface :: ObjectId
+  }
+
+expectSurfaceSetup :: Word32 -> Mock -> IO Objects
+expectSurfaceSetup height mock = do
   registryId <- answerStartup mock standardGlobals
   compositorId <- expectBind mock registryId 1 "wl_compositor"
-  _ <- expectBind mock registryId 2 "wl_shm"
+  shmId <- expectBind mock registryId 2 "wl_shm"
   layerShellId <- expectBind mock registryId 3 "zwlr_layer_shell_v1"
   surfaceId <- receiveNewIdRequest mock compositorId (Opcode 0)
   layerSurfaceFrame <- receiveRequest mock
@@ -100,10 +120,75 @@ expectSurfaceSetup mock = do
     putNullableObject Nothing
     putUint 2
     putString "seki-layer-surface-fixture"
-  expectRequest mock "set_size" layerSurfaceId (Opcode 0) (putUint 0 >> putUint 40)
+  expectRequest mock "set_size" layerSurfaceId (Opcode 0) (putUint 0 >> putUint height)
   expectRequest mock "set_anchor" layerSurfaceId (Opcode 1) (putUint (1 + 4 + 8))
-  expectRequest mock "set_exclusive_zone" layerSurfaceId (Opcode 2) (putInt 40)
+  expectRequest mock "set_exclusive_zone" layerSurfaceId (Opcode 2) (putInt (fromIntegral height))
   expectRequest mock "initial commit" surfaceId (Opcode 6) (pure ())
+  pure (Objects shmId surfaceId layerSurfaceId)
+
+testConfigureAck :: Assertion
+testConfigureAck = do
+  (result, _) <-
+    withFixture defaultConfig $ \mock -> do
+      objects <- expectSurfaceSetup 32 mock
+      sendConfigure mock objects 77 1280 32
+      expectRequest mock "ack_configure" (objectsLayerSurface objects) (Opcode 6) (putUint 77)
+      frame <- receiveRequest mock
+      assertEqual "first buffer request follows the ack" (objectsShm objects) (rawFrameSender frame)
+  assertStoppedByConnection result
+
+testBufferAttachment :: Assertion
+testBufferAttachment = do
+  (result, _) <-
+    withFixture FixtureConfig{fixtureHeight = 40} $ \mock -> do
+      objects <- expectSurfaceSetup 40 mock
+      sendConfigure mock objects 5 1280 40
+      expectRequest mock "ack_configure" (objectsLayerSurface objects) (Opcode 6) (putUint 5)
+      expectBufferCommit mock objects 1280 40
+  assertStoppedByConnection result
+
+data BufferObjects = BufferObjects
+  { bufferPool :: ObjectId
+  , bufferBuffer :: ObjectId
+  , bufferSyncCallback :: ObjectId
+  }
+
+expectBufferCommit :: Mock -> Objects -> Word32 -> Word32 -> IO BufferObjects
+expectBufferCommit mock objects width height = do
+  let stride = width * 4
+      poolSize = stride * height
+  poolFrame <- receiveRequest mock
+  assertEqual "create_pool sender" (objectsShm objects) (rawFrameSender poolFrame)
+  assertEqual "create_pool opcode" (Opcode 0) (rawFrameOpcode poolFrame)
+  poolId <- decodeLeadingNewId poolFrame
+  expectPayload "create_pool" poolFrame (putNewId poolId >> putInt (fromIntegral poolSize))
+  poolFd <- takePassedFd mock
+  descriptorSize <- withOwnedFd poolFd (fmap fileSize . getFdStatus) >>= expectRight
+  _ <- closeOwnedFd poolFd
+  assertEqual "passed pool descriptor size" (fromIntegral poolSize) descriptorSize
+  bufferRequest@(bufferId, _) <- receiveNewIdRequestWithArguments mock poolId (Opcode 0)
+  expectRequestArguments "create_buffer" bufferRequest $ do
+    putInt 0
+    putInt (fromIntegral width)
+    putInt (fromIntegral height)
+    putInt (fromIntegral stride)
+    putUint 1
+  expectRequest mock "attach" (objectsSurface objects) (Opcode 1) (putObject bufferId >> putInt 0 >> putInt 0)
+  expectRequest mock "damage" (objectsSurface objects) (Opcode 2) $ do
+    putInt 0
+    putInt 0
+    putInt (fromIntegral width)
+    putInt (fromIntegral height)
+  expectRequest mock "buffer commit" (objectsSurface objects) (Opcode 6) (pure ())
+  display <- requireObjectId 1
+  callbackId <- receiveNewIdRequest mock display (Opcode 0)
+  pure (BufferObjects poolId bufferId callbackId)
+
+sendConfigure :: Mock -> Objects -> Word32 -> Word32 -> Word32 -> IO ()
+sendConfigure mock objects serial width height =
+  sendFrames
+    (mockPeer mock)
+    [encodedFrame (objectsLayerSurface objects) (Opcode 0) (putUint serial >> putUint width >> putUint height)]
 
 defaultConfig :: FixtureConfig
 defaultConfig = FixtureConfig{fixtureHeight = 32}
@@ -205,6 +290,24 @@ answerStartup mock globals = do
         <> [callbackDoneFrame callbackId 1]
     )
   pure registryId
+
+takePassedFd :: Mock -> IO OwnedFd
+takePassedFd mock =
+  readIORef (mockFds mock) >>= \case
+    descriptor : remaining -> writeIORef (mockFds mock) remaining >> pure descriptor
+    [] -> assertFailure "expected a passed descriptor"
+
+receiveNewIdRequestWithArguments :: Mock -> ObjectId -> Opcode -> IO (ObjectId, RawFrame)
+receiveNewIdRequestWithArguments mock sender opcode = do
+  frame <- receiveRequest mock
+  assertEqual "new-ID request sender" sender (rawFrameSender frame)
+  assertEqual "new-ID request opcode" opcode (rawFrameOpcode frame)
+  identifier <- decodeLeadingNewId frame
+  pure (identifier, frame)
+
+expectRequestArguments :: String -> (ObjectId, RawFrame) -> ArgumentEncoder () () -> Assertion
+expectRequestArguments label (identifier, frame) arguments =
+  expectPayload label frame (putNewId identifier >> arguments)
 
 receiveNewIdRequest :: Mock -> ObjectId -> Opcode -> IO ObjectId
 receiveNewIdRequest mock sender opcode = do

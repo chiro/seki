@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | A wlr-layer-shell client that maps one exclusive-zone surface for tests.
 module Seki.Fixture.LayerSurface (
@@ -13,9 +14,15 @@ module Seki.Fixture.LayerSurface (
 )
 where
 
-import Control.Exception (bracket)
+import Control.Concurrent (forkIO, killThread)
+import Control.Concurrent.Chan (Chan, newChan, readChan, writeChan)
+import Control.Exception (IOException, bracket, try)
+import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE, withExceptT)
 import Data.Bits ((.|.))
+import Data.ByteString (ByteString)
+import Data.ByteString qualified as ByteString
+import Data.Int (Int32)
 import Data.Text (Text)
 import Data.Word (Word32)
 import Seki.Fixture.Protocol.WlrLayerShellUnstableV1 qualified as LayerShell
@@ -27,6 +34,7 @@ import Seki.Run.Startup (
   openWaylandSessionAt,
   readWaylandGlobalCatalog,
   waylandConnection,
+  waylandDisplay,
   waylandRegistry,
  )
 import Seki.Wire.Binding (Interface (..))
@@ -36,7 +44,9 @@ import Seki.Wire.Connection (
   DispatchResult (..),
   dispatchNextEvent,
   eventRoute,
+  submitInheritedObjectRequest,
   submitInheritedObjectRequestWithRoute,
+  submitNewObjectRequestWithRoute,
   submitRequest,
  )
 import Seki.Wire.Connection.ObjectTable (Object, defaultObjectLimit, objectId)
@@ -48,7 +58,12 @@ import Seki.Wire.Connection.Registry (
   bindGlobalWithRoute,
   selectGlobals,
  )
-import Seki.Wire.Transport (ConnectionTarget)
+import Seki.Wire.Transport (ConnectionTarget, OwnedFd, adoptFd, withOwnedFd)
+import System.IO.Error (isAlreadyExistsError)
+import System.Posix.IO.ByteString (fdWrite)
+import System.Posix.Process (getProcessID)
+import System.Posix.SharedMem (ShmOpenFlags (..), shmOpen, shmUnlink)
+import System.Posix.Types (Fd)
 
 newtype FixtureConfig = FixtureConfig
   { fixtureHeight :: Word32
@@ -72,12 +87,21 @@ data FixtureError
   | FixtureMissingGlobal Text
   | FixtureConnectionError ConnectionError
   | FixtureConnectionFinished
+  | FixtureUnusableBufferSize Word32 Word32
+  | FixtureShmError String
   deriving (Eq, Show)
 
-data FixtureControl = FixtureControl
+-- | Everything the fixture reacts to after its initial commit, in arrival order.
+data FixtureInput
+  = InputConfigure Word32 Word32
+  | InputClosed
+  | InputSyncDone
+  | InputConnectionEnded (Either ConnectionError ())
+
+newtype FixtureControl = FixtureControl (Chan FixtureInput)
 
 newFixtureControl :: IO FixtureControl
-newFixtureControl = pure FixtureControl
+newFixtureControl = FixtureControl <$> newChan
 
 data FixtureGlobals = FixtureGlobals
   { compositorGlobal :: Global Wayland.WlCompositor
@@ -103,7 +127,7 @@ runLayerSurfaceFixture ::
   ConnectionTarget ->
   (FixtureReady -> IO ()) ->
   IO (Either FixtureError FixtureStop)
-runLayerSurfaceFixture _ config target _ =
+runLayerSurfaceFixture control@(FixtureControl inputs) config target _ =
   openWaylandSessionAt target defaultObjectLimit >>= \case
     Left errorValue -> pure (Left (FixtureStartupError errorValue))
     Right opened ->
@@ -112,8 +136,174 @@ runLayerSurfaceFixture _ config target _ =
           catalog <- fixtureStep FixtureRegistryError (readWaylandGlobalCatalog session)
           globals <- except (selectFixtureGlobals catalog)
           bound <- bindFixtureGlobals session globals
-          _ <- requestLayerSurface (waylandConnection session) config bound
-          awaitConnectionEnd session
+          surfaces <- requestLayerSurface (waylandConnection session) control config bound
+          let fixture = Fixture session config bound surfaces control
+          ExceptT $
+            bracket
+              (forkIO (dispatchInputs (waylandConnection session) inputs))
+              killThread
+              (\_ -> runExceptT (runPhase fixture AwaitingConfigure))
+
+data Fixture = Fixture
+  { fixtureSession :: WaylandSession
+  , fixtureConfig :: FixtureConfig
+  , fixtureGlobals :: BoundGlobals
+  , fixtureSurfaces :: SurfaceObjects
+  , fixtureControl :: FixtureControl
+  }
+
+data Phase
+  = AwaitingConfigure
+  | AwaitingReadySync MappedBuffer FixtureReady
+
+data MappedBuffer = MappedBuffer
+  { mappedPool :: Object Wayland.WlShmPool
+  , mappedBuffer :: Object Wayland.WlBuffer
+  }
+
+runPhase :: Fixture -> Phase -> ExceptIO FixtureStop
+runPhase fixture phase = do
+  input <- lift (readChan inputs)
+  case (phase, input) of
+    (_, InputConnectionEnded (Left errorValue)) -> throwE (FixtureConnectionError errorValue)
+    (_, InputConnectionEnded (Right ())) -> throwE FixtureConnectionFinished
+    (AwaitingConfigure, InputConfigure serial width) -> mapBuffer fixture serial width >>= runPhase fixture
+    _ -> runPhase fixture phase
+ where
+  FixtureControl inputs = fixtureControl fixture
+
+mapBuffer :: Fixture -> Word32 -> Word32 -> ExceptIO Phase
+mapBuffer fixture serial width = do
+  let height = fixtureHeight (fixtureConfig fixture)
+      connection = waylandConnection (fixtureSession fixture)
+      surface = surfaceObject (fixtureSurfaces fixture)
+  layout <- except (bufferLayout width height)
+  connectionStep
+    ( submitRequest
+        connection
+        LayerShell.zwlrLayerSurfaceV1Interface
+        (layerSurfaceObject (fixtureSurfaces fixture))
+        (LayerShell.encodeZwlrLayerSurfaceV1AckConfigure serial)
+    )
+  descriptor <- fixtureStep (FixtureShmError . show) (try @IOException (createPixelFile (layoutSize layout)))
+  pool <-
+    connectionStep
+      ( submitInheritedObjectRequest
+          connection
+          Wayland.wlShmInterface
+          (boundShm (fixtureGlobals fixture))
+          Wayland.wlShmPoolInterface
+          (\object -> Wayland.encodeWlShmCreatePool (objectId object) descriptor (layoutSize layout))
+      )
+  buffer <-
+    connectionStep
+      ( submitInheritedObjectRequestWithRoute
+          connection
+          Wayland.wlShmPoolInterface
+          pool
+          Wayland.wlBufferInterface
+          ( \object ->
+              Wayland.encodeWlShmPoolCreateBuffer
+                (objectId object)
+                0
+                (layoutWidth layout)
+                (layoutHeight layout)
+                (layoutStride layout)
+                Wayland.WlShmFormatEnumXrgb8888
+          )
+          (eventRoute Wayland.decodeWlBufferEvent (\_ _ -> pure ()))
+      )
+  let sendSurface = connectionStep . submitRequest connection Wayland.wlSurfaceInterface surface
+  sendSurface (Wayland.encodeWlSurfaceAttach (Just (objectId buffer)) 0 0)
+  sendSurface (Wayland.encodeWlSurfaceDamage 0 0 (layoutWidth layout) (layoutHeight layout))
+  sendSurface Wayland.encodeWlSurfaceCommit
+  requestSync fixture
+  pure (AwaitingReadySync (MappedBuffer pool buffer) (FixtureReady width height))
+
+requestSync :: Fixture -> ExceptIO ()
+requestSync fixture = do
+  _ <-
+    connectionStep
+      ( submitNewObjectRequestWithRoute
+          (waylandConnection session)
+          Wayland.wlDisplayInterface
+          (waylandDisplay session)
+          Wayland.wlCallbackInterface
+          1
+          (Wayland.encodeWlDisplaySync . objectId)
+          (eventRoute Wayland.decodeWlCallbackEvent (\_ _ -> writeChan inputs InputSyncDone))
+      )
+  pure ()
+ where
+  session = fixtureSession fixture
+  FixtureControl inputs = fixtureControl fixture
+
+data BufferLayout = BufferLayout
+  { layoutWidth :: Int32
+  , layoutHeight :: Int32
+  , layoutStride :: Int32
+  , layoutSize :: Int32
+  }
+
+-- | One XRGB8888 buffer, rejected when empty or when its size overflows the wire's int.
+bufferLayout :: Word32 -> Word32 -> Either FixtureError BufferLayout
+bufferLayout width height
+  | width == 0 || height == 0 || size > toInteger (maxBound :: Int32) =
+      Left (FixtureUnusableBufferSize width height)
+  | otherwise =
+      Right
+        BufferLayout
+          { layoutWidth = fromIntegral width
+          , layoutHeight = fromIntegral height
+          , layoutStride = fromIntegral stride
+          , layoutSize = fromIntegral size
+          }
+ where
+  stride = toInteger width * bytesPerPixel
+  size = stride * toInteger height
+
+bytesPerPixel :: Integer
+bytesPerPixel = 4
+
+{- | Create an unlinked shared-memory file filled with one opaque colour.
+
+The name only has to survive until 'shmUnlink', so a collision with another
+fixture just moves on to the next attempt.
+-}
+createPixelFile :: Int32 -> IO OwnedFd
+createPixelFile size = do
+  processId <- getProcessID
+  descriptor <- openUniqueShm processId (0 :: Int)
+  owned <- adoptFd descriptor
+  _ <- withOwnedFd owned (\fd -> writeAll fd (ByteString.concat (replicate pixelCount pixel)))
+  pure owned
+ where
+  pixelCount = fromIntegral size `div` fromIntegral bytesPerPixel
+  pixel = ByteString.pack [0x99, 0x66, 0x33, 0xff]
+  openUniqueShm processId attempt = do
+    let name = "/seki-layer-surface-fixture-" <> show processId <> "-" <> show attempt
+    opened <- try @IOException (shmOpen name exclusiveCreate 0o600)
+    case opened of
+      Right descriptor -> shmUnlink name >> pure descriptor
+      Left exception
+        | isAlreadyExistsError exception -> openUniqueShm processId (attempt + 1)
+        | otherwise -> ioError exception
+  exclusiveCreate =
+    ShmOpenFlags{shmReadWrite = True, shmCreate = True, shmExclusive = True, shmTrunc = False}
+
+writeAll :: Fd -> ByteString -> IO ()
+writeAll descriptor bytes
+  | ByteString.null bytes = pure ()
+  | otherwise = do
+      written <- fdWrite descriptor bytes
+      writeAll descriptor (ByteString.drop (fromIntegral written) bytes)
+
+dispatchInputs :: Connection -> Chan FixtureInput -> IO ()
+dispatchInputs connection inputs =
+  dispatchNextEvent connection >>= \case
+    Left errorValue -> writeChan inputs (InputConnectionEnded (Left errorValue))
+    Right DispatchFinished -> writeChan inputs (InputConnectionEnded (Right ()))
+    Right (EventDispatched _) -> dispatchInputs connection inputs
 
 selectFixtureGlobals :: GlobalCatalog -> Either FixtureError FixtureGlobals
 selectFixtureGlobals catalog =
@@ -150,8 +340,8 @@ data SurfaceObjects = SurfaceObjects
   , layerSurfaceObject :: Object LayerShell.ZwlrLayerSurfaceV1
   }
 
-requestLayerSurface :: Connection -> FixtureConfig -> BoundGlobals -> ExceptIO SurfaceObjects
-requestLayerSurface connection config bound = do
+requestLayerSurface :: Connection -> FixtureControl -> FixtureConfig -> BoundGlobals -> ExceptIO SurfaceObjects
+requestLayerSurface connection (FixtureControl inputs) config bound = do
   surface <-
     connectionStep
       ( submitInheritedObjectRequestWithRoute
@@ -177,7 +367,7 @@ requestLayerSurface connection config bound = do
                 LayerShell.ZwlrLayerShellV1LayerEnumTop
                 layerNamespace
           )
-          (eventRoute LayerShell.decodeZwlrLayerSurfaceV1Event (\_ _ -> pure ()))
+          (eventRoute LayerShell.decodeZwlrLayerSurfaceV1Event (\_ event -> writeChan inputs (layerSurfaceInput event)))
       )
   let height = fixtureHeight config
       sendLayerSurface = connectionStep . submitRequest connection LayerShell.zwlrLayerSurfaceV1Interface layerSurface
@@ -186,6 +376,11 @@ requestLayerSurface connection config bound = do
   sendLayerSurface (LayerShell.encodeZwlrLayerSurfaceV1SetExclusiveZone (fromIntegral height))
   connectionStep (submitRequest connection Wayland.wlSurfaceInterface surface Wayland.encodeWlSurfaceCommit)
   pure (SurfaceObjects surface layerSurface)
+
+layerSurfaceInput :: LayerShell.ZwlrLayerSurfaceV1Event fd -> FixtureInput
+layerSurfaceInput = \case
+  LayerShell.ZwlrLayerSurfaceV1Configure serial width _ -> InputConfigure serial width
+  LayerShell.ZwlrLayerSurfaceV1Closed -> InputClosed
 
 layerNamespace :: Text
 layerNamespace = "seki-layer-surface-fixture"
@@ -197,12 +392,6 @@ topEdgeAnchor =
         .|. LayerShell.zwlrLayerSurfaceV1AnchorFlagsValue LayerShell.ZwlrLayerSurfaceV1AnchorFlagsLeft
         .|. LayerShell.zwlrLayerSurfaceV1AnchorFlagsValue LayerShell.ZwlrLayerSurfaceV1AnchorFlagsRight
     )
-
-awaitConnectionEnd :: WaylandSession -> ExceptIO FixtureStop
-awaitConnectionEnd session =
-  connectionStep (dispatchNextEvent (waylandConnection session)) >>= \case
-    DispatchFinished -> throwE FixtureConnectionFinished
-    EventDispatched _ -> awaitConnectionEnd session
 
 type ExceptIO = ExceptT FixtureError IO
 
