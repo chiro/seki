@@ -29,6 +29,7 @@ import Seki.Run.Phase (ManageM, RenderM, closeWindow, focusWindow)
 import Seki.Run.Policy (launchDetached)
 import Seki.Run.River (RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (
+  RenderOutcome (..),
   RiverManageAction (..),
   RiverRuntimeError,
   RiverRuntimeHandlers (..),
@@ -87,7 +88,7 @@ defaultRuntimeHandlers config
           , riverKeyBindings = [defaultTerminalBinding config, defaultCloseBinding config]
           , handleRiverKeyBindingEvent = handleBindingEvent
           , prepareRiverManagePlan = pure . prepareDefaultManagePlan
-          , prepareRiverRenderPlan = pure . prepareDefaultRenderPlan
+          , prepareRiverRenderPlan = pure . fmap (const (RenderOutcome False)) . prepareDefaultRenderPlan
           }
  where
   handleBindingEvent definition _ = \case

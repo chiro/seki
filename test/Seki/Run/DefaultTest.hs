@@ -100,7 +100,7 @@ testTargets = do
           >>= activateRiverWindow (objectId first)
       )
   layerShellSeat <- makeClientObject LayerShell.riverLayerShellSeatV1Interface
-  let snapshot = RiverRuntimeSnapshot inventory [RiverSeatBindings seat layerShellSeat RiverLayerFocusNone []]
+  let snapshot = RiverRuntimeSnapshot inventory [RiverSeatBindings seat layerShellSeat 0 RiverLayerFocusNone []]
   assertEqual "close target" (Just (objectId first)) (objectId . riverWindowObject <$> defaultCloseTarget snapshot)
   assertEqual
     "focus target"

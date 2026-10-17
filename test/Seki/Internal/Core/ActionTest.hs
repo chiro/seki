@@ -33,9 +33,9 @@ tests =
         [ testCase "pure returns its value without changing state or recording intents" $
             runAction (pure 'x') attached @?= ('x', attached, [])
         , testCase "windows applies its function to the attached StackSet" $
-            runAction (windows focusUp) attached @?= ((), withStack (Stack w3 [] [w2, w1]), [])
+            runAction (windows focusUp) attached @?= ((), withStack (Stack w3 [] [w2, w1]), [ReclaimFocus])
         , testCase "windows changes nothing while headless" $
-            runAction (windows (greedyView 2)) headless @?= ((), headless, [])
+            runAction (windows (greedyView 2)) headless @?= ((), headless, [ReclaimFocus])
         , testCase "sendMessage changes the current layout" $
             runAction (sendMessage Shrink) attached @?= ((), withLayout (Choose CL tall{tallRatio = 47 / 100} rest), [])
         , testCase "sendMessage changes nothing while headless" $
@@ -51,7 +51,7 @@ tests =
               @?= ((), attached, [Spawn "a", CloseWindow w2, Spawn "b"])
         , testCase "kill closes the window focused by an earlier step" $
             runAction (windows focusDown >> kill) attached
-              @?= ((), withStack (Stack w1 [w2, w3] []), [CloseWindow w1])
+              @?= ((), withStack (Stack w1 [w2, w3] []), [ReclaimFocus, CloseWindow w1])
         ]
     , testGroup
         "default actions"
@@ -67,16 +67,16 @@ tests =
         , testCase "sendMessage (IncMasterN (-1)) removes a master" $
             runAction (sendMessage (IncMasterN (-1))) attached @?= ((), withLayout (Choose CL tall{tallNMaster = 0} rest), [])
         , testCase "windows focusUp focuses the window above" $
-            runAction (windows focusUp) attached @?= ((), withStack (Stack w3 [] [w2, w1]), [])
+            runAction (windows focusUp) attached @?= ((), withStack (Stack w3 [] [w2, w1]), [ReclaimFocus])
         , testCase "windows focusDown focuses the window below" $
-            runAction (windows focusDown) attached @?= ((), withStack (Stack w1 [w2, w3] []), [])
+            runAction (windows focusDown) attached @?= ((), withStack (Stack w1 [w2, w3] []), [ReclaimFocus])
         , testCase "windows swapMaster swaps the focused window with the master" $
-            runAction (windows swapMaster) attached @?= ((), withStack (Stack w2 [] [w3, w1]), [])
+            runAction (windows swapMaster) attached @?= ((), withStack (Stack w2 [] [w3, w1]), [ReclaimFocus])
         , testCase "windows (greedyView 2) shows workspace 2" $
             runAction (windows (greedyView 2)) attached
               @?= ( ()
                   , AttachedState (StackSet (Screen (Workspace 2 layouts Nothing) o1) [] [ws1, Workspace 3 layouts Nothing] Map.empty) []
-                  , []
+                  , [ReclaimFocus]
                   )
         , testCase "windows (shift 2) moves the focused window to workspace 2" $
             runAction (windows (shift 2)) attached
@@ -89,7 +89,7 @@ tests =
                           Map.empty
                       )
                       []
-                  , []
+                  , [ReclaimFocus]
                   )
         , testCase "spawn \"foot\" records a launch" $
             runAction (spawn "foot") attached @?= ((), attached, [Spawn "foot"])

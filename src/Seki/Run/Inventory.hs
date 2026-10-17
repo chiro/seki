@@ -70,6 +70,7 @@ data RiverWindowState = RiverWindowState
   { riverWindowObject :: Object River.RiverWindowV1
   , riverWindowNode :: Maybe (Object River.RiverNodeV1)
   , riverWindowDimensionsHint :: Maybe RiverDimensionsHint
+  , riverWindowDimensionsRevision :: Integer
   , riverWindowDimensions :: Maybe RiverSize
   , riverWindowAppId :: Maybe Text
   , riverWindowTitle :: Maybe Text
@@ -154,6 +155,7 @@ addRiverWindow window inventory = do
           { riverWindowObject = window
           , riverWindowNode = Nothing
           , riverWindowDimensionsHint = Nothing
+          , riverWindowDimensionsRevision = 0
           , riverWindowDimensions = Nothing
           , riverWindowAppId = Nothing
           , riverWindowTitle = Nothing
@@ -269,7 +271,7 @@ applyRiverWindowEvent window event inventory = do
     River.RiverWindowV1Dimensions width height -> do
       let dimensions = RiverSize width height
       if positiveSize dimensions
-        then update current{riverWindowDimensions = Just dimensions}
+        then update current{riverWindowDimensions = Just dimensions, riverWindowDimensionsRevision = riverWindowDimensionsRevision current + 1}
         else Left (RiverInventoryInvalidWindowDimensions identifier dimensions)
     River.RiverWindowV1AppId appId -> update current{riverWindowAppId = appId}
     River.RiverWindowV1Title title -> update current{riverWindowTitle = title}

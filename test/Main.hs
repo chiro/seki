@@ -5,6 +5,7 @@ import Seki.Internal.Core.ActionTest qualified as ActionTest
 import Seki.Internal.Core.EventTest qualified as CoreEventTest
 import Seki.Internal.Core.GeometryTest qualified as GeometryTest
 import Seki.Internal.Core.LayoutTest qualified as LayoutTest
+import Seki.Internal.Core.SceneTest qualified as SceneTest
 import Seki.Internal.Core.StackSetTest qualified as StackSetTest
 import Seki.Internal.Core.StateTest qualified as StateTest
 import Seki.Internal.Layout.FullTest qualified as FullLayoutTest
@@ -14,6 +15,8 @@ import Seki.Run.FullTest qualified as FullTest
 import Seki.Run.InventoryTest qualified as InventoryTest
 import Seki.Run.PhaseTest qualified as PhaseTest
 import Seki.Run.PolicyTest qualified as PolicyTest
+import Seki.Run.ReconcileTest qualified as ReconcileTest
+import Seki.Run.ReconcileTraceTest qualified as ReconcileTraceTest
 import Seki.Run.RiverTest qualified as RiverTest
 import Seki.Run.RuntimeTest qualified as RuntimeTest
 import Seki.Run.SequenceTest qualified as SequenceTest
@@ -34,4 +37,4 @@ import Seki.Wire.TransportTest qualified as TransportTest
 import Test.Tasty (defaultMain, testGroup)
 
 main :: IO ()
-main = defaultMain (testGroup "seki" [GeometryTest.tests, StackSetTest.tests, StateTest.tests, LayoutTest.tests, FullLayoutTest.tests, TallTest.tests, ActionTest.tests, CoreEventTest.tests, CodecTest.tests, ArgumentsTest.tests, TransportTest.tests, DriverTest.tests, BufferTest.tests, ObjectTableTest.tests, RequestTest.tests, EventTest.tests, ConnectionTest.tests, DispatchTest.tests, RegistryTest.tests, StartupTest.tests, RiverTest.tests, RuntimeTest.tests, SequenceTest.tests, PhaseTest.tests, InventoryTest.tests, FullTest.tests, DefaultTest.tests, PolicyTest.tests, ScannerTest.tests, GeneratorTest.tests, LayerSurfaceFixtureTest.tests])
+main = defaultMain (testGroup "seki" [ReconcileTest.tests, ReconcileTraceTest.tests, SceneTest.tests, GeometryTest.tests, StackSetTest.tests, StateTest.tests, LayoutTest.tests, FullLayoutTest.tests, TallTest.tests, ActionTest.tests, CoreEventTest.tests, CodecTest.tests, ArgumentsTest.tests, TransportTest.tests, DriverTest.tests, BufferTest.tests, ObjectTableTest.tests, RequestTest.tests, EventTest.tests, ConnectionTest.tests, DispatchTest.tests, RegistryTest.tests, StartupTest.tests, RiverTest.tests, RuntimeTest.tests, SequenceTest.tests, PhaseTest.tests, InventoryTest.tests, FullTest.tests, DefaultTest.tests, PolicyTest.tests, ScannerTest.tests, GeneratorTest.tests, LayerSurfaceFixtureTest.tests])

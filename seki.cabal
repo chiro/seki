@@ -30,6 +30,7 @@ extra-doc-files:
   THIRD_PARTY_NOTICES.md
   docs/integration-testing.md
   docs/m1-plan.md
+  docs/wp6-reconciliation.md
   docs/spec.md
   docs/wire-protocol.md
 
@@ -71,6 +72,7 @@ library seki-core
     Seki.Internal.Core.Layout
     Seki.Internal.Core.StackSet
     Seki.Internal.Core.State
+    Seki.Internal.Core.Scene
     Seki.Internal.Layout.Full
     Seki.Internal.Layout.Tall
   build-depends:
@@ -99,6 +101,7 @@ library seki-wire
     Seki.Run.Default
     Seki.Run.Phase
     Seki.Run.Policy
+    Seki.Run.Reconcile
     Seki.Run.River
     Seki.Run.Runtime
     Seki.Run.Sequence
@@ -215,6 +218,7 @@ test-suite seki-test
     Seki.Internal.Core.StackSetGen
     Seki.Internal.Core.StackSetTest
     Seki.Internal.Core.StateTest
+    Seki.Internal.Core.SceneTest
     Seki.Internal.Layout.FullTest
     Seki.Internal.Layout.TallTest
     Seki.Scanner.GenerateTest
@@ -225,6 +229,8 @@ test-suite seki-test
     Seki.Run.DefaultTest
     Seki.Run.PhaseTest
     Seki.Run.PolicyTest
+    Seki.Run.ReconcileTest
+    Seki.Run.ReconcileTraceTest
     Seki.Run.RiverTest
     Seki.Run.RuntimeTest
     Seki.Run.SequenceTest

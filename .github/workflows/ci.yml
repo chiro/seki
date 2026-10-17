@@ -33,6 +33,9 @@ jobs:
       - name: Run ordinary test suite
         run: nix develop --no-write-lock-file .#unit --command cabal test all
 
+      - name: Reject requests in the wrong sequence phase
+        run: nix develop --no-write-lock-file .#unit --command bash ci/check-phase-types.sh
+
       - name: Check source distribution and public documentation
         run: nix develop --no-write-lock-file .#unit --command ci/check-package.sh
 
