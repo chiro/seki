@@ -190,6 +190,101 @@ runLayerSurfaceFixture control@(FixtureControl inputs) config target reportReady
               killThread
               (\_ -> runExceptT (runPhase fixture AwaitingConfigure))
 
+selectFixtureGlobals :: GlobalCatalog -> Either FixtureError FixtureGlobals
+selectFixtureGlobals catalog =
+  FixtureGlobals
+    <$> requireGlobal Wayland.wlCompositorInterface catalog
+    <*> requireGlobal Wayland.wlShmInterface catalog
+    <*> requireGlobal LayerShell.zwlrLayerShellV1Interface catalog
+
+requireGlobal :: Interface interface -> GlobalCatalog -> Either FixtureError (Global interface)
+requireGlobal interface catalog = case selectGlobals interface boundVersion catalog of
+  Left errorValue -> Left (FixtureRegistryError errorValue)
+  Right [] -> Left (FixtureMissingGlobal (interfaceName interface))
+  Right (global : _) -> Right global
+
+bindFixtureGlobals :: WaylandSession -> FixtureGlobals -> ExceptIO BoundGlobals
+bindFixtureGlobals session globals = do
+  compositor <- connectionStep (bindGlobal connection registry (compositorGlobal globals))
+  shm <-
+    connectionStep
+      ( bindGlobalWithRoute
+          connection
+          registry
+          (shmGlobal globals)
+          (eventRoute Wayland.decodeWlShmEvent (\_ _ -> pure ()))
+      )
+  layerShell <- connectionStep (bindGlobal connection registry (layerShellGlobal globals))
+  pure (BoundGlobals compositor shm layerShell)
+ where
+  connection = waylandConnection session
+  registry = waylandRegistry session
+
+data SurfaceObjects = SurfaceObjects
+  { surfaceObject :: Object Wayland.WlSurface
+  , layerSurfaceObject :: Object LayerShell.ZwlrLayerSurfaceV1
+  }
+
+requestLayerSurface :: Connection -> FixtureControl -> FixtureConfig -> BoundGlobals -> ExceptIO SurfaceObjects
+requestLayerSurface connection (FixtureControl inputs) config bound = do
+  surface <-
+    connectionStep
+      ( submitInheritedObjectRequestWithRoute
+          connection
+          Wayland.wlCompositorInterface
+          (boundCompositor bound)
+          Wayland.wlSurfaceInterface
+          (Wayland.encodeWlCompositorCreateSurface . objectId)
+          (eventRoute Wayland.decodeWlSurfaceEvent (\_ _ -> pure ()))
+      )
+  layerSurface <-
+    connectionStep
+      ( submitInheritedObjectRequestWithRoute
+          connection
+          LayerShell.zwlrLayerShellV1Interface
+          (boundLayerShell bound)
+          LayerShell.zwlrLayerSurfaceV1Interface
+          ( \object ->
+              LayerShell.encodeZwlrLayerShellV1GetLayerSurface
+                (objectId object)
+                (objectId surface)
+                Nothing
+                LayerShell.ZwlrLayerShellV1LayerEnumTop
+                layerNamespace
+          )
+          (eventRoute LayerShell.decodeZwlrLayerSurfaceV1Event (\_ event -> writeChan inputs (layerSurfaceInput event)))
+      )
+  let height = fixtureHeight config
+      sendLayerSurface = connectionStep . submitRequest connection LayerShell.zwlrLayerSurfaceV1Interface layerSurface
+  sendLayerSurface (LayerShell.encodeZwlrLayerSurfaceV1SetSize 0 height)
+  sendLayerSurface (LayerShell.encodeZwlrLayerSurfaceV1SetAnchor topEdgeAnchor)
+  sendLayerSurface (LayerShell.encodeZwlrLayerSurfaceV1SetExclusiveZone (fromIntegral height))
+  connectionStep (submitRequest connection Wayland.wlSurfaceInterface surface Wayland.encodeWlSurfaceCommit)
+  pure (SurfaceObjects surface layerSurface)
+
+layerSurfaceInput :: LayerShell.ZwlrLayerSurfaceV1Event fd -> FixtureInput
+layerSurfaceInput = \case
+  LayerShell.ZwlrLayerSurfaceV1Configure serial width _ -> InputConfigure serial width
+  LayerShell.ZwlrLayerSurfaceV1Closed -> InputClosed
+
+layerNamespace :: Text
+layerNamespace = "seki-layer-surface-fixture"
+
+topEdgeAnchor :: LayerShell.ZwlrLayerSurfaceV1AnchorFlags
+topEdgeAnchor =
+  LayerShell.ZwlrLayerSurfaceV1AnchorFlags
+    ( LayerShell.zwlrLayerSurfaceV1AnchorFlagsValue LayerShell.ZwlrLayerSurfaceV1AnchorFlagsTop
+        .|. LayerShell.zwlrLayerSurfaceV1AnchorFlagsValue LayerShell.ZwlrLayerSurfaceV1AnchorFlagsLeft
+        .|. LayerShell.zwlrLayerSurfaceV1AnchorFlagsValue LayerShell.ZwlrLayerSurfaceV1AnchorFlagsRight
+    )
+
+dispatchInputs :: Connection -> Chan FixtureInput -> IO ()
+dispatchInputs connection inputs =
+  dispatchNextEvent connection >>= \case
+    Left errorValue -> writeChan inputs (InputConnectionEnded (Left errorValue))
+    Right DispatchFinished -> writeChan inputs (InputConnectionEnded (Right ()))
+    Right (EventDispatched _) -> dispatchInputs connection inputs
+
 data Fixture = Fixture
   { fixtureSession :: WaylandSession
   , fixtureConfig :: FixtureConfig
@@ -404,101 +499,6 @@ writeAll descriptor bytes
   | otherwise = do
       written <- fdWrite descriptor bytes
       writeAll descriptor (ByteString.drop (fromIntegral written) bytes)
-
-dispatchInputs :: Connection -> Chan FixtureInput -> IO ()
-dispatchInputs connection inputs =
-  dispatchNextEvent connection >>= \case
-    Left errorValue -> writeChan inputs (InputConnectionEnded (Left errorValue))
-    Right DispatchFinished -> writeChan inputs (InputConnectionEnded (Right ()))
-    Right (EventDispatched _) -> dispatchInputs connection inputs
-
-selectFixtureGlobals :: GlobalCatalog -> Either FixtureError FixtureGlobals
-selectFixtureGlobals catalog =
-  FixtureGlobals
-    <$> requireGlobal Wayland.wlCompositorInterface catalog
-    <*> requireGlobal Wayland.wlShmInterface catalog
-    <*> requireGlobal LayerShell.zwlrLayerShellV1Interface catalog
-
-requireGlobal :: Interface interface -> GlobalCatalog -> Either FixtureError (Global interface)
-requireGlobal interface catalog = case selectGlobals interface boundVersion catalog of
-  Left errorValue -> Left (FixtureRegistryError errorValue)
-  Right [] -> Left (FixtureMissingGlobal (interfaceName interface))
-  Right (global : _) -> Right global
-
-bindFixtureGlobals :: WaylandSession -> FixtureGlobals -> ExceptIO BoundGlobals
-bindFixtureGlobals session globals = do
-  compositor <- connectionStep (bindGlobal connection registry (compositorGlobal globals))
-  shm <-
-    connectionStep
-      ( bindGlobalWithRoute
-          connection
-          registry
-          (shmGlobal globals)
-          (eventRoute Wayland.decodeWlShmEvent (\_ _ -> pure ()))
-      )
-  layerShell <- connectionStep (bindGlobal connection registry (layerShellGlobal globals))
-  pure (BoundGlobals compositor shm layerShell)
- where
-  connection = waylandConnection session
-  registry = waylandRegistry session
-
-data SurfaceObjects = SurfaceObjects
-  { surfaceObject :: Object Wayland.WlSurface
-  , layerSurfaceObject :: Object LayerShell.ZwlrLayerSurfaceV1
-  }
-
-requestLayerSurface :: Connection -> FixtureControl -> FixtureConfig -> BoundGlobals -> ExceptIO SurfaceObjects
-requestLayerSurface connection (FixtureControl inputs) config bound = do
-  surface <-
-    connectionStep
-      ( submitInheritedObjectRequestWithRoute
-          connection
-          Wayland.wlCompositorInterface
-          (boundCompositor bound)
-          Wayland.wlSurfaceInterface
-          (Wayland.encodeWlCompositorCreateSurface . objectId)
-          (eventRoute Wayland.decodeWlSurfaceEvent (\_ _ -> pure ()))
-      )
-  layerSurface <-
-    connectionStep
-      ( submitInheritedObjectRequestWithRoute
-          connection
-          LayerShell.zwlrLayerShellV1Interface
-          (boundLayerShell bound)
-          LayerShell.zwlrLayerSurfaceV1Interface
-          ( \object ->
-              LayerShell.encodeZwlrLayerShellV1GetLayerSurface
-                (objectId object)
-                (objectId surface)
-                Nothing
-                LayerShell.ZwlrLayerShellV1LayerEnumTop
-                layerNamespace
-          )
-          (eventRoute LayerShell.decodeZwlrLayerSurfaceV1Event (\_ event -> writeChan inputs (layerSurfaceInput event)))
-      )
-  let height = fixtureHeight config
-      sendLayerSurface = connectionStep . submitRequest connection LayerShell.zwlrLayerSurfaceV1Interface layerSurface
-  sendLayerSurface (LayerShell.encodeZwlrLayerSurfaceV1SetSize 0 height)
-  sendLayerSurface (LayerShell.encodeZwlrLayerSurfaceV1SetAnchor topEdgeAnchor)
-  sendLayerSurface (LayerShell.encodeZwlrLayerSurfaceV1SetExclusiveZone (fromIntegral height))
-  connectionStep (submitRequest connection Wayland.wlSurfaceInterface surface Wayland.encodeWlSurfaceCommit)
-  pure (SurfaceObjects surface layerSurface)
-
-layerSurfaceInput :: LayerShell.ZwlrLayerSurfaceV1Event fd -> FixtureInput
-layerSurfaceInput = \case
-  LayerShell.ZwlrLayerSurfaceV1Configure serial width _ -> InputConfigure serial width
-  LayerShell.ZwlrLayerSurfaceV1Closed -> InputClosed
-
-layerNamespace :: Text
-layerNamespace = "seki-layer-surface-fixture"
-
-topEdgeAnchor :: LayerShell.ZwlrLayerSurfaceV1AnchorFlags
-topEdgeAnchor =
-  LayerShell.ZwlrLayerSurfaceV1AnchorFlags
-    ( LayerShell.zwlrLayerSurfaceV1AnchorFlagsValue LayerShell.ZwlrLayerSurfaceV1AnchorFlagsTop
-        .|. LayerShell.zwlrLayerSurfaceV1AnchorFlagsValue LayerShell.ZwlrLayerSurfaceV1AnchorFlagsLeft
-        .|. LayerShell.zwlrLayerSurfaceV1AnchorFlagsValue LayerShell.ZwlrLayerSurfaceV1AnchorFlagsRight
-    )
 
 type ExceptIO = ExceptT FixtureError IO
 
