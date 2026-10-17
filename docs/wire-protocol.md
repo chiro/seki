@@ -412,8 +412,9 @@ typed event tree.
 `Seki.Run.Runtime` composes synchronized Wayland startup with manager binding.
 Opening is all-or-nothing: if global selection or binding fails, it closes the
 Wayland session rather than returning a partially initialized runtime. The
-result retains typed access to both the underlying session and the bound
-`river_window_manager_v1` object.
+result retains typed access to the underlying session and the bound
+`river_window_manager_v1`, `river_xkb_bindings_v1`, and `river_layer_shell_v1`
+objects.
 
 `runRiverSession` claims single, one-shot ownership of event dispatch; a second
 or concurrent runner is rejected. It continues until clean EOF, promotes
@@ -501,6 +502,16 @@ for diagnostics and tests. On closure/removal, callbacks run once and the
 runtime destroys the window's node before its window object, or the removed
 output object, so long-running sessions do not accumulate protocol objects.
 
+Each new output likewise gets exactly one `river_layer_shell_v1.get_output`
+request before its creation callback, and the typed
+`river_layer_shell_output_v1` handle is stored with the output. Its
+`non_exclusive_area` events update the output's usable area in the callback,
+stored as a core `Rect` built with `mkRect`: zero area and negative origins are
+kept exactly, while a negative size or a far edge beyond `Int32` is a
+structured inventory error. Only the latest area is kept. On
+`river_output_v1.removed` the runtime destroys the layer-shell output before
+the river output.
+
 ### 7.9 M0 Full placement
 
 `Seki.Run.Full` turns an inventory snapshot into the minimal M0 manage and
@@ -527,10 +538,17 @@ matching the M0 target release and retaining modifier-watch support for the
 configured binding model. Missing, duplicate, obsolete, and request-failure
 cases remain distinct structured errors.
 
-The owned runtime preflights both required river globals before submitting any
-bind request, then binds the window manager followed by the XKB bindings global.
-Either failure closes the partially opened Wayland session. `RiverSession`
-retains and exposes both typed handles.
+`Seki.Run.LayerShell` selects and binds the unique `river_layer_shell_v1`
+global at version 1. Binding it is what tells river that the window manager
+supports layer surfaces; without it river closes them. The registry rejects
+version 0 announcements, so the layer-shell error type has missing, duplicate,
+and bind-failure cases but no obsolete case.
+
+The owned runtime preflights all three required river globals,
+`river_window_manager_v1`, `river_xkb_bindings_v1`, and `river_layer_shell_v1`,
+before submitting any bind request, then binds them in that order. Any failure
+closes the partially opened Wayland session. `RiverSession` retains and exposes
+all three typed handles.
 
 ### 7.11 XKB seat and binding lifecycle
 
@@ -548,6 +566,14 @@ definition so the action layer does not need to recover identity from an object
 ID. On `river_seat_v1.removed`, the seat leaves the snapshot before callbacks
 run, then every binding is destroyed in definition order before the seat itself.
 Unknown, duplicate, and stale seat handles are fatal structured runtime errors.
+
+Before creating its bindings, the runtime sends one
+`river_layer_shell_v1.get_seat` for the seat and stores the typed
+`river_layer_shell_seat_v1` handle in the seat's state. The latest of
+`focus_exclusive`, `focus_non_exclusive`, and `focus_none` is recorded per seat
+as `RiverLayerFocus` and appears in the next manage snapshot; the scene
+reconciler decides what to do with it. On removal the layer-shell seat is
+destroyed after the bindings and before the river seat.
 
 Binding objects begin disabled. At the next manage boundary, the runtime
 prepends an internal plan that applies each optional layout override and then

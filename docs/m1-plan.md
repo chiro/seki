@@ -533,11 +533,18 @@ Deliverables:
   generate its fixture binding;
 - bind its global as a required runtime capability;
 - create and destroy one layer-shell output object per river output;
-- track `non_exclusive_area` revisions;
+- track the latest `non_exclusive_area` as each output's usable core `Rect`,
+  without a revision counter; WP6 adds one if its planner needs it;
 - create the seat object needed to track whether a layer surface owns focus;
 - track river's keyboard owner from `focus_exclusive`, `focus_non_exclusive`,
-  and `focus_none`, and apply the M1-D01 focus and border rules;
-- send `set_default` for the focused output in a manage sequence;
+  and `focus_none` per seat as `RiverLayerFocus` in the runtime snapshot. This
+  landed in WP5. Applying the M1-D01 focus and border rules moved to WP6, with
+  its request-level tests, because focus requests and borders are generated
+  by the reconciler;
+- send `set_default` for the current screen's output in every manage sequence
+  while the core state is attached. Sending it every sequence is deliberate:
+  the request is idempotent, and river forgets the default when that output's
+  layer-shell object is destroyed;
 - add a `seki-layer-surface-fixture` Haskell executable using the existing
   native Wayland transport. It binds `wl_compositor`, `wl_shm`, and
   `zwlr_layer_shell_v1`, maps one top-anchored shared-memory surface with a
