@@ -1,6 +1,8 @@
 module Seki.Run.DefaultTest (tests) where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.Exception (bracket_)
 import Data.Word (Word32)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
@@ -37,8 +39,12 @@ import Seki.Wire.Connection.ObjectTable (
   registerServerObject,
  )
 import Seki.Wire.Types (mkObjectId)
+import System.Environment (getEnv, setEnv)
+import System.IO.Temp (withSystemTempDirectory)
+import System.Posix.Files (createNamedPipe, fileExist, setFileMode)
+import System.Posix.IO (OpenFileFlags (..), OpenMode (WriteOnly), closeFd, defaultFileFlags, fdWrite, openFd)
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (Assertion, assertEqual, assertFailure, testCase)
+import Test.Tasty.HUnit (Assertion, assertBool, assertEqual, assertFailure, testCase)
 
 tests :: TestTree
 tests =
@@ -49,6 +55,7 @@ tests =
     , testCase "rejects invalid configuration before Wayland startup" testRunConfigFailure
     , testCase "selects the active window and first seat" testTargets
     , testCase "launches the terminal action asynchronously" testTerminalAction
+    , testCase "keeps running while the default terminal is open" testDefaultTerminalDoesNotBlock
     ]
 
 testDefaultBindings :: Assertion
@@ -112,6 +119,49 @@ testTerminalAction = do
       bindingObject
       Xkb.RiverXkbBindingV1Pressed
   takeMVar launched
+
+-- The test suite, like the seki executable, uses GHC's non-threaded runtime,
+-- where a thread blocked waiting for a child process stops every thread.
+testDefaultTerminalDoesNotBlock :: Assertion
+testDefaultTerminalDoesNotBlock =
+  withSystemTempDirectory "seki-default-terminal" $ \dir -> do
+    let fifo = dir <> "/go"
+        started = dir <> "/started"
+        done = dir <> "/done"
+        foot = dir <> "/foot"
+    createNamedPipe fifo 0o600
+    writeFile foot . unlines $
+      [ "#!/bin/sh"
+      , "exec 3<> " <> fifo
+      , "touch " <> started
+      , "timeout 10 head -n 1 <&3 > /dev/null"
+      , "touch " <> done
+      ]
+    setFileMode foot 0o755
+    bindingObject <- makeClientObject Xkb.riverXkbBindingV1Interface
+    handlers <- case defaultRuntimeHandlers defaultConfig of
+      Left errorValue -> assertFailure ("unexpected configuration error: " <> show errorValue)
+      Right value -> pure value
+    path <- getEnv "PATH"
+    bracket_ (setEnv "PATH" (dir <> ":" <> path)) (setEnv "PATH" path) $ do
+      _ <-
+        handleRiverKeyBindingEvent
+          handlers
+          (defaultTerminalBinding defaultConfig)
+          bindingObject
+          Xkb.RiverXkbBindingV1Pressed
+      waitFor "the terminal to start" started
+      assertBool "the terminal is still open while other threads run" . not =<< fileExist done
+      fd <- openFd fifo WriteOnly defaultFileFlags{nonBlock = True}
+      _ <- fdWrite fd "go\n"
+      closeFd fd
+      waitFor "the terminal to exit" done
+
+waitFor :: String -> FilePath -> Assertion
+waitFor label path = go (500 :: Int)
+ where
+  go 0 = assertFailure ("timed out waiting for " <> label)
+  go n = fileExist path >>= \exists -> if exists then pure () else threadDelay 10000 >> go (n - 1)
 
 makeServerObject :: Interface interface -> Word32 -> IO (Object interface)
 makeServerObject interface rawIdentifier = do

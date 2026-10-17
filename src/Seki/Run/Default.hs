@@ -26,6 +26,7 @@ import Seki.Run.Inventory (
   riverInventoryActiveWindow,
  )
 import Seki.Run.Phase (ManageM, RenderM, closeWindow, focusWindow)
+import Seki.Run.Policy (launchDetached)
 import Seki.Run.River (RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (
   RiverManageAction (..),
@@ -40,7 +41,6 @@ import Seki.Run.Runtime (
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable (Object)
 import System.IO (hPutStrLn, stderr)
-import System.Process (callProcess)
 
 data DefaultConfig = DefaultConfig
   { defaultTerminalBinding :: RiverKeyBinding
@@ -65,7 +65,7 @@ defaultConfig =
   DefaultConfig
     { defaultTerminalBinding = keyBinding 0xff0d
     , defaultCloseBinding = keyBinding 0x63
-    , defaultTerminalProcess = callProcess "foot" []
+    , defaultTerminalProcess = launchDetached "foot"
     }
  where
   keyBinding keysym =
