@@ -63,6 +63,7 @@ library seki-core
   hs-source-dirs:  src-core
   exposed-modules:
     Seki.Internal.Core.Action
+    Seki.Internal.Core.Event
     Seki.Internal.Core.Geometry
     Seki.Internal.Core.Layout
     Seki.Internal.Core.StackSet
@@ -173,6 +174,7 @@ test-suite seki-test
   main-is:        Main.hs
   other-modules:
     Seki.Internal.Core.ActionTest
+    Seki.Internal.Core.EventTest
     Seki.Internal.Core.GeometryGen
     Seki.Internal.Core.GeometryTest
     Seki.Internal.Core.LayoutTest
