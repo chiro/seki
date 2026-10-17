@@ -93,6 +93,7 @@ library seki-wire
     Seki.Run.Inventory
     Seki.Run.Default
     Seki.Run.Phase
+    Seki.Run.Policy
     Seki.Run.River
     Seki.Run.Runtime
     Seki.Run.Sequence
@@ -190,6 +191,7 @@ test-suite seki-test
     Seki.Run.MockRiver
     Seki.Run.DefaultTest
     Seki.Run.PhaseTest
+    Seki.Run.PolicyTest
     Seki.Run.RiverTest
     Seki.Run.RuntimeTest
     Seki.Run.SequenceTest
