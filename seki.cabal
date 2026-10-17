@@ -182,6 +182,16 @@ executable seki-registry-smoke
     seki:seki-wire,
     text >=2.0.2 && <2.2
 
+executable seki-layer-surface-fixture
+  import:         warnings
+  hs-source-dirs: tools/layer-surface-fixture/app
+  main-is:        Main.hs
+  build-depends:
+    base >=4.18 && <4.19,
+    seki:layer-surface-fixture,
+    seki:seki-wire,
+    unix >=2.8.4 && <2.9
+
 executable seki
   import:         warnings
   hs-source-dirs: tools/seki/app
