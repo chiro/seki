@@ -5,6 +5,7 @@ module Seki.Run.LayerShell (
   selectRiverLayerShellGlobal,
   bindRiverLayerShell,
   createRiverLayerShellOutput,
+  createRiverLayerShellSeat,
 )
 where
 
@@ -91,3 +92,20 @@ createRiverLayerShellOutput connection layerShell output handler =
     (objectVersion layerShell)
     (\child -> LayerShell.encodeRiverLayerShellV1GetOutput (objectId child) (objectId output))
     (eventRoute LayerShell.decodeRiverLayerShellOutputV1Event (const handler))
+
+-- | Send @get_seat@ for one river seat and install its event route atomically.
+createRiverLayerShellSeat ::
+  Connection ->
+  Object LayerShell.RiverLayerShellV1 ->
+  Object River.RiverSeatV1 ->
+  (LayerShell.RiverLayerShellSeatV1Event OwnedFd -> IO ()) ->
+  IO (Either ConnectionError (Object LayerShell.RiverLayerShellSeatV1))
+createRiverLayerShellSeat connection layerShell seat handler =
+  submitNewObjectRequestWithRoute
+    connection
+    LayerShell.riverLayerShellV1Interface
+    layerShell
+    LayerShell.riverLayerShellSeatV1Interface
+    (objectVersion layerShell)
+    (\child -> LayerShell.encodeRiverLayerShellV1GetSeat (objectId child) (objectId seat))
+    (eventRoute LayerShell.decodeRiverLayerShellSeatV1Event (const handler))

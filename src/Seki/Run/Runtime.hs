@@ -10,6 +10,7 @@ module Seki.Run.Runtime (
   readRiverInventory,
   RiverKeyBindingState (..),
   RiverSeatBindings (..),
+  RiverLayerFocus (..),
   RiverRuntimeSnapshot (..),
   readRiverSeatBindings,
   RiverManageAction (..),
@@ -53,6 +54,7 @@ import Seki.Run.LayerShell (
   RiverLayerShellBootstrapError,
   bindRiverLayerShell,
   createRiverLayerShellOutput,
+  createRiverLayerShellSeat,
   selectRiverLayerShellGlobal,
  )
 import Seki.Run.Phase (
@@ -129,8 +131,22 @@ data RiverKeyBindingState = RiverKeyBindingState
 
 data RiverSeatBindings = RiverSeatBindings
   { riverBindingsSeat :: Object River.RiverSeatV1
+  , riverSeatLayerShell :: Object LayerShell.RiverLayerShellSeatV1
+  , riverSeatLayerFocus :: RiverLayerFocus
   , riverSeatKeyBindings :: [RiverKeyBindingState]
   }
+  deriving (Eq, Show)
+
+{- | Which kind of layer surface river last said owns the seat's keyboard.
+
+The runtime only records river's latest @focus_exclusive@,
+@focus_non_exclusive@, or @focus_none@. The WP6 reconciler applies the
+M1-D01 rules from it, since focus requests and borders are generated there.
+-}
+data RiverLayerFocus
+  = RiverLayerFocusNone
+  | RiverLayerFocusExclusive
+  | RiverLayerFocusNonExclusive
   deriving (Eq, Show)
 
 -- | Pure inputs available to runtime manage and render planning.
@@ -452,14 +468,37 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
             pure False
           Right () -> pure True
   handleSeatCreated seat = do
-    reserved <- reserveSeat seat
-    when reserved $
-      readIORef xkbGlobalState >>= \case
+    untracked <- requireSeatUntracked seat
+    when untracked $
+      readIORef layerShellGlobalState >>= \case
         Nothing ->
-          recordRuntimeError sequenceStatus RiverRuntimeXkbGlobalUnavailable
-        Just xkbBindings -> do
-          created <- createBindings xkbBindings seat (riverKeyBindings runtimeHandlers)
-          when created (handleRiverSeatCreated handlers seat)
+          recordRuntimeError sequenceStatus RiverRuntimeLayerShellGlobalUnavailable
+        Just layerShell ->
+          createRiverLayerShellSeat connection layerShell seat (handleLayerShellSeatEvent seat)
+            >>= \case
+              Left errorValue ->
+                recordRuntimeError sequenceStatus (RiverRuntimeConnectionError errorValue)
+              Right layerShellSeat -> do
+                reserved <- reserveSeat seat layerShellSeat
+                when reserved $
+                  readIORef xkbGlobalState >>= \case
+                    Nothing ->
+                      recordRuntimeError sequenceStatus RiverRuntimeXkbGlobalUnavailable
+                    Just xkbBindings -> do
+                      created <- createBindings xkbBindings seat (riverKeyBindings runtimeHandlers)
+                      when created (handleRiverSeatCreated handlers seat)
+  handleLayerShellSeatEvent seat event = do
+    let focus = case event of
+          LayerShell.RiverLayerShellSeatV1FocusExclusive -> RiverLayerFocusExclusive
+          LayerShell.RiverLayerShellSeatV1FocusNonExclusive -> RiverLayerFocusNonExclusive
+          LayerShell.RiverLayerShellSeatV1FocusNone -> RiverLayerFocusNone
+    result <-
+      atomicModifyIORef' seatBindingsState $ \seats ->
+        case Map.lookup (objectId seat) seats of
+          Nothing -> (seats, Left (RiverRuntimeSeatNotTracked (objectId seat)))
+          Just state ->
+            (Map.insert (objectId seat) state{riverSeatLayerFocus = focus} seats, Right ())
+    void (recordStateResult result)
   handleSeatEvent seat event = do
     tracked <- requireSeat seat
     when tracked $ do
@@ -478,13 +517,22 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
                 Nothing -> pure ()
                 Just state -> destroySeat state
           _ -> handleRiverSeatEvent handlers seat event
-  reserveSeat seat = do
+  requireSeatUntracked seat = do
+    seats <- readIORef seatBindingsState
+    recordStateResult $
+      if Map.member (objectId seat) seats
+        then Left (RiverRuntimeSeatAlreadyTracked (objectId seat))
+        else Right ()
+  reserveSeat seat layerShellSeat = do
     result <-
       atomicModifyIORef' seatBindingsState $ \seats ->
         if Map.member (objectId seat) seats
           then (seats, Left (RiverRuntimeSeatAlreadyTracked (objectId seat)))
           else
-            ( Map.insert (objectId seat) (RiverSeatBindings seat []) seats
+            ( Map.insert
+                (objectId seat)
+                (RiverSeatBindings seat layerShellSeat RiverLayerFocusNone [])
+                seats
             , Right ()
             )
     recordStateResult result
@@ -591,10 +639,19 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
       True ->
         submitRequest
           connection
-          River.riverSeatV1Interface
-          (riverBindingsSeat state)
-          River.encodeRiverSeatV1Destroy
-          >>= recordConnectionResult
+          LayerShell.riverLayerShellSeatV1Interface
+          (riverSeatLayerShell state)
+          LayerShell.encodeRiverLayerShellSeatV1Destroy
+          >>= \case
+            Left errorValue ->
+              recordRuntimeError sequenceStatus (RiverRuntimeConnectionError errorValue)
+            Right () ->
+              submitRequest
+                connection
+                River.riverSeatV1Interface
+                (riverBindingsSeat state)
+                River.encodeRiverSeatV1Destroy
+                >>= recordConnectionResult
   destroyBindings [] = pure True
   destroyBindings (bindingState : rest) =
     submitRequest

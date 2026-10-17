@@ -4,6 +4,7 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (bracket_)
 import Data.Word (Word32)
+import Seki.Protocol.RiverLayerShellV1 qualified as LayerShell
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Protocol.Wayland qualified as Wayland
@@ -24,6 +25,7 @@ import Seki.Run.Inventory (
   emptyRiverInventory,
  )
 import Seki.Run.Runtime (
+  RiverLayerFocus (..),
   RiverRuntimeHandlers (..),
   RiverRuntimeSnapshot (..),
   RiverSeatBindings (..),
@@ -97,7 +99,8 @@ testTargets = do
           >>= addRiverWindow second
           >>= activateRiverWindow (objectId first)
       )
-  let snapshot = RiverRuntimeSnapshot inventory [RiverSeatBindings seat []]
+  layerShellSeat <- makeClientObject LayerShell.riverLayerShellSeatV1Interface
+  let snapshot = RiverRuntimeSnapshot inventory [RiverSeatBindings seat layerShellSeat RiverLayerFocusNone []]
   assertEqual "close target" (Just (objectId first)) (objectId . riverWindowObject <$> defaultCloseTarget snapshot)
   assertEqual
     "focus target"

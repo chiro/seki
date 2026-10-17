@@ -32,6 +32,7 @@ import Seki.Run.MockRiver (
   receiveGlobalBind,
   receiveKeyBindingRequest,
   receiveLayerShellOutputRequest,
+  receiveLayerShellSeatRequest,
   receiveNewIdRequest,
   receiveRuntimeBinds,
   receiveRuntimeBindsAtManagerVersion,
@@ -46,10 +47,12 @@ import Seki.Run.MockRiver (
 import Seki.Run.Phase (disableKeyBinding, setWindowDimensionBounds)
 import Seki.Run.River (RiverBootstrapError (..), RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (
+  RiverLayerFocus (..),
   RiverManageAction (..),
   RiverRuntimeError (..),
   RiverRuntimeHandlers (..),
   RiverRuntimeSnapshot (..),
+  RiverSeatBindings (..),
   closeRiverSession,
   noRiverManageAction,
   openRiverSessionAt,
@@ -93,6 +96,7 @@ tests =
     , testCase "owns per-seat XKB binding objects" testSeatBindingLifecycle
     , testCase "owns one layer-shell output per output and plans with its usable area" testOutputLayerShellLifecycle
     , testCase "promotes invalid usable areas to inventory errors" testInvalidUsableArea
+    , testCase "owns one layer-shell seat per seat and tracks its keyboard owner" testSeatLayerShellLifecycle
     , testCase "rejects an out-of-order manager sequence event" testSequenceOrderError
     , testCase "closes startup when the manager global is missing" testMissingManager
     , testCase "closes startup when the XKB bindings global is missing" testMissingXkb
@@ -289,6 +293,7 @@ testDefaultPolicy =
         ]
       nodeId <- receiveNewIdRequest reader peer windowId (Opcode 2)
       _ <- receiveLayerShellOutputRequest reader peer layerShellId outputId
+      _ <- receiveLayerShellSeatRequest reader peer layerShellId seatId
       terminalId <- receiveKeyBindingRequest reader peer xkbBindingsId seatId terminalBinding
       closeId <- receiveKeyBindingRequest reader peer xkbBindingsId seatId closeBinding
       sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
@@ -337,7 +342,7 @@ testSeatInteractionFocus =
         , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
         , callbackDoneFrame callbackId 99
         ]
-      (managerId, _, _) <- receiveRuntimeBinds reader peer
+      (managerId, _, layerShellId) <- receiveRuntimeBinds reader peer
       seatId <- requireObjectId 0xff000022
       sendFrames
         peer
@@ -347,6 +352,7 @@ testSeatInteractionFocus =
         ]
       _ <- receiveNewIdRequest reader peer firstWindowId (Opcode 2)
       _ <- receiveNewIdRequest reader peer secondWindowId (Opcode 2)
+      _ <- receiveLayerShellSeatRequest reader peer layerShellId seatId
       sendFrames
         peer
         [ encodedFrame seatId (Opcode 4) (putObject firstWindowId)
@@ -590,9 +596,10 @@ testSeatBindingLifecycle =
         , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
         , callbackDoneFrame callbackId 98
         ]
-      (managerId, xkbBindingsId, _) <- receiveRuntimeBinds reader peer
+      (managerId, xkbBindingsId, layerShellId) <- receiveRuntimeBinds reader peer
       seatId <- requireObjectId 0xff000007
       sendFrames peer [encodedFrame managerId (Opcode 8) (putNewId seatId)]
+      layerShellSeatId <- receiveLayerShellSeatRequest reader peer layerShellId seatId
       terminalId <- receiveKeyBindingRequest reader peer xkbBindingsId seatId terminalBinding
       closeId <- receiveKeyBindingRequest reader peer xkbBindingsId seatId closeBinding
       sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
@@ -622,6 +629,7 @@ testSeatBindingLifecycle =
         ]
       receiveExpectedRequest reader peer terminalId (Opcode 0) (pure ())
       receiveExpectedRequest reader peer closeId (Opcode 0) (pure ())
+      receiveExpectedRequest reader peer layerShellSeatId (Opcode 0) (pure ())
       receiveExpectedRequest reader peer seatId (Opcode 0) (pure ())
       receiveSequenceCompletion reader peer managerId (Opcode 2)
       closeTransport peer
@@ -743,6 +751,61 @@ testInvalidUsableArea =
       (Left (RiverRuntimeInventoryError (RiverInventoryInvalidUsableArea outputId (NegativeSize (-1) 5))))
       =<< runRiverSession session
     expectMockSuccess mockDone
+
+testSeatLayerShellLifecycle :: Assertion
+testSeatLayerShellLifecycle =
+  withRuntimePair $ \target peer -> do
+    plannedFocus <- newIORef []
+    seatId <- requireObjectId 0xff000090
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
+        , callbackDoneFrame callbackId 1
+        ]
+      (managerId, _, layerShellId) <- receiveRuntimeBinds reader peer
+      sendFrames peer [encodedFrame managerId (Opcode 8) (putNewId seatId)]
+      layerShellSeatId <- receiveLayerShellSeatRequest reader peer layerShellId seatId
+      let manageWith events = do
+            sendFrames peer (events <> [encodedFrame managerId (Opcode 2) (pure ())])
+            receiveSequenceCompletion reader peer managerId (Opcode 2)
+            sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+            receiveSequenceCompletion reader peer managerId (Opcode 4)
+      manageWith []
+      manageWith [encodedFrame layerShellSeatId (Opcode 0) (pure ())]
+      manageWith [encodedFrame layerShellSeatId (Opcode 1) (pure ())]
+      manageWith [encodedFrame layerShellSeatId (Opcode 2) (pure ())]
+      sendFrames
+        peer
+        [ encodedFrame seatId (Opcode 0) (pure ())
+        , encodedFrame managerId (Opcode 2) (pure ())
+        ]
+      receiveExpectedRequest reader peer layerShellSeatId (Opcode 0) (pure ())
+      receiveExpectedRequest reader peer seatId (Opcode 0) (pure ())
+      receiveSequenceCompletion reader peer managerId (Opcode 2)
+      closeTransport peer
+    let handlers =
+          (runtimeHandlers (\_ -> pure ()))
+            { prepareRiverManagePlan = \snapshot -> do
+                modifyIORef' plannedFocus (<> [map riverSeatLayerFocus (riverRuntimeSeatBindings snapshot)])
+                pure (pure ())
+            }
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
+    assertEqual "layer-shell seat lifecycle" (Right ()) =<< runRiverSession session
+    expectMockSuccess mockDone
+    assertEqual
+      "keyboard owner seen by each manage plan"
+      [ [RiverLayerFocusNone]
+      , [RiverLayerFocusExclusive]
+      , [RiverLayerFocusNonExclusive]
+      , [RiverLayerFocusNone]
+      , []
+      ]
+      =<< readIORef plannedFocus
 
 testSequenceOrderError :: Assertion
 testSequenceOrderError =

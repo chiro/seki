@@ -38,6 +38,7 @@ import Seki.Run.MockRiver (
   receiveExpectedRequest,
   receiveKeyBindingRequest,
   receiveLayerShellOutputRequest,
+  receiveLayerShellSeatRequest,
   receiveNewIdRequest,
   receiveRuntimeBinds,
   receiveSequenceCompletion,
@@ -153,6 +154,7 @@ testSeatEvents =
       _ <- receiveNewIdRequest reader peer w1 (Opcode 2)
       _ <- receiveNewIdRequest reader peer w2 (Opcode 2)
       _ <- receiveLayerShellOutputRequest reader peer layerShellId o1
+      _ <- receiveLayerShellSeatRequest reader peer layerShellId s1
       finishManage reader peer managerId
       sendFrames
         peer
@@ -188,6 +190,7 @@ testBindingOrder =
       (managerId, xkbBindingsId, layerShellId) <- handshake reader peer
       sendFrames peer [newOutput managerId o1, newSeat managerId s1]
       _ <- receiveLayerShellOutputRequest reader peer layerShellId o1
+      _ <- receiveLayerShellSeatRequest reader peer layerShellId s1
       bindingIds <- mapM (receiveKeyBindingRequest reader peer xkbBindingsId s1 . fst) bindings
       sendFrames peer [manageStart managerId]
       mapM_ (\b -> receiveExpectedRequest reader peer b (Opcode 2) (pure ())) bindingIds
@@ -217,6 +220,7 @@ testOneQueue =
       sendFrames peer [newWindow managerId w1, newOutput managerId o1, newSeat managerId s1]
       _ <- receiveNewIdRequest reader peer w1 (Opcode 2)
       _ <- receiveLayerShellOutputRequest reader peer layerShellId o1
+      _ <- receiveLayerShellSeatRequest reader peer layerShellId s1
       killId <- receiveKeyBindingRequest reader peer xkbBindingsId s1 (keyBinding 0x63)
       sendFrames peer [manageStart managerId]
       receiveExpectedRequest reader peer killId (Opcode 2) (pure ())
@@ -242,6 +246,7 @@ testCloseRequests =
       sendFrames peer [newWindow managerId w1, newOutput managerId o1, newSeat managerId s1]
       nodeId <- receiveNewIdRequest reader peer w1 (Opcode 2)
       _ <- receiveLayerShellOutputRequest reader peer layerShellId o1
+      _ <- receiveLayerShellSeatRequest reader peer layerShellId s1
       killId <- receiveKeyBindingRequest reader peer xkbBindingsId s1 (keyBinding 0x63)
       sendFrames peer [manageStart managerId]
       receiveExpectedRequest reader peer killId (Opcode 2) (pure ())
