@@ -252,10 +252,10 @@ testArguments = do
 
 expectMappedTeardown :: Mock -> Objects -> BufferObjects -> IO ObjectId
 expectMappedTeardown mock objects buffers = do
-  expectRequest mock "layer surface destroy" (objectsLayerSurface objects) (Opcode 7) (pure ())
-  expectRequest mock "surface destroy" (objectsSurface objects) (Opcode 0) (pure ())
   expectRequest mock "buffer destroy" (bufferBuffer buffers) (Opcode 0) (pure ())
   expectRequest mock "pool destroy" (bufferPool buffers) (Opcode 1) (pure ())
+  expectRequest mock "layer surface destroy" (objectsLayerSurface objects) (Opcode 7) (pure ())
+  expectRequest mock "surface destroy" (objectsSurface objects) (Opcode 0) (pure ())
   receiveTeardownSync mock
 
 receiveTeardownSync :: Mock -> IO ObjectId

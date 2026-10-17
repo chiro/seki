@@ -253,11 +253,11 @@ runPhase fixture phase = do
 -- | Destroy every object the fixture created, role object before its surface.
 tearDown :: Fixture -> Maybe MappedBuffer -> FixtureStop -> ExceptIO Phase
 tearDown fixture mapped stop = do
-  send LayerShell.zwlrLayerSurfaceV1Interface (layerSurfaceObject surfaces) LayerShell.encodeZwlrLayerSurfaceV1Destroy
-  send Wayland.wlSurfaceInterface (surfaceObject surfaces) Wayland.encodeWlSurfaceDestroy
   for_ mapped $ \buffers -> do
     send Wayland.wlBufferInterface (mappedBuffer buffers) Wayland.encodeWlBufferDestroy
     send Wayland.wlShmPoolInterface (mappedPool buffers) Wayland.encodeWlShmPoolDestroy
+  send LayerShell.zwlrLayerSurfaceV1Interface (layerSurfaceObject surfaces) LayerShell.encodeZwlrLayerSurfaceV1Destroy
+  send Wayland.wlSurfaceInterface (surfaceObject surfaces) Wayland.encodeWlSurfaceDestroy
   requestSync fixture TeardownSync
   pure (AwaitingTeardownSync stop)
  where
