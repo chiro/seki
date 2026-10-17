@@ -199,8 +199,8 @@ testPhasePlans =
             { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
             , riverKeyBindings = []
             , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
-            , prepareRiverManagePlan = prepareFullManagePlan . riverRuntimeInventory
-            , prepareRiverRenderPlan = prepareFullRenderPlan . riverRuntimeInventory
+            , prepareRiverManagePlan = pure . prepareFullManagePlan . riverRuntimeInventory
+            , prepareRiverRenderPlan = pure . prepareFullRenderPlan . riverRuntimeInventory
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
     assertEqual "phase-plan lifecycle" (Right ()) =<< runRiverSession session
@@ -251,8 +251,8 @@ testFullWithoutOutput =
             { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
             , riverKeyBindings = []
             , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
-            , prepareRiverManagePlan = prepareFullManagePlan . riverRuntimeInventory
-            , prepareRiverRenderPlan = prepareFullRenderPlan . riverRuntimeInventory
+            , prepareRiverManagePlan = pure . prepareFullManagePlan . riverRuntimeInventory
+            , prepareRiverRenderPlan = pure . prepareFullRenderPlan . riverRuntimeInventory
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
     assertEqual "headless Full lifecycle" (Right ()) =<< runRiverSession session
@@ -412,8 +412,8 @@ testInventoryRemoval =
                   }
             , riverKeyBindings = []
             , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
-            , prepareRiverManagePlan = \_ -> pure ()
-            , prepareRiverRenderPlan = \_ -> pure ()
+            , prepareRiverManagePlan = \_ -> pure (pure ())
+            , prepareRiverRenderPlan = \_ -> pure (pure ())
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
     assertEqual "removal lifecycle" (Right ()) =<< runRiverSession session
@@ -454,10 +454,10 @@ testPhasePlanFailure =
             , riverKeyBindings = []
             , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
             , prepareRiverManagePlan = \snapshot ->
-                case riverInventoryWindows (riverRuntimeInventory snapshot) of
+                pure $ case riverInventoryWindows (riverRuntimeInventory snapshot) of
                   window : _ -> setWindowDimensionBounds (riverWindowObject window) 1920 1080
                   [] -> pure ()
-            , prepareRiverRenderPlan = \_ -> pure ()
+            , prepareRiverRenderPlan = \_ -> pure (pure ())
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
     runRiverSession session >>= \case
@@ -497,8 +497,8 @@ testInventoryFailure =
                   }
             , riverKeyBindings = []
             , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
-            , prepareRiverManagePlan = \_ -> pure ()
-            , prepareRiverRenderPlan = \_ -> pure ()
+            , prepareRiverManagePlan = \_ -> pure (pure ())
+            , prepareRiverRenderPlan = \_ -> pure (pure ())
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
     assertEqual
@@ -543,8 +543,8 @@ testNodeAcquisitionFailure =
                   }
             , riverKeyBindings = []
             , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
-            , prepareRiverManagePlan = \_ -> pure ()
-            , prepareRiverRenderPlan = \_ -> pure ()
+            , prepareRiverManagePlan = \_ -> pure (pure ())
+            , prepareRiverRenderPlan = \_ -> pure (pure ())
             }
     session <- expectRight =<< openRiverSessionAt target limit handlers
     runRiverSession session >>= \case
@@ -631,8 +631,8 @@ testSeatBindingLifecycle =
                     modifyIORef' bindingPresses (<> [definition])
                     pure (RiverManageAction (\_ -> disableKeyBinding binding))
                   _ -> pure noRiverManageAction
-            , prepareRiverManagePlan = \_ -> pure ()
-            , prepareRiverRenderPlan = \_ -> pure ()
+            , prepareRiverManagePlan = \_ -> pure (pure ())
+            , prepareRiverRenderPlan = \_ -> pure (pure ())
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
     assertEqual "seat binding lifecycle" (Right ()) =<< runRiverSession session
@@ -750,8 +750,8 @@ runtimeHandlers managerHandler =
     { riverProtocolHandlers = protocolHandlers managerHandler
     , riverKeyBindings = []
     , handleRiverKeyBindingEvent = \_ _ _ -> pure noRiverManageAction
-    , prepareRiverManagePlan = \_ -> pure ()
-    , prepareRiverRenderPlan = \_ -> pure ()
+    , prepareRiverManagePlan = \_ -> pure (pure ())
+    , prepareRiverRenderPlan = \_ -> pure (pure ())
     }
 
 protocolHandlers ::

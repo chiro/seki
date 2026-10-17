@@ -138,15 +138,15 @@ noRiverManageAction = RiverManageAction (const (pure ()))
 {- | Low-level river event handlers plus phase-safe plans prepared at each
 sequence boundary.
 
-Plan preparation is a pure function of the runtime-owned inventory, and the
-returned plans cannot lift arbitrary IO.
+Plan preparation runs in IO so a policy can keep state across sequences;
+the returned plans themselves cannot lift arbitrary IO.
 -}
 data RiverRuntimeHandlers = RiverRuntimeHandlers
   { riverProtocolHandlers :: RiverWindowManagerHandlers
   , riverKeyBindings :: [RiverKeyBinding]
   , handleRiverKeyBindingEvent :: RiverKeyBinding -> Object Xkb.RiverXkbBindingV1 -> Xkb.RiverXkbBindingV1Event OwnedFd -> IO RiverManageAction
-  , prepareRiverManagePlan :: RiverRuntimeSnapshot -> ManageM ()
-  , prepareRiverRenderPlan :: RiverRuntimeSnapshot -> RenderM ()
+  , prepareRiverManagePlan :: RiverRuntimeSnapshot -> IO (ManageM ())
+  , prepareRiverRenderPlan :: RiverRuntimeSnapshot -> IO (RenderM ())
   }
 
 data RiverRuntimeError
@@ -327,7 +327,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState sea
         manager
         event
         startRenderSequence
-        (readRuntimeSnapshot >>= runRenderM connection . prepareRiverRenderPlan runtimeHandlers)
+        (readRuntimeSnapshot >>= prepareRiverRenderPlan runtimeHandlers >>= runRenderM connection)
     _ -> handleRiverWindowManagerEvent handlers manager event
   handleWindowCreated window = do
     added <- updateInventory sequenceStatus inventoryState (addRiverWindow window)
@@ -475,6 +475,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState sea
   runManagePlans = do
     snapshot <- readRuntimeSnapshot
     actions <- readIORef manageActionsState
+    policyPlan <- prepareRiverManagePlan runtimeHandlers snapshot
     let pending =
           [ bindingState
           | seatState <- riverRuntimeSeatBindings snapshot
@@ -484,7 +485,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState sea
         plan = do
           mapM_ prepareKeyBinding pending
           mapM_ (\action -> prepareRiverManageAction action snapshot) actions
-          prepareRiverManagePlan runtimeHandlers snapshot
+          policyPlan
     runManageM connection plan >>= \case
       Left errorValue -> pure (Left errorValue)
       Right () -> do

@@ -86,8 +86,8 @@ defaultRuntimeHandlers config
           { riverProtocolHandlers = noOpProtocolHandlers
           , riverKeyBindings = [defaultTerminalBinding config, defaultCloseBinding config]
           , handleRiverKeyBindingEvent = handleBindingEvent
-          , prepareRiverManagePlan = prepareDefaultManagePlan
-          , prepareRiverRenderPlan = prepareDefaultRenderPlan
+          , prepareRiverManagePlan = pure . prepareDefaultManagePlan
+          , prepareRiverRenderPlan = pure . prepareDefaultRenderPlan
           }
  where
   handleBindingEvent definition _ = \case
