@@ -321,11 +321,7 @@ applyRiverOutputEvent output event inventory = do
         else Left (RiverInventoryInvalidOutputDimensions identifier dimensions)
  where
   identifier = objectId output
-  update state =
-    Right
-      inventory
-        { inventoryOutputs = Map.insert identifier state (inventoryOutputs inventory)
-        }
+  update state = Right (updateOutput state inventory)
 
 updateOutput :: RiverOutputState -> RiverInventory -> RiverInventory
 updateOutput state inventory =
