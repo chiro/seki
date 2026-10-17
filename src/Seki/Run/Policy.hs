@@ -5,7 +5,11 @@
 River callbacks and key-binding presses append core events to one queue, so
 their arrival order is kept across kinds. Each @manage_start@ drains the
 queue into the core state, launches spawned commands, and sends close
-requests in the manage sequence.
+requests in the manage sequence. While an output is attached, every manage
+sequence then marks the current screen's output as the layer-shell default.
+The request is idempotent, and river forgets the default when that output's
+layer-shell object is destroyed, so it is sent every time rather than on
+change.
 -}
 module Seki.Run.Policy (
   PolicyConfig (..),
@@ -26,12 +30,12 @@ import Data.Maybe (mapMaybe)
 import Data.Word (Word32)
 import Seki.Internal.Core.Action (Action, Intent (..))
 import Seki.Internal.Core.Event (CoreEvent (..), drainCore)
-import Seki.Internal.Core.StackSet (OutputId (..), WindowId (..))
-import Seki.Internal.Core.State (CoreState, WorkspaceTagError, newCoreState)
+import Seki.Internal.Core.StackSet (OutputId (..), Screen (..), StackSet (..), WindowId (..))
+import Seki.Internal.Core.State (CoreState (..), WorkspaceTagError, newCoreState)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
-import Seki.Run.Inventory (RiverWindowState (..), lookupRiverWindow)
-import Seki.Run.Phase (ManageM, closeWindow)
+import Seki.Run.Inventory (RiverOutputState (..), RiverWindowState (..), lookupRiverOutput, lookupRiverWindow)
+import Seki.Run.Phase (ManageM, closeWindow, setDefaultLayerShellOutput)
 import Seki.Run.River (RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..), noRiverManageAction)
 import Seki.Run.Xkb (RiverKeyBinding)
@@ -112,10 +116,18 @@ prepareManagePlan policy snapshot = do
   (st, intents) <- drainCore events <$> readIORef (policyState policy)
   writeIORef (policyState policy) st
   mapM_ (policyLaunch (policyConfig policy)) [cmd | Spawn cmd <- intents]
-  pure (mapM_ closeWindow (mapMaybe liveWindow [w | CloseWindow w <- intents]))
+  pure $ do
+    mapM_ closeWindow (mapMaybe liveWindow [w | CloseWindow w <- intents])
+    mapM_ setDefaultLayerShellOutput (currentLayerShellOutput st)
  where
+  inventory = riverRuntimeInventory snapshot
   liveWindow (WindowId w) =
-    riverWindowObject <$> (mkObjectId w >>= (`lookupRiverWindow` riverRuntimeInventory snapshot))
+    riverWindowObject <$> (mkObjectId w >>= (`lookupRiverWindow` inventory))
+  currentLayerShellOutput = \case
+    HeadlessState _ -> Nothing
+    AttachedState ss _ ->
+      let OutputId o = output (current ss)
+       in mkObjectId o >>= (`lookupRiverOutput` inventory) >>= riverOutputLayerShell
 
 readPolicyState :: Policy i l -> IO (CoreState i l)
 readPolicyState = readIORef . policyState

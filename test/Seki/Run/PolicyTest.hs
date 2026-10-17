@@ -23,6 +23,7 @@ import Seki.Internal.Core.StackSet (
   greedyView,
   integrate',
   peek,
+  view,
  )
 import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), WorkspaceTagError (..), newCoreState)
 import Seki.Internal.Layout.Full (Full (..))
@@ -85,6 +86,8 @@ tests =
     , testCase "applies bindings pressed before one manage_start in press order" testBindingOrder
     , testCase "queues window events and bindings in one arrival order" testOneQueue
     , testCase "sends close requests only for windows still in inventory" testCloseRequests
+    , testCase "sets the current output as the layer-shell default" testSetDefaultFollowsCurrentOutput
+    , testCase "sets no layer-shell default while headless" testSetDefaultHeadless
     , testCase "launches a command without waiting for it" testLaunchDetached
     ]
 
@@ -121,11 +124,11 @@ testEventsAtManageStart =
       (managerId, _, layerShellId) <- handshake reader peer
       sendFrames peer [newWindow managerId w1, newOutput managerId o1, manageStart managerId]
       _ <- receiveNewIdRequest reader peer w1 (Opcode 2)
-      _ <- receiveLayerShellOutputRequest reader peer layerShellId o1
-      finishManage reader peer managerId
+      ls1 <- receiveLayerShellOutputRequest reader peer layerShellId o1
+      finishManageDefault reader peer managerId ls1
       sendFrames peer [newWindow managerId w2, manageStart managerId]
       _ <- receiveNewIdRequest reader peer w2 (Opcode 2)
-      finishManage reader peer managerId
+      finishManageDefault reader peer managerId ls1
       closeTransport peer
     (_, drains) <- runPolicy target mockDone []
     case drains of
@@ -153,18 +156,18 @@ testSeatEvents =
       sendFrames peer [newWindow managerId w1, newWindow managerId w2, newOutput managerId o1, newSeat managerId s1, manageStart managerId]
       _ <- receiveNewIdRequest reader peer w1 (Opcode 2)
       _ <- receiveNewIdRequest reader peer w2 (Opcode 2)
-      _ <- receiveLayerShellOutputRequest reader peer layerShellId o1
+      ls1 <- receiveLayerShellOutputRequest reader peer layerShellId o1
       _ <- receiveLayerShellSeatRequest reader peer layerShellId s1
-      finishManage reader peer managerId
+      finishManageDefault reader peer managerId ls1
       sendFrames
         peer
         [ encodedFrame s1 (Opcode 2) (putObject w1)
         , encodedFrame s1 (Opcode 3) (pure ())
         , manageStart managerId
         ]
-      finishManage reader peer managerId
+      finishManageDefault reader peer managerId ls1
       sendFrames peer [encodedFrame s1 (Opcode 4) (putObject w1), manageStart managerId]
-      finishManage reader peer managerId
+      finishManageDefault reader peer managerId ls1
       closeTransport peer
     (_, drains) <- runPolicy target mockDone []
     case map drainAfter drains of
@@ -189,14 +192,14 @@ testBindingOrder =
       reader <- newFrameReader
       (managerId, xkbBindingsId, layerShellId) <- handshake reader peer
       sendFrames peer [newOutput managerId o1, newSeat managerId s1]
-      _ <- receiveLayerShellOutputRequest reader peer layerShellId o1
+      ls1 <- receiveLayerShellOutputRequest reader peer layerShellId o1
       _ <- receiveLayerShellSeatRequest reader peer layerShellId s1
       bindingIds <- mapM (receiveKeyBindingRequest reader peer xkbBindingsId s1 . fst) bindings
       sendFrames peer [manageStart managerId]
       mapM_ (\b -> receiveExpectedRequest reader peer b (Opcode 2) (pure ())) bindingIds
-      finishManage reader peer managerId
+      finishManageDefault reader peer managerId ls1
       sendFrames peer (map pressed bindingIds ++ [manageStart managerId])
-      finishManage reader peer managerId
+      finishManageDefault reader peer managerId ls1
       closeTransport peer
     (launches, drains) <- runPolicy target mockDone bindings
     case drains of
@@ -219,16 +222,16 @@ testOneQueue =
       (managerId, xkbBindingsId, layerShellId) <- handshake reader peer
       sendFrames peer [newWindow managerId w1, newOutput managerId o1, newSeat managerId s1]
       _ <- receiveNewIdRequest reader peer w1 (Opcode 2)
-      _ <- receiveLayerShellOutputRequest reader peer layerShellId o1
+      ls1 <- receiveLayerShellOutputRequest reader peer layerShellId o1
       _ <- receiveLayerShellSeatRequest reader peer layerShellId s1
       killId <- receiveKeyBindingRequest reader peer xkbBindingsId s1 (keyBinding 0x63)
       sendFrames peer [manageStart managerId]
       receiveExpectedRequest reader peer killId (Opcode 2) (pure ())
-      finishManage reader peer managerId
+      finishManageDefault reader peer managerId ls1
       sendFrames peer [newWindow managerId w2, pressed killId, manageStart managerId]
       _ <- receiveNewIdRequest reader peer w2 (Opcode 2)
       receiveExpectedRequest reader peer w2 (Opcode 1) (pure ())
-      finishManage reader peer managerId
+      finishManageDefault reader peer managerId ls1
       closeTransport peer
     _ <- runPolicy target mockDone bindings
     pure ()
@@ -245,22 +248,79 @@ testCloseRequests =
       (managerId, xkbBindingsId, layerShellId) <- handshake reader peer
       sendFrames peer [newWindow managerId w1, newOutput managerId o1, newSeat managerId s1]
       nodeId <- receiveNewIdRequest reader peer w1 (Opcode 2)
-      _ <- receiveLayerShellOutputRequest reader peer layerShellId o1
+      ls1 <- receiveLayerShellOutputRequest reader peer layerShellId o1
       _ <- receiveLayerShellSeatRequest reader peer layerShellId s1
       killId <- receiveKeyBindingRequest reader peer xkbBindingsId s1 (keyBinding 0x63)
       sendFrames peer [manageStart managerId]
       receiveExpectedRequest reader peer killId (Opcode 2) (pure ())
-      finishManage reader peer managerId
+      finishManageDefault reader peer managerId ls1
       sendFrames peer [pressed killId, manageStart managerId]
       receiveExpectedRequest reader peer w1 (Opcode 1) (pure ())
-      finishManage reader peer managerId
+      finishManageDefault reader peer managerId ls1
       sendFrames peer [pressed killId, encodedFrame w1 (Opcode 0) (pure ()), manageStart managerId]
       receiveExpectedRequest reader peer nodeId (Opcode 0) (pure ())
       receiveExpectedRequest reader peer w1 (Opcode 0) (pure ())
-      finishManage reader peer managerId
+      finishManageDefault reader peer managerId ls1
       closeTransport peer
     (_, drains) <- runPolicy target mockDone bindings
     assertEqual "the closed window is unmanaged" [] (maybe [] (managed . drainAfter) (lastMaybe drains))
+
+testSetDefaultFollowsCurrentOutput :: Assertion
+testSetDefaultFollowsCurrentOutput =
+  withRuntimePair $ \target peer -> do
+    o1 <- requireObjectId 0xff000080
+    o2 <- requireObjectId 0xff000081
+    s1 <- requireObjectId 0xff000082
+    let bindings =
+          [ (keyBinding 0x32, windows (view 2))
+          , (keyBinding 0x31, windows (greedyView 1))
+          ]
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (managerId, xkbBindingsId, layerShellId) <- handshake reader peer
+      sendFrames peer [newOutput managerId o1, newOutput managerId o2, newSeat managerId s1]
+      ls1 <- receiveLayerShellOutputRequest reader peer layerShellId o1
+      ls2 <- receiveLayerShellOutputRequest reader peer layerShellId o2
+      _ <- receiveLayerShellSeatRequest reader peer layerShellId s1
+      [viewId, greedyViewId] <- mapM (receiveKeyBindingRequest reader peer xkbBindingsId s1 . fst) bindings
+      sendFrames peer [manageStart managerId]
+      mapM_ (\b -> receiveExpectedRequest reader peer b (Opcode 2) (pure ())) [viewId, greedyViewId]
+      finishManageDefault reader peer managerId ls1
+      sendFrames peer [pressed viewId, manageStart managerId]
+      finishManageDefault reader peer managerId ls2
+      sendFrames peer [pressed greedyViewId, manageStart managerId]
+      finishManageDefault reader peer managerId ls2
+      closeTransport peer
+    (_, drains) <- runPolicy target mockDone bindings
+    assertEqual
+      "view moves to the second output; greedyView then pulls tag 1 onto it"
+      [Just (1, oid o1), Just (2, oid o2), Just (1, oid o2)]
+      (map (currentScreenOf . drainAfter) drains)
+
+testSetDefaultHeadless :: Assertion
+testSetDefaultHeadless =
+  withRuntimePair $ \target peer -> do
+    w1 <- requireObjectId 0xff000090
+    o1 <- requireObjectId 0xff000091
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (managerId, _, layerShellId) <- handshake reader peer
+      sendFrames peer [newWindow managerId w1, manageStart managerId]
+      _ <- receiveNewIdRequest reader peer w1 (Opcode 2)
+      finishManage reader peer managerId
+      sendFrames peer [newOutput managerId o1, manageStart managerId]
+      ls1 <- receiveLayerShellOutputRequest reader peer layerShellId o1
+      finishManageDefault reader peer managerId ls1
+      sendFrames peer [encodedFrame o1 (Opcode 0) (pure ()), manageStart managerId]
+      receiveExpectedRequest reader peer ls1 (Opcode 0) (pure ())
+      receiveExpectedRequest reader peer o1 (Opcode 0) (pure ())
+      finishManage reader peer managerId
+      closeTransport peer
+    (_, drains) <- runPolicy target mockDone []
+    assertEqual
+      "headless, attached, then headless again"
+      [Nothing, Just (1, oid o1), Nothing]
+      (map (currentScreenOf . drainAfter) drains)
 
 testLaunchDetached :: Assertion
 testLaunchDetached =
@@ -341,6 +401,12 @@ finishManage reader peer managerId = do
   sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
   receiveSequenceCompletion reader peer managerId (Opcode 4)
 
+-- | As 'finishManage', after the policy's @set_default@ for the current output.
+finishManageDefault :: FrameReader -> Transport -> ObjectId -> ObjectId -> IO ()
+finishManageDefault reader peer managerId layerShellOutput = do
+  receiveExpectedRequest reader peer layerShellOutput (Opcode 1) (pure ())
+  finishManage reader peer managerId
+
 newWindow, newOutput, newSeat :: ObjectId -> ObjectId -> IO Char8.ByteString
 newWindow managerId w = encodedFrame managerId (Opcode 6) (putNewId w)
 newOutput managerId o = encodedFrame managerId (Opcode 7) (putNewId o)
@@ -382,6 +448,10 @@ managed st = sort (concatMap (integrate' . stack) allWs)
 focused :: CoreState i l -> Maybe WindowId
 focused (AttachedState ss _) = peek ss
 focused HeadlessState{} = Nothing
+
+currentScreenOf :: CoreState i l -> Maybe (i, OutputId)
+currentScreenOf (AttachedState ss _) = Just (currentTag ss, output (current ss))
+currentScreenOf HeadlessState{} = Nothing
 
 currentTagOf :: CoreState i l -> Maybe i
 currentTagOf (AttachedState ss _) = Just (currentTag ss)
