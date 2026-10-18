@@ -1,4 +1,4 @@
-module ConfigMain (configuredMain, customConfig, fullConfig, hookedConfig) where
+module ConfigMain (configuredMain, customConfig, fullConfig, hookedConfig, mediaConfig, raiseVolume) where
 
 import Seki
 
@@ -31,6 +31,15 @@ hookedConfig =
           , isDialog --> doSink
           ]
     }
+
+raiseVolume :: KeyBinding
+raiseVolume = KeyBinding (Mods 0) (Keysym 0x1008FF13)
+
+mediaConfig :: Config StdLayouts
+mediaConfig =
+  additionalKeys
+    def{startupHook = spawnOnce "dunst"}
+    [(raiseVolume, spawn "pactl set-sink-volume @DEFAULT_SINK@ +5%")]
 
 configuredMain :: IO ()
 configuredMain = seki customConfig

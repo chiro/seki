@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+
 module Seki.Run.ConfigTest (tests) where
 
 import Control.Exception (bracket)
@@ -94,6 +96,17 @@ tests =
         assertBool "kill is gone" (KeyBinding (Mod4 .|. Shift) (Keysym 0x63) `notElem` map fst (keys config config))
         assertEqual "the rest remain" 27 (length (keys config config))
         assertEqual "removed and re-added" [Action.Spawn "x"] (intents (pressExactly (additionalKeys config [(KeyBinding (Mod4 .|. Shift) (Keysym 0x63), Action.spawn "x")]) (KeyBinding (Mod4 .|. Shift) (Keysym 0x63)) initial))
+    , testCase "a binding with no modifier passes validation and lowers with no modifier" $
+        bracket (lookupEnv "WAYLAND_DISPLAY") restore $ \_ -> do
+          let config = additionalKeys def [(KeyBinding (Mods 0) (Keysym 0x1008ff13), Action.spawn "louder")]
+          policy <- prepareConfig config >>= either (assertFailure . show) pure
+          assertBool
+            "lowered with modifiers 0"
+            (RiverKeyBinding 0x1008ff13 (River.RiverSeatV1ModifiersFlags 0) (Just 0) `elem` riverKeyBindings (policyRuntimeHandlers policy))
+          setEnv "WAYLAND_DISPLAY" "/this-wayland-display-does-not-exist"
+          runConfig config >>= \case
+            Left ConfigRuntimeError{} -> pure ()
+            other -> assertFailure ("expected validation to pass and the connection to fail, got " ++ show other)
     , testCase "invalid configuration fails before connecting" $
         bracket (lookupEnv "WAYLAND_DISPLAY") restore $ \_ -> do
           setEnv "WAYLAND_DISPLAY" "/this-wayland-display-does-not-exist"

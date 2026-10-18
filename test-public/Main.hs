@@ -1,6 +1,6 @@
 module Main (main) where
 
-import ConfigMain (customConfig, fullConfig)
+import ConfigMain (customConfig, fullConfig, mediaConfig, raiseVolume)
 import Control.Monad (unless)
 import Seki
 import Seki.Core.StackSet (differentiate, integrate, integrate')
@@ -21,7 +21,11 @@ main = do
   check "integrate' of an empty list is empty" (null (integrate' (differentiate ([] :: [Int]))))
   check "the first layout is selected" (description layouts == "Tall")
   check "NextLayout selects the next layout" (fmap description (pureMessage layouts (SomeMessage NextLayout)) == Just "Mirror Tall")
+  check "a modifier-less media key is bound" (raiseVolume `elem` bound mediaConfig)
+  check "the media key joins the default bindings" (length (bound mediaConfig) == length (bound def) + 1)
+  check "removeKeys removes the media key" (raiseVolume `notElem` bound (removeKeys mediaConfig [raiseVolume]))
  where
   check label ok = unless ok (failWith label)
   failWith message = putStrLn ("public API check failed: " <> message) >> exitFailure
+  bound config = map fst (keys config config)
   layouts = Tall 1 (3 / 100) (1 / 2) ||| Mirror (Tall 1 (3 / 100) (1 / 2)) ||| Full
