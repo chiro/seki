@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 
 -- | Validate public configuration before opening the Wayland connection.
-module Seki.Run.Config (ConfigRunError (..), prepareConfig, runConfig) where
+module Seki.Run.Config (ConfigRunError (..), policyConfigOf, prepareConfig, runConfig) where
 
 import Seki.Internal.Config (BorderConfig (..), Config (..), KeyBinding (..), Keysym (..), Mods (..))
 import Seki.Internal.Core.Layout (LayoutClass)
@@ -16,16 +16,18 @@ data ConfigRunError = ConfigPolicyError (PolicyError String) | ConfigRuntimeErro
   deriving (Eq, Show)
 
 prepareConfig :: Config l -> IO (Either (PolicyError String) (Policy String l))
-prepareConfig config =
-  newPolicy
-    PolicyConfig
-      { policyLayout = layoutHook config
-      , policyTags = workspaces config
-      , policyBindings = [(lower binding, action) | (binding, action) <- keys config config]
-      , policySceneStyle = SceneStyle (borderWidth style) (focusedBorderColor style) (unfocusedBorderColor style)
-      , policyLaunch = launchDetached
-      , policyManageHook = idHook
-      }
+prepareConfig = newPolicy . policyConfigOf
+
+policyConfigOf :: Config l -> PolicyConfig String l
+policyConfigOf config =
+  PolicyConfig
+    { policyLayout = layoutHook config
+    , policyTags = workspaces config
+    , policyBindings = [(lower binding, action) | (binding, action) <- keys config config]
+    , policySceneStyle = SceneStyle (borderWidth style) (focusedBorderColor style) (unfocusedBorderColor style)
+    , policyLaunch = launchDetached
+    , policyManageHook = idHook
+    }
  where
   style = borders config
   lower (KeyBinding (Mods modifiers) (Keysym symbol)) =
