@@ -8,8 +8,13 @@ module Seki.Fixture.Probe (
   Color (..),
   Image (..),
   KeyboardSnapshot (..),
+  AppIdRequest (..),
+  CommitSize (..),
+  WindowSpec (..),
+  windowSpec,
   withProbe,
   openWindow,
+  openWindowWith,
   keyboardSnapshot,
   captureOutput,
   outputNames,
@@ -60,9 +65,24 @@ data KeyboardSnapshot = KeyboardSnapshot
   }
   deriving (Eq, Show)
 
+data AppIdRequest = NumberedAppId | CustomAppId Text | NoAppId deriving (Eq, Show)
+data CommitSize = CommitConfigured | CommitFixed Int32 Int32 deriving (Eq, Show)
+data WindowSpec = WindowSpec
+  { specColor :: Color
+  , specAppId :: AppIdRequest
+  , specParent :: Maybe ProbeWindow
+  , specMinSize :: Maybe (Int32, Int32)
+  , specMaxSize :: Maybe (Int32, Int32)
+  , specCommit :: CommitSize
+  }
+  deriving (Eq, Show)
+
+windowSpec :: Color -> WindowSpec
+windowSpec color = WindowSpec color NumberedAppId Nothing Nothing Nothing CommitConfigured
+
 data Probe = Probe (Chan Input) (MVar (Either SomeException ())) (IORef KeyboardSnapshot)
 data Input
-  = Open Color (MVar ProbeWindow)
+  = Open WindowSpec (MVar ProbeWindow)
   | Size ProbeWindow Int32 Int32
   | Configure ProbeWindow Word32
   | Synced (MVar ProbeWindow) ProbeWindow
@@ -75,7 +95,9 @@ data Input
 data Window = Window
   { windowSurface :: Object W.WlSurface
   , windowXdg :: Object Xdg.XdgSurface
+  , windowToplevel :: Object Xdg.XdgToplevel
   , windowColor :: Color
+  , windowCommit :: CommitSize
   , windowSize :: (Int32, Int32)
   , windowPaintedSize :: Maybe (Int32, Int32)
   , windowReply :: Maybe (MVar ProbeWindow)
@@ -122,9 +144,12 @@ withProbe socketPath action = bracket (openSession socketPath) closeWaylandSessi
     (\_ -> watchActor finished (action (Probe inputs finished snapshot)))
 
 openWindow :: Probe -> Color -> IO ProbeWindow
-openWindow (Probe inputs _ _) color = do
+openWindow probe = openWindowWith probe . windowSpec
+
+openWindowWith :: Probe -> WindowSpec -> IO ProbeWindow
+openWindowWith (Probe inputs _ _) spec = do
   reply <- newEmptyMVar
-  writeChan inputs (Open color reply)
+  writeChan inputs (Open spec reply)
   bounded "initial xdg configure" (readMVar reply)
 
 watchActor :: MVar (Either SomeException ()) -> IO a -> IO a
@@ -171,7 +196,7 @@ actorLoop actor hasKeyboard windows =
         W.WlKeyboardKey _ _ _ W.WlKeyboardKeyStateEnumPressed -> modifyIORef' (actorKeyboard actor) (\s -> s{pressedKeys = maybe (pressedKeys s) (\w -> Map.insertWith (+) w 1 (pressedKeys s)) (keyboardOwner s)})
         _ -> pure ()
       continue hasKeyboard windows
-    Open color reply -> do
+    Open spec reply -> do
       let window = ProbeWindow (Map.size windows + 1)
       surface <- checkedIO (submitInheritedObjectRequestWithRoute connection W.wlCompositorInterface (actorCompositor actor) W.wlSurfaceInterface (W.encodeWlCompositorCreateSurface . objectId) (eventRoute W.decodeWlSurfaceEvent (\_ _ -> pure ())))
       xdg <- checkedIO (submitInheritedObjectRequestWithRoute connection Xdg.xdgWmBaseInterface (actorWm actor) Xdg.xdgSurfaceInterface (\obj -> Xdg.encodeXdgWmBaseGetXdgSurface (objectId obj) (objectId surface)) (eventRoute Xdg.decodeXdgSurfaceEvent (\_ (Xdg.XdgSurfaceConfigure serial) -> writeChan (actorInputs actor) (Configure window serial))))
@@ -192,14 +217,21 @@ actorLoop actor hasKeyboard windows =
                   )
               )
           )
-      send Xdg.xdgToplevelInterface top (Xdg.encodeXdgToplevelSetAppId (Data.Text.pack ("seki-color-probe-" <> show (Map.size windows + 1))))
+      let toplevel = send Xdg.xdgToplevelInterface top
+      case specAppId spec of
+        NumberedAppId -> toplevel (Xdg.encodeXdgToplevelSetAppId (Data.Text.pack ("seki-color-probe-" <> show (Map.size windows + 1))))
+        CustomAppId appId -> toplevel (Xdg.encodeXdgToplevelSetAppId appId)
+        NoAppId -> pure ()
+      mapM_ (\parent -> maybe (fail "unknown probe parent window") (toplevel . Xdg.encodeXdgToplevelSetParent . Just . objectId . windowToplevel) (Map.lookup parent windows)) (specParent spec)
+      mapM_ (toplevel . uncurry Xdg.encodeXdgToplevelSetMinSize) (specMinSize spec)
+      mapM_ (toplevel . uncurry Xdg.encodeXdgToplevelSetMaxSize) (specMaxSize spec)
       send W.wlSurfaceInterface surface W.encodeWlSurfaceCommit
-      continue hasKeyboard (Map.insert window (Window surface xdg color (100, 100) Nothing (Just reply)) windows)
+      continue hasKeyboard (Map.insert window (Window surface xdg top (specColor spec) (specCommit spec) (100, 100) Nothing (Just reply)) windows)
     Size window width height -> continue hasKeyboard (Map.adjust (\w -> w{windowSize = if width > 0 && height > 0 then (width, height) else windowSize w}) window windows)
     Configure window serial -> case Map.lookup window windows of
       Nothing -> fail "configure for unknown probe window"
       Just w -> do
-        let (width, height) = windowSize w
+        let (width, height) = case windowCommit w of CommitConfigured -> windowSize w; CommitFixed fixedWidth fixedHeight -> (fixedWidth, fixedHeight)
         send Xdg.xdgSurfaceInterface (windowXdg w) (Xdg.encodeXdgSurfaceAckConfigure serial)
         when (windowPaintedSize w /= Just (width, height)) $ do
           (_, buffer, _) <- makeBuffer connection (actorShm actor) (actorFiles actor) width height W.WlShmFormatEnumXrgb8888 (colorBytes (windowColor w)) (\buffer descriptor -> writeChan (actorInputs actor) (Released buffer descriptor))
