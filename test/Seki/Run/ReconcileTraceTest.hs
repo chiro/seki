@@ -35,6 +35,7 @@ tests =
     , traceProperty "generated Mirror Tall traces never propose or show a degenerate tile" (Mirror (Tall 1 (1 / 10) (1 / 2))) $ \width ->
         [content width 50, content width 50]
     , testCase "focus raises a shown family and new windows retain nonexclusive layer focus" testFamilies
+    , testCase "Full focuses a new child and hides it when its parent is refocused" testChildUnderFull
     ]
  where
   content width height = if width > 4 && height > 4 then Just (width - 4, height - 4) else Nothing
@@ -181,6 +182,59 @@ testFamilies = withRuntimePair $ \target peer -> do
     manage >>= assertLayerOwns
     _ <- render
     closeTransport peer
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
+  result <- runRiverSession session
+  expectMockSuccess done
+  result @?= Right ()
+
+testChildUnderFull :: Assertion
+testChildUnderFull = withRuntimePair $ \target peer -> do
+  parent <- requireObjectId 0xff0000b0
+  child <- requireObjectId 0xff0000b1
+  output <- requireObjectId 0xff0000b2
+  seat <- requireObjectId 0xff0000b3
+  done <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (manager, _, layerShell) <- handshake reader peer
+    sendFrames peer [event manager 6 (putNewId parent), event manager 7 (putNewId output), event manager 8 (putNewId seat)]
+    _ <- receiveNewIdRequest reader peer parent (Opcode 2)
+    ls <- receiveLayerShellOutputRequest reader peer layerShell output
+    _ <- receiveLayerShellSeatRequest reader peer layerShell seat
+    let manage = sendFrames peer [event manager 2 (pure ())] >> readUntil reader peer manager 2
+        render = sendFrames peer [event manager 3 (pure ())] >> readUntil reader peer manager 4
+    sendFrames peer [event output 2 (putInt 0 >> putInt 0), event output 3 (putInt 200 >> putInt 100), event ls 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100)]
+    proposed <- encodedPayload (putInt 196 >> putInt 96)
+    first <- manage
+    requests parent 3 first @?= [proposed]
+    sendFrames peer [event parent 2 (putInt 196 >> putInt 96)]
+    _ <- render
+    _ <- manage
+    _ <- render
+    sendFrames peer [event manager 6 (putNewId child)]
+    _ <- receiveNewIdRequest reader peer child (Opcode 2)
+    sendFrames peer [event child 5 (putObject parent)]
+    inserted <- manage
+    requests child 3 inserted @?= [proposed]
+    requests parent 3 inserted @?= []
+    sendFrames peer [event child 2 (putInt 196 >> putInt 96)]
+    childShown <- render
+    requests parent 4 childShown @?= [mempty]
+    requests child 5 childShown @?= [mempty]
+    childFocused <- manage
+    childPayload <- encodedPayload (putObject child)
+    requests seat 1 childFocused @?= [childPayload]
+    _ <- render
+    sendFrames peer [event seat 4 (putObject parent)]
+    _ <- manage
+    parentShown <- render
+    requests child 4 parentShown @?= [mempty]
+    requests parent 5 parentShown @?= [mempty]
+    parentFocused <- manage
+    parentPayload <- encodedPayload (putObject parent)
+    requests seat 1 parentFocused @?= [parentPayload]
+    _ <- render
+    closeTransport peer
+  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
