@@ -3,7 +3,11 @@
 {- | The runtime policy that owns 'CoreState' and executes action intents.
 
 River callbacks and key-binding presses append core events to one queue, so
-their arrival order is kept across kinds. Each @manage_start@ drains the
+their arrival order is kept across kinds. The startup hook joins the queue
+once per process, right after the first output's event, so it sees an
+attached state and outlives later detach and reattach. A restarted process
+runs it again; 'Seki.Internal.Core.Action.spawnOnce' is what keeps its
+launches from repeating. Each @manage_start@ drains the
 queue into the core state, giving each new window the properties the
 inventory holds by then, launches spawned commands, and sends close
 requests in the manage sequence. While an output is attached, every manage
@@ -60,6 +64,8 @@ data PolicyConfig i l = PolicyConfig
   , policyLaunch :: String -> IO ()
   -- ^ Runs while a manage sequence is prepared, so it must not block; see 'launchDetached'.
   , policyManageHook :: ManageHook i l
+  , policyStartupHook :: Action i l ()
+  -- ^ Queued once per process, right after the first output arrives.
   }
 
 data PolicyError i
@@ -76,6 +82,8 @@ data Policy i l = Policy
   , policyScene :: IORef DesiredScene
   , policyQueue :: IORef [RiverInventory -> CoreEvent i l]
   -- ^ Newest first.
+  , policyPendingStartup :: IORef (Maybe (Action i l ()))
+  -- ^ The startup hook until an output arrives.
   }
 
 -- | Validate tags, binding identities and modifiers, border width, and premultiplied colors before connecting.
@@ -87,7 +95,7 @@ newPolicy config
       Left e -> pure (Left (PolicyTagError e))
       Right st -> case firstRepeat [] (map fst (policyBindings config)) of
         Just binding -> pure (Left (PolicyBindingConflict binding))
-        Nothing -> Right <$> (Policy config <$> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] Nothing Nothing) <*> newIORef [])
+        Nothing -> Right <$> (Policy config <$> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)))
  where
   -- River excludes capslock and numlock bits from its modifier enum.
   invalidModifiers binding = River.riverSeatV1ModifiersFlagsValue (riverKeyBindingModifiers binding) .&. complement 0xed /= 0
@@ -109,7 +117,9 @@ policyRuntimeHandlers policy =
           , handleRiverWindowEvent = \window -> \case
               River.RiverWindowV1Closed -> enqueue (WindowClosed (windowIdOf window))
               _ -> pure ()
-          , handleRiverOutputCreated = enqueue . OutputCreated . outputIdOf
+          , handleRiverOutputCreated = \output -> do
+              enqueue (OutputCreated (outputIdOf output))
+              atomicModifyIORef' (policyPendingStartup policy) (Nothing,) >>= mapM_ (enqueue . RunAction)
           , handleRiverOutputEvent = \output -> \case
               River.RiverOutputV1Removed -> enqueue (OutputRemoved (outputIdOf output))
               _ -> pure ()

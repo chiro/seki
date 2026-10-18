@@ -137,6 +137,7 @@ runWM socket directory = do
             [S.focusDown, S.focusUp, S.greedyView "2", S.greedyView "1"]
       , policySceneStyle = defaultSceneStyle
       , policyManageHook = idHook
+      , policyStartupHook = pure ()
       , policyLaunch = \_ -> fail "unexpected spawn"
       }
 

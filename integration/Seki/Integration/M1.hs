@@ -302,6 +302,7 @@ m1Config =
     , policyBindings = [(RiverKeyBinding (0xffbe + fromIntegral (fromEnum key)) (River.RiverSeatV1ModifiersFlags 0) (Just 0), action key) | key <- [Down .. SelectTwo]]
     , policySceneStyle = SceneStyle 2 (BorderColor maxBound 0 maxBound maxBound) (BorderColor 0x40404040 0x40404040 0x40404040 maxBound)
     , policyManageHook = idHook
+    , policyStartupHook = pure ()
     , policyLaunch = \_ -> failIntegration "unexpected spawn in M1 policy"
     }
  where

@@ -443,6 +443,7 @@ integrationConfig probeMode executable footConfigPath probeSocketPath clientEnvi
     , policyBindings = [(functionKeyBinding 0xffbe, spawn "integration-terminal"), (functionKeyBinding 0xffbf, kill)]
     , policySceneStyle = defaultSceneStyle{sceneBorderWidth = 0}
     , policyManageHook = idHook
+    , policyStartupHook = pure ()
     , policyLaunch = \_ -> do
         process <-
           startManagedProcess
