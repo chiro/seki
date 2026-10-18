@@ -8,6 +8,7 @@ module Seki.Fixture.LayerSurface (
   FixtureReady (..),
   FixtureStop (..),
   FixtureError (..),
+  KeyboardInteractivity (..),
   FixtureControl,
   newFixtureControl,
   parseFixtureArguments,
@@ -56,7 +57,7 @@ import Seki.Wire.Connection (
  )
 import Seki.Wire.Connection.ObjectTable (Object, defaultObjectLimit, objectId)
 import Seki.Wire.Connection.Registry (
-  Global,
+  Global (..),
   GlobalCatalog,
   RegistryError,
   bindGlobal,
@@ -72,10 +73,36 @@ import System.Posix.SharedMem (ShmOpenFlags (..), shmOpen, shmUnlink)
 import System.Posix.Types (Fd)
 import Text.Read (readMaybe)
 
-newtype FixtureConfig = FixtureConfig
+data FixtureConfig = FixtureConfig
   { fixtureHeight :: Word32
+  , fixtureKeyboardInteractivity :: KeyboardInteractivity
   }
   deriving (Eq, Show)
+
+data KeyboardInteractivity
+  = KeyboardInteractivityNone
+  | KeyboardInteractivityExclusive
+  | KeyboardInteractivityOnDemand
+  deriving (Eq, Show, Enum, Bounded)
+
+keyboardInteractivityName :: KeyboardInteractivity -> String
+keyboardInteractivityName = \case
+  KeyboardInteractivityNone -> "none"
+  KeyboardInteractivityExclusive -> "exclusive"
+  KeyboardInteractivityOnDemand -> "on_demand"
+
+keyboardInteractivityValue :: KeyboardInteractivity -> LayerShell.ZwlrLayerSurfaceV1KeyboardInteractivityEnum
+keyboardInteractivityValue = \case
+  KeyboardInteractivityNone -> LayerShell.ZwlrLayerSurfaceV1KeyboardInteractivityEnumNone
+  KeyboardInteractivityExclusive -> LayerShell.ZwlrLayerSurfaceV1KeyboardInteractivityEnumExclusive
+  KeyboardInteractivityOnDemand -> LayerShell.ZwlrLayerSurfaceV1KeyboardInteractivityEnumOnDemand
+
+-- | The zwlr_layer_shell_v1 version that introduced the value.
+keyboardInteractivitySince :: KeyboardInteractivity -> Word32
+keyboardInteractivitySince = \case
+  KeyboardInteractivityNone -> 1
+  KeyboardInteractivityExclusive -> 1
+  KeyboardInteractivityOnDemand -> 4
 
 data FixtureReady = FixtureReady
   { readyWidth :: Word32
@@ -92,6 +119,7 @@ data FixtureError
   = FixtureStartupError WaylandStartupError
   | FixtureRegistryError RegistryError
   | FixtureMissingGlobal Text
+  | FixtureUnsupportedGlobalVersion Text Word32 Word32
   | FixtureConnectionError ConnectionError
   | FixtureConnectionFinished
   | FixtureUnusableBufferSize Word32 Word32
@@ -131,16 +159,22 @@ stopOnEndOfInput input control = do
 readyLine :: FixtureReady -> String
 readyLine ready = "ready " <> show (readyWidth ready) <> " " <> show (readyHeight ready)
 
--- | Parse the optional bar height in pixels, which is also the exclusive zone.
+{- | Parse the optional bar height in pixels, which is also the exclusive zone,
+and the optional keyboard interactivity, named as in the protocol.
+-}
 parseFixtureArguments :: [String] -> Either String FixtureConfig
 parseFixtureArguments = \case
-  [] -> Right (FixtureConfig defaultHeight)
-  [value]
-    | Just height <- readMaybe value
-    , height >= 1
-    , height <= toInteger (maxBound :: Int32) ->
-        Right (FixtureConfig (fromInteger height))
-  _ -> Left "usage: seki-layer-surface-fixture [HEIGHT], where HEIGHT is a positive pixel count"
+  [] -> Right (FixtureConfig defaultHeight KeyboardInteractivityNone)
+  [value] | Just height <- parseHeight value -> Right (FixtureConfig height KeyboardInteractivityNone)
+  [value, name]
+    | Just height <- parseHeight value
+    , Just interactivity <- lookup name [(keyboardInteractivityName i, i) | i <- [minBound .. maxBound]] ->
+        Right (FixtureConfig height interactivity)
+  _ -> Left "usage: seki-layer-surface-fixture [HEIGHT [none|exclusive|on_demand]], where HEIGHT is a positive pixel count"
+ where
+  parseHeight value = case readMaybe value of
+    Just height | height >= 1, height <= toInteger (maxBound :: Int32) -> Just (fromInteger height)
+    _ -> Nothing
 
 defaultHeight :: Word32
 defaultHeight = 32
@@ -161,8 +195,10 @@ data BoundGlobals = BoundGlobals
   , boundLayerShell :: Object LayerShell.ZwlrLayerShellV1
   }
 
-{- | Every global is bound at version 1: the fixture uses no later request or
-event, so a newer compositor cannot change what it sends.
+{- | Every global is bound at version 1, except that layer shell is bound at
+the version that introduced the requested keyboard interactivity. The fixture
+uses no other later request or event, so a newer compositor cannot change what
+it sends.
 -}
 boundVersion :: Word32
 boundVersion = 1
@@ -180,7 +216,7 @@ runLayerSurfaceFixture control@(FixtureControl inputs) config target reportReady
       bracket (pure opened) closeWaylandSession $ \session ->
         runExceptT $ do
           catalog <- fixtureStep FixtureRegistryError (readWaylandGlobalCatalog session)
-          globals <- except (selectFixtureGlobals catalog)
+          globals <- except (selectFixtureGlobals config catalog)
           bound <- bindFixtureGlobals session globals
           surfaces <- requestLayerSurface (waylandConnection session) control config bound
           let fixture = Fixture session config bound surfaces control reportReady
@@ -190,18 +226,20 @@ runLayerSurfaceFixture control@(FixtureControl inputs) config target reportReady
               killThread
               (\_ -> runExceptT (runPhase fixture AwaitingConfigure))
 
-selectFixtureGlobals :: GlobalCatalog -> Either FixtureError FixtureGlobals
-selectFixtureGlobals catalog =
+selectFixtureGlobals :: FixtureConfig -> GlobalCatalog -> Either FixtureError FixtureGlobals
+selectFixtureGlobals config catalog =
   FixtureGlobals
-    <$> requireGlobal Wayland.wlCompositorInterface catalog
-    <*> requireGlobal Wayland.wlShmInterface catalog
-    <*> requireGlobal LayerShell.zwlrLayerShellV1Interface catalog
+    <$> requireGlobal Wayland.wlCompositorInterface boundVersion catalog
+    <*> requireGlobal Wayland.wlShmInterface boundVersion catalog
+    <*> requireGlobal LayerShell.zwlrLayerShellV1Interface (keyboardInteractivitySince (fixtureKeyboardInteractivity config)) catalog
 
-requireGlobal :: Interface interface -> GlobalCatalog -> Either FixtureError (Global interface)
-requireGlobal interface catalog = case selectGlobals interface boundVersion catalog of
+requireGlobal :: Interface interface -> Word32 -> GlobalCatalog -> Either FixtureError (Global interface)
+requireGlobal interface version catalog = case selectGlobals interface version catalog of
   Left errorValue -> Left (FixtureRegistryError errorValue)
   Right [] -> Left (FixtureMissingGlobal (interfaceName interface))
-  Right (global : _) -> Right global
+  Right (global : _)
+    | globalVersion global < version -> Left (FixtureUnsupportedGlobalVersion (interfaceName interface) (globalVersion global) version)
+    | otherwise -> Right global
 
 bindFixtureGlobals :: WaylandSession -> FixtureGlobals -> ExceptIO BoundGlobals
 bindFixtureGlobals session globals = do
@@ -259,6 +297,7 @@ requestLayerSurface connection (FixtureControl inputs) config bound = do
   sendLayerSurface (LayerShell.encodeZwlrLayerSurfaceV1SetSize 0 height)
   sendLayerSurface (LayerShell.encodeZwlrLayerSurfaceV1SetAnchor topEdgeAnchor)
   sendLayerSurface (LayerShell.encodeZwlrLayerSurfaceV1SetExclusiveZone (fromIntegral height))
+  sendLayerSurface (LayerShell.encodeZwlrLayerSurfaceV1SetKeyboardInteractivity (keyboardInteractivityValue (fixtureKeyboardInteractivity config)))
   connectionStep (submitRequest connection Wayland.wlSurfaceInterface surface Wayland.encodeWlSurfaceCommit)
   pure (SurfaceObjects surface layerSurface)
 
