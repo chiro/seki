@@ -8,10 +8,12 @@ import Data.ByteString (ByteString)
 import Data.Int (Int32)
 import Data.Maybe (isJust)
 import Seki.Internal.Core.Scene (defaultSceneStyle)
+import Seki.Internal.Core.StackSet (WindowId (..), index, peek)
+import Seki.Internal.Core.State (CoreState (..))
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Run.MockRiver (FrameReader, callbackDoneFrame, encodedFrame, encodedPayload, expectMockSuccess, expectRight, newFrameReader, receiveFrame, receiveLayerShellOutputRequest, receiveLayerShellSeatRequest, receiveNewIdRequest, receiveRuntimeBinds, receiveStartupRequests, registryGlobalFrame, requireObjectId, runMock, sendFrames, withRuntimePair)
-import Seki.Run.Policy (PolicyConfig (..), newPolicy, policyRuntimeHandlers)
+import Seki.Run.Policy (PolicyConfig (..), newPolicy, policyRuntimeHandlers, readPolicyState)
 import Seki.Run.Runtime (openRiverSessionAt, runRiverSession)
 import Seki.Wire.Arguments (ArgumentEncoder, putInt, putNewId, putObject, putUint)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
@@ -94,6 +96,7 @@ testFamilies = withRuntimePair $ \target peer -> do
   w4 <- requireObjectId 0xff0000a3
   output <- requireObjectId 0xff0000a4
   seat <- requireObjectId 0xff0000a5
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()))
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader
     (manager, _, layerShell) <- handshake reader peer
@@ -107,6 +110,9 @@ testFamilies = withRuntimePair $ \target peer -> do
         assertLayerOwns frames = do
           requests seat 1 frames @?= []
           requests seat 3 frames @?= []
+        windowOrder (AttachedState ss _) = (index ss, peek ss)
+        windowOrder HeadlessState{} = ([], Nothing)
+        order = map WindowId [0xff0000a2, 0xff0000a1, 0xff0000a0]
     sendFrames
       peer
       [ event output 2 (putInt 0 >> putInt 0)
@@ -128,6 +134,8 @@ testFamilies = withRuntimePair $ \target peer -> do
     forM_ [w1, w2, w3] $ \w -> requests w 8 initialRender @?= [unfocused]
     manage >>= assertLayerOwns
     _ <- render
+    beforeClick <- readPolicyState policy
+    windowOrder beforeClick @?= (order, Just (WindowId 0xff0000a2))
     sendFrames peer [event seat 4 (putObject w2)]
     interacted <- manage
     focusPayload <- encodedPayload (putObject w2)
@@ -137,6 +145,8 @@ testFamilies = withRuntimePair $ \target peer -> do
     case nodes of
       [n1, n2, n3] -> stacked raised @?= [n1, n3, n2]
       _ -> fail "expected three nodes"
+    afterRaise <- readPolicyState policy
+    windowOrder afterRaise @?= (order, Just (WindowId 0xff0000a1))
     focusedBorder <- encodedPayload (putUint 15 >> putInt 2 >> mapM_ putUint [0, 0x80000000, 0xffffffff, 0xffffffff])
     requests w2 8 raised @?= [focusedBorder]
     sendFrames peer [event layerSeat 2 (pure ())]
@@ -156,7 +166,6 @@ testFamilies = withRuntimePair $ \target peer -> do
     manage >>= assertLayerOwns
     _ <- render
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
