@@ -302,6 +302,7 @@ test-suite seki-integration
   hs-source-dirs: integration
   main-is:        Main.hs
   other-modules:
+    Seki.Integration.Fixture
     Seki.Integration.Harness
     Seki.Integration.M1
   build-depends:
