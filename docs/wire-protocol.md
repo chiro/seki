@@ -1,9 +1,9 @@
 # Wayland Wire Protocol and Binding Generator Design
 
-Status: **implemented through M1 WP9, closeout pending** / Last updated: 2026-10-18
+Status: **implemented through M1** / Last updated: 2026-10-18
 
-This document records the implemented wire protocol and runtime through M1
-WP9. It refines the wire-protocol portion of `docs/spec.md` and covers the
+This document records the implemented wire protocol and runtime through M1.
+It refines the wire-protocol portion of `docs/spec.md` and covers the
 Wayland client transport, message codec, object lifecycle, XML scanner,
 generated bindings, and current river policy. M0-specific sections retain the
 initial implementation scope.
@@ -91,24 +91,17 @@ Each vendored source MUST have its upstream URL, tag or commit, SHA-256 digest,
 and license recorded in `protocol/SOURCES.md`. Copyright and license text in
 the XML MUST be retained.
 
-### 3.2 Correction applied to the general specification
+### 3.2 Required and shipped versions
 
-The earlier `docs/spec.md` described `river-window-management-v1` as version 3
-and `river-xkb-bindings-v1` as version 2. The pinned river 0.4.5 release exposes
-versions 4 and 3 respectively. It also adds the version 4 unique window
-identifier used for hot-swap restoration. The operation that establishes
-seki's minimum window-management protocol requirement, `set_content_clip_box`,
-remains a since-version-3 request.
+seki distinguishes the protocol version whose features it requires from the
+version that its minimum compositor release ships:
 
-The general specification now records that:
-
-- seki requires `river_window_manager_v1` version 3 functionality;
-- river 0.4.5 advertises version 4;
+- seki requires `river_window_manager_v1` version 3 functionality, because
+  `set_content_clip_box` is a since-version-3 request;
+- river 0.4.5 advertises version 4, which adds the unique window identifier
+  used for hot-swap restoration;
 - seki binds the lower of the advertised and generated maximum versions; and
 - modifier watching is in `river-xkb-bindings-v1` version 3 in river 0.4.5.
-
-This wording separates the required feature version from the version shipped
-by the minimum compositor release.
 
 ### 3.3 Runtime version negotiation
 
@@ -539,15 +532,14 @@ its dimensions settle. An existing selection retains its last settled size
 while a resize is pending. Focus requests follow the shown state and respect
 layer-shell keyboard ownership. The runtime sends a requested `manage_dirty`
 only after `render_finish` succeeds. See
-[WP6 reconciliation](wp6-reconciliation.md) for the state transitions and live
+[Scene reconciliation](wp6-reconciliation.md) for the state transitions and live
 compositor evidence.
 
 ### 7.10 XKB bindings bootstrap
 
 `Seki.Run.Xkb` selects and binds the unique `river_xkb_bindings_v1` global.
 The bootstrap negotiates the generated maximum version and requires version 3,
-matching the M0 target release and retaining modifier-watch support for the
-configured binding model. Missing, duplicate, obsolete, and request-failure
+which provides modifier watching for the configured binding model. Missing, duplicate, obsolete, and request-failure
 cases remain distinct structured errors.
 
 `Seki.Run.LayerShell` selects and binds the unique `river_layer_shell_v1`
@@ -629,8 +621,7 @@ not block the event loop, and a launch failure is reported on standard error.
 An internal launcher seam supports process tracking in integration tests;
 public actions cannot lift arbitrary IO.
 
-The old independent Full policy has been removed. Integration tests construct
-the production policy with their chosen layout, bindings, borders, and launcher,
+Integration tests construct the production policy with their chosen layout, bindings, borders, and launcher,
 so terminal, close, focus, and placement checks exercise the same runtime and
 reconciler as the default executable.
 
@@ -792,7 +783,7 @@ bootstrap, inventory, and sequence failures feed `RiverRuntimeError`.
 Structured values retain object IDs and interface information where available.
 Invalid strings are rejected, and descriptor contents are never logged.
 
-Wire tracing is not implemented in M0. If added, it should resemble
+Wire tracing is not implemented. If added, it should resemble
 `WAYLAND_DEBUG` without logging descriptor contents:
 
 ```text
@@ -861,7 +852,7 @@ documented in [Real-river Integration Tests](integration-testing.md).
 
 ## 13. Remaining Technical Follow-up
 
-1. **C shim portability:** M0 targets Linux. A non-Linux port must define and
+1. **C shim portability:** seki targets Linux. A non-Linux port must define and
    test equivalent send-safety and close-on-exec behavior.
 2. **Big-endian testing:** the codec uses native byte order, but CI has not run
    in a big-endian Wayland environment.

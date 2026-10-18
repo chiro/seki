@@ -1,4 +1,4 @@
-# WP6 reconciliation
+# Scene reconciliation
 
 The scene planner selects windows and content rectangles from the core's
 workspaces. The reconciler decides when those selections can be shown and
@@ -68,16 +68,15 @@ Captured pixels also verified border placement. A 300 by 200 content box at
 100,100 with 5-pixel borders covered 310 by 210 pixels in total. The blue
 border began at 95,95, outside the content rectangle.
 
-The throwaway client, policy, runner, logs, and captures are preserved in the
-local `artifacts/wp6/prototype` directory. They are experimental evidence,
-rather than a dependency of seki or the layer-surface fixture.
+The scratch client, policy, runner, logs, and captures remain in the ignored
+local `artifacts/wp6/prototype` directory of the measuring checkout. They are
+not part of the repository.
 
 ## Verification evidence
 
-The following describes the WP6 verification record from 2026-10-17. Its
-scratch-client runs are historical local evidence. The current reproducible
-release suite and its maintained commands are in the
-[integration guide](integration-testing.md).
+This section records the verification of 2026-10-17. Its scratch-client runs
+are historical local evidence. The reproducible release suite and its
+commands are in the [integration guide](integration-testing.md).
 
 The socket-pair tests check exact phase requests, delayed and superseded
 proposals, accepted size mismatches, omitted windows, layer focus, ID reuse,
@@ -97,6 +96,5 @@ was `artifacts/wp6/prototype/live.py`; captures are in the adjacent
 compiler rejects manage requests in render plans and render requests in
 manage plans. CI runs this check beside the ordinary test suite.
 
-That local verification used GHC 9.6.7 through `-w ghc-9.6.7 --offline` because
-the pinned GHC 9.6.6 and Nix environment were unavailable on that host.
-The repository keeps its existing pinned CI toolchain.
+These local runs used GHC 9.6.7 through `-w ghc-9.6.7 --offline`, not the
+pinned GHC 9.6.6 Nix environment that CI uses.

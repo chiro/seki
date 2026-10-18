@@ -1,8 +1,9 @@
 # Latency and collector measurements
 
-WP9 provides an opt-in diagnostic, a repeated-trial runner, and reproducible report
-creation. Production configuration and executable RTS defaults remain unchanged.
-The reviewed [reference report](latency-baseline/report.md) contains five
+The opt-in `seki-latency` diagnostic and the `tools/latency/run.py` runner
+measure manage/render sequence latency and GC behavior in repeated trials and
+generate a report. They do not change production configuration or the
+executable's RTS defaults. The reviewed [reference report](latency-baseline/report.md) contains five
 alternating trials per collector and the retained compact evidence.
 Ordinary unit CI does not enforce timing budgets.
 
@@ -28,15 +29,15 @@ defaults to `ghc-9.6.7`. Report-only mode does not use a compiler.
 The runner builds once with `--enable-optimization=2` into
 `dist-newstyle/latency`. It alternates normal/nonmoving trials five times using
 the identical binary and `+RTS -N1 -T -s`; only the nonmoving side adds
-`--nonmoving-gc`. The diagnostic is threaded and supports RTS options, unlike
-the production executable. GHC 9.6 already supports eventlogs without the
-deprecated `-eventlog` link option. Do not compile concurrently with trials.
+`--nonmoving-gc`. Unlike the production executable, the diagnostic is
+threaded and accepts RTS options. GHC 9.6 needs no `-eventlog` link option for
+eventlog output. Do not compile concurrently with trials.
 
 For a short feasibility check, use a new directory and
 `--trials 1 --live-steps 3 --pure-steps 512`. A supplied `--binary PATH` skips
-building, records its hash and embedded compiler family, and explicitly marks
-its compiler patch version and dependency optimization flags as unverified. A short check is exploratory,
-not the five-trial report gate. Existing artifact directories are never replaced.
+building, records its hash and embedded compiler family, and marks its
+compiler patch version and dependency optimization flags as unverified. A
+short check is exploratory, not the five-trial report gate. Existing artifact directories are never replaced.
 
 The runner starts only private headless river instances with the pixman renderer.
 It owns the separate WM, native client/driver, keyboard keeper, and river process
@@ -51,16 +52,16 @@ seeded focus direction, views the empty workspace, then restores the populated
 workspace. Every operation waits for the expected native keyboard-owner change.
 Initial and restored captures check every client-content pixel against exact
 Tall rectangles, including all eight windows and omitted background regions.
-Final keyboard delivery must reach only the focused client. Captures verify pixels and can add render sequences; actual counts are retained.
-An explicit WM checkpoint waits for the completed-render idle phase after the
+Final keyboard delivery must reach only the focused client. Captures can add
+render sequences, so the report retains the actual sequence counts. An explicit WM checkpoint waits for the completed-render idle phase after the
 last action and capture, before the driver closes the measurement interval.
 Checkpoint signal/file overhead lies inside this broad driver interval, outside
 individual sequence timers. Capture readiness alone is not a fresh-frame barrier.
 
 The fixture acknowledges every configure and commits it. Unchanged dimensions
 reuse current surface content. Genuine resizes allocate a new buffer. The
-existing 128 lifetime-buffer limit remains in force; this workload does not
-claim broad resize throughput or a 32-window native stress case.
+fixture's 128 lifetime-buffer limit applies. The workload does not measure
+resize throughput or more than eight native windows.
 
 The runtime optionally keeps at most 100,000 strict sequence samples. Disabled
 instrumentation reads no clocks and stores no samples. A sample starts at
@@ -82,9 +83,8 @@ Tall/Mirror/Full selection, floating bookkeeping and intents. Concrete random
 operation codes and initial state are forced before measurement. Every timed
 iteration runs production `drainCore` and `planScene`, then a strict structural
 checksum fold over all state, layout, tag, stack, floating, intent and scene
-fields. The next iteration therefore receives an already forced state. No
-`show`, WHNF-only result or map-size proxy stands in for work. Fold overhead is
-included. Membership, tag, focus, stacking and geometry invariants run after
+fields. The next iteration therefore receives an already forced state. Fold
+overhead is included. Membership, tag, focus, stacking and geometry invariants run after
 each timer; a separate replay must produce the same retained checksum.
 
 ## Artifacts and interpretation

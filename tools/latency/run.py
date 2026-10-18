@@ -97,7 +97,7 @@ def report(directory):
     require(len(checksums) == 1, "deterministic checksum differs across trials")
     summary = {"manifest": manifest, "trials": trials, "verdict": "inconclusive; production defaults unchanged"}
     write(directory / "summary.json", summary)
-    lines = ["# WP9 latency and collector evidence", "", "Collector selection is inconclusive. Production defaults remain unchanged.", "",
+    lines = ["# Latency and collector evidence", "", "Collector selection is inconclusive. Production defaults remain unchanged.", "",
              "The diagnostic uses the same optimized threaded build at `-N1`; only `--nonmoving-gc` differs. WM sequence latency is request submission time, not compositor acknowledgment or display latency.", "",
              f"Trials per collector: {len(trials)//2}. Fewer than five is exploratory evidence only.",
              f"Machine: {manifest['machine']}. Compiler: {manifest['compiler']}. Binary SHA-256: `{manifest['binary_sha256']}`.",
@@ -120,7 +120,7 @@ def report(directory):
               "The pure interval includes concrete structural checksum folding over every state, layout, tag, stack, floating rectangle, intent, and desired-scene field. Inputs are pre-generated and previous state fully evaluated. Independent invariants and deterministic replay occur outside the interval. Replay, serialization, and validation still contribute to pure-process lifetime RTS totals.", "",
               "Native actions wait for exact keyboard-owner changes. Initial and restored captures verify client colors and Tall geometry; final input delivery checks the target window. Captures verify pixels and may add render sequences. An idle-phase WM acknowledgment after the final capture ensures the last render completion precedes interval end. Signal/checkpoint overhead lies in the broad driver interval, outside sequence timers. Startup, warmup, cleanup, and samples crossing the interval boundary remain in raw wm.json but are excluded from quantiles. Driver/native-client and river costs are excluded from WM RTS statistics.", "",
               "Scheduling, GC, and waiting remain possible limiters. Separate profile mode records a WM eventlog and Linux process CPU snapshots for WM, river, and driver; it is excluded from these trials. These observations do not identify source-level hotspots. No collector winner is inferred from noisy distributions or an unproven limiter.", "",
-              "The local compiler may differ from the repository's pinned GHC 9.6.6. Consult manifest.json for the exact compiler, build flags, platform, tools, trial order, and workload. Reproduction commands and limitations are in docs/latency.md. WP10 remains the M1 closeout phase."]
+              "The local compiler may differ from the repository's pinned GHC 9.6.6. Consult manifest.json for the exact compiler, build flags, platform, tools, trial order, and workload. Reproduction commands and limitations are in docs/latency.md."]
     for t in trials:
         t["budgets"] = {"pure_p99": t["pure"]["p99_ms"] < 2,
                         "manage_p99": t["manage"]["p99_ms"] < 10,
@@ -170,7 +170,7 @@ def cleanup_groups(directory):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Collect opt-in WP9 latency and collector evidence")
+    parser = argparse.ArgumentParser(description="Collect opt-in latency and collector evidence")
     parser.add_argument("directory", type=Path)
     parser.add_argument("--trials", type=int, default=5)
     parser.add_argument("--seed", type=int, default=1909)

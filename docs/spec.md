@@ -273,7 +273,7 @@ Required functionality: river_window_manager_v1 **version 3** (depends on set_co
 
 ### 5.1 Configuration = Program (the shape of the public API)
 
-WP7 implements the M1 subset of this target API. `Config l` currently has
+M1 implements a subset of this target API. `Config l` currently has
 `modMask`, `terminal`, `workspaces :: [String]`, `layoutHook`,
 `keys :: Config l -> Bindings l`, `borders`, and `bindingsUseFixedLayout`.
 `BorderConfig` contains a width and focused and unfocused premultiplied RGBA

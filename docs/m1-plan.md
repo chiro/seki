@@ -13,8 +13,8 @@ All seven are Verified against their required regressions, and every
 The [README](../README.md#project-direction) describes the current public API.
 The [wire and runtime reference](wire-protocol.md) and
 [integration guide](integration-testing.md) describe the implementation through
-WP10. The [WP9 report](latency-baseline/report.md) retains historical latency
-and GC evidence. The [coverage ledger](#91-regression-coverage-and-closeout)
+WP10. The [latency report](latency-baseline/report.md) retains historical
+latency and GC evidence. The [coverage ledger](#91-regression-coverage-and-closeout)
 links the regression evidence and records the closeout checks.
 
 ## 1. Outcome
@@ -41,8 +41,7 @@ daily-use milestone.
 
 ### 1.1 M0 work reused as complete
 
-M0 already delivered more of the original M1 row than the roadmap wording
-suggests:
+M0 already delivered several items in the M1 row:
 
 - `ManageM` and `RenderM` are distinct pure request plans;
 - the runtime validates manage/render sequence order;
@@ -409,10 +408,10 @@ A proposal is settled only after a newer dimensions revision is observed.
 While a new window has no settled dimensions it remains explicitly hidden.
 When the layout selects an existing window whose dimensions are not yet
 settled for its new rectangle, show that selection at its last settled size
-and the desired top-left. A WP6 prototype on river 0.5.0 compared this with
+and the desired top-left. A prototype on river 0.5.0 compared this with
 retaining the previous selection. Both rendered correctly with a deliberately
 delayed client. Showing the new selection keeps it aligned with StackSet
-focus. See [WP6 reconciliation](wp6-reconciliation.md) for the experiment.
+focus. See [Scene reconciliation](wp6-reconciliation.md) for the experiment.
 If the desired dimensions change while a proposal is in flight, retain only
 the latest desired rectangle, finish the current render sequence safely, and
 request another manage sequence with `manage_dirty` after sequence completion.
@@ -559,14 +558,12 @@ Deliverables:
   generate its fixture binding;
 - bind its global as a required runtime capability;
 - create and destroy one layer-shell output object per river output;
-- track the latest `non_exclusive_area` as each output's usable core `Rect`,
-  without a revision counter; WP6 adds one if its planner needs it;
+- track the latest `non_exclusive_area` as each output's usable core `Rect`;
 - create the seat object needed to track whether a layer surface owns focus;
 - track river's keyboard owner from `focus_exclusive`, `focus_non_exclusive`,
-  and `focus_none` per seat as `RiverLayerFocus` in the runtime snapshot. This
-  landed in WP5. Applying the M1-D01 focus and border rules moved to WP6, with
-  its request-level tests, because focus requests and borders are generated
-  by the reconciler;
+  and `focus_none` per seat as `RiverLayerFocus` in the runtime snapshot. The
+  M1-D01 focus and border rules belong to WP6, because the reconciler
+  generates focus requests and borders;
 - send `set_default` for the current screen's output in every manage sequence
   while the core state is attached. Sending it every sequence is deliberate:
   the request is idempotent, and river forgets the default when that output's
@@ -672,7 +669,8 @@ Tests:
 
 ### WP8 — Real-river scenarios
 
-Implemented by the nine `m1-*` entries in the exact release manifest. The native
+Implemented by the ten `m1-*` entries in the exact release manifest: the nine
+scenarios below and `m1-layer-focus`, which M1-D01 requires. The native
 Haskell fixture checks actual compositor pixels and keyboard delivery. See
 `docs/integration-testing.md` for the oracle, fixture limits, and output lifecycle
 coverage.
@@ -818,7 +816,7 @@ M1 is complete only when all of the following are true:
 
 ## 8. Planning Decisions
 
-This baseline recommends the following choices:
+M1 adopted the following choices:
 
 1. **Include a minimal public configuration/Action slice in M1.** Otherwise the
    default binary can demonstrate tiling but users cannot exercise the core in
@@ -843,9 +841,6 @@ This baseline recommends the following choices:
 8. **Own the exclusive-zone integration fixture.** A deterministic Haskell
    fixture uses seki's native Wayland transport and a pinned integration-only
    wlr-layer-shell binding; it does not link `libwayland` or depend on Waybar.
-
-If any of these decisions changes, revise the affected work packages before
-implementation begins.
 
 ## 9. Open Design Issues
 
@@ -1091,9 +1086,9 @@ regression evidence for each entry.
 
 ### 9.1 Regression coverage and closeout
 
-WP10 ([#14](https://github.com/chiro/seki/pull/14)) closed the regression gaps
-that this ledger recorded through WP9. Each entry below names the tests that
-assert its required and additional regressions.
+Each entry below names the tests that assert its required and additional
+regressions. WP10 ([#14](https://github.com/chiro/seki/pull/14)) added the
+last of them.
 
 | Decision | Regression evidence |
 |---|---|
@@ -1122,5 +1117,5 @@ The pinned command `nix develop --no-write-lock-file .#ci --command
 ci/run-integration.sh` passed in the CI `integration` job of
 [run 39114975118](https://github.com/chiro/seki/actions/runs/39114975118) on the same tree that
 [#14](https://github.com/chiro/seki/pull/14) merged. The historical
-[WP9 report](latency-baseline/report.md) remains the recorded latency evidence;
+[latency report](latency-baseline/report.md) remains the recorded latency evidence;
 it does not certify a new host or toolchain.

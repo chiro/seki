@@ -1,4 +1,4 @@
-# WP9 latency and collector evidence
+# Latency and collector evidence
 
 Collector selection is inconclusive. Production defaults remain unchanged.
 
@@ -71,7 +71,7 @@ See [summary.json](summary.json), [manifest.json](manifest.json), and the
 fingerprints. Full raw samples, logs, RTS summaries, and the separate eventlog
 remain in ignored `artifacts/wp9/` in the measuring checkout. Repeating the
 runner recreates those artifacts; the compact summary alone cannot revalidate
-individual raw timestamps. WP10 remains the M1 closeout.
+individual raw timestamps.
 
 ## Work and validity
 
@@ -100,7 +100,7 @@ Native actions wait for exact keyboard-owner changes. Initial and restored captu
 
 Scheduling, GC, and waiting remain possible limiters. Separate profile mode records a WM eventlog and Linux process CPU snapshots for WM, river, and driver; it is excluded from these trials. These observations do not identify source-level hotspots. No collector winner is inferred from noisy distributions or an unproven limiter.
 
-The local compiler may differ from the repository's pinned GHC 9.6.6. Consult manifest.json for the exact compiler, build flags, platform, tools, trial order, and workload. Reproduction commands and limitations are in ../latency.md. WP10 remains the M1 closeout phase.
+The local compiler may differ from the repository's pinned GHC 9.6.6. Consult manifest.json for the exact compiler, build flags, platform, tools, trial order, and workload. Reproduction commands and limitations are in ../latency.md.
 
 ## Separate diagnostic profile
 

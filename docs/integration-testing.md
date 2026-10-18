@@ -168,11 +168,11 @@ The default command continues to use the pinned compiler from `cabal.project`.
 
 ## Layer-surface fixture
 
-`seki-layer-surface-fixture` is the exclusive-zone client for WP8's
-layer-shell scenario (`m1-layer-exclusive-zone`) and the layer focus scenario
-(`m1-layer-focus`). It is a native Haskell
-wlr-layer-shell client built on seki's own Wayland transport, so it does not link `libwayland` and does not depend on a
-desktop bar.
+`seki-layer-surface-fixture` is the layer-shell client for the exclusive-zone
+scenario (`m1-layer-exclusive-zone`) and the layer focus scenario
+(`m1-layer-focus`). It is a native Haskell wlr-layer-shell client built on
+seki's own Wayland transport, so it does not link `libwayland` and does not
+depend on a desktop bar.
 
 ```console
 seki-layer-surface-fixture [HEIGHT [INTERACTIVITY]]
