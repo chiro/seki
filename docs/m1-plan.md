@@ -99,6 +99,13 @@ branch:
   GreedyView,Insert,Screen,Shift,Stack,Swap,View,Workspace,Floating}.hs` and
   `tests/Properties/Layout/{Tall,Full}.hs`
 
+M2 also ports from **xmonad-contrib 0.18.1**:
+
+- release archive:
+  `https://hackage.haskell.org/package/xmonad-contrib-0.18.1/xmonad-contrib-0.18.1.tar.gz`
+- SHA-256:
+  `05739d204acd84d352dec94d0618ac907ff3963551123c747eef37e813866432`
+
 Property disposition for M1 is explicit:
 
 - port all applicable properties from StackSet, Delete, Focus, GreedyView,

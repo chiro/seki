@@ -126,11 +126,47 @@ adapts the layout class and messages of `XMonad.Core` and the `Mirror` and
 `Choose` layouts of `XMonad.Layout`. `src-core/Seki/Internal/Layout/Tall.hs`
 and `src-core/Seki/Internal/Layout/Full.hs` adapt the `Tall` and `Full`
 layouts of `XMonad.Layout`. `src-core/Seki/Internal/Core/StackSet.hs` adapts
-`XMonad.StackSet`, and the tests under `test/Seki/Internal/` adapt xmonad's
+`XMonad.StackSet`, and `src-core/Seki/Internal/Core/ManageHook.hs` adapts
+`XMonad.ManageHook`. The tests under `test/Seki/Internal/` adapt xmonad's
 QuickCheck properties from `tests/`.
 
 Copyright (c) 2007,2008 Spencer Janssen
 Copyright (c) 2007,2008 Don Stewart
+Copyright (c) The Xmonad Community. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation
+and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+may be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+## xmonad-contrib
+
+seki ports semantics from xmonad-contrib 0.18.1
+(`https://hackage.haskell.org/package/xmonad-contrib-0.18.1/xmonad-contrib-0.18.1.tar.gz`,
+SHA-256 `05739d204acd84d352dec94d0618ac907ff3963551123c747eef37e813866432`).
+`src-core/Seki/Internal/Core/ManageHook.hs` adapts `doSink` from
+`XMonad.Hooks.ManageHelpers`.
+
 Copyright (c) The Xmonad Community. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification,

@@ -82,7 +82,11 @@ Port semantics from **xmonad 0.18.1**, the M1 pin, and from
 `additionalKeys` and `removeKeys`, `SpawnOnce`, and `ewmhFullscreen`'s
 `doFullFloat` behavior. Record the contrib tarball SHA-256 beside the M1 pin.
 
-Port the xmonad ManageHook and Floating property suites where they apply. The
+Port the xmonad ManageHook and Floating property suites where they apply.
+Neither release archive has a ManageHook property suite, so WP2's properties
+are written from `XMonad.ManageHook`'s definitions: `(=?)`, `(-->)`, and
+`composeAll` against the Endos they build, and `doShift` and `doSink` against
+`shiftWin` and `sink`. The
 X11 resize and aspect-hint properties that M1 excluded return only where river
 supplies the input. River supplies minimum and maximum dimensions and no
 aspect ratio or size increment, so the aspect and increment properties stay

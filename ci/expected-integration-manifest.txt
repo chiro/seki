@@ -14,3 +14,4 @@ m1-layer-exclusive-zone=passed
 m1-layer-focus=passed
 m1-output-readd=passed
 m2-probe-self-test=passed
+m2-manage-shift=passed
