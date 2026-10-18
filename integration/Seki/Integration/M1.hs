@@ -165,7 +165,7 @@ layerScenario fixture probe = do
   control <- Layer.newFixtureControl
   ready <- newEmptyMVar
   stopped <- newEmptyMVar
-  thread <- forkFinally (Layer.runLayerSurfaceFixture control (Layer.FixtureConfig 32) (UnixSocketPath (mSocket fixture)) (putMVar ready)) (putMVar stopped)
+  thread <- forkFinally (Layer.runLayerSurfaceFixture control (Layer.FixtureConfig 32 Layer.KeyboardInteractivityNone) (UnixSocketPath (mSocket fixture)) (putMVar ready)) (putMVar stopped)
   let stop = Layer.requestStop control >> waitForMVar "native layer shutdown" stopped >>= requireRight "layer thread" >>= requireRight "layer protocol" >>= assertEqual "layer stop" Layer.StoppedByRequest
   ( do
       size <- waitForMVar "native layer ready" ready

@@ -18,6 +18,7 @@ import Seki.Fixture.LayerSurface (
   FixtureError (..),
   FixtureReady (..),
   FixtureStop (..),
+  KeyboardInteractivity (..),
   newFixtureControl,
   parseFixtureArguments,
   readyLine,
@@ -78,6 +79,8 @@ tests =
     [ testCase "binds the compositor, shm, and layer-shell globals at version 1" testBindsGlobals
     , testCase "fails clearly when a required global is missing" testMissingGlobal
     , testCase "requests a top-anchored exclusive-zone layer surface" testSurfaceSetup
+    , testCase "binds layer shell at version 4 for on-demand keyboard interactivity" testOnDemandSurfaceSetup
+    , testCase "rejects on-demand keyboard interactivity below layer-shell version 4" testOnDemandNeedsVersion4
     , testCase "acks the configure serial before attaching a buffer" testConfigureAck
     , testCase "attaches a shared-memory buffer matching the configure" testBufferAttachment
     , testCase "withholds readiness until the sync round trip completes" testNoReadyBeforeSync
@@ -98,7 +101,7 @@ testBindsGlobals = do
     withFixture defaultConfig $ \mock -> do
       registryId <- answerStartup mock standardGlobals
       mapM_
-        (uncurry (expectBind mock registryId))
+        (uncurry (expectBind mock registryId 1))
         [(1, "wl_compositor"), (2, "wl_shm"), (3, "zwlr_layer_shell_v1")]
   assertStoppedByConnection result
 
@@ -112,8 +115,23 @@ testMissingGlobal = do
 
 testSurfaceSetup :: Assertion
 testSurfaceSetup = do
-  (result, _) <- withFixture FixtureConfig{fixtureHeight = 40} (expectSurfaceSetup 40)
+  let config = defaultConfig{fixtureHeight = 40}
+  (result, _) <- withFixture config (expectSurfaceSetup config)
   assertStoppedByConnection result
+
+testOnDemandSurfaceSetup :: Assertion
+testOnDemandSurfaceSetup = do
+  let config = defaultConfig{fixtureKeyboardInteractivity = KeyboardInteractivityOnDemand}
+  (result, _) <- withFixture config (expectSurfaceSetup config)
+  assertStoppedByConnection result
+
+testOnDemandNeedsVersion4 :: Assertion
+testOnDemandNeedsVersion4 = do
+  (result, ()) <-
+    withFixture defaultConfig{fixtureKeyboardInteractivity = KeyboardInteractivityOnDemand} $ \mock -> do
+      _ <- answerStartup mock [(name, interface, if interface == "zwlr_layer_shell_v1" then 3 else version) | (name, interface, version) <- standardGlobals]
+      expectEndOfRequests mock
+  assertEqual "old layer shell" (Left (FixtureUnsupportedGlobalVersion "zwlr_layer_shell_v1" 3 4)) (fixtureOutcome result)
 
 data Objects = Objects
   { objectsShm :: ObjectId
@@ -121,12 +139,17 @@ data Objects = Objects
   , objectsLayerSurface :: ObjectId
   }
 
-expectSurfaceSetup :: Word32 -> Mock -> IO Objects
-expectSurfaceSetup height mock = do
+expectSurfaceSetup :: FixtureConfig -> Mock -> IO Objects
+expectSurfaceSetup config mock = do
+  let height = fixtureHeight config
+      (interactivity, layerShellVersion) = case fixtureKeyboardInteractivity config of
+        KeyboardInteractivityNone -> (0, 1)
+        KeyboardInteractivityExclusive -> (1, 1)
+        KeyboardInteractivityOnDemand -> (2, 4)
   registryId <- answerStartup mock standardGlobals
-  compositorId <- expectBind mock registryId 1 "wl_compositor"
-  shmId <- expectBind mock registryId 2 "wl_shm"
-  layerShellId <- expectBind mock registryId 3 "zwlr_layer_shell_v1"
+  compositorId <- expectBind mock registryId 1 1 "wl_compositor"
+  shmId <- expectBind mock registryId 1 2 "wl_shm"
+  layerShellId <- expectBind mock registryId layerShellVersion 3 "zwlr_layer_shell_v1"
   surfaceId <- receiveNewIdRequest mock compositorId (Opcode 0)
   layerSurfaceFrame <- receiveRequest mock
   assertEqual "get_layer_surface sender" layerShellId (rawFrameSender layerSurfaceFrame)
@@ -141,6 +164,7 @@ expectSurfaceSetup height mock = do
   expectRequest mock "set_size" layerSurfaceId (Opcode 0) (putUint 0 >> putUint height)
   expectRequest mock "set_anchor" layerSurfaceId (Opcode 1) (putUint (1 + 4 + 8))
   expectRequest mock "set_exclusive_zone" layerSurfaceId (Opcode 2) (putInt (fromIntegral height))
+  expectRequest mock "set_keyboard_interactivity" layerSurfaceId (Opcode 4) (putUint interactivity)
   expectRequest mock "initial commit" surfaceId (Opcode 6) (pure ())
   pure (Objects shmId surfaceId layerSurfaceId)
 
@@ -148,7 +172,7 @@ testConfigureAck :: Assertion
 testConfigureAck = do
   (result, _) <-
     withFixture defaultConfig $ \mock -> do
-      objects <- expectSurfaceSetup 32 mock
+      objects <- expectSurfaceSetup defaultConfig mock
       sendConfigure mock objects 77 1280 32
       expectRequest mock "ack_configure" (objectsLayerSurface objects) (Opcode 6) (putUint 77)
       frame <- receiveRequest mock
@@ -158,8 +182,8 @@ testConfigureAck = do
 testBufferAttachment :: Assertion
 testBufferAttachment = do
   (result, _) <-
-    withFixture FixtureConfig{fixtureHeight = 40} $ \mock -> do
-      objects <- expectSurfaceSetup 40 mock
+    withFixture defaultConfig{fixtureHeight = 40} $ \mock -> do
+      objects <- expectSurfaceSetup defaultConfig{fixtureHeight = 40} mock
       sendConfigure mock objects 5 1280 40
       expectRequest mock "ack_configure" (objectsLayerSurface objects) (Opcode 6) (putUint 5)
       expectBufferCommit mock objects 1280 40
@@ -210,7 +234,7 @@ testClosedBeforeConfigure :: Assertion
 testClosedBeforeConfigure = do
   (result, _) <-
     withFixture defaultConfig $ \mock -> do
-      objects <- expectSurfaceSetup 32 mock
+      objects <- expectSurfaceSetup defaultConfig mock
       sendFrames (mockPeer mock) [encodedFrame (objectsLayerSurface objects) (Opcode 1) (pure ())]
       drainEvents mock
       expectUnmappedTeardown mock objects >>= completeTeardown mock
@@ -233,7 +257,7 @@ testEarlyStopDrainsEvents :: Assertion
 testEarlyStopDrainsEvents = do
   (result, _) <-
     withFixtureControl defaultConfig $ \control mock -> do
-      objects <- expectSurfaceSetup 32 mock
+      objects <- expectSurfaceSetup defaultConfig mock
       requestStop control
       display <- requireObjectId 1
       drainCallback <- receiveNewIdRequest mock display (Opcode 0)
@@ -261,11 +285,14 @@ testReadyLine = assertEqual "ready line" "ready 1280 32" (readyLine (FixtureRead
 
 testArguments :: Assertion
 testArguments = do
-  assertEqual "default height" (Right (FixtureConfig 32)) (parseFixtureArguments [])
-  assertEqual "explicit height" (Right (FixtureConfig 48)) (parseFixtureArguments ["48"])
+  assertEqual "default height" (Right (FixtureConfig 32 KeyboardInteractivityNone)) (parseFixtureArguments [])
+  assertEqual "explicit height" (Right (FixtureConfig 48 KeyboardInteractivityNone)) (parseFixtureArguments ["48"])
+  assertEqual "no interactivity" (Right (FixtureConfig 48 KeyboardInteractivityNone)) (parseFixtureArguments ["48", "none"])
+  assertEqual "exclusive interactivity" (Right (FixtureConfig 48 KeyboardInteractivityExclusive)) (parseFixtureArguments ["48", "exclusive"])
+  assertEqual "on-demand interactivity" (Right (FixtureConfig 48 KeyboardInteractivityOnDemand)) (parseFixtureArguments ["48", "on_demand"])
   mapM_
     (\arguments -> assertBool ("rejects " <> show arguments) (isLeft (parseFixtureArguments arguments)))
-    [["0"], ["-4"], ["tall"], ["2147483648"], ["32", "48"]]
+    [["0"], ["-4"], ["tall"], ["2147483648"], ["32", "48"], ["on_demand"], ["32", "on-demand"], ["32", "none", "none"]]
 
 drainEvents :: Mock -> Assertion
 drainEvents mock = do
@@ -297,7 +324,7 @@ completeTeardown mock callbackId = do
 
 mapFixtureSurface :: Word32 -> Mock -> IO (Objects, BufferObjects)
 mapFixtureSurface height mock = do
-  objects <- expectSurfaceSetup height mock
+  objects <- expectSurfaceSetup defaultConfig{fixtureHeight = height} mock
   sendConfigure mock objects 9 1280 height
   expectRequest mock "ack_configure" (objectsLayerSurface objects) (Opcode 6) (putUint 9)
   buffers <- expectBufferCommit mock objects 1280 height
@@ -347,7 +374,7 @@ sendConfigure mock objects serial width height =
     [encodedFrame (objectsLayerSurface objects) (Opcode 0) (putUint serial >> putUint width >> putUint height)]
 
 defaultConfig :: FixtureConfig
-defaultConfig = FixtureConfig{fixtureHeight = 32}
+defaultConfig = FixtureConfig{fixtureHeight = 32, fixtureKeyboardInteractivity = KeyboardInteractivityNone}
 
 standardGlobals :: [(Word32, Text, Word32)]
 standardGlobals =
@@ -491,8 +518,8 @@ expectPayload label frame arguments = do
   payload <- encodedPayload arguments
   assertEqual (label <> " payload") payload (rawFramePayload frame)
 
-expectBind :: Mock -> ObjectId -> Word32 -> Text -> IO ObjectId
-expectBind mock registryId expectedName expectedInterface = do
+expectBind :: Mock -> ObjectId -> Word32 -> Word32 -> Text -> IO ObjectId
+expectBind mock registryId expectedVersion expectedName expectedInterface = do
   frame <- receiveRequest mock
   assertEqual (label <> " bind sender") registryId (rawFrameSender frame)
   assertEqual (label <> " bind opcode") (Opcode 0) (rawFrameOpcode frame)
@@ -501,7 +528,7 @@ expectBind mock registryId expectedName expectedInterface = do
       | ByteString.null remaining -> do
           assertEqual (label <> " global name") expectedName name
           assertEqual (label <> " interface") expectedInterface (dynamicNewIdInterface dynamicId)
-          assertEqual (label <> " version") 1 (dynamicNewIdVersion dynamicId)
+          assertEqual (label <> " version") expectedVersion (dynamicNewIdVersion dynamicId)
           pure (dynamicNewIdObject dynamicId)
     other -> assertFailure ("unexpected " <> label <> " bind payload: " <> show other)
  where
