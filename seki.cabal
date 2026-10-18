@@ -83,6 +83,7 @@ library seki-core
     Seki.Internal.Core.Event
     Seki.Internal.Core.Geometry
     Seki.Internal.Core.Layout
+    Seki.Internal.Core.ManageHook
     Seki.Internal.Core.StackSet
     Seki.Internal.Core.State
     Seki.Internal.Core.Scene
@@ -91,6 +92,7 @@ library seki-core
   build-depends:
     base >=4.18 && <4.19,
     containers >=0.6.7 && <0.8,
+    text >=2.0.2 && <2.2,
     transformers >=0.6.1 && <0.7
 
 library seki-wire
