@@ -21,7 +21,7 @@ import Seki.Internal.Core.Action (windows)
 import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.Scene (defaultSceneStyle)
 import Seki.Internal.Core.StackSet qualified as S
-import Seki.Internal.Core.State (CoreState (..))
+import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Inventory (riverInventoryWindows)
@@ -64,7 +64,7 @@ runWM socket directory = do
                   state <- readPolicyState policy
                   phase <- readRiverSequencePhase session
                   pure
-                    ( null (riverInventoryWindows inventory) && case state of
+                    ( null (riverInventoryWindows inventory) && case coreWorkspaces state of
                         AttachedState ss _ -> null (S.allWindows ss) && phase == Right AwaitingManageOrRender
                         _ -> False
                     )

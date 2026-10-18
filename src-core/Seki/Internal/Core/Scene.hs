@@ -20,7 +20,7 @@ import Data.Word (Word32)
 import Seki.Internal.Core.Geometry (Point (..), Rect, mkRect, mkSize, rectHeight, rectWidth, rectX, rectY)
 import Seki.Internal.Core.Layout (LayoutClass, runLayout)
 import Seki.Internal.Core.StackSet (OutputId, Screen (..), StackSet (..), WindowId, Workspace (..), integrate', peek, screens)
-import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..))
+import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..))
 
 data Placement = Omitted | Placed Rect deriving (Eq, Show)
 
@@ -48,7 +48,7 @@ data DesiredScene = DesiredScene
 planScene :: (LayoutClass l) => SceneStyle -> CoreState i l -> Map OutputId Rect -> Map WindowId (Maybe WindowId) -> DesiredScene
 planScene style st areas parents = DesiredScene placements stable ordering (preferred >>= \w -> if shown w then Just w else Nothing) activeOutput
  where
-  (allWorkspaces, assigned, preferred, activeOutput) = case st of
+  (allWorkspaces, assigned, preferred, activeOutput) = case coreWorkspaces st of
     HeadlessState hw -> (headlessCurrent hw : headlessHidden hw, [], Nothing, Nothing)
     AttachedState ss _ -> (map workspace (screens ss) ++ hidden ss, screens ss, peek ss, Just (output (current ss)))
   stable = concatMap (integrate' . stack) allWorkspaces

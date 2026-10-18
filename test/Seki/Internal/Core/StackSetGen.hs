@@ -21,7 +21,7 @@ module Seki.Internal.Core.StackSetGen (
   Hotplug (..),
   Step (..),
   hotplugState,
-  coreWorkspaces,
+  sortedWorkspaces,
   coreFloating,
   coreInvariant,
   DefaultLayout,
@@ -40,7 +40,7 @@ import Seki.Internal.Core.Geometry (Point (..), mkRect, mkSize)
 import Seki.Internal.Core.Layout (CLR (..), ChangeLayout (..), Choose (..), IncMasterN (..), Mirror (..), Resize (..))
 import Seki.Internal.Core.ManageHook (noWindowProps)
 import Seki.Internal.Core.StackSet
-import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), addOutput, newCoreState, removeOutput)
+import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..), addOutput, newCoreState, removeOutput)
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Test.QuickCheck (
@@ -94,7 +94,7 @@ attach n l ts = case foldl (flip addOutput) initial (map (OutputId . fromIntegra
   AttachedState ss [] -> ss
   _ -> error "attach: every output must get a workspace"
  where
-  initial = either (error . show) id (newCoreState l ts)
+  initial = either (error . show) coreWorkspaces (newCoreState l ts)
 
 newtype EmptyStackSet = EmptyStackSet T
   deriving (Show)
@@ -196,10 +196,10 @@ instance Arbitrary Hotplug where
     pure (Hotplug [1 .. numWs] steps)
   shrink (Hotplug ts steps) = Hotplug ts <$> shrinkList (const []) steps
 
-hotplugState :: Hotplug -> CoreState Int Int
+hotplugState :: Hotplug -> Workspaces Int Int
 hotplugState (Hotplug ts steps) = foldl (flip apply) initial steps
  where
-  initial = either (error . show) id (newCoreState 0 ts)
+  initial = either (error . show) coreWorkspaces (newCoreState 0 ts)
   apply (AddOutput o) = addOutput o
   apply (RemoveOutput o) = removeOutput o
   apply (InsertWindow w) = attached (insertUp w)
@@ -211,16 +211,16 @@ hotplugState (Hotplug ts steps) = foldl (flip apply) initial steps
   floatRect = either (error . show) id (mkSize 100 100 >>= mkRect (Point 100 100))
 
 -- | Every workspace, sorted by tag.
-coreWorkspaces :: (Ord i) => CoreState i l -> [Workspace i l]
-coreWorkspaces (HeadlessState (HeadlessWorkspaces c hs _)) = sortOn tag (c : hs)
-coreWorkspaces (AttachedState ss _) = sortOn tag (workspaces ss)
+sortedWorkspaces :: (Ord i) => Workspaces i l -> [Workspace i l]
+sortedWorkspaces (HeadlessState (HeadlessWorkspaces c hs _)) = sortOn tag (c : hs)
+sortedWorkspaces (AttachedState ss _) = sortOn tag (workspaces ss)
 
-coreFloating :: CoreState i l -> Map WindowId FloatGeom
+coreFloating :: Workspaces i l -> Map WindowId FloatGeom
 coreFloating (HeadlessState hw) = headlessFloating hw
 coreFloating (AttachedState ss _) = floating ss
 
 -- | The plan's StackSet and headless-state invariants for the configured tags.
-coreInvariant :: [Int] -> CoreState Int l -> Property
+coreInvariant :: [Int] -> Workspaces Int l -> Property
 coreInvariant configured st =
   conjoin
     [ counterexample "every configured tag appears exactly once" (sort (map tag allWs) === sort configured)

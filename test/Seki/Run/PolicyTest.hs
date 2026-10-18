@@ -28,7 +28,7 @@ import Seki.Internal.Core.StackSet (
   peek,
   view,
  )
-import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), WorkspaceTagError (..), newCoreState)
+import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), WorkspaceTagError (..), Workspaces (..), fromWorkspaces, newCoreState)
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Inventory (RiverWindowState (..), riverInventoryWindows)
@@ -144,7 +144,7 @@ testEventsAtManageStart =
         assertEqual "nothing applied before the first manage_start" initialState (drainBefore d0)
         assertEqual
           "the first manage_start applies the window and output"
-          (AttachedState (StackSet (Screen (Workspace 1 Full (Just (Stack (wid w1) [] []))) (oid o1)) [] [empty 2, empty 3] Map.empty) [])
+          (fromWorkspaces (AttachedState (StackSet (Screen (Workspace 1 Full (Just (Stack (wid w1) [] []))) (oid o1)) [] [empty 2, empty 3] Map.empty) []))
           (drainAfter d0)
         assertEqual "the second window waits for the next manage_start" (drainAfter d0) (drainBefore d1)
         assertEqual "the second manage_start manages it" (sort [wid w1, wid w2]) (managed (drainAfter d1))
@@ -178,7 +178,7 @@ testManageHookProps =
       [d0] ->
         assertEqual
           "the app_id sent after the window event moves only that window, and w2 keeps focus"
-          (AttachedState (StackSet (Screen (Workspace 1 Full (Just (Stack (wid w2) [] []))) (oid o1)) [] [Workspace 2 Full (Just (Stack (wid w1) [] [])), empty 3] Map.empty) [])
+          (fromWorkspaces (AttachedState (StackSet (Screen (Workspace 1 Full (Just (Stack (wid w2) [] []))) (oid o1)) [] [Workspace 2 Full (Just (Stack (wid w1) [] [])), empty 3] Map.empty) []))
           (drainAfter d0)
       _ -> assertFailure ("expected one drain, got " <> show (length drains))
 
@@ -496,21 +496,24 @@ oid = OutputId . objectIdValue
 managed :: CoreState i l -> [WindowId]
 managed st = sort (concatMap (integrate' . stack) allWs)
  where
-  allWs = case st of
+  allWs = case coreWorkspaces st of
     HeadlessState hw -> headlessCurrent hw : headlessHidden hw
     AttachedState ss _ -> workspace (current ss) : map workspace (visible ss) ++ hidden ss
 
 focused :: CoreState i l -> Maybe WindowId
-focused (AttachedState ss _) = peek ss
-focused HeadlessState{} = Nothing
+focused st = case coreWorkspaces st of
+  AttachedState ss _ -> peek ss
+  HeadlessState{} -> Nothing
 
 currentScreenOf :: CoreState i l -> Maybe (i, OutputId)
-currentScreenOf (AttachedState ss _) = Just (currentTag ss, output (current ss))
-currentScreenOf HeadlessState{} = Nothing
+currentScreenOf st = case coreWorkspaces st of
+  AttachedState ss _ -> Just (currentTag ss, output (current ss))
+  HeadlessState{} -> Nothing
 
 currentTagOf :: CoreState i l -> Maybe i
-currentTagOf (AttachedState ss _) = Just (currentTag ss)
-currentTagOf HeadlessState{} = Nothing
+currentTagOf st = case coreWorkspaces st of
+  AttachedState ss _ -> Just (currentTag ss)
+  HeadlessState{} -> Nothing
 
 lastMaybe :: [a] -> Maybe a
 lastMaybe [] = Nothing

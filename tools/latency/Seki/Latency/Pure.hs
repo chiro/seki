@@ -29,9 +29,9 @@ layout :: BenchLayout
 layout = Tall 1 (1 / 10) (1 / 2) ||| Mirror (Tall 1 (1 / 10) (1 / 2)) ||| Full
 
 initialState :: Int -> CoreState String BenchLayout
-initialState count = foldl' (flip (manageWindow id)) attached [S.WindowId (fromIntegral i) | i <- [1 .. count]]
+initialState count = overWorkspaces attached (either (error . show) id (newCoreState layout ["1", "2", "3"]))
  where
-  attached = addOutput (S.OutputId 1) (either (error . show) id (newCoreState layout ["1", "2", "3"]))
+  attached ws = foldl' (flip (manageWindow id)) (addOutput (S.OutputId 1) ws) [S.WindowId (fromIntegral i) | i <- [1 .. count]]
 
 area :: Rect
 area = either (error . show) id (mkSize 1920 1080 >>= mkRect (Point 0 0))
@@ -90,8 +90,9 @@ screen (S.Screen ws o) = mix (workspace ws) (output o)
 floats :: Map.Map S.WindowId S.FloatGeom -> Word64
 floats = Map.foldlWithKey' (\a w r -> mix a (mix (window w) (rect r))) 0
 state :: CoreState String BenchLayout -> Word64
-state (HeadlessState (HeadlessWorkspaces c hs fs)) = many id [0, workspace c, many workspace hs, floats fs]
-state (AttachedState (S.StackSet c vs hs fs) os) = many id [1, screen c, many screen vs, many workspace hs, floats fs, many output os]
+state st = case coreWorkspaces st of
+  HeadlessState (HeadlessWorkspaces c hs fs) -> many id [0, workspace c, many workspace hs, floats fs]
+  AttachedState (S.StackSet c vs hs fs) os -> many id [1, screen c, many screen vs, many workspace hs, floats fs, many output os]
 intent :: Intent -> Word64
 intent (Spawn command) = mix 1 (many (fromIntegral . fromEnum) command)
 intent (CloseWindow w) = mix 2 (window w)
@@ -113,7 +114,7 @@ forceResult :: CoreState String BenchLayout -> [Intent] -> DesiredScene -> Word6
 forceResult st intents desired = many id [state st, many intent intents, scene desired]
 
 validateResult :: Int -> CoreState String BenchLayout -> DesiredScene -> Bool
-validateResult count st desired = case st of
+validateResult count st desired = case coreWorkspaces st of
   HeadlessState _ -> False
   AttachedState ss os ->
     null os

@@ -33,9 +33,12 @@ leaves it hidden until that workspace is shown.
 -}
 module Seki.Internal.Core.State (
   CoreState (..),
+  Workspaces (..),
   HeadlessWorkspaces (..),
   WorkspaceTagError (..),
   newCoreState,
+  fromWorkspaces,
+  overWorkspaces,
   addOutput,
   removeOutput,
   manageWindow,
@@ -60,8 +63,12 @@ import Seki.Internal.Core.StackSet (
  )
 import Seki.Internal.Core.StackSet qualified as StackSet
 
+-- | Everything the core reduces events into.
+data CoreState i l = CoreState {coreWorkspaces :: Workspaces i l}
+  deriving (Eq, Show)
+
 -- | The core's workspaces, with or without outputs to show them on.
-data CoreState i l
+data Workspaces i l
   = HeadlessState (HeadlessWorkspaces i l)
   | -- | The outputs that have no workspace yet, in arrival order.
     AttachedState (StackSet i l) [OutputId]
@@ -86,7 +93,7 @@ newCoreState :: (Eq i) => l -> [i] -> Either (WorkspaceTagError i) (CoreState i 
 newCoreState _ [] = Left NoWorkspaceTags
 newCoreState l tags@(t : ts) = case firstRepeat [] tags of
   Just repeated -> Left (DuplicateWorkspaceTag repeated)
-  Nothing -> Right (HeadlessState (HeadlessWorkspaces (empty t) (map empty ts) Map.empty))
+  Nothing -> Right (fromWorkspaces (HeadlessState (HeadlessWorkspaces (empty t) (map empty ts) Map.empty)))
  where
   empty i = Workspace i l Nothing
   firstRepeat _ [] = Nothing
@@ -94,11 +101,19 @@ newCoreState l tags@(t : ts) = case firstRepeat [] tags of
     | x `elem` seen = Just x
     | otherwise = firstRepeat (x : seen) xs
 
+-- | A core state over these workspaces with nothing else recorded yet.
+fromWorkspaces :: Workspaces i l -> CoreState i l
+fromWorkspaces = CoreState
+
+-- | Change the workspaces and keep the rest of the core state.
+overWorkspaces :: (Workspaces i l -> Workspaces i l) -> CoreState i l -> CoreState i l
+overWorkspaces f st = st{coreWorkspaces = f (coreWorkspaces st)}
+
 {- | Give a new output the remembered workspace when headless, otherwise the
 first hidden workspace, or leave it unassigned when none is hidden. Adding a
 known output changes nothing.
 -}
-addOutput :: OutputId -> CoreState i l -> CoreState i l
+addOutput :: OutputId -> Workspaces i l -> Workspaces i l
 addOutput o (HeadlessState (HeadlessWorkspaces c hs f)) = AttachedState (StackSet (Screen c o) [] hs f) []
 addOutput o st@(AttachedState ss unassigned)
   | o `elem` map output (screens ss) || o `elem` unassigned = st
@@ -110,7 +125,7 @@ one, and unassigned outputs then take hidden workspaces in order. The first
 surviving screen becomes current; with none left the state goes headless and
 remembers the removed workspace. Removing an unknown output changes nothing.
 -}
-removeOutput :: OutputId -> CoreState i l -> CoreState i l
+removeOutput :: OutputId -> Workspaces i l -> Workspaces i l
 removeOutput _ st@HeadlessState{} = st
 removeOutput o st@(AttachedState ss unassigned)
   | o `elem` unassigned = AttachedState ss (filter (/= o) unassigned)
@@ -129,10 +144,10 @@ focus it, then apply the manage hook's change. Headless, the remembered
 current workspace takes it, so it shows when an output arrives. A window
 already present anywhere changes nothing and skips the hook.
 -}
-manageWindow :: (StackSet i l -> StackSet i l) -> WindowId -> CoreState i l -> CoreState i l
+manageWindow :: (StackSet i l -> StackSet i l) -> WindowId -> Workspaces i l -> Workspaces i l
 manageWindow hook w = onStackSet (\ss -> if member w ss then ss else hook (insertUp w ss))
 
-onStackSet :: (StackSet i l -> StackSet i l) -> CoreState i l -> CoreState i l
+onStackSet :: (StackSet i l -> StackSet i l) -> Workspaces i l -> Workspaces i l
 onStackSet f (AttachedState ss unassigned) = AttachedState (f ss) unassigned
 onStackSet f (HeadlessState (HeadlessWorkspaces c hs fl)) =
   HeadlessState (HeadlessWorkspaces (workspace (current ss)) (map workspace (visible ss) ++ hidden ss) (floating ss))
@@ -144,7 +159,7 @@ headlessOutput :: OutputId
 headlessOutput = OutputId 0
 
 -- | xmonad's delete, from every workspace and the floating map, in either state.
-unmanageWindow :: WindowId -> CoreState i l -> CoreState i l
+unmanageWindow :: WindowId -> Workspaces i l -> Workspaces i l
 unmanageWindow w (AttachedState ss unassigned) = AttachedState (delete w ss) unassigned
 unmanageWindow w (HeadlessState (HeadlessWorkspaces c hs f)) =
   HeadlessState (HeadlessWorkspaces (remove c) (map remove hs) (Map.delete w f))
@@ -154,6 +169,6 @@ unmanageWindow w (HeadlessState (HeadlessWorkspaces c hs f)) =
 {- | Focus a window and view its workspace, making its output current. Headless
 or for an unknown window, nothing changes.
 -}
-focusWindowIn :: (Eq i) => WindowId -> CoreState i l -> CoreState i l
+focusWindowIn :: (Eq i) => WindowId -> Workspaces i l -> Workspaces i l
 focusWindowIn w (AttachedState ss unassigned) = AttachedState (focusWindow w ss) unassigned
 focusWindowIn _ st@HeadlessState{} = st

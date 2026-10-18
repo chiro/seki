@@ -10,7 +10,7 @@ import Seki.Internal.Core.GeometryGen (genRatio, genRect)
 import Seki.Internal.Core.Layout (CLR (..), Choose (..), LayoutClass (..), Mirror (..), runLayout)
 import Seki.Internal.Core.Scene (DesiredScene (..), Placement (..), SceneStyle (..), defaultSceneStyle, planScene, stackWindows)
 import Seki.Internal.Core.StackSet (OutputId (..), Screen (..), Stack (..), StackSet (..), WindowId (..), Workspace (..), integrate)
-import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..))
+import Seki.Internal.Core.State (CoreState, HeadlessWorkspaces (..), Workspaces (..), fromWorkspaces)
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Test.Tasty (TestTree, testGroup)
@@ -25,7 +25,7 @@ w2 = WindowId 2
 w3 = WindowId 3
 w4 = WindowId 4
 state :: l -> Stack WindowId -> CoreState Int l
-state l s = AttachedState (StackSet (Screen (Workspace 1 l (Just s)) (OutputId 1)) [] [Workspace 2 l (Just (Stack w4 [] []))] Map.empty) []
+state l s = fromWorkspaces (AttachedState (StackSet (Screen (Workspace 1 l (Just s)) (OutputId 1)) [] [Workspace 2 l (Just (Stack w4 [] []))] Map.empty) [])
 scene :: (LayoutClass l) => l -> Stack WindowId -> DesiredScene
 scene l s = planScene defaultSceneStyle (state l s) (Map.singleton (OutputId 1) (rectangle 101 81)) Map.empty
 
@@ -44,7 +44,7 @@ tests =
         sceneWindows result @?= Map.fromList [(w1, Omitted), (w2, Omitted), (w4, Omitted)]
         sceneFocus result @?= Nothing
         let hw = HeadlessWorkspaces (Workspace (1 :: Int) Full Nothing) [] Map.empty
-        sceneWindows (planScene defaultSceneStyle (HeadlessState hw{headlessCurrent = Workspace 1 Full (Just (Stack w1 [] []))}) Map.empty Map.empty) @?= Map.singleton w1 Omitted
+        sceneWindows (planScene defaultSceneStyle (fromWorkspaces (HeadlessState hw{headlessCurrent = Workspace 1 Full (Just (Stack w1 [] []))})) Map.empty Map.empty) @?= Map.singleton w1 Omitted
     , testCase "parents and focused sibling branch are complete and stable" $ do
         let w5 = WindowId 5
             st = state (Tall 1 0.03 0.5) (Stack w2 [w1] [w5, w3])
@@ -78,7 +78,7 @@ tests =
                   w6 = WindowId 6
                   first = Screen (Workspace (1 :: Int) selected (Just (Stack w2 [w1] [w3]))) (OutputId 1)
                   second = Screen (Workspace 2 selected (Just (Stack w4 [] [w5]))) (OutputId 2)
-                  st = AttachedState (StackSet first [second] [Workspace 3 selected (Just (Stack w6 [] []))] Map.empty) []
+                  st = fromWorkspaces (AttachedState (StackSet first [second] [Workspace 3 selected (Just (Stack w6 [] []))] Map.empty) [])
                   areas = Map.fromList [(o, area) | (o, area) <- [(OutputId 1, area1), (OutputId 2, area2)], o `elem` available]
                   style = defaultSceneStyle{sceneBorderWidth = fromIntegral border}
                   result = planScene style st areas Map.empty

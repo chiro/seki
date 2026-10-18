@@ -16,7 +16,7 @@ import Data.Monoid (Endo (..))
 import Seki.Internal.Core.Action (Action, Intent, runAction)
 import Seki.Internal.Core.ManageHook (ManageHook, WindowProps, runQuery)
 import Seki.Internal.Core.StackSet (OutputId, WindowId)
-import Seki.Internal.Core.State (CoreState, addOutput, focusWindowIn, manageWindow, removeOutput, unmanageWindow)
+import Seki.Internal.Core.State (CoreState, addOutput, focusWindowIn, manageWindow, overWorkspaces, removeOutput, unmanageWindow)
 
 -- | A change river reported, or a key binding's action.
 data CoreEvent i l
@@ -31,11 +31,11 @@ data CoreEvent i l
 -- | Apply one event, returning the new state and the intents it recorded.
 stepCore :: (Eq i) => ManageHook i l -> CoreEvent i l -> CoreState i l -> (CoreState i l, [Intent])
 stepCore hook event st = case event of
-  WindowCreated w props -> (manageWindow (appEndo (runQuery hook w props)) w st, [])
-  WindowClosed w -> (unmanageWindow w st, [])
-  OutputCreated o -> (addOutput o st, [])
-  OutputRemoved o -> (removeOutput o st, [])
-  WindowInteraction w -> (focusWindowIn w st, [])
+  WindowCreated w props -> (overWorkspaces (manageWindow (appEndo (runQuery hook w props)) w) st, [])
+  WindowClosed w -> (overWorkspaces (unmanageWindow w) st, [])
+  OutputCreated o -> (overWorkspaces (addOutput o) st, [])
+  OutputRemoved o -> (overWorkspaces (removeOutput o) st, [])
+  WindowInteraction w -> (overWorkspaces (focusWindowIn w) st, [])
   RunAction action -> let ((), st', intents) = runAction action st in (st', intents)
 
 -- | Apply events in arrival order, concatenating their intents in order.

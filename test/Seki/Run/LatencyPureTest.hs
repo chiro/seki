@@ -17,8 +17,8 @@ tests =
     [ testCase "consumes lazy intent payload" $ throws (forceResult initial [Spawn (error "unforced command")] emptyScene)
     , testCase "consumes scene placement values" $ throws (forceResult initial [] emptyScene{sceneWindows = Map.singleton (S.WindowId 1) (Placed (error "unforced rectangle"))})
     , testCase "consumes complete scene ordering" $ throws (forceResult initial [] emptyScene{sceneStacking = [S.WindowId 1, error "unforced tail"]})
-    , testCase "consumes hidden workspace tags" $ case initial of
-        AttachedState ss os -> throws (forceResult (AttachedState ss{S.hidden = [S.Workspace (error "unforced tag") layout Nothing]} os) [] emptyScene)
+    , testCase "consumes hidden workspace tags" $ case coreWorkspaces initial of
+        AttachedState ss os -> throws (forceResult (fromWorkspaces (AttachedState ss{S.hidden = [S.Workspace (error "unforced tag") layout Nothing]} os)) [] emptyScene)
         _ -> assertFailure "unexpected headless fixture"
     , testCase "rejects missing work and missing scene membership" $ do
         assertBool "empty result cannot claim 32 windows" (not (validateResult 32 (initialState 2) emptyScene))
