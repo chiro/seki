@@ -109,6 +109,12 @@ tests =
         sceneWindows result @?= Map.fromList [(w1, Placed content), (w2, Omitted), (w3, Omitted), (w4, Omitted)]
         sceneFocus result @?= Nothing
         sceneStacking result @?= [w2, w3, w4, w1]
+    , testCase "focusing a parent raises its child and grandchild above unrelated windows" $ do
+        let w5 = WindowId 5
+            w6 = WindowId 6
+            st = state (Tall 1 0.03 0.5) (Stack w1 [w5] [w2, w6, w3])
+            result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) (rectangle 100 100)) (Map.fromList [(w2, Just w1), (w3, Just w2)])
+        sceneStacking result @?= [w4, w5, w6, w1, w2, w3]
     ]
  where
   content = either (error . show) id (mkSize 97 77 >>= mkRect (Point (-98) 22))
