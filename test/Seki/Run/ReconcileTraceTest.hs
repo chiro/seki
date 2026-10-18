@@ -7,15 +7,18 @@ import Control.Monad (foldM, forM, forM_, when)
 import Data.ByteString (ByteString)
 import Data.Int (Int32)
 import Data.Maybe (isJust)
+import Seki.Internal.Core.Action (windows)
 import Seki.Internal.Core.Layout (LayoutClass, Mirror (..))
 import Seki.Internal.Core.Scene (defaultSceneStyle)
-import Seki.Internal.Core.StackSet (WindowId (..), index, peek)
+import Seki.Internal.Core.StackSet (WindowId (..), focusDown, index, peek)
 import Seki.Internal.Core.State (CoreState (..))
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
-import Seki.Run.MockRiver (FrameReader, callbackDoneFrame, encodedFrame, encodedPayload, expectMockSuccess, expectRight, newFrameReader, receiveFrame, receiveLayerShellOutputRequest, receiveLayerShellSeatRequest, receiveNewIdRequest, receiveRuntimeBinds, receiveStartupRequests, registryGlobalFrame, requireObjectId, runMock, sendFrames, withRuntimePair)
+import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Run.MockRiver (FrameReader, callbackDoneFrame, encodedFrame, encodedPayload, expectMockSuccess, expectRight, newFrameReader, receiveFrame, receiveKeyBindingRequest, receiveLayerShellOutputRequest, receiveLayerShellSeatRequest, receiveNewIdRequest, receiveRuntimeBinds, receiveStartupRequests, registryGlobalFrame, requireObjectId, runMock, sendFrames, withRuntimePair)
 import Seki.Run.Policy (PolicyConfig (..), newPolicy, policyRuntimeHandlers, readPolicyState)
 import Seki.Run.Runtime (openRiverSessionAt, runRiverSession)
+import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Arguments (ArgumentEncoder, putInt, putNewId, putObject, putUint)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
 import Seki.Wire.Transport (Transport, closeTransport)
@@ -36,6 +39,7 @@ tests =
         [content width 50, content width 50]
     , testCase "focus raises a shown family and new windows retain nonexclusive layer focus" testFamilies
     , testCase "Full focuses a new child and hides it when its parent is refocused" testChildUnderFull
+    , testCase "Full shows only a smaller focused commit and focus cycling hides it" testFullSelection
     ]
  where
   content width height = if width > 4 && height > 4 then Just (width - 4, height - 4) else Nothing
@@ -239,6 +243,59 @@ testChildUnderFull = withRuntimePair $ \target peer -> do
   result <- runRiverSession session
   expectMockSuccess done
   result @?= Right ()
+
+testFullSelection :: Assertion
+testFullSelection = withRuntimePair $ \target peer -> do
+  w1 <- requireObjectId 0xff0000c0
+  w2 <- requireObjectId 0xff0000c1
+  w3 <- requireObjectId 0xff0000c2
+  output <- requireObjectId 0xff0000c3
+  seat <- requireObjectId 0xff0000c4
+  done <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (manager, xkb, layerShell) <- handshake reader peer
+    sendFrames peer (map (\w -> event manager 6 (putNewId w)) [w1, w2, w3] ++ [event manager 7 (putNewId output), event manager 8 (putNewId seat)])
+    mapM_ (\w -> receiveNewIdRequest reader peer w (Opcode 2)) [w1, w2, w3]
+    ls <- receiveLayerShellOutputRequest reader peer layerShell output
+    _ <- receiveLayerShellSeatRequest reader peer layerShell seat
+    focusBinding <- receiveKeyBindingRequest reader peer xkb seat focusKey
+    let manage = sendFrames peer [event manager 2 (pure ())] >> readUntil reader peer manager 2
+        render = sendFrames peer [event manager 3 (pure ())] >> readUntil reader peer manager 4
+    sendFrames peer [event output 2 (putInt 0 >> putInt 0), event output 3 (putInt 200 >> putInt 100), event ls 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100)]
+    proposed <- encodedPayload (putInt 196 >> putInt 96)
+    first <- manage
+    requests w3 3 first @?= [proposed]
+    forM_ [w1, w2] $ \w -> requests w 3 first @?= []
+    sendFrames peer [event w3 2 (putInt 150 >> putInt 80)]
+    smaller <- render
+    requests w3 5 smaller @?= [mempty]
+    forM_ [w1, w2] $ \w -> do
+      requests w 5 smaller @?= []
+      requests w 4 smaller @?= [mempty]
+    _ <- manage
+    _ <- render
+    sendFrames peer [event focusBinding 0 (pure ())]
+    cycled <- manage
+    requests w2 3 cycled @?= [proposed]
+    forM_ [w1, w3] $ \w -> requests w 3 cycled @?= []
+    sendFrames peer [event w2 2 (putInt 196 >> putInt 96)]
+    selected <- render
+    requests w3 4 selected @?= [mempty]
+    requests w2 5 selected @?= [mempty]
+    forM_ [w1, w3] $ \w -> requests w 5 selected @?= []
+    requests w1 4 selected @?= []
+    refocused <- manage
+    focusPayload <- encodedPayload (putObject w2)
+    requests seat 1 refocused @?= [focusPayload]
+    _ <- render
+    closeTransport peer
+  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [(focusKey, windows focusDown)] defaultSceneStyle (\_ -> pure ()))
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
+  result <- runRiverSession session
+  expectMockSuccess done
+  result @?= Right ()
+ where
+  focusKey = RiverKeyBinding 0x62 (River.RiverSeatV1ModifiersFlags 0) Nothing
 
 requests :: ObjectId -> Int -> [RawFrame] -> [ByteString]
 requests sender opcode frames = [rawFramePayload f | f <- frames, rawFrameSender f == sender, rawFrameOpcode f == Opcode (fromIntegral opcode)]
