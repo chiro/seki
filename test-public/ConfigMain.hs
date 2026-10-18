@@ -15,10 +15,11 @@ customConfig =
     { layoutHook = CustomLayout Full
     , keys = \config -> (KeyBinding (modMask config .|. Shift) (Keysym 0xffbe), windows focusDown >> kill >> spawn "true") : defaultKeys config
     , manageHook = idHook
+    , startupHook = spawnOnce "true"
     }
 
 fullConfig :: Config Full
-fullConfig = def{layoutHook = Full, keys = defaultKeys, manageHook = idHook}
+fullConfig = def{layoutHook = Full, keys = defaultKeys, manageHook = idHook, startupHook = pure ()}
 
 hookedConfig :: Config StdLayouts
 hookedConfig =

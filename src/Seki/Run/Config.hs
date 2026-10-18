@@ -26,7 +26,7 @@ policyConfigOf config =
     , policySceneStyle = SceneStyle (borderWidth style) (focusedBorderColor style) (unfocusedBorderColor style)
     , policyLaunch = launchDetached
     , policyManageHook = manageHook config
-    , policyStartupHook = pure ()
+    , policyStartupHook = startupHook config
     }
  where
   style = borders config

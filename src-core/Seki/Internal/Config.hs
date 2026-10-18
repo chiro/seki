@@ -80,9 +80,14 @@ data Config l = Config
   , bindingsUseFixedLayout :: Bool
   , manageHook :: ManageHook l
   -- ^ Runs on every new window, after it is inserted above the focus.
+  , startupHook :: Action l ()
+  -- ^ Runs once per seki process, when the first output arrives. Use
+  -- 'Core.spawnOnce' for launches that must not repeat after a restart. Its
+  -- type names the layout, so an update that changes the layout type sets it
+  -- again, as it does 'keys' and 'manageHook'.
   }
 
--- | Nine workspaces, Tall, Mirror Tall, Full, xmonad-style bindings, and no manage hook.
+-- | Nine workspaces, Tall, Mirror Tall, Full, xmonad-style bindings, and no manage or startup hook.
 def :: Config StdLayouts
 def =
   Config
@@ -94,6 +99,7 @@ def =
     , borders = BorderConfig 2 (BorderColor 0 0x80000000 0xffffffff 0xffffffff) (BorderColor 0x40000000 0x40000000 0x40000000 0xffffffff)
     , bindingsUseFixedLayout = True
     , manageHook = idHook
+    , startupHook = pure ()
     }
  where
   tall = Tall 1 (3 / 100) (1 / 2)
