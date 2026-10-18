@@ -7,6 +7,7 @@ module Seki.Integration.Fixture (
   Paint (..),
   WindowRequest (..),
   withFixture,
+  withHeldLogo,
   windowRequests,
   picture,
   pictureError,
@@ -18,6 +19,7 @@ import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, tryReadMVar)
 import Control.Exception (SomeException, bracket, finally, onException, try)
 import Control.Monad (forM, forM_, void)
+import Data.Bits ((.&.))
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
@@ -122,6 +124,17 @@ withFixture policyConfig name outputCount action = do
                             renderManagedProcessLogs river >>= announce
                         )
           `finally` cleanup
+
+withHeldLogo :: Fixture l -> Probe -> IO a -> IO a
+withHeldLogo fixture probe action = do
+  result <-
+    bracket (startManagedProcess "held logo modifier" (mEnvironment fixture) (proc "wtype" ["-M", "logo", "-s", "60000"])) stopManagedProcess $ \_ -> do
+      _ <- waitUntil "logo modifier held on the focused window" assertionTimeoutMicroseconds (keyboardSnapshot probe) (logoHeld . depressedModifiers)
+      action
+  _ <- waitUntil "logo modifier released after its keyboard stops" assertionTimeoutMicroseconds (keyboardSnapshot probe) (not . logoHeld . depressedModifiers)
+  pure result
+ where
+  logoHeld modifiers = modifiers .&. 0x40 /= 0
 
 windowRequests :: Fixture l -> ObjectId -> IO [WindowRequest]
 windowRequests fixture window = Map.findWithDefault [] window <$> readIORef (mRequests fixture)
