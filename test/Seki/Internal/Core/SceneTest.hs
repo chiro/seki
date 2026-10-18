@@ -116,6 +116,10 @@ tests =
             st = state (Tall 1 0.03 0.5) (Stack w1 [w5] [w2, w6, w3])
             result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) (rectangle 100 100)) (Map.fromList [(w2, Just w1), (w3, Just w2)])
         sceneStacking result @?= [w4, w5, w6, w1, w2, w3]
+    , testCase "a parent on another workspace leaves its child a family of its own" $ do
+        let st = state (Tall 1 0.03 0.5) (Stack w1 [] [w2, w3])
+            result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) (rectangle 100 100)) (Map.fromList [(w2, Just w4), (w3, Just w2)])
+        sceneStacking result @?= [w4, w2, w3, w1]
     ]
  where
   content = either (error . show) id (mkSize 97 77 >>= mkRect (Point (-98) 22))
