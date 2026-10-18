@@ -411,7 +411,7 @@ settled for its new rectangle, show that selection at its last settled size
 and the desired top-left. A prototype on river 0.5.0 compared this with
 retaining the previous selection. Both rendered correctly with a deliberately
 delayed client. Showing the new selection keeps it aligned with StackSet
-focus. See [Scene reconciliation](wp6-reconciliation.md) for the experiment.
+focus. See [Scene reconciliation](reconciliation.md) for the experiment.
 If the desired dimensions change while a proposal is in flight, retain only
 the latest desired rectangle, finish the current render sequence safely, and
 request another manage sequence with `manage_dirty` after sequence completion.

@@ -41,7 +41,7 @@ extra-doc-files:
   docs/latency-baseline/manifest.json
   docs/latency-baseline/profile-summary.json
   docs/m1-plan.md
-  docs/wp6-reconciliation.md
+  docs/reconciliation.md
   docs/spec.md
   docs/wire-protocol.md
 

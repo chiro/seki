@@ -532,7 +532,7 @@ its dimensions settle. An existing selection retains its last settled size
 while a resize is pending. Focus requests follow the shown state and respect
 layer-shell keyboard ownership. The runtime sends a requested `manage_dirty`
 only after `render_finish` succeeds. See
-[Scene reconciliation](wp6-reconciliation.md) for the state transitions and live
+[Scene reconciliation](reconciliation.md) for the state transitions and live
 compositor evidence.
 
 ### 7.10 XKB bindings bootstrap
