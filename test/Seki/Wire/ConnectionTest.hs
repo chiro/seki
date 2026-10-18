@@ -29,6 +29,7 @@ import Seki.Wire.Transport (
   OwnedFdError (..),
   ReceivedChunk (..),
   Transport,
+  TransportError (..),
   adoptFd,
   closeOwnedFd,
   closeTransport,
@@ -129,13 +130,20 @@ testPreparationFailure =
 
 testTransportFailure :: Assertion
 testTransportFailure =
-  withConnectionPair $ \connection display receiver -> do
-    closeTransport receiver
-    firstResult <- submitSync connection display
-    firstError <- case firstResult of
-      Left errorValue@(ConnectionTransportError _) -> pure errorValue
-      other -> assertFailure ("expected transport failure, got: " <> show other)
-    assertEqual "same terminal failure" (Left firstError) =<< submitSync connection display
+  withPipe $ \readDescriptor _ ->
+    withConnectionPair $ \connection display _ -> do
+      released <- dup readDescriptor >>= adoptFd
+      void (closeOwnedFd released)
+      let terminalError = Left (ConnectionTransportError TransportDescriptorAlreadyReleased)
+      assertEqual
+        "transport failure"
+        terminalError
+        =<< submitRequest
+          connection
+          Wayland.wlDisplayInterface
+          display
+          (RequestEncoder "descriptor" (Opcode 2) 1 False (putFd released))
+      assertEqual "same terminal failure" terminalError . void =<< submitSync connection display
 
 testConcurrentChildren :: Assertion
 testConcurrentChildren =
