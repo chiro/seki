@@ -95,6 +95,7 @@ nix develop --no-write-lock-file .#unit --command cabal test all
 | `m1-layer-focus` | An `on_demand` layer surface keeps keyboard focus through a new window and a layout message; a window click and a focus key binding each take it back, and the window keeps it with a focused border after `focus_none` | `wlr-randr` |
 | `m1-output-readd` | Actual WM output removal and addition through two, one, zero, one, and two outputs preserve stacks, layouts, focus, and window identities | `wlr-randr` |
 | `m2-probe-self-test` | Each probe window spec field and request against river's state: a custom and an absent app_id, the parent window, the dimensions hint, a fixed commit size, fullscreen and exit fullscreen requests, a move during a held press, and a pointer press, motion, and release with the logo modifier held | `wlr-randr` |
+| `m2-manage-shift` | A `doShift` manage hook keyed on a probe window's custom app_id puts it on hidden workspace 2: it is not shown and focus stays on the earlier window. Viewing workspace 2 shows it, and a window with another app_id still tiles on workspace 1 | `wlr-randr` |
 
 All scenarios also use the core river, foot, and synthetic-input fixture as
 needed. The CI shell in `flake.nix` provides the integration dependency set,
@@ -146,7 +147,11 @@ The actor waits for observed events rather than a startup delay.
 
 `openWindowWith` takes a `WindowSpec`. `windowSpec color` gives the defaults,
 and `openWindow` uses them, so its requests are the same as before the spec
-existed. The spec fields are:
+existed. Both return after the window's initial `xdg_surface.configure`.
+River sends it only after seki proposes dimensions, and seki proposes none
+for a window on a hidden workspace, so `m2-manage-shift` opens its shifted
+window on a separate thread and collects it once the workspace is shown. The
+spec fields are:
 
 | Field | Request | Default |
 | --- | --- | --- |
@@ -315,6 +320,7 @@ m1-layer-exclusive-zone=passed
 m1-layer-focus=passed
 m1-output-readd=passed
 m2-probe-self-test=passed
+m2-manage-shift=passed
 ```
 
 `ci/run-integration.sh` byte-compares the generated file with
