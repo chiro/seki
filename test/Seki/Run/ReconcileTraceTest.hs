@@ -139,6 +139,10 @@ testFamilies = withRuntimePair $ \target peer -> do
       _ -> fail "expected three nodes"
     focusedBorder <- encodedPayload (putUint 15 >> putInt 2 >> mapM_ putUint [0, 0x80000000, 0xffffffff, 0xffffffff])
     requests w2 8 raised @?= [focusedBorder]
+    sendFrames peer [event layerSeat 2 (pure ())]
+    refocused <- manage
+    requests seat 1 refocused @?= [focusPayload]
+    _ <- render
     sendFrames peer [event layerSeat 1 (pure ()), event manager 6 (putNewId w4)]
     _ <- receiveNewIdRequest reader peer w4 (Opcode 2)
     created <- manage
