@@ -236,6 +236,7 @@ test-suite seki-test
     Seki.Internal.Core.GeometryGen
     Seki.Internal.Core.GeometryTest
     Seki.Internal.Core.LayoutTest
+    Seki.Internal.Core.ManageHookTest
     Seki.Internal.Core.StackSetGen
     Seki.Internal.Core.StackSetTest
     Seki.Internal.Core.StateTest
