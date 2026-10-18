@@ -11,7 +11,7 @@ import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.MockRiver (FrameReader, callbackDoneFrame, encodedFrame, expectMockSuccess, expectRight, newFrameReader, receiveExpectedRequest, receiveKeyBindingRequest, receiveLayerShellOutputRequest, receiveLayerShellSeatRequest, receiveNewIdRequest, receiveRuntimeBinds, receiveStartupRequests, registryGlobalFrame, requireObjectId, runMock, sendFrames, withRuntimePair)
-import Seki.Run.Policy (PolicyConfig (..), newPolicy, policyRuntimeHandlers)
+import Seki.Run.Policy (PolicyConfig (..), newPolicy, policyRuntimeHandlers, readPolicyState)
 import Seki.Run.Runtime (openRiverSessionAt, runRiverSession)
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Arguments (putInt, putNewId, putNullableObject, putObject, putUint)
@@ -35,6 +35,7 @@ testSettlement = withRuntimePair $ \target peer -> do
   window <- requireObjectId 0xff000030
   output <- requireObjectId 0xff000031
   seat <- requireObjectId 0xff000032
+  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()))
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader
     (manager, _, layerShell) <- handshake reader peer
@@ -168,6 +169,7 @@ testSettlement = withRuntimePair $ \target peer -> do
     request manager 2 (pure ())
     render
     request manager 4 (pure ())
+    unsupportedBefore <- readPolicyState policy
     sendFrames
       peer
       [ event window 7 (putObject seat)
@@ -181,6 +183,8 @@ testSettlement = withRuntimePair $ \target peer -> do
       ]
     start
     manageEnd ls
+    unsupportedAfter <- readPolicyState policy
+    unsupportedAfter @?= unsupportedBefore
     render
     request manager 4 (pure ())
     sendFrames peer [event window 0 (pure ()), event manager 6 (putNewId window)]
@@ -200,7 +204,6 @@ testSettlement = withRuntimePair $ \target peer -> do
     request window 4 (pure ())
     request manager 4 (pure ())
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
