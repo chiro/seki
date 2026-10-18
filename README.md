@@ -72,16 +72,25 @@ with `Keysym 0xff0d` representing Return. Combine `Mods` with `(.|.)`, which
 `Seki` exports. River excludes locked modifiers, so bit 16 and unknown modifier
 bits fail validation before connection. Named modifiers are `Shift`, `Control`,
 `Mod1`, `Mod3`, `Mod4`, and `Mod5`. `bindingsUseFixedLayout = True`
-matches group zero regardless of the active keyboard layout.
+matches group zero regardless of the active keyboard layout. A binding may
+have no modifier, as in `KeyBinding (Mods 0) (Keysym 0x1008FF13)` for a
+volume key.
 
-When changing the layout's type, replace the layout-dependent key function
-in the same record update, as in `def{layoutHook = Full, keys = defaultKeys}`.
+`additionalKeys` and `removeKeys` follow xmonad-contrib's EZConfig. A binding
+added with `additionalKeys` replaces one with the same identity, and both keep
+the final-configuration behavior of `keys`. `startupHook` runs once per seki
+process when the first output arrives. Use `spawnOnce` in it for programs
+that must start only once.
+
+When changing the layout's type, replace the layout-dependent key function,
+manage hook, and startup hook in the same record update, as in
+`def{layoutHook = Full, keys = defaultKeys, manageHook = idHook, startupHook = pure ()}`.
 Custom bindings are an association list of `(KeyBinding, Action l ())` pairs.
 Duplicate identities, empty workspace lists or duplicate tags, negative borders,
 and colors whose RGB channels exceed alpha fail before Wayland startup.
 `BorderColor` channels are unsigned 32-bit premultiplied RGBA values.
 
-`Action` is pure. Use `windows`, `sendMessage`, `spawn`, and `kill` to change
+`Action` is pure. Use `windows`, `sendMessage`, `spawn`, `spawnOnce`, and `kill` to change
 state or record effects. Arbitrary IO is not part of the configuration API.
 Import `Seki.Core.StackSet` qualified for its full operation set; `Seki`
 exports selected operations without conflicting with `Config.workspaces`.
