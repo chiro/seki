@@ -13,6 +13,7 @@ module Seki.Fixture.Probe (
   keyboardSnapshot,
   captureOutput,
   outputNames,
+  click,
 ) where
 
 import Control.Concurrent (forkFinally, killThread)
@@ -32,6 +33,7 @@ import Data.Text qualified
 import Data.Word (Word32, Word64)
 import Seki.Fixture.Protocol.ExtImageCaptureSourceV1 qualified as Source
 import Seki.Fixture.Protocol.ExtImageCopyCaptureV1 qualified as Copy
+import Seki.Fixture.Protocol.WlrVirtualPointerUnstableV1 qualified as Pointer
 import Seki.Fixture.Protocol.XdgShell qualified as Xdg
 import Seki.Protocol.Wayland qualified as W
 import Seki.Run.Startup
@@ -250,6 +252,26 @@ outputNames socketPath = bounded "discover named outputs" $
     forM names $ \(global, name) -> do
       value <- readIORef name >>= maybe (fail "wl_output omitted name") pure
       pure (global, value)
+
+{- | Press and release the left button of a fresh virtual pointer at a point
+of the output layout, given with the layout's width and height.
+-}
+click :: FilePath -> (Word32, Word32) -> (Word32, Word32) -> IO ()
+click socketPath (width, height) (x, y) = bounded ("click " <> show (x, y)) $
+  bracket (openSession socketPath) closeWaylandSession $ \session -> do
+    let connection = waylandConnection session
+    manager <- bindOne session Pointer.zwlrVirtualPointerManagerV1Interface 1 Nothing
+    pointer <- checkedIO (submitInheritedObjectRequest connection Pointer.zwlrVirtualPointerManagerV1Interface manager Pointer.zwlrVirtualPointerV1Interface (Pointer.encodeZwlrVirtualPointerManagerV1CreateVirtualPointer Nothing . objectId))
+    let send = checkedIO . submitRequest connection Pointer.zwlrVirtualPointerV1Interface pointer
+        button state = send (Pointer.encodeZwlrVirtualPointerV1Button 0 leftButton state) >> send Pointer.encodeZwlrVirtualPointerV1Frame
+    send (Pointer.encodeZwlrVirtualPointerV1MotionAbsolute 0 x y width height)
+    send Pointer.encodeZwlrVirtualPointerV1Frame
+    button W.WlPointerButtonStateEnumPressed
+    button W.WlPointerButtonStateEnumReleased
+    send Pointer.encodeZwlrVirtualPointerV1Destroy
+    roundtrip session
+ where
+  leftButton = 0x110
 
 captureOutput :: FilePath -> Text -> IO Image
 captureOutput socketPath outputName = bounded ("capture " <> show outputName) $

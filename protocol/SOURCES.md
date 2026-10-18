@@ -60,3 +60,14 @@ mirror and can be used when Codeberg is unavailable.
   - <https://gitlab.freedesktop.org/wayland/wayland-protocols/-/blob/1.49/staging/ext-image-capture-source/ext-image-capture-source-v1.xml>
   - <https://gitlab.freedesktop.org/wayland/wayland-protocols/-/blob/1.49/staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml>
   - <https://gitlab.freedesktop.org/wayland/wayland-protocols/-/blob/1.49/staging/ext-foreign-toplevel-list/ext-foreign-toplevel-list-v1.xml>
+
+## wlr-protocols
+
+- File: `wlr-protocols/wlr-virtual-pointer-unstable-v1.xml`
+- Upstream: <https://gitlab.freedesktop.org/wlroots/wlr-protocols>
+- Commit: `bf4fc79abc359eea5a0edec0ac6d4a2b2955f82a`; the file is unchanged
+  since `c11408942e2fb54d41dadb84cdf844331076ae11`
+- Source: <https://gitlab.freedesktop.org/wlroots/wlr-protocols/-/blob/bf4fc79abc359eea5a0edec0ac6d4a2b2955f82a/unstable/wlr-virtual-pointer-unstable-v1.xml>
+- License: MIT-style; full notice is embedded in the XML
+- Use: the integration probe clicks windows through a virtual pointer. seki
+  itself does not bind it.
