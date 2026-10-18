@@ -40,7 +40,7 @@ import Data.Char (isDigit)
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Foreign.C.Error (Errno (..), eAGAIN, eCONNRESET, eINTR, eWOULDBLOCK)
+import Foreign.C.Error (Errno (..), eAGAIN, eCONNRESET, eINTR, ePIPE, eWOULDBLOCK)
 import Foreign.C.Types (CInt)
 import GHC.Conc (threadWaitRead, threadWaitWrite)
 import Network.Socket (
@@ -238,6 +238,7 @@ data TransportError
   | TransportInvalidReceiveCapacity Int
   | TransportNoProgress
   | TransportInvalidSendProgress Int Int
+  | TransportPeerClosed
   | TransportSystemError TransportOperation CInt
   | TransportReceiveRejected AncillaryError
   deriving (Eq, Show)
@@ -363,7 +364,9 @@ firstSendError result = case result of
   Left SendDescriptorsWithoutBytes -> Left TransportEmptyPayloadWithDescriptors
   Left SendNoProgress -> Left TransportNoProgress
   Left (SendInvalidProgress progress available) -> Left (TransportInvalidSendProgress progress available)
-  Left (SendDriverFailed errorNumber) -> Left (TransportSystemError SendOperation errorNumber)
+  Left (SendDriverFailed errorNumber)
+    | errorNumber == errnoCode ePIPE -> Left TransportPeerClosed
+    | otherwise -> Left (TransportSystemError SendOperation errorNumber)
   Right () -> Right ()
 
 -- | Receive one stream chunk, waiting through interruption and backpressure.

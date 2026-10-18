@@ -90,7 +90,7 @@ import Seki.Wire.Connection.Request (
   prepareNewObjectRequest,
   prepareRequest,
  )
-import Seki.Wire.Transport (OwnedFd, Transport, TransportError, closeTransport, receiveChunk, sendMessage)
+import Seki.Wire.Transport (OwnedFd, Transport, TransportError (..), closeTransport, receiveChunk, sendMessage)
 import Seki.Wire.Types (ObjectId, Opcode, RawFrame (..), objectIdValue)
 
 data Connection = Connection
@@ -469,7 +469,17 @@ submitPrepared connection prepare =
                         (preparedRequestFds prepared)
                     )
                 )
+            let published =
+                  connectionData
+                    { connectionObjects = nextTable
+                    , connectionEventRoutes = foldl installRoute (pruneRoutes nextTable (connectionEventRoutes connectionData)) newRoutes
+                    }
             case attempted of
+              -- The peer is gone and will never read this request, but its
+              -- last events may still be queued for us. Keep receiving so
+              -- the stream ends at EOF, as when a reset drops our requests.
+              Right (Left TransportPeerClosed) ->
+                pure (ConnectionOpen published, SubmissionReturned (Right value))
               Left exception -> do
                 closeConnectionResources connection
                 let terminalError = ConnectionUnexpectedError (displayException exception)
@@ -479,12 +489,7 @@ submitPrepared connection prepare =
                 let terminalError = ConnectionTransportError errorValue
                 pure (ConnectionFailed terminalError, SubmissionReturned (Left terminalError))
               Right (Right ()) ->
-                let nextData =
-                      connectionData
-                        { connectionObjects = nextTable
-                        , connectionEventRoutes = foldl installRoute (pruneRoutes nextTable (connectionEventRoutes connectionData)) newRoutes
-                        }
-                 in pure (ConnectionOpen nextData, SubmissionReturned (Right value))
+                pure (ConnectionOpen published, SubmissionReturned (Right value))
     case outcome of
       SubmissionReturned result -> pure result
       SubmissionRaised exception

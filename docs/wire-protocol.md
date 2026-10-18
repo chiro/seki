@@ -302,6 +302,9 @@ If the call writes at least one byte but only a prefix of the frame, the
 ancillary data has been transferred; the remaining bytes are sent without the
 descriptors. `EINTR` retries without changing state. `EAGAIN` waits for
 writability. A zero-byte successful result is treated as no progress.
+`EPIPE` becomes `TransportPeerClosed`. `Connection` then accepts the request
+as sent and stays open, because the peer's last events may still wait in the
+receive queue. Dispatch drains them and ends at EOF, as in section 6.2.
 
 Calling `Transport.sendMessage` transfers ownership of its descriptors to
 the transport, including on send failure. Constructing an encoder or failing
