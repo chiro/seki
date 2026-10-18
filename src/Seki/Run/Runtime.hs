@@ -8,6 +8,7 @@ module Seki.Run.Runtime (
   riverXkbBindings,
   riverLayerShell,
   readRiverInventory,
+  readRiverSequencePhase,
   RiverKeyBindingState (..),
   RiverSeatBindings (..),
   RiverLayerFocus (..),
@@ -29,6 +30,7 @@ import Control.Monad (void, when)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Protocol.RiverLayerShellV1 qualified as LayerShell
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
@@ -48,6 +50,7 @@ import Seki.Run.Inventory (
   lookupRiverOutput,
   lookupRiverWindow,
  )
+import Seki.Run.Latency
 import Seki.Run.LayerShell (
   RiverLayerShellBootstrapError,
   bindRiverLayerShell,
@@ -72,9 +75,11 @@ import Seki.Run.River (
 import Seki.Run.Sequence (
   RiverSequenceCompletion (..),
   RiverSequenceError,
+  RiverSequencePhase,
   RiverSequenceState,
   completeRiverSequence,
   initialRiverSequenceState,
+  riverSequencePhase,
   startManageSequence,
   startRenderSequence,
  )
@@ -162,6 +167,7 @@ data RiverRuntimeHandlers = RiverRuntimeHandlers
   { riverProtocolHandlers :: RiverWindowManagerHandlers
   , riverKeyBindings :: [RiverKeyBinding]
   , handleRiverKeyBindingEvent :: RiverKeyBinding -> Object Xkb.RiverXkbBindingV1 -> Xkb.RiverXkbBindingV1Event OwnedFd -> IO ()
+  , riverSequenceRecorder :: Maybe Recorder
   , prepareRiverManagePlan :: RiverRuntimeSnapshot -> IO (ManageM ())
   , prepareRiverRenderPlan :: RiverRuntimeSnapshot -> IO (RenderM RenderOutcome)
   }
@@ -311,6 +317,9 @@ closeRiverSession = closeWaylandSession . riverWaylandSession
 readRiverInventory :: RiverSession -> IO RiverInventory
 readRiverInventory = readIORef . riverInventoryState
 
+readRiverSequencePhase :: RiverSession -> IO (Either RiverRuntimeError RiverSequencePhase)
+readRiverSequencePhase session = fmap riverSequencePhase <$> readIORef (riverSequenceStatus session)
+
 -- | Read the live seats and their initially configured key binding objects.
 readRiverSeatBindings :: RiverSession -> IO [RiverSeatBindings]
 readRiverSeatBindings session =
@@ -339,6 +348,8 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
   handleManagerEvent manager event = case event of
     River.RiverWindowManagerV1ManageStart ->
       runSequence
+        (riverSequenceRecorder runtimeHandlers)
+        ManageSequence
         (waylandConnection wayland)
         sequenceStatus
         handlers
@@ -348,6 +359,8 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
         (fmap (fmap (const (RenderOutcome False))) runManagePlans)
     River.RiverWindowManagerV1RenderStart ->
       runSequence
+        (riverSequenceRecorder runtimeHandlers)
+        RenderSequence
         (waylandConnection wayland)
         sequenceStatus
         handlers
@@ -704,6 +717,8 @@ recordRuntimeError runtimeStatus newError =
       Right _ -> (Left newError, ())
 
 runSequence ::
+  Maybe Recorder ->
+  SequenceKind ->
   Connection ->
   IORef (Either RiverRuntimeError RiverSequenceState) ->
   RiverWindowManagerHandlers ->
@@ -712,36 +727,50 @@ runSequence ::
   (RiverSequenceState -> Either RiverSequenceError RiverSequenceState) ->
   IO (Either ConnectionError RenderOutcome) ->
   IO ()
-runSequence connection sequenceStatus handlers manager event startSequence runPlan = do
-  started <-
-    atomicModifyIORef' sequenceStatus $ \current -> case current of
-      Left errorValue -> (current, Left errorValue)
-      Right state -> case startSequence state of
-        Left errorValue ->
-          let runtimeError = RiverRuntimeSequenceError errorValue
-           in (Left runtimeError, Left runtimeError)
-        Right active -> (Right active, Right active)
-  case started of
-    Left _ -> pure ()
-    Right active -> do
-      handleRiverWindowManagerEvent handlers manager event
-      runPlan >>= \case
-        Left errorValue ->
-          writeIORef sequenceStatus (Left (RiverRuntimeConnectionError errorValue))
-        Right outcome ->
-          case completeRiverSequence active of
-            Left errorValue ->
-              writeIORef sequenceStatus (Left (RiverRuntimeSequenceError errorValue))
-            Right (completion, next) ->
-              submitSequenceCompletion connection manager completion >>= \case
-                Left errorValue ->
-                  writeIORef sequenceStatus (Left (RiverRuntimeConnectionError errorValue))
-                Right () -> do
-                  writeIORef sequenceStatus (Right next)
-                  when (renderNeedsManage outcome) $
-                    submitRequest connection River.riverWindowManagerV1Interface manager River.encodeRiverWindowManagerV1ManageDirty >>= \case
-                      Left errorValue -> writeIORef sequenceStatus (Left (RiverRuntimeConnectionError errorValue))
-                      Right () -> pure ()
+runSequence recorder kind connection sequenceStatus handlers manager event startSequence runPlan = do
+  result <- case recorder of
+    Nothing -> submit
+    Just recording -> do
+      started <- getMonotonicTimeNSec
+      completed <- submit `onException` recordFailure recording
+      case completed of
+        Nothing -> recordFailure recording
+        Just _ -> do
+          ended <- getMonotonicTimeNSec
+          recordSuccess recording kind started ended
+      pure completed
+  case result of
+    Nothing -> pure ()
+    Just (next, outcome) -> do
+      writeIORef sequenceStatus (Right next)
+      when (renderNeedsManage outcome) $
+        submitRequest connection River.riverWindowManagerV1Interface manager River.encodeRiverWindowManagerV1ManageDirty >>= \case
+          Left errorValue -> writeIORef sequenceStatus (Left (RiverRuntimeConnectionError errorValue))
+          Right () -> pure ()
+ where
+  failed errorValue = writeIORef sequenceStatus (Left errorValue) >> pure Nothing
+  submit = do
+    started <-
+      atomicModifyIORef' sequenceStatus $ \current -> case current of
+        Left errorValue -> (current, Left errorValue)
+        Right state -> case startSequence state of
+          Left errorValue ->
+            let runtimeError = RiverRuntimeSequenceError errorValue
+             in (Left runtimeError, Left runtimeError)
+          Right active -> (Right active, Right active)
+    case started of
+      Left _ -> pure Nothing
+      Right active -> do
+        handleRiverWindowManagerEvent handlers manager event
+        runPlan >>= \case
+          Left errorValue -> failed (RiverRuntimeConnectionError errorValue)
+          Right outcome ->
+            case completeRiverSequence active of
+              Left errorValue -> failed (RiverRuntimeSequenceError errorValue)
+              Right (completion, next) ->
+                submitSequenceCompletion connection manager completion >>= \case
+                  Left errorValue -> failed (RiverRuntimeConnectionError errorValue)
+                  Right () -> pure (Just (next, outcome))
 
 submitSequenceCompletion ::
   Connection ->

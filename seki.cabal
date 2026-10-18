@@ -15,6 +15,8 @@ category:            System
 build-type:          Simple
 tested-with:         GHC ==9.6.6
 extra-source-files:
+  tools/latency/run.py
+  tools/latency/test_report.py
   cbits/seki_wayland_transport.h
   fourmolu.yaml
   protocol/SHA256SUMS
@@ -32,6 +34,11 @@ extra-doc-files:
   README.md
   THIRD_PARTY_NOTICES.md
   docs/integration-testing.md
+  docs/latency.md
+  docs/latency-baseline/report.md
+  docs/latency-baseline/summary.json
+  docs/latency-baseline/manifest.json
+  docs/latency-baseline/profile-summary.json
   docs/m1-plan.md
   docs/wp6-reconciliation.md
   docs/spec.md
@@ -102,6 +109,7 @@ library seki-wire
     Seki.Protocol.Wayland
     Seki.Run.Inventory
     Seki.Run.LayerShell
+    Seki.Run.Latency
     Seki.Run.Config
     Seki.Run.Phase
     Seki.Run.Policy
@@ -215,7 +223,7 @@ executable seki
 test-suite seki-test
   import:         warnings
   type:           exitcode-stdio-1.0
-  hs-source-dirs: test
+  hs-source-dirs: test tools/latency
   main-is:        Main.hs
   other-modules:
     Seki.Fixture.LayerSurfaceTest
@@ -233,6 +241,9 @@ test-suite seki-test
     Seki.Scanner.GenerateTest
     Seki.Scanner.ParseTest
     Seki.Run.InventoryTest
+    Seki.Run.LatencyTest
+    Seki.Run.LatencyPureTest
+    Seki.Latency.Pure
     Seki.Run.MockRiver
     Seki.Run.ConfigTest
     Seki.Run.PhaseTest
@@ -255,6 +266,7 @@ test-suite seki-test
     Seki.Wire.Transport.DriverTest
     Seki.Wire.TransportTest
   build-depends:
+    aeson >=2.1 && <2.3,
     QuickCheck >=2.14.3 && <2.16,
     base >=4.18 && <4.19,
     binary >=0.8.9 && <0.9,
@@ -305,6 +317,31 @@ test-suite seki-integration
     temporary >=1.3 && <1.4,
     text >=2.0.2 && <2.2,
     unix >=2.8.4 && <2.9
+
+executable seki-latency
+  import: warnings
+  hs-source-dirs: tools/latency integration
+  main-is: Main.hs
+  ghc-options: -O2 -threaded -rtsopts
+  other-modules:
+    Seki.Latency.Pure
+    Seki.Latency.Live
+    Seki.Integration.Harness
+  build-depends:
+    base >=4.18 && <4.19,
+    aeson >=2.1 && <2.3,
+    bytestring >=0.11.5 && <0.12,
+    containers >=0.6.7 && <0.8,
+    directory >=1.3.8 && <1.4,
+    filepath >=1.4.3 && <1.6,
+    network >=3.1.4 && <3.3,
+    process >=1.6.18 && <1.7,
+    temporary >=1.3 && <1.4,
+    text >=2.0.2 && <2.2,
+    unix >=2.8.4 && <2.9,
+    seki:seki-core,
+    seki:seki-wire,
+    seki:layer-surface-fixture
 
 source-repository head
   type:     git

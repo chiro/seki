@@ -703,6 +703,11 @@ Performance measurements are a manual/release evidence gate, not a flaky
 wall-clock assertion in ordinary unit CI. Pure allocation/regression checks may
 still run in CI.
 
+Implementation and reproduction are documented in [latency.md](latency.md).
+The opt-in `seki-latency` executable and `tools/latency/run.py` retain raw
+measurements and generate the repeated-trial report; collector selection remains
+an evidence gate.
+
 ### WP10 — Documentation and M1 closeout
 
 Deliverables:
