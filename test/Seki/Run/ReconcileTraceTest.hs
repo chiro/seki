@@ -7,7 +7,7 @@ import Control.Monad (foldM, forM, forM_, when)
 import Data.ByteString (ByteString)
 import Data.Int (Int32)
 import Data.Maybe (isJust)
-import Seki.Internal.Core.Layout (LayoutClass)
+import Seki.Internal.Core.Layout (LayoutClass, Mirror (..))
 import Seki.Internal.Core.Scene (defaultSceneStyle)
 import Seki.Internal.Core.StackSet (WindowId (..), index, peek)
 import Seki.Internal.Core.State (CoreState (..))
@@ -20,7 +20,7 @@ import Seki.Wire.Arguments (ArgumentEncoder, putInt, putNewId, putObject, putUin
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
 import Seki.Wire.Transport (Transport, closeTransport)
 import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..))
-import Test.Tasty (TestTree, testGroup)
+import Test.Tasty (TestName, TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertEqual, testCase, (@?=))
 import Test.Tasty.QuickCheck (arbitrary, elements, forAll, ioProperty, testProperty, vectorOf, withMaxSuccess)
 
@@ -28,12 +28,23 @@ tests :: TestTree
 tests =
   testGroup
     "reconciliation traces"
-    [ testProperty "generated area and dimensions traces preserve proposal, visibility, and focus invariants" $
-        withMaxSuccess 30 $
-          forAll (vectorOf 16 ((,) <$> elements [0, 4, 50, 100, 150] <*> arbitrary)) $ \steps ->
-            ioProperty (testTrace Full (\width -> [if width > 4 then Just (width - 4, 96) else Nothing]) steps >> pure True)
+    [ traceProperty "generated area and dimensions traces preserve proposal, visibility, and focus invariants" Full $ \width ->
+        [content width 100]
+    , traceProperty "generated Tall traces never propose or show a degenerate tile" (Tall 1 (1 / 10) (1 / 2)) $ \width ->
+        [content (width - width `div` 2) 100, content (width `div` 2) 100]
+    , traceProperty "generated Mirror Tall traces never propose or show a degenerate tile" (Mirror (Tall 1 (1 / 10) (1 / 2))) $ \width ->
+        [content width 50, content width 50]
     , testCase "focus raises a shown family and new windows retain nonexclusive layer focus" testFamilies
     ]
+ where
+  content width height = if width > 4 && height > 4 then Just (width - 4, height - 4) else Nothing
+
+traceProperty :: (LayoutClass l) => TestName -> l -> (Int32 -> [Maybe (Int32, Int32)]) -> TestTree
+traceProperty name layout desiredSizes =
+  testProperty name $
+    withMaxSuccess 30 $
+      forAll (vectorOf 16 ((,) <$> elements [0, 4, 9, 50, 100, 150] <*> arbitrary)) $ \steps ->
+        ioProperty (testTrace layout desiredSizes steps >> pure True)
 
 data Model = Model
   { pendingSize :: Maybe (Int32, Int32)
