@@ -1,6 +1,6 @@
 # seki Specification — A river Window Manager in Haskell
 
-Status: **v1 design accepted — M0 complete, M1 next** / Last updated: 2026-10-16
+Status: **v1 design accepted, M1 implemented through WP9, closeout pending** / Last updated: 2026-10-18
 Legend: [DECIDED] = current design decision, [RESOLVED] = checked against the protocol or other available evidence
 
 This is the target design for v1, not a description of the currently exported
@@ -103,6 +103,13 @@ data Stack a       = Stack { focus :: a, up :: [a], down :: [a] }
 
 ### 3.3 Two-Phase Commit and the Reconciler
 
+The signatures below sketch the target stages, not the exported M1 API.
+M1's private `DesiredScene` stores placement selections, ordering, and eligible
+focus/output IDs. The reconciler derives visibility, decorations, and borders
+from the scene, style, and inventory. M1 accepts actual client dimensions at the
+desired top-left; per-layout Crop/Tolerate remains an M2 target. See the
+[implemented scene contract](m1-plan.md#35-desired-scene).
+
 Split the core into three stages. ① and ② are pure; only ③ does IO.
 
 ```haskell
@@ -162,7 +169,7 @@ class Show l => LayoutClass l where
   - focus-follows-mouse: pointer_enter / pointer_leave events (per-window crossing notifications; the window's region includes the input regions of borders and decorations) → focus_window on enter.
   - click-to-focus / raise: the window_interaction event (a "this window was interacted with" notification abstracting over button presses, touch, and tablet input — policy over mechanism). Raising applies to the focused window's family (3.1).
   - If raw pointer coordinates are needed, the pointer_position event provides them (only when changed, once per manage sequence; because coordinate changes alone do not trigger a sequence, pointer motion will not swamp a WM written in a GC'd language).
-- [RESOLVED] Arbitration with layer surfaces: signalled by river_layer_shell_seat_v1's focus_exclusive / focus_non_exclusive / focus_none events. While exclusive (lock screens, keyboard-grabbing launchers, etc.) **the WM's focus requests are ignored**, so there are periods where StackSet focus and actual keyboard focus diverge. The core leaves the StackSet untouched and reflects "no actual focus" only in the decoration computation of DesiredScene. On focus_none, return focus to the StackSet's focused window. [DECIDED] While any layer surface holds keyboard focus, every window draws the unfocused border. During non-exclusive focus only explicit user focus actions (window_interaction, or a key binding that applies `windows`) send a focus request, which takes keyboard input back; routine reconciliation, including a newly mapped window, sends none. On focus_none the WM re-sends focus even for an unchanged target, because river does not restore window focus itself (M1-D01).
+- [RESOLVED] Arbitration with layer surfaces: signalled by river_layer_shell_seat_v1's focus_exclusive / focus_non_exclusive / focus_none events. While exclusive (lock screens, keyboard-grabbing launchers, etc.) **the WM's focus requests are ignored**, so there are periods where StackSet focus and actual keyboard focus diverge. The core leaves the StackSet untouched. The reconciler uses reported layer focus to select border colors. On focus_none, return focus to the StackSet's focused window. [DECIDED] While any layer surface holds keyboard focus, every window draws the unfocused border. During non-exclusive focus only explicit user focus actions (window_interaction, or a key binding that applies `windows`) send a focus request, which takes keyboard input back; routine reconciliation, including a newly mapped window, sends none. On focus_none the WM re-sends focus even for an unchanged target, because river does not restore window focus itself (M1-D01).
 
 ### 3.7 State Persistence and Hot-Swap
 
@@ -182,7 +189,7 @@ class Show l => LayoutClass l where
   - Escaping via timeout: WM-side timer → manage_dirty → cancel_ensure_next_key_eaten. The spec allows a race where ate_unbound_key arrives before the cancel, so handle it idempotently.
 - Both pressed and released events arrive (released fires when the "main" key is released; releasing only modifiers does not fire it). Repeating an action while a key is held (volume keys, etc.) is **implemented with a WM-side timer**, stopped by the stop_repeat event (sent when another key is pressed). Note that set_repeat_info is the repeat configuration for ordinary keys delivered to clients — a different thing from binding repeat.
 - set_layout_override: pins the xkb layout used to interpret a binding. **When several layouts are in use (Japanese/US, etc.), registering bindings pinned to layout 0 makes "the same physical key triggers the binding regardless of the active layout" the default behaviour** (can be disabled in configuration).
-- Which binding receives the event when several match the same physical key is compositor policy (unspecified in the protocol). The library detects and warns about duplicate registrations of (keysym, mods, layout_override).
+- Which binding receives the event when several match the same physical key is compositor policy (unspecified in the protocol). The current M1 configuration rejects duplicate registrations of (keysym, mods, layout_override) before opening a Wayland connection.
 - [RESOLVED] modifiers_watch / modifiers_update are since-version-3 features in the river-xkb-bindings-v1 XML shipped by river 0.4.5. Watching modifier state makes alt-tab-style "commit on modifier release" UIs implementable. **The target river version is 0.4.5 or later.**
 
 ### 3.9 Input Device Configuration [RESOLVED: river-input-management-v1 (v1) read]
@@ -194,7 +201,7 @@ class Show l => LayoutClass l where
   - Capability-discovery event pattern: `*_support` (once, right after creation) → `*_default` → `*_current` (on every change). **This lets us check support before applying inputRules and warn the user instead of silently swallowing unsupported settings.**
   - Each configuration request returns a river_libinput_result_v1 (success / unsupported / invalid). Surface the result in logs and over IPC.
   - Coverage is the full libinput configuration surface (send_events, tap-to-click, acceleration profiles; custom acceleration curves are possible via create_accel_config + set_points).
-  - Binding implementation note: libinput's floating-point values are packed into Wayland array arguments as native-endian IEEE-754 doubles. Our own code generator (2.2) types this array as `Double`.
+  - Binding implementation note: libinput's floating-point values are packed into Wayland array arguments as native-endian IEEE-754 doubles. The planned libinput adapter will decode this array as `Double` values. These input protocols are deferred. Current generated array arguments remain opaque bytes.
 - Keymaps are set per device through river-xkb-config-v1 by passing an fd (create_keymap). Layouts can be switched programmatically with set_layout_index / set_layout_name, and active_layout / capslock / numlock state events are available (usable for a layout indicator in the bar).
 
 ## 4. Protocol Mapping (river-window-management-v1 v4, read)
@@ -241,7 +248,7 @@ Required functionality: river_window_manager_v1 **version 3** (depends on set_co
 ### 4.3 Design Notes Drawn from Reading the Protocol
 
 - **set_capabilities**: in final v1, declare only `fullscreen` and leave maximize / minimize / window_menu undeclared. Clients may use this information to omit the corresponding controls. The protocol default is "all supported", so the WM must send the intended capability set explicitly. M1 sends an empty capability set and ignores all corresponding client requests; M2 advertises `fullscreen` only when its fullscreen policy is implemented.
-- **set_tiled**: [DECIDED] every window the layout places receives all four tiled edges, which suppresses CSD drop shadows and rounded corners. Hidden windows keep their last flags, and floating windows receive none. Gap layouts may refine this when they exist. Added as a field of DesiredScene.
+- **set_tiled**: [DECIDED] every window the layout places receives all four tiled edges, which suppresses CSD drop shadows and rounded corners. Hidden windows keep their last flags, and floating windows receive none. Gap layouts may refine this when they exist. The v1 target includes these flags in DesiredScene. M1 derives them in the reconciler.
 - **Type-level separation of the two phases**: window management state may only be changed inside a manage sequence, rendering state only inside manage/render, and violations are protocol errors (sequence_order). Split the `Protocol ()` of 3.3 into two monads, `ManageM` and `RenderM`, and expose each request through the phase or phases in which it is valid. This makes invalid phase-specific calls unrepresentable through these APIs; the lower-level binding and sequence state machine still require runtime validation.
 - **The unresponsive error**: the compositor may disconnect a WM that fails to respond. Do no heavy work during manage/render: `step`/`plan` are lightweight pure computations, and hook IO (spawning processes, etc.) is deferred to asynchronous tasks outside the sequence, re-entering via manage_dirty on completion.
 - **manage_dirty**: the entry point for state changes driven by external factors (IPC, timers, dbus). logHook external commands and scratchpad toggles come through here.
@@ -281,7 +288,7 @@ layout override also replaces `keys`, as in
 imports only `Seki` and runs `seki def`. See the [README](../README.md) for the
 implemented configuration and default keys.
 
-As in xmonad, there is no configuration file. The user writes a Haskell program importing this library. A minimal Main.hs:
+As in xmonad, there is no configuration file. The user writes a Haskell program importing this library. The [current M1 example](../README.md#project-direction) uses only exported fields. The following target-v1 example includes `manageHook` and floating, which are deferred to M2 and do not compile against the current API:
 
 ```haskell
 import Seki
@@ -300,19 +307,24 @@ main = seki def
   where tall = Tall 1 (3/100) (1/2)
 ```
 
-Module layout (following xmonad's core / contrib split):
+The current public library exposes six modules:
 
 | Module | Contents |
 |---|---|
-| `Seki` | The front door, re-exporting everything needed for configuration. Users normally import only this |
+| `Seki` | Configuration, actions, defaults, and the `seki` entry point |
+| `Seki.Core.Geometry` | Checked geometry |
 | `Seki.Core.StackSet` | The pure data structure and operations from 3.1 |
-| `Seki.Core.Layout` | LayoutClass, `\|\|\|`, Mirror, ModifiedLayout |
-| `Seki.Core.Scene` | DesiredScene, plan |
-| `Seki.Run.*` | ManageM / RenderM, reconciler, event loop (users normally do not touch these) |
-| `Seki.Wire.*` | The wire protocol implementation and generated code (2.2) |
-| `Seki.Layout.*` / `Seki.Hooks.*` / `Seki.Actions.*` | The contrib equivalent. Extensions get added here |
+| `Seki.Core.Layout` | `LayoutClass`, messages, `\|\|\|`, and `Mirror` |
+| `Seki.Layout.Full` | `Full` |
+| `Seki.Layout.Tall` | `Tall` |
 
-The configuration record in full:
+Their public facades live in `src-public`. `Seki.Internal.Core.State`,
+`Action`, `Event`, and `Scene` live in the private `seki-core` component.
+`Seki.Run.*`, `Seki.Wire.*`, and generated `Seki.Protocol.*` live in the
+private `seki-wire` component. `ModifiedLayout`, hooks, and contrib-style
+extensions remain planned.
+
+The target-v1 configuration record in full:
 
 ```haskell
 data Config l = Config
@@ -344,6 +356,9 @@ instance Default (Config StdLayouts)  -- def supplies the standard configuration
 - An ExtensibleState equivalent (user state stored keyed by type) is also provided. Essential for porting the contrib culture.
 
 ### 5.2 Build, Startup, and Hot-Swap
+
+M1 runs a prebuilt configuration program from river's init script. The automated
+build, restart, and restoration workflow below belongs to later milestones.
 
 - Location: `~/.config/seki/` is a cabal project (Main.hs + seki.cabal). A skeleton is generated automatically on first run.
 - Startup: launch the WM binary from river's `~/.config/river/init` (a shell script). If the user configuration is unbuilt or fails to build, attempt to start the **default WM binary** shipped with the library as a fallback.
@@ -390,7 +405,7 @@ instance Default (Config StdLayouts)  -- def supplies the standard configuration
 | Milestone | Status | Contents | Acceptance criteria |
 |---|---|---|---|
 | M0 Validation | **Complete** | Haskell wire protocol implementation without libwayland; own XML code generator; connection and window/output event handling; Full placement; terminal and close bindings; Japanese input and Xwayland validation | Completed on nested river, including exact fcitx5/Mozc input and the real-river release suite |
-| M1 Core | **Next** | StackSet port + QuickCheck properties, Tall / Mirror / Full / `\|\|\|`, greedyView, focus movement, swapMaster, borders, non_exclusive_area, the two-phase monads (ManageM/RenderM) | Tiling operations follow the intended xmonad semantics. Sequence latency and GC pauses meet the documented seki budgets; see the [M1 implementation plan](m1-plan.md) |
+| M1 Core | **WP1 through WP9 implemented; WP10 and exit verification pending** | StackSet port + QuickCheck properties, Tall / Mirror / Full / `\|\|\|`, greedyView, focus movement, swapMaster, borders, non_exclusive_area, the two-phase monads (ManageM/RenderM) | Tiling operations follow the intended xmonad semantics. Sequence latency and GC pauses meet the documented seki budgets; see the [M1 implementation plan](m1-plan.md) |
 | M2 Practical | Planned | Floating (mod+drag), ManageHook, fullscreen, submaps, hot-swap + state restoration, inputRules, Crop/Tolerate | The main parts of my own xmonad.hs can be ported |
 | M3 Daily use | Planned | Bar IPC + `sekictl`, scratchpad, urgent handling, documentation and configuration skeleton | **Full migration from xmonad; used for daily work** |
 | M4 onwards | Planned | Prompt (shell surface + shm drawing), the contrib-equivalent extension set, IndependentScreens, further protocol integrations | — |

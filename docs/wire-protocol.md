@@ -1,11 +1,12 @@
 # Wayland Wire Protocol and Binding Generator Design
 
-Status: **implemented — M0 complete** / Last updated: 2026-08-16
+Status: **implemented through M1 WP9, closeout pending** / Last updated: 2026-10-18
 
-This document records the implemented M0 wire-protocol design. It refines the
-wire-protocol portion of `docs/spec.md` and covers the Wayland client transport,
-message codec, object lifecycle, XML scanner, generated bindings, and first
-river integration slice.
+This document records the implemented wire protocol and runtime through M1
+WP9. It refines the wire-protocol portion of `docs/spec.md` and covers the
+Wayland client transport, message codec, object lifecycle, XML scanner,
+generated bindings, and current river policy. M0-specific sections retain the
+initial implementation scope.
 
 The words **MUST**, **SHOULD**, and **MAY** describe requirements on seki's
 implementation. They are not additions to the Wayland or river protocols.
@@ -21,8 +22,9 @@ implementation. They are not additions to the Wayland or river protocols.
   so building seki does not require running the scanner.
 - The codec is pure except for file-descriptor ownership. Transport, object
   dispatch, and generated protocol bindings are separate layers.
-- Generated bindings enforce interface versions and object types. `ManageM`
-  and `RenderM` wrappers enforce river's sequence phases.
+- Generated descriptors and encoders carry interface and request metadata.
+  Connection preparation validates sender types and request versions.
+  `ManageM` and `RenderM` wrappers enforce river's sequence phases.
 - M0 implements only the protocols needed to enumerate and place windows and
   outputs, launch a terminal, and close the focused window. The scanner itself
   is designed for all Wayland XML argument types from the beginning.
@@ -77,10 +79,13 @@ The river release contains these interface versions:
 | `river-libinput-config-v1` | 1 |
 | `river-xkb-config-v1` | 1 |
 
-M0 vendors `wayland.xml`, `river-window-management-v1.xml`, and
-`river-xkb-bindings-v1.xml`. The other river XML files are added with the M2
-features that use them. Cross-protocol interface and enum references are
-resolved across all XML documents given to the scanner.
+M0 vendored `wayland.xml`, `river-window-management-v1.xml`, and
+`river-xkb-bindings-v1.xml`. M1 added `river-layer-shell-v1.xml` to the runtime.
+Input-configuration protocols remain deferred to M2. Integration-only sources
+include wlr-layer-shell, xdg-shell, and the image-capture protocols. See
+[`protocol/SOURCES.md`](../protocol/SOURCES.md) for the current pins.
+Cross-protocol interface and enum references are resolved across all XML
+documents given to the scanner.
 
 Each vendored source MUST have its upstream URL, tag or commit, SHA-256 digest,
 and license recorded in `protocol/SOURCES.md`. Copyright and license text in
@@ -265,13 +270,14 @@ A receive operation returns:
 
 ```haskell
 data ReceivedChunk = ReceivedChunk
-  { bytes :: ByteString
-  , fds   :: [OwnedFd]
+  { receivedBytes :: ByteString
+  , receivedFds   :: [OwnedFd]
   }
 ```
 
-The transport appends bytes and descriptors to separate FIFO buffers. The
-connection layer repeatedly decodes complete frames from their fronts.
+The connection's receive buffer appends bytes and descriptors from each
+transport chunk to separate FIFO queues. The dispatcher repeatedly decodes
+complete frames from their fronts.
 
 Received descriptors MUST be close-on-exec, preferably using
 `MSG_CMSG_CLOEXEC`, with `fcntl` as a fallback. `MSG_CTRUNC`, malformed control
@@ -279,19 +285,18 @@ messages, an unsupported control-message type, or exceeding the descriptor
 queue limit is fatal. All descriptors already received are closed during error
 cleanup.
 
-EOF is a clean disconnect only when no partial frame, pending ancillary data,
-or live protocol operation remains. Otherwise it is reported as a truncated
-connection.
+The receive buffer accepts EOF only after all complete frames have drained
+and no partial frame or descriptors remain. Partial frames and missing or
+surplus descriptors produce structured errors. Clean EOF does not prove that
+an application operation or river sequence completed.
 
 ### 6.3 Sending and descriptor ownership
 
-An encoded outgoing message contains its bytes and a list of descriptors:
+Request preparation returns a `PreparedRequest` containing frame bytes and
+ordered descriptors. The transport receives them through its actual entry point:
 
 ```haskell
-data OutgoingMessage = OutgoingMessage
-  { bytes :: ByteString
-  , fds   :: [OwnedFd]
-  }
+sendMessage :: Transport -> ByteString -> [OwnedFd] -> IO (Either TransportError ())
 ```
 
 Messages containing descriptors are sent with one `sendmsg` call initially.
@@ -300,15 +305,16 @@ ancillary data has been transferred; the remaining bytes are sent without the
 descriptors. `EINTR` retries without changing state. `EAGAIN` waits for
 writability. A zero-byte successful result is treated as no progress.
 
-Passing an `OwnedFd` to an outgoing message transfers ownership to the
-connection. The local descriptor is closed after a successful transfer and is
-also closed if the connection fails before transfer. Incoming descriptors are
-transferred to the event handler only after successful argument decoding.
+Calling `Transport.sendMessage` transfers ownership of its descriptors to
+the transport, including on send failure. Constructing an encoder or failing
+request preparation does not consume them. After a successful byte transfer
+the transport closes its local descriptors; failure cleanup also closes them.
+Incoming descriptors reach the event handler only after successful argument
+decoding.
 
-Only one writer may use a connection. M0 performs protocol work on the event
-loop thread. Later asynchronous tasks submit commands to that thread rather
-than writing protocol requests directly; this also protects river's sequence
-ordering.
+`Connection` serializes preparation and submission under its state `MVar`.
+The window manager's phase-sensitive requests remain owned by the runtime
+event loop and its phase plans.
 
 ### 6.4 Resource limits
 
@@ -457,11 +463,13 @@ requests are deliberately absent because the runtime owns completion.
 
 These plans are pure ordered request lists, not general IO transformers. They
 have `Functor`, `Applicative`, and `Monad` instances for composition but no
-operation for lifting arbitrary IO, keeping blocking work outside river's
-response deadline. `RiverRuntimeHandlers` pairs the low-level object/event
-handlers with pure functions from a `RiverRuntimeSnapshot` to the next manage
-and render plans. The snapshot combines the window/output inventory with live
-seat and binding handles without exposing mutable runtime state.
+operation for lifting arbitrary IO. `RiverRuntimeHandlers` pairs the low-level
+object/event handlers with IO callbacks that prepare the next plans from a
+`RiverRuntimeSnapshot`. Policy uses these callbacks to read mutable state and
+launch asynchronous effects. The returned phase plans remain pure. The snapshot
+combines the window/output inventory with live seat and binding handles without
+exposing mutable runtime state. The pinned river does not enforce a WM response
+timer; seki's measured budgets are described in [latency.md](latency.md).
 
 At a valid boundary the runtime delivers the boundary callback, prepares and
 submits the corresponding plan in request order, and only then submits the
@@ -514,8 +522,9 @@ the river output.
 `Seki.Internal.Core.Scene` plans layout selections using pure window IDs,
 workspace stacks, output usable areas, and parent relationships. Layout-omitted
 windows remain explicitly hidden. Content rectangles are inset by the border
-width so that content plus borders fit their tiles. Degenerate tiles produce
-no size proposal.
+width so that proposed content plus borders fit their tiles. Actual oversized
+client commits may overflow under M1's accepted mismatch policy. Degenerate
+tiles produce no size proposal.
 
 `Seki.Run.Reconcile` joins those IDs to live inventory handles and compiles
 phase-safe plans. Each window has at most one outstanding dimension proposal.
@@ -636,47 +645,38 @@ descriptors, and rejects new requests.
 ## 8. Generated Binding Shape
 
 Each interface gets a phantom marker, descriptor, request functions, and an
-event ADT. A representative shape is:
+event ADT and decoder. For example, the committed Wayland module declares:
 
 ```haskell
 data WlRegistry
 
 wlRegistryInterface :: Interface WlRegistry
 
-data WlRegistryEvent
-  = WlRegistryGlobal GlobalName InterfaceName Version
-  | WlRegistryGlobalRemove GlobalName
+encodeWlRegistryBind :: Word32 -> DynamicNewId -> RequestEncoder fd
 
-wlRegistryBind
-  :: Object WlRegistry
-  -> GlobalName
-  -> Interface a
-  -> Version
-  -> Wire (Object a)
+data WlRegistryEvent fd
+  = WlRegistryGlobal Word32 Text Word32
+  | WlRegistryGlobalRemove Word32
 ```
+
+The generated modules in `src-generated/Seki/Protocol` are authoritative for
+current names and signatures. Encoders describe arguments and metadata. They
+do not allocate objects or send requests.
 
 Names are idiomatic Haskell names prefixed by their interface where needed to
 avoid collisions. Generated modules use explicit export lists and include the
 XML descriptions as Haddock documentation.
 
-The common runtime exports neither untyped request construction nor unchecked
-object casts to window-manager code. A deliberately internal raw API may exist
-for codec and generator tests.
+Raw request construction belongs to the private wire component.
+`Seki.Wire.Connection.Request.prepareRequest` validates the sender, interface,
+version, and arguments, then encodes the frame and applies destructor state.
+`prepareNewObjectRequest` adds client-ID allocation and registration to that
+pure transaction. `Connection` serializes submission and installs the resulting
+object table and routes after a successful send.
 
-Generated request functions perform:
-
-1. object/interface validation;
-2. `since` version validation;
-3. argument validation;
-4. new-ID allocation and registration;
-5. encoding; and
-6. ordered submission to the connection.
-
-Generated event decoders perform the inverse and return structured events. The
-connection registers a typed route per object; existential packaging stays
-inside the route table, so untyped argument lists do not leak upward.
-
-The generated river request functions are internal. Later modules wrap them:
+Generated event decoders return structured events. The connection registers a
+typed route per object; existential packaging stays inside the route table.
+The generated river encoders are private and the runtime wraps them:
 
 ```text
 generated raw request -> ManageM/RenderM capability -> reconciler
@@ -738,8 +738,11 @@ time zone, map iteration order, and generation time. Generated files contain:
 - typed definitions and codecs; and
 - retained protocol documentation.
 
-No timestamp is emitted. Regeneration followed by `git diff --exit-code` is the
-CI freshness check.
+No timestamp is emitted. During ordinary tests,
+[`test/Seki/Scanner/GenerateTest.hs`](../test/Seki/Scanner/GenerateTest.hs)
+generates text in memory and compares it with every committed runtime and
+fixture binding. CI runs these tests; it does not regenerate files followed
+by a Git diff.
 
 The scanner is a separate Cabal executable component. Scanner-only dependencies
 do not become dependencies of the seki runtime library.
@@ -747,46 +750,35 @@ do not become dependencies of the seki runtime library.
 ## 10. Repository Layout
 
 ```text
-protocol/
+protocol/                     pinned runtime and integration-only XML
   SOURCES.md
-  wayland/wayland.xml
-  river/river-window-management-v1.xml
-  river/river-xkb-bindings-v1.xml
+  wayland/
+  river/                      includes river-layer-shell-v1.xml
+  river/upstream/             wlr-layer-shell fixture source
+  wayland-protocols/          xdg-shell and image-capture fixture sources
 
-src/Seki/Wire/
-  Types.hs
-  Arguments.hs
-  Binding.hs
-  Codec.hs
-  Transport.hs
-  Transport/Driver.hs
-  Connection.hs
-  Connection/{Buffer,Event,ObjectTable,Registry,Request}.hs
+src-public/                   public Seki and Core/Layout facades
+src-core/                     private seki-core implementations
+src/                          private seki-wire transport and runtime
+src-generated/                committed runtime bindings
 
-src-generated/Seki/Protocol/
-  Wayland.hs
-  RiverWindowManagementV1.hs
-  RiverXkbBindingsV1.hs
+tools/scanner/                private scanner library and executable
+tools/seki/                   public-API executable
+tools/registry-smoke/         registry diagnostic
+tools/layer-surface-fixture/  native fixture and capture implementation
+tools-generated/             committed integration-only bindings
+tools/latency/               opt-in diagnostic and report runner
 
-tools/scanner/
-  app/Main.hs
-  Seki/Scanner/{IR,Parse,Generate}.hs
-
-cbits/
-  seki_wayland_transport.c
-  seki_wayland_transport.h
-
-test/
-  Seki/Wire/
-  Seki/Scanner/
-
-integration/
-  Main.hs
+cbits/                        libc transport shim
+test/                         internal unit, property, mock, and scanner tests
+test-public/                  downstream-style public API compile fixture
+integration/                  real-river scenarios
 ```
 
-The library uses both `src` and `src-generated` as source directories. The
-generated modules and low-level runtime are private Cabal components; the
-public `Seki` API will grow during later milestones.
+This list shows component roots, not every module. [`seki.cabal`](../seki.cabal)
+is authoritative for component source directories and module lists. The public
+library exposes six modules from `src-public`. `seki-core`, `seki-wire`, the
+scanner, and the layer-surface fixture are private components.
 
 The runtime uses `binary`, `bytestring`, `containers`, `network`, `process`,
 `text`, and `unix`. The scanner uses `xeno` for XML parsing. Test-only

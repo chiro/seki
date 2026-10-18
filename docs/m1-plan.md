@@ -1,14 +1,21 @@
 # M1 Core Implementation Plan
 
-Status: **planning baseline — open design issues** / Last updated: 2026-10-16
+Status: **WP1 through WP9 implemented, WP10 closeout pending** / Last updated: 2026-10-18
 
 This document turns the M1 row in the specification into an ordered,
 testable implementation plan. It is intentionally narrower than the complete
 v1 design in `spec.md`.
 
 The review findings are tracked in [Open design issues](#9-open-design-issues).
-All seven are Decided, so the design review is complete; each becomes
-Verified as its implementation lands.
+All seven are Decided, so the design review is complete. Verification against
+all required regressions remains open. M1 is not complete.
+
+The [README](../README.md#project-direction) describes the current public API.
+The [wire and runtime reference](wire-protocol.md) and
+[integration guide](integration-testing.md) describe the implementation through
+WP9. The [WP9 report](latency-baseline/report.md) retains historical latency
+and GC evidence. The [coverage ledger](#91-regression-coverage-and-closeout)
+records the remaining regression and closeout checks.
 
 ## 1. Outcome
 
@@ -172,7 +179,7 @@ Protocol inventory owns live object handles and facts reported by river. The
 pure core owns policy. The reconciler is the only layer that joins pure IDs to
 protocol objects.
 
-### 3.1 Proposed modules
+### 3.1 Implemented modules
 
 | Module | Responsibility |
 |---|---|
@@ -181,29 +188,31 @@ protocol objects.
 | `Seki.Core.Layout` | `LayoutClass`, messages, `Choose` / `(|||)`, `Mirror` |
 | `Seki.Layout.Tall` | `Tall` and `tile`; its `Shrink`, `Expand`, and `IncMasterN` messages live in `Seki.Core.Layout` |
 | `Seki.Layout.Full` | `Full` |
-| `Seki.Core.State` | Headless/attached policy state, window manage/unmanage/focus, output hotplug |
-| `Seki.Core.Action` | Pure user actions: `windows`, `sendMessage`, kill/spawn intents |
-| `Seki.Core.Event` | Core events and the reducer that applies them in arrival order |
-| `Seki.Core.Scene` | `DesiredScene` and pure planning |
+| `Seki.Internal.Core.State` | Headless/attached policy state, window manage/unmanage/focus, output hotplug |
+| `Seki.Internal.Core.Action` | Pure user actions: `windows`, `sendMessage`, kill/spawn intents |
+| `Seki.Internal.Core.Event` | Core events and the reducer that applies them in arrival order |
+| `Seki.Internal.Core.Scene` | `DesiredScene` and pure planning |
 | `Seki.Run.LayerShell` | layer-shell global binding and per-output/per-seat objects |
 | `Seki.Run.Reconcile` | persistent proposal/applied state and phase-safe diffs |
 | `Seki.Run.Policy` | Queues river events and key-binding actions, drains them into core state at `manage_start`, plans scenes, and runs intents and reconciliation |
 
-WP7 removes `Seki.Run.Full` and `Seki.Run.Default` after migrating the
+The public geometry, StackSet, layout, Tall, and Full facades live in
+`src-public`; their implementations and the private `Seki.Internal.Core.*`
+modules live in `src-core`. `Seki.Run.*` lives in `src`.
+
+WP7 removed `Seki.Run.Full` and `Seki.Run.Default` after migrating the
 executable, integration fixture, and tests to `Seki.Run.Policy`. Inventory
 tracks protocol facts without choosing focus. The policy's core-event queue
 owns the ordering of callbacks and key actions.
 
-The Cabal component graph must stay acyclic when the pure core becomes public.
-Introduce an internal `seki-core` library, make `seki-wire` depend on it, and
-make the public `seki` library depend on both. The public library re-exports the
-supported `Seki.Core.*` / `Seki.Layout.*` modules and provides the `Seki` front
-door; tests may continue to address the internal libraries directly. Do not
-compile the same source module independently into multiple components.
-
-WP1 must prove this topology before the core port grows: build a minimal
-cross-component module, re-export it from the public library, and verify a
-downstream import plus `cabal haddock all` and source-distribution contents.
+The implemented Cabal component graph is acyclic. The private `seki-wire`
+library depends on private `seki-core`, and the public `seki` library depends
+on both. The public library exposes the six modules listed in
+[the specification](spec.md#51-configuration--program-the-shape-of-the-public-api).
+Tests address internal libraries directly. Each shared core or wire
+implementation module belongs to its own private library.
+`test-public/ConfigMain.hs` checks a downstream-style import, and
+`ci/check-package.sh` checks the source distribution and public Haddock index.
 
 ### 3.2 Core identifiers and geometry
 
@@ -292,18 +301,15 @@ sequence. Completion that changes WM state re-enters through `manage_dirty`.
 
 ### 3.5 Desired scene
 
-`DesiredScene` contains only pure identifiers and values. For every known
-window it specifies:
+`DesiredScene` contains a map from window IDs to `Omitted` or `Placed Rect`,
+a stable window order, proposed stacking, and the selected focus and output IDs.
+`Placed` selects a positive content rectangle; the window can still await its
+first dimensions. The scene does not store actual visibility, tiled flags,
+decorations, borders, or a request to focus a window.
 
-- shown or hidden;
-- target content rectangle when shown;
-- tiled adjacency edges;
-- SSD/CSD choice;
-- border edges, width, and premultiplied RGBA color;
-- stacking position; and
-- whether it is the keyboard-focus target.
-
-Planner rules:
+The reconciler derives those requests from the scene, style, and live inventory.
+It recomputes family stacking for the subset that can actually be shown.
+The following rules describe planning and its reconciliation:
 
 - windows that the active layout places on a visible workspace receive its
   rectangles;
@@ -334,13 +340,16 @@ Planner rules:
   their last flags, since they are hidden;
 - with border width `b`, a window's content rectangle is its tile inset by
   `b` on all four sides, because river draws borders outside the content box
-  (M1-D07). Content and border then fill the tile exactly, as in xmonad's
-  `tileWindow`. A tile whose inset content has zero width or height, that is
+  (M1-D07). The proposed content and border fill the tile exactly, as in
+  xmonad's `tileWindow`. A client that commits a larger size can overflow the
+  tile under M1's accepted mismatch policy. A tile whose inset content has zero
+  width or height, that is
   a tile no larger than `2b` in either dimension, is degenerate and follows
   the zero-sized tile rule above. `Full` keeps the border on its window;
-- at most one window is the keyboard-focus target: the StackSet's focused
-  window, and only while it is shown. Otherwise the scene has no focus target.
-  The StackSet focus itself never changes for rendering reasons; and
+- the scene selects at most one focus candidate, the StackSet's focused window,
+  only when the layout places it. The reconciler sends window focus only after
+  that selection is shown and layer-focus arbitration permits it. The StackSet
+  focus itself never changes for rendering reasons; and
 - the focused border is drawn on the StackSet's focused window whenever it is
   shown, even before the following manage sequence sends `focus_window`. While
   a layer surface holds keyboard focus, every window draws the unfocused
@@ -352,12 +361,15 @@ The reconciler owns state that persists across sequences:
 
 - last applied manage attributes;
 - last applied rendering attributes;
-- most recent actual dimensions and their inventory revision;
-- at most one in-flight proposal per window;
-- the keyboard owner river last reported: a window, an exclusive layer
-  surface, a non-exclusive layer surface, or nobody; and
-- a queued target rectangle when layout changes supersede an in-flight
-  proposal.
+- most recent actual dimensions;
+- at most one in-flight proposal per window, with its dimensions revision;
+- the last requested focus per seat, its layer-focus revision, and whether
+  non-exclusive focus has been reclaimed; and
+- the last applied stacking order.
+
+The runtime snapshot supplies reported layer ownership. The latest desired
+rectangle remains in Policy's current scene, rather than in a per-window
+queued target field.
 
 Manage reconciliation sends, in deterministic order:
 
@@ -579,11 +591,10 @@ Deliverables:
 
 Tests:
 
-- scene properties for window uniqueness, visibility, all four tiled edges on
-  every placed window, at
-  most one focus target that is always shown, no degenerate tile shown or
-  proposed, content plus borders inside each tile, and deterministic
-  stacking;
+- scene properties for window uniqueness, layout selection, at most one
+  selected focus target, positive inset content inside each tile, and
+  deterministic stacking; request-level checks for all four tiled edges,
+  shown-state focus, and no degenerate tile shown or proposed;
 - request-level tests for focus recovery: when a degenerate tile regains a
   positive size and when a spawned window's first dimensions settle, `show`
   arrives in a render sequence with the focused border, then `focus_window`
@@ -761,7 +772,10 @@ M1 is complete only when all of the following are true:
   receive `hide`, and only windows the layout places with settled dimensions
   receive `show`;
 - focus, borders, complete stacking, and tiled edges are observable in tests,
-  and every shown window's content plus borders stays inside its tile;
+  and proposed content plus borders stays inside each tile. Actual geometry
+  stays inside for size-conforming clients; an oversized commit may overflow
+  under M1's accepted mismatch policy. Configurable mismatch handling remains
+  deferred to M2;
 - keyboard focus never targets a hidden window, no degenerate tile is
   proposed or shown, and focus returns through the post-render
   `manage_dirty` path;
@@ -783,7 +797,7 @@ M1 is complete only when all of the following are true:
 
 | Risk | Early check | Mitigation |
 |---|---|---|
-| No protocol correlation ID for dimension proposals | WP6 mock spike with delayed/superseded proposals | One in-flight proposal per window plus dimensions revisions and queued latest target |
+| No protocol correlation ID for dimension proposals | WP6 mock spike with delayed/superseded proposals | One in-flight proposal per window plus dimensions revisions and the latest target in Policy's scene |
 | Headless/hotplug state distorts StackSet invariants | WP2 generated attach/detach sequences | Sum type around an unchanged active StackSet zipper |
 | Layer-shell child creation does not fit current handler composition | WP5 socket-pair prototype before policy integration | Give runtime explicit layer-shell object ownership and cleanup |
 | Private-sublibrary re-exports build but produce broken public docs or sdist contents | WP1 downstream import, Haddock, and sdist spike | Fix the component/source-dir topology before porting core modules; never compile one module into multiple components |
@@ -838,9 +852,8 @@ Status progression:
 
 The design review is complete when all seven entries are **Decided** or
 **Verified**. M1 completion requires every entry to be **Verified**. Proposed
-resolutions below are starting points for the decisions, not replacements for
-the current baseline. Decision and verification evidence are pending for all
-entries initially.
+resolutions below remain as decision history. The coverage ledger records
+existing evidence and the remaining verification for each entry.
 
 | ID | Issue | Priority | Status | Affected work |
 |---|---|---|---|---|
@@ -1060,7 +1073,31 @@ entries initially.
   `spec.md` sections 3.3 and 4.1 (the focus border row).
 - **Required regression:** on real river, record where a border is drawn
   relative to its content. In request-level tests with border width `b`,
-  assert that each window's content plus borders stays inside its tile, that
-  adjacent windows' borders do not overlap, that a single window's border
-  stays inside the usable area, and that a tile of at most `2b` follows the
-  M1-D04 rule.
+  assert that proposed content plus borders stays inside each tile. For
+  size-conforming clients, assert that adjacent borders do not overlap and a
+  single window's border stays inside the usable area. Verify that a tile of
+  at most `2b` follows M1-D04. Oversized actual commits may overflow under the
+  accepted M1 mismatch policy.
+
+### 9.1 Regression coverage and closeout
+
+This source audit records coverage through WP9. It does not mark a required
+regression as passed or promote any entry to Verified.
+
+| Decision | Existing coverage | Remaining verification |
+|---|---|---|
+| M1-D01 | `testLayerFocus` in [ReconcileTest](../test/Seki/Run/ReconcileTest.hs) covers key-action reclaim, borders, exclusive suppression, and repeated `focus_none`. `testFamilies` in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs) covers interaction reclaim and new windows retaining layer focus. | Real-river non-exclusive focus reclaim remains open. The live `layerScenario` in [M1.hs](../integration/Seki/Integration/M1.hs) checks exclusive-zone geometry, not keyboard ownership. |
+| M1-D02 | [SceneTest](../test/Seki/Internal/Core/SceneTest.hs) checks Full selection. `testLayouts` in [ReconcileTest](../test/Seki/Run/ReconcileTest.hs) checks two-window Tall/Full omission and retained dimensions. [M1.hs](../integration/Seki/Integration/M1.hs) checks live layout cycling. | The exact three-window Full case with a smaller focused commit and focus cycling, plus a custom layout omitting a window, is not established by these tests. |
+| M1-D03 | [SceneTest](../test/Seki/Internal/Core/SceneTest.hs) checks parent/sibling order and a pending parent. `testFamilies` in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs) checks family raising through requests. | The required parent-child-grandchild case with unrelated windows, parent close, and unchanged StackSet order still needs explicit evidence. |
+| M1-D04 | [TallTest](../test/Seki/Internal/Layout/TallTest.hs) covers one-pixel and extreme-ratio tiles through Mirror. [SceneTest](../test/Seki/Internal/Core/SceneTest.hs) checks omission and positive insets. `testTrace` and `testSettlement` in the reconciliation tests cover zero/border-sized areas and recovery. | Cross-check the full required combination of Tall/Mirror degenerate tiles, protocol focus, and recovery before marking Verified. |
+| M1-D05 | `testSettlement` in [ReconcileTest](../test/Seki/Run/ReconcileTest.hs) asserts all flags before the first Full proposal. `testLayouts` asserts flags for two Tall windows. | Explicit single-Tall and exclusive-zone-reduced-area flag assertions are not established. |
+| M1-D06 | [Scene.hs](../src-core/Seki/Internal/Core/Scene.hs) selects Full's focus without a dialog exception. The general window insertion and family tests cover parts of the behavior. | No dedicated request-level regression establishes child insertion under Full followed by parent refocus hiding the child. |
+| M1-D07 | [SceneTest](../test/Seki/Internal/Core/SceneTest.hs) checks inset properties. `testSettlement` checks border requests. [M1.hs](../integration/Seki/Integration/M1.hs) checks actual border pixels for conforming clients. | Audit the complete request-level border and degenerate-tile cases against the revised criterion. Actual oversized commits retain M1's accepted overflow behavior. |
+
+WP10 must reconcile this ledger with every required regression, record the
+explicit xmonad-property disposition and high-count invariant results, and run
+the exit checks in section 6. Those include formatting, lint, unit and public
+API tests, package/Haddock validation, and the pinned real-river release gate.
+The historical [WP9 report](latency-baseline/report.md) remains the recorded
+latency evidence; it does not certify a new host or toolchain. Documentation
+updates alone do not close M1.

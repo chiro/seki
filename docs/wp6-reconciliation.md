@@ -50,7 +50,7 @@ Each layer-focus report has a revision, so repeated `focus_none` reports
 invalidate the last focus request. Layer ownership also controls border
 colors.
 
-## Real-river selection experiment
+## Historical real-river selection experiment
 
 The 2026-10-17 experiment used river 0.5.0 with its headless backend and pixman
 renderer. A scratch xdg-shell client delayed each resize response after its
@@ -72,7 +72,12 @@ The throwaway client, policy, runner, logs, and captures are preserved in the
 local `artifacts/wp6/prototype` directory. They are experimental evidence,
 rather than a dependency of seki or the layer-surface fixture.
 
-## Verification
+## Verification evidence
+
+The following describes the WP6 verification record from 2026-10-17. Its
+scratch-client runs are historical local evidence. The current reproducible
+release suite and its maintained commands are in the
+[integration guide](integration-testing.md).
 
 The socket-pair tests check exact phase requests, delayed and superseded
 proposals, accepted size mismatches, omitted windows, layer focus, ID reuse,
@@ -81,17 +86,17 @@ visibility, and focus requests with an independent settlement model.
 Generated scene tests cover Tall, Mirror Tall, and Full across two outputs,
 including extreme coordinates, missing usable areas, and border insets.
 
-The live Policy check uses the same native scratch clients. Pixel captures
-verify Tall and Full placement, focus switching, ratio changes, workspace
+The historical live Policy check used the same native scratch clients. Pixel
+captures verified Tall and Full placement, focus switching, ratio changes, workspace
 hiding and restoration, and resizing after a focused window closes. A new
-keyboard event in the surviving client verifies focus recovery. Its runner
-is `artifacts/wp6/prototype/live.py`; captures are in the adjacent
+keyboard event in the surviving client verified focus recovery. Its local runner
+was `artifacts/wp6/prototype/live.py`; captures are in the adjacent
 `policy-live` directory.
 
 `bash ci/check-phase-types.sh` compiles valid plans and checks that the
 compiler rejects manage requests in render plans and render requests in
 manage plans. CI runs this check beside the ordinary test suite.
 
-Local verification uses GHC 9.6.7 through `-w ghc-9.6.7 --offline` because
-the pinned GHC 9.6.6 and Nix environment are unavailable on this host.
+That local verification used GHC 9.6.7 through `-w ghc-9.6.7 --offline` because
+the pinned GHC 9.6.6 and Nix environment were unavailable on that host.
 The repository keeps its existing pinned CI toolchain.
