@@ -92,6 +92,7 @@ tests =
     , testCase "sends close requests only for windows still in inventory" testCloseRequests
     , testCase "sets the current output as the layer-shell default" testSetDefaultFollowsCurrentOutput
     , testCase "sets no layer-shell default while headless" testSetDefaultHeadless
+    , testCase "runs the startup hook once, after the first output attaches" testStartupHookOnce
     , testCase "launches a command without waiting for it" testLaunchDetached
     ]
 
@@ -108,7 +109,7 @@ data Drain = Drain
 testConfigErrors :: Assertion
 testConfigErrors = do
   let binding = keyBinding 0x61
-      config tags bindings = PolicyConfig Full tags bindings defaultSceneStyle (\_ -> pure ()) idHook
+      config tags bindings = PolicyConfig Full tags bindings defaultSceneStyle (\_ -> pure ()) idHook (pure ())
   let invalidWidth = defaultSceneStyle{sceneBorderWidth = -1}
       invalidColor = defaultSceneStyle{sceneFocusedColor = BorderColor 2 0 0 1}
   assertError (PolicyInvalidSceneStyle invalidWidth) =<< newPolicy (config [1] []){policySceneStyle = invalidWidth}
@@ -173,7 +174,7 @@ testManageHookProps =
       ls1 <- receiveLayerShellOutputRequest reader peer layerShellId o1
       finishManageDefault reader peer managerId ls1
       closeTransport peer
-    (_, drains) <- runPolicyWith (appId =? "mpv" --> doShift 2) target mockDone []
+    (_, drains) <- runPolicyWith (appId =? "mpv" --> doShift 2) (pure ()) target mockDone []
     case drains of
       [d0] ->
         assertEqual
@@ -361,6 +362,35 @@ testSetDefaultHeadless =
       [Nothing, Just (1, oid o1), Nothing]
       (map (currentScreenOf . drainAfter) drains)
 
+testStartupHookOnce :: Assertion
+testStartupHookOnce =
+  withRuntimePair $ \target peer -> do
+    o1 <- requireObjectId 0xff0000a0
+    o2 <- requireObjectId 0xff0000a1
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (managerId, _, layerShellId) <- handshake reader peer
+      sendFrames peer [manageStart managerId]
+      finishManage reader peer managerId
+      sendFrames peer [newOutput managerId o1, manageStart managerId]
+      ls1 <- receiveLayerShellOutputRequest reader peer layerShellId o1
+      finishManageDefault reader peer managerId ls1
+      sendFrames peer [encodedFrame o1 (Opcode 0) (pure ()), manageStart managerId]
+      receiveExpectedRequest reader peer ls1 (Opcode 0) (pure ())
+      receiveExpectedRequest reader peer o1 (Opcode 0) (pure ())
+      finishManage reader peer managerId
+      sendFrames peer [newOutput managerId o2, manageStart managerId]
+      ls2 <- receiveLayerShellOutputRequest reader peer layerShellId o2
+      finishManageDefault reader peer managerId ls2
+      closeTransport peer
+    (launches, drains) <- runPolicyWith idHook (windows (greedyView 2) >> spawn "startup") target mockDone []
+    assertEqual
+      "headless start, the hook views tag 2 once attached, headless again, then tag 2 returns"
+      [Nothing, Just (2, oid o1), Nothing, Just (2, oid o2)]
+      (map (currentScreenOf . drainAfter) drains)
+    assertEqual "launches seen before each drain" [[], [], ["startup"], ["startup"]] (map drainLaunchesBefore drains)
+    assertEqual "the hook launched once across detach and reattach" ["startup"] launches
+
 testLaunchDetached :: Assertion
 testLaunchDetached =
   withSystemTempDirectory "seki-launch" $ \dir -> do
@@ -392,18 +422,20 @@ runPolicy ::
   MVar (Either SomeException ()) ->
   [(RiverKeyBinding, Action Int Full ())] ->
   IO ([String], [Drain])
-runPolicy = runPolicyWith idHook
+runPolicy = runPolicyWith idHook (pure ())
 
+-- | 'runPolicy' with a manage hook and a startup hook.
 runPolicyWith ::
   ManageHook Int Full ->
+  Action Int Full () ->
   ConnectionTarget ->
   MVar (Either SomeException ()) ->
   [(RiverKeyBinding, Action Int Full ())] ->
   IO ([String], [Drain])
-runPolicyWith hook target mockDone bindings = do
+runPolicyWith hook startup target mockDone bindings = do
   launches <- newIORef []
   drains <- newIORef []
-  policy <- expectRight =<< newPolicy (PolicyConfig Full [1, 2, 3] bindings defaultSceneStyle (record launches) hook)
+  policy <- expectRight =<< newPolicy (PolicyConfig Full [1, 2, 3] bindings defaultSceneStyle (record launches) hook startup)
   let handlers = policyRuntimeHandlers policy
       observed =
         handlers
