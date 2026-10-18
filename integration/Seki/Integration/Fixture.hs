@@ -5,7 +5,9 @@ module Seki.Integration.Fixture (
   Fixture (..),
   Box (..),
   Paint (..),
+  WindowRequest (..),
   withFixture,
+  windowRequests,
   picture,
   pictureError,
   pixel,
@@ -18,7 +20,10 @@ import Control.Exception (SomeException, bracket, finally, onException, try)
 import Control.Monad (forM, forM_, void)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List (find)
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
 import GHC.Clock (getMonotonicTimeNSec)
@@ -27,14 +32,16 @@ import Seki.Integration.Harness
 import Seki.Internal.Core.Layout (LayoutClass)
 import Seki.Internal.Core.StackSet qualified as SS
 import Seki.Internal.Core.State (CoreState (..))
+import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Inventory
 import Seki.Run.Policy
+import Seki.Run.River (RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime
 import Seki.Run.Startup (readWaylandGlobalCatalog)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
 import Seki.Wire.Connection.ObjectTable qualified as ObjectTable
 import Seki.Wire.Transport (ConnectionTarget (UnixSocketPath))
-import Seki.Wire.Types (objectIdValue)
+import Seki.Wire.Types (ObjectId, objectIdValue)
 import System.Directory (createDirectoryIfMissing)
 import System.Environment (getEnvironment, getExecutablePath, lookupEnv)
 import System.FilePath ((</>))
@@ -48,7 +55,11 @@ data Fixture l = Fixture
   , mPolicy :: Policy String l
   , mOutputs :: [Text]
   , mName :: String
+  , mRequests :: IORef (Map ObjectId [WindowRequest])
   }
+
+data WindowRequest = FullscreenRequested | ExitFullscreenRequested | PointerMoveRequested | PointerResizeRequested deriving (Eq, Show)
+
 data Box = Box Int Int Int Int deriving (Eq, Show)
 data Paint = Paint Color Box Bool deriving (Eq, Show)
 
@@ -70,7 +81,8 @@ withFixture policyConfig name outputCount action = do
         let environment = fixtureEnvironment host runtime config <> [("WAYLAND_DISPLAY", nestedWaylandDisplay names)]
             socketPath = runtime </> nestedWaylandDisplay names
         policy <- newPolicy policyConfig >>= requireRight "production policy"
-        session <- openRiverSessionAt (UnixSocketPath socketPath) defaultObjectLimit (policyRuntimeHandlers policy) >>= requireRight "runtime"
+        requests <- newIORef Map.empty
+        session <- openRiverSessionAt (UnixSocketPath socketPath) defaultObjectLimit (recordWindowRequests requests (policyRuntimeHandlers policy)) >>= requireRight "runtime"
         result <- newEmptyMVar
         void (forkIO (runRiverSession session >>= putMVar result))
         let cleanup = stopManagedProcess river >> waitForRuntimeExit result
@@ -87,7 +99,7 @@ withFixture policyConfig name outputCount action = do
             firstOutput <- maybe (failIntegration "current wl_output has no native name") pure (lookup currentGlobal namesByGlobal)
             let outputs = firstOutput : filter (/= firstOutput) (map snd namesByGlobal)
             forM_ (zip [0 :: Int ..] outputs) $ \(index, output) -> void (runProcessCapture environment "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "800x600", "--pos", show (index * 800) <> ",0", "--scale", "1", "--transform", "normal"])
-            let fixture = Fixture socketPath environment session policy outputs name
+            let fixture = Fixture socketPath environment session policy outputs name requests
             bracket (startManagedProcess "virtual keyboard lifetime" environment (proc "wtype" ["-s", "60000"])) stopManagedProcess $ \keeper ->
               withProbe
                 socketPath
@@ -110,6 +122,23 @@ withFixture policyConfig name outputCount action = do
                             renderManagedProcessLogs river >>= announce
                         )
           `finally` cleanup
+
+windowRequests :: Fixture l -> ObjectId -> IO [WindowRequest]
+windowRequests fixture window = Map.findWithDefault [] window <$> readIORef (mRequests fixture)
+
+recordWindowRequests :: IORef (Map ObjectId [WindowRequest]) -> RiverRuntimeHandlers -> RiverRuntimeHandlers
+recordWindowRequests requests handlers = handlers{riverProtocolHandlers = protocol{handleRiverWindowEvent = record}}
+ where
+  protocol = riverProtocolHandlers handlers
+  record window event = do
+    forM_ (windowRequest event) $ \value -> atomicModifyIORef' requests (\logged -> (Map.insertWith (flip (<>)) (ObjectTable.objectId window) [value] logged, ()))
+    handleRiverWindowEvent protocol window event
+  windowRequest = \case
+    River.RiverWindowV1FullscreenRequested _ -> Just FullscreenRequested
+    River.RiverWindowV1ExitFullscreenRequested -> Just ExitFullscreenRequested
+    River.RiverWindowV1PointerMoveRequested _ -> Just PointerMoveRequested
+    River.RiverWindowV1PointerResizeRequested _ _ -> Just PointerResizeRequested
+    _ -> Nothing
 
 picture :: Fixture l -> String -> [(Text, [Paint])] -> IO ()
 picture fixture phase expected = do

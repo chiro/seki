@@ -8,6 +8,7 @@ module Seki.Fixture.Probe (
   Color (..),
   Image (..),
   KeyboardSnapshot (..),
+  PointerSnapshot (..),
   AppIdRequest (..),
   CommitSize (..),
   WindowSpec (..),
@@ -16,8 +17,18 @@ module Seki.Fixture.Probe (
   openWindow,
   openWindowWith,
   keyboardSnapshot,
+  pointerSnapshot,
+  requestFullscreen,
+  requestExitFullscreen,
+  requestMove,
   captureOutput,
   outputNames,
+  Button (..),
+  VirtualPointer,
+  withVirtualPointer,
+  pointerMoveTo,
+  pointerPress,
+  pointerRelease,
   click,
 ) where
 
@@ -42,7 +53,8 @@ import Seki.Fixture.Protocol.WlrVirtualPointerUnstableV1 qualified as Pointer
 import Seki.Fixture.Protocol.XdgShell qualified as Xdg
 import Seki.Protocol.Wayland qualified as W
 import Seki.Run.Startup
-import Seki.Wire.Binding (Interface (..))
+import Seki.Wire.Arguments (Fixed, fixedRawValue)
+import Seki.Wire.Binding (Interface (..), RequestEncoder)
 import Seki.Wire.Connection
 import Seki.Wire.Connection.ObjectTable (Object, defaultObjectLimit, objectId)
 import Seki.Wire.Connection.Registry
@@ -80,13 +92,24 @@ data WindowSpec = WindowSpec
 windowSpec :: Color -> WindowSpec
 windowSpec color = WindowSpec color NumberedAppId Nothing Nothing Nothing CommitConfigured
 
-data Probe = Probe (Chan Input) (MVar (Either SomeException ())) (IORef KeyboardSnapshot)
+data PointerSnapshot = PointerSnapshot
+  { pointerOwner :: Maybe ProbeWindow
+  , surfacePosition :: Maybe (Double, Double)
+  , pointerPresses :: Map ProbeWindow Word64
+  , pointerReleases :: Map ProbeWindow Word64
+  }
+  deriving (Eq, Show)
+
+data Probe = Probe (Chan Input) (MVar (Either SomeException ())) (IORef KeyboardSnapshot) (IORef PointerSnapshot)
+data ToplevelRequest = SetFullscreen | UnsetFullscreen | Move
 data Input
   = Open WindowSpec (MVar ProbeWindow)
   | Size ProbeWindow Int32 Int32
   | Configure ProbeWindow Word32
   | Synced (MVar ProbeWindow) ProbeWindow
   | Keyboard (W.WlKeyboardEvent OwnedFd)
+  | Pointer (W.WlPointerEvent OwnedFd)
+  | Request ProbeWindow ToplevelRequest (MVar (Either String ()))
   | Seat (W.WlSeatEvent OwnedFd)
   | Ping Word32
   | Released (Object W.WlBuffer) OwnedFd
@@ -111,13 +134,22 @@ data Actor = Actor
   , actorWm :: Object Xdg.XdgWmBase
   , actorSeat :: Object W.WlSeat
   , actorKeyboard :: IORef KeyboardSnapshot
+  , actorPointer :: IORef PointerSnapshot
   , actorFiles :: IORef [OwnedFd]
+  }
+
+data Loop = Loop
+  { loopKeyboard :: Bool
+  , loopPointer :: Bool
+  , loopPressSerials :: Map ProbeWindow Word32
+  , loopWindows :: Map ProbeWindow Window
   }
 
 withProbe :: FilePath -> (Probe -> IO a) -> IO a
 withProbe socketPath action = bracket (openSession socketPath) closeWaylandSession $ \session -> do
   inputs <- newChan
   snapshot <- newIORef (KeyboardSnapshot Nothing Map.empty)
+  pointerState <- newIORef (PointerSnapshot Nothing Nothing Map.empty Map.empty)
   files <- newIORef []
   finished <- newEmptyMVar
   dispatcherFinished <- newEmptyMVar
@@ -126,7 +158,7 @@ withProbe socketPath action = bracket (openSession socketPath) closeWaylandSessi
   shm <- bindOne session W.wlShmInterface 1 (Just (eventRoute W.decodeWlShmEvent (\_ _ -> pure ())))
   wm <- bindOne session Xdg.xdgWmBaseInterface 1 (Just (eventRoute Xdg.decodeXdgWmBaseEvent (\_ (Xdg.XdgWmBasePing serial) -> writeChan inputs (Ping serial))))
   seat <- bindOne session W.wlSeatInterface 1 (Just (eventRoute W.decodeWlSeatEvent (\_ event -> writeChan inputs (Seat event))))
-  let actor = Actor session inputs compositor shm wm seat snapshot files
+  let actor = Actor session inputs compositor shm wm seat snapshot pointerState files
       cleanupFiles = readIORef files >>= mapM_ (void . closeOwnedFd)
   bracket
     ( do
@@ -137,17 +169,17 @@ withProbe socketPath action = bracket (openSession socketPath) closeWaylandSessi
                 case outcome of Left exception -> writeChan inputs (Ended (displayException exception)); Right () -> pure ()
                 putMVar dispatcherFinished ()
             )
-        worker <- forkFinally (actorLoop actor False Map.empty) (putMVar finished)
+        worker <- forkFinally (actorLoop actor (Loop False False Map.empty Map.empty)) (putMVar finished)
         pure (dispatcher, worker)
     )
     (\(dispatcher, worker) -> closeWaylandSession session >> killThread dispatcher >> killThread worker >> readMVar dispatcherFinished >> readMVar finished >> cleanupFiles)
-    (\_ -> watchActor finished (action (Probe inputs finished snapshot)))
+    (\_ -> watchActor finished (action (Probe inputs finished snapshot pointerState)))
 
 openWindow :: Probe -> Color -> IO ProbeWindow
 openWindow probe = openWindowWith probe . windowSpec
 
 openWindowWith :: Probe -> WindowSpec -> IO ProbeWindow
-openWindowWith (Probe inputs _ _) spec = do
+openWindowWith (Probe inputs _ _ _) spec = do
   reply <- newEmptyMVar
   writeChan inputs (Open spec reply)
   bounded "initial xdg configure" (readMVar reply)
@@ -168,34 +200,80 @@ watchActor finished action = do
         Left (Right ()) -> fail "probe actor stopped"
 
 keyboardSnapshot :: Probe -> IO KeyboardSnapshot
-keyboardSnapshot (Probe _ finished snapshot) = do
+keyboardSnapshot probe@(Probe _ _ snapshot _) = actorAlive probe >> readIORef snapshot
+
+pointerSnapshot :: Probe -> IO PointerSnapshot
+pointerSnapshot probe@(Probe _ _ _ snapshot) = actorAlive probe >> readIORef snapshot
+
+actorAlive :: Probe -> IO ()
+actorAlive (Probe _ finished _ _) =
   tryReadMVar finished >>= \case
     Just (Left exception) -> throwIO exception
     _ -> pure ()
-  readIORef snapshot
 
-actorLoop :: Actor -> Bool -> Map ProbeWindow Window -> IO ()
-actorLoop actor hasKeyboard windows =
+requestFullscreen :: Probe -> ProbeWindow -> IO ()
+requestFullscreen probe window = request probe window SetFullscreen
+
+requestExitFullscreen :: Probe -> ProbeWindow -> IO ()
+requestExitFullscreen probe window = request probe window UnsetFullscreen
+
+requestMove :: Probe -> ProbeWindow -> IO ()
+requestMove probe window = request probe window Move
+
+request :: Probe -> ProbeWindow -> ToplevelRequest -> IO ()
+request probe@(Probe inputs _ _ _) window value = do
+  actorAlive probe
+  reply <- newEmptyMVar
+  writeChan inputs (Request window value reply)
+  bounded "toplevel request round trip" (readMVar reply) >>= either fail pure
+
+actorLoop :: Actor -> Loop -> IO ()
+actorLoop actor state =
   readChan (actorInputs actor) >>= \case
     Ended reason -> fail reason
     Released buffer descriptor -> do
       send W.wlBufferInterface buffer W.encodeWlBufferDestroy
       void (closeOwnedFd descriptor)
-      continue hasKeyboard windows
-    Ping serial -> send Xdg.xdgWmBaseInterface (actorWm actor) (Xdg.encodeXdgWmBasePong serial) >> continue hasKeyboard windows
-    Seat (W.WlSeatCapabilities flags)
-      | not hasKeyboard && W.wlSeatCapabilityFlagsValue flags .&. 2 /= 0 -> do
-          _ <- checkedIO (submitInheritedObjectRequestWithRoute connection W.wlSeatInterface (actorSeat actor) W.wlKeyboardInterface (W.encodeWlSeatGetKeyboard . objectId) (eventRoute W.decodeWlKeyboardEvent (\_ event -> writeChan (actorInputs actor) (Keyboard event))))
-          continue True windows
-    Seat _ -> continue hasKeyboard windows
+      continue state
+    Ping serial -> send Xdg.xdgWmBaseInterface (actorWm actor) (Xdg.encodeXdgWmBasePong serial) >> continue state
+    Seat (W.WlSeatCapabilities flags) -> do
+      let advertised bit = W.wlSeatCapabilityFlagsValue flags .&. bit /= 0
+      when (not (loopKeyboard state) && advertised 2) $
+        void (checkedIO (submitInheritedObjectRequestWithRoute connection W.wlSeatInterface (actorSeat actor) W.wlKeyboardInterface (W.encodeWlSeatGetKeyboard . objectId) (eventRoute W.decodeWlKeyboardEvent (\_ event -> writeChan (actorInputs actor) (Keyboard event)))))
+      -- A removed capability leaves the old wl_pointer inert, so a returning pointer needs a new one.
+      when (not (loopPointer state) && advertised 1) $
+        void (checkedIO (submitInheritedObjectRequestWithRoute connection W.wlSeatInterface (actorSeat actor) W.wlPointerInterface (W.encodeWlSeatGetPointer . objectId) (eventRoute W.decodeWlPointerEvent (\_ event -> writeChan (actorInputs actor) (Pointer event)))))
+      continue state{loopKeyboard = loopKeyboard state || advertised 2, loopPointer = advertised 1}
+    Seat _ -> continue state
     Keyboard event -> do
       case event of
         W.WlKeyboardKeymap _ descriptor _ -> void (closeOwnedFd descriptor)
-        W.WlKeyboardEnter _ surface _ -> modifyIORef' (actorKeyboard actor) (\s -> s{keyboardOwner = fst <$> Map.lookupMin (Map.filter ((== surface) . objectId . windowSurface) windows)})
+        W.WlKeyboardEnter _ surface _ -> modifyIORef' (actorKeyboard actor) (\s -> s{keyboardOwner = windowOf surface})
         W.WlKeyboardLeave{} -> modifyIORef' (actorKeyboard actor) (\s -> s{keyboardOwner = Nothing})
         W.WlKeyboardKey _ _ _ W.WlKeyboardKeyStateEnumPressed -> modifyIORef' (actorKeyboard actor) (\s -> s{pressedKeys = maybe (pressedKeys s) (\w -> Map.insertWith (+) w 1 (pressedKeys s)) (keyboardOwner s)})
         _ -> pure ()
-      continue hasKeyboard windows
+      continue state
+    Pointer event -> case event of
+      W.WlPointerEnter _ surface x y -> pointer (\s -> s{pointerOwner = windowOf surface, surfacePosition = Just (surfaceLocal x, surfaceLocal y)}) >> continue state
+      W.WlPointerLeave{} -> pointer (\s -> s{pointerOwner = Nothing, surfacePosition = Nothing}) >> continue state
+      W.WlPointerMotion _ x y -> pointer (\s -> s{surfacePosition = Just (surfaceLocal x, surfaceLocal y)}) >> continue state
+      W.WlPointerButton serial _ _ buttonState -> do
+        owner <- pointerOwner <$> readIORef (actorPointer actor)
+        let pressed = buttonState == W.WlPointerButtonStateEnumPressed
+            counted field s = maybe (field s) (\w -> Map.insertWith (+) w 1 (field s)) owner
+        pointer (\s -> if pressed then s{pointerPresses = counted pointerPresses s} else s{pointerReleases = counted pointerReleases s})
+        continue state{loopPressSerials = if pressed then maybe (loopPressSerials state) (\w -> Map.insert w serial (loopPressSerials state)) owner else loopPressSerials state}
+      _ -> continue state
+    Request window value reply -> do
+      case Map.lookup window windows of
+        Nothing -> putMVar reply (Left ("request for unknown probe window " <> show window))
+        Just w -> do
+          let toplevel encoder = send Xdg.xdgToplevelInterface (windowToplevel w) encoder >> sync session (putMVar reply (Right ()))
+          case value of
+            SetFullscreen -> toplevel (Xdg.encodeXdgToplevelSetFullscreen Nothing)
+            UnsetFullscreen -> toplevel Xdg.encodeXdgToplevelUnsetFullscreen
+            Move -> maybe (putMVar reply (Left ("move needs a pointer press on " <> show window))) (toplevel . Xdg.encodeXdgToplevelMove (objectId (actorSeat actor))) (Map.lookup window (loopPressSerials state))
+      continue state
     Open spec reply -> do
       let window = ProbeWindow (Map.size windows + 1)
       surface <- checkedIO (submitInheritedObjectRequestWithRoute connection W.wlCompositorInterface (actorCompositor actor) W.wlSurfaceInterface (W.encodeWlCompositorCreateSurface . objectId) (eventRoute W.decodeWlSurfaceEvent (\_ _ -> pure ())))
@@ -226,8 +304,8 @@ actorLoop actor hasKeyboard windows =
       mapM_ (toplevel . uncurry Xdg.encodeXdgToplevelSetMinSize) (specMinSize spec)
       mapM_ (toplevel . uncurry Xdg.encodeXdgToplevelSetMaxSize) (specMaxSize spec)
       send W.wlSurfaceInterface surface W.encodeWlSurfaceCommit
-      continue hasKeyboard (Map.insert window (Window surface xdg top (specColor spec) (specCommit spec) (100, 100) Nothing (Just reply)) windows)
-    Size window width height -> continue hasKeyboard (Map.adjust (\w -> w{windowSize = if width > 0 && height > 0 then (width, height) else windowSize w}) window windows)
+      continue state{loopWindows = Map.insert window (Window surface xdg top (specColor spec) (specCommit spec) (100, 100) Nothing (Just reply)) windows}
+    Size window width height -> continue state{loopWindows = Map.adjust (\w -> w{windowSize = if width > 0 && height > 0 then (width, height) else windowSize w}) window windows}
     Configure window serial -> case Map.lookup window windows of
       Nothing -> fail "configure for unknown probe window"
       Just w -> do
@@ -239,13 +317,19 @@ actorLoop actor hasKeyboard windows =
           send W.wlSurfaceInterface (windowSurface w) (W.encodeWlSurfaceDamage 0 0 width height)
         send W.wlSurfaceInterface (windowSurface w) W.encodeWlSurfaceCommit
         mapM_ (\reply -> sync session (writeChan (actorInputs actor) (Synced reply window))) (windowReply w)
-        continue hasKeyboard (Map.insert window w{windowReply = Nothing, windowPaintedSize = Just (width, height)} windows)
-    Synced reply window -> putMVar reply window >> continue hasKeyboard windows
+        continue state{loopWindows = Map.insert window w{windowReply = Nothing, windowPaintedSize = Just (width, height)} windows}
+    Synced reply window -> putMVar reply window >> continue state
  where
   session = actorSession actor
   connection = waylandConnection session
+  windows = loopWindows state
+  windowOf surface = fst <$> Map.lookupMin (Map.filter ((== surface) . objectId . windowSurface) windows)
+  pointer = modifyIORef' (actorPointer actor)
   send interface object = checkedIO . submitRequest connection interface object
   continue = actorLoop actor
+
+surfaceLocal :: Fixed -> Double
+surfaceLocal = (/ 256) . fromIntegral . fixedRawValue
 
 colorBytes :: Color -> ByteString
 colorBytes Red = BS.pack [0, 0, 255, 255]
@@ -285,25 +369,48 @@ outputNames socketPath = bounded "discover named outputs" $
       value <- readIORef name >>= maybe (fail "wl_output omitted name") pure
       pure (global, value)
 
+data Button = LeftButton | RightButton deriving (Eq, Show)
+
+data VirtualPointer = VirtualPointer WaylandSession (Object Pointer.ZwlrVirtualPointerV1) (Word32, Word32)
+
+withVirtualPointer :: FilePath -> (Word32, Word32) -> (VirtualPointer -> IO a) -> IO a
+withVirtualPointer socketPath extent action = bracket (openSession socketPath) closeWaylandSession $ \session -> do
+  let connection = waylandConnection session
+  manager <- bindOne session Pointer.zwlrVirtualPointerManagerV1Interface 1 Nothing
+  pointer <- checkedIO (submitInheritedObjectRequest connection Pointer.zwlrVirtualPointerManagerV1Interface manager Pointer.zwlrVirtualPointerV1Interface (Pointer.encodeZwlrVirtualPointerManagerV1CreateVirtualPointer Nothing . objectId))
+  result <- action (VirtualPointer session pointer extent)
+  checkedIO (submitRequest connection Pointer.zwlrVirtualPointerV1Interface pointer Pointer.encodeZwlrVirtualPointerV1Destroy)
+  bounded "destroy virtual pointer" (roundtrip session)
+  pure result
+
+pointerMoveTo :: VirtualPointer -> (Word32, Word32) -> IO ()
+pointerMoveTo pointer@(VirtualPointer _ _ (width, height)) (x, y) = pointerFrame pointer ("pointer motion to " <> show (x, y)) (Pointer.encodeZwlrVirtualPointerV1MotionAbsolute 0 x y width height)
+
+pointerPress :: VirtualPointer -> Button -> IO ()
+pointerPress pointer button = pointerFrame pointer ("press " <> show button) (Pointer.encodeZwlrVirtualPointerV1Button 0 (buttonCode button) W.WlPointerButtonStateEnumPressed)
+
+pointerRelease :: VirtualPointer -> Button -> IO ()
+pointerRelease pointer button = pointerFrame pointer ("release " <> show button) (Pointer.encodeZwlrVirtualPointerV1Button 0 (buttonCode button) W.WlPointerButtonStateEnumReleased)
+
+pointerFrame :: VirtualPointer -> String -> RequestEncoder OwnedFd -> IO ()
+pointerFrame (VirtualPointer session pointer _) phase event = bounded phase $ do
+  let send = checkedIO . submitRequest (waylandConnection session) Pointer.zwlrVirtualPointerV1Interface pointer
+  send event
+  send Pointer.encodeZwlrVirtualPointerV1Frame
+  roundtrip session
+
+buttonCode :: Button -> Word32
+buttonCode LeftButton = 0x110
+buttonCode RightButton = 0x111
+
 {- | Press and release the left button of a fresh virtual pointer at a point
 of the output layout, given with the layout's width and height.
 -}
 click :: FilePath -> (Word32, Word32) -> (Word32, Word32) -> IO ()
-click socketPath (width, height) (x, y) = bounded ("click " <> show (x, y)) $
-  bracket (openSession socketPath) closeWaylandSession $ \session -> do
-    let connection = waylandConnection session
-    manager <- bindOne session Pointer.zwlrVirtualPointerManagerV1Interface 1 Nothing
-    pointer <- checkedIO (submitInheritedObjectRequest connection Pointer.zwlrVirtualPointerManagerV1Interface manager Pointer.zwlrVirtualPointerV1Interface (Pointer.encodeZwlrVirtualPointerManagerV1CreateVirtualPointer Nothing . objectId))
-    let send = checkedIO . submitRequest connection Pointer.zwlrVirtualPointerV1Interface pointer
-        button state = send (Pointer.encodeZwlrVirtualPointerV1Button 0 leftButton state) >> send Pointer.encodeZwlrVirtualPointerV1Frame
-    send (Pointer.encodeZwlrVirtualPointerV1MotionAbsolute 0 x y width height)
-    send Pointer.encodeZwlrVirtualPointerV1Frame
-    button W.WlPointerButtonStateEnumPressed
-    button W.WlPointerButtonStateEnumReleased
-    send Pointer.encodeZwlrVirtualPointerV1Destroy
-    roundtrip session
- where
-  leftButton = 0x110
+click socketPath extent point = withVirtualPointer socketPath extent $ \pointer -> do
+  pointerMoveTo pointer point
+  pointerPress pointer LeftButton
+  pointerRelease pointer LeftButton
 
 captureOutput :: FilePath -> Text -> IO Image
 captureOutput socketPath outputName = bounded ("capture " <> show outputName) $
