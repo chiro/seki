@@ -162,22 +162,27 @@ layerScenario :: Fixture -> Probe -> IO ()
 layerScenario fixture probe = do
   _ <- openWindow probe Red
   onFirst fixture "layer unmapped" [full Red True]
+  withLayer fixture Layer.KeyboardInteractivityNone $ do
+    _ <- waitUntil "exclusive area y=32" assertionTimeoutMicroseconds (readRiverInventory (mSession fixture)) (\inventory -> any ((== Just (RiverSize 800 600)) . riverOutputDimensions) (riverInventoryOutputs inventory) && any (maybe False (\r -> rectX r == 0 && rectY r == 32 && rectWidth r == 800 && rectHeight r == 568) . riverOutputUsableArea) (riverInventoryOutputs inventory))
+    onFirst fixture "exclusive zone moves client" [Paint Red (Box 2 34 796 564) True]
+    frame <- captureOutput (mSocket fixture) (head (mOutputs fixture))
+    unless (all (\(x, y) -> pixel frame x y == BS.pack [0x33, 0x66, 0x99]) [(x, y) | x <- [0 .. 799], y <- [0 .. 31]]) (failIntegration "exclusive-zone bar pixel strip differs")
+  _ <- waitUntil "exclusive area restored" assertionTimeoutMicroseconds (readRiverInventory (mSession fixture)) (\inventory -> any (maybe False (\r -> rectX r == 0 && rectY r == 0 && rectWidth r == 800 && rectHeight r == 600) . riverOutputUsableArea) (riverInventoryOutputs inventory))
+  onFirst fixture "layer teardown restores client" [full Red True]
+
+withLayer :: Fixture -> Layer.KeyboardInteractivity -> IO a -> IO a
+withLayer fixture interactivity action = do
   control <- Layer.newFixtureControl
   ready <- newEmptyMVar
   stopped <- newEmptyMVar
-  thread <- forkFinally (Layer.runLayerSurfaceFixture control (Layer.FixtureConfig 32 Layer.KeyboardInteractivityNone) (UnixSocketPath (mSocket fixture)) (putMVar ready)) (putMVar stopped)
+  thread <- forkFinally (Layer.runLayerSurfaceFixture control (Layer.FixtureConfig 32 interactivity) (UnixSocketPath (mSocket fixture)) (putMVar ready)) (putMVar stopped)
   let stop = Layer.requestStop control >> waitForMVar "native layer shutdown" stopped >>= requireRight "layer thread" >>= requireRight "layer protocol" >>= assertEqual "layer stop" Layer.StoppedByRequest
   ( do
       size <- waitForMVar "native layer ready" ready
       assertEqual "layer dimensions" (Layer.FixtureReady 800 32) size
-      _ <- waitUntil "exclusive area y=32" assertionTimeoutMicroseconds (readRiverInventory (mSession fixture)) (\inventory -> any ((== Just (RiverSize 800 600)) . riverOutputDimensions) (riverInventoryOutputs inventory) && any (maybe False (\r -> rectX r == 0 && rectY r == 32 && rectWidth r == 800 && rectHeight r == 568) . riverOutputUsableArea) (riverInventoryOutputs inventory))
-      onFirst fixture "exclusive zone moves client" [Paint Red (Box 2 34 796 564) True]
-      frame <- captureOutput (mSocket fixture) (head (mOutputs fixture))
-      unless (all (\(x, y) -> pixel frame x y == BS.pack [0x33, 0x66, 0x99]) [(x, y) | x <- [0 .. 799], y <- [0 .. 31]]) (failIntegration "exclusive-zone bar pixel strip differs")
+      action
     )
     `finally` (stop `finally` killThread thread)
-  _ <- waitUntil "exclusive area restored" assertionTimeoutMicroseconds (readRiverInventory (mSession fixture)) (\inventory -> any (maybe False (\r -> rectX r == 0 && rectY r == 0 && rectWidth r == 800 && rectHeight r == 600) . riverOutputUsableArea) (riverInventoryOutputs inventory))
-  onFirst fixture "layer teardown restores client" [full Red True]
 
 outputScenario :: Fixture -> Probe -> IO ()
 outputScenario fixture probe = do
