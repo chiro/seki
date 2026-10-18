@@ -74,6 +74,7 @@ data Image = Image {imageWidth :: Int, imageHeight :: Int, imageRgb :: ByteStrin
 data KeyboardSnapshot = KeyboardSnapshot
   { keyboardOwner :: Maybe ProbeWindow
   , pressedKeys :: Map ProbeWindow Word64
+  , depressedModifiers :: Word32
   }
   deriving (Eq, Show)
 
@@ -148,7 +149,7 @@ data Loop = Loop
 withProbe :: FilePath -> (Probe -> IO a) -> IO a
 withProbe socketPath action = bracket (openSession socketPath) closeWaylandSession $ \session -> do
   inputs <- newChan
-  snapshot <- newIORef (KeyboardSnapshot Nothing Map.empty)
+  snapshot <- newIORef (KeyboardSnapshot Nothing Map.empty 0)
   pointerState <- newIORef (PointerSnapshot Nothing Nothing Map.empty Map.empty)
   files <- newIORef []
   finished <- newEmptyMVar
@@ -250,6 +251,7 @@ actorLoop actor state =
         W.WlKeyboardKeymap _ descriptor _ -> void (closeOwnedFd descriptor)
         W.WlKeyboardEnter _ surface _ -> modifyIORef' (actorKeyboard actor) (\s -> s{keyboardOwner = windowOf surface})
         W.WlKeyboardLeave{} -> modifyIORef' (actorKeyboard actor) (\s -> s{keyboardOwner = Nothing})
+        W.WlKeyboardModifiers _ depressed _ _ _ -> modifyIORef' (actorKeyboard actor) (\s -> s{depressedModifiers = depressed})
         W.WlKeyboardKey _ _ _ W.WlKeyboardKeyStateEnumPressed -> modifyIORef' (actorKeyboard actor) (\s -> s{pressedKeys = maybe (pressedKeys s) (\w -> Map.insertWith (+) w 1 (pressedKeys s)) (keyboardOwner s)})
         _ -> pure ()
       continue state

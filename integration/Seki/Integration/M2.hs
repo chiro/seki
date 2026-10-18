@@ -52,6 +52,17 @@ selfTest fixture probe = do
     pointerRelease pointer LeftButton
     _ <- waitUntil "left release reaches the custom window" assertionTimeoutMicroseconds (pointerSnapshot probe) ((== 1) . Map.findWithDefault 0 parent . pointerReleases)
     pure ()
+  withHeldLogo fixture probe . withVirtualPointer (mSocket fixture) (800, 600) $ \pointer -> do
+    pointerMoveTo pointer (600, 450)
+    before <- waitUntil "pointer over the custom window with logo held" assertionTimeoutMicroseconds (pointerSnapshot probe) ((== Just parent) . pointerOwner)
+    pointerPress pointer LeftButton
+    pointerMoveTo pointer (650, 480)
+    pointerRelease pointer LeftButton
+    let count field = Map.findWithDefault 0 parent . field
+        moved after = (\(x0, y0) (x1, y1) -> (round (x1 - x0), round (y1 - y0))) <$> surfacePosition before <*> surfacePosition after
+    _ <- waitUntil "logo press, absolute motion, and release reach the custom window" assertionTimeoutMicroseconds (pointerSnapshot probe) $ \after ->
+      count pointerPresses after == count pointerPresses before + 1 && count pointerReleases after == count pointerReleases before + 1 && moved after == Just (50 :: Int, 30 :: Int)
+    pure ()
 
 riverWindow :: Fixture -> String -> (RiverWindowState -> Bool) -> IO RiverWindowState
 riverWindow fixture phase predicate =
