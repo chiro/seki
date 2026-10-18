@@ -74,6 +74,7 @@ nix develop --no-write-lock-file .#unit --command cabal test all
 | `m1-workspace-visibility` | Shift, visible and empty workspaces, keyboard focus, and restoration | `wlr-randr` |
 | `m1-greedy-view` | Two output workspace exchange with distinct layouts and key delivery | `wlr-randr` |
 | `m1-layer-exclusive-zone` | Native layer fixture map and teardown change usable area and actual client pixels | `wlr-randr` |
+| `m1-layer-focus` | An `on_demand` layer surface keeps keyboard focus through a new window and a layout message; a window click and a focus key binding each take it back, and the window keeps it with a focused border after `focus_none` | `wlr-randr` |
 | `m1-output-readd` | Actual WM output removal and addition through two, one, zero, one, and two outputs preserve stacks, layouts, focus, and window identities | `wlr-randr` |
 
 All scenarios also use the core river, foot, and synthetic-input fixture as
@@ -124,18 +125,26 @@ keeps a virtual keyboard present for the fixture lifetime. It sends no keys.
 Separate short `wtype` commands drive the production policy bindings and input.
 The actor waits for observed events rather than a startup delay.
 
+Pointer input uses `click`. Each click opens a fresh native connection,
+creates a `zwlr_virtual_pointer_v1` on the default seat, moves it to an
+absolute point of the output layout, presses and releases the left button, and
+destroys it after a round trip. River turns a click on a window into
+`window_interaction` for seki and a click on an `on_demand` layer surface into
+layer keyboard focus.
+
 Each screenshot uses a fresh native connection and the pinned
 ext-image-capture-source and ext-image-copy-capture protocols. Capture selects
 `wl_output.name`, excludes cursors, and reads real compositor SHM bytes after
 frame readiness. The compositor must advertise
 `ext_output_image_capture_source_manager_v1` and
 `ext_image_copy_capture_manager_v1`, with SHM XRGB8888 or ARGB8888 support.
+Clicks require `zwlr_virtual_pointer_manager_v1`.
 The fixture accepts only normal transform and unit scale.
 Each allocation is limited to 16 MiB and each connection to 128 allocations.
 Window buffers survive until release or connection close. Captures keep their
 local descriptor until the frame bytes have been read.
 
-The nine scenarios use literal content rectangles for 800 by 600 outputs.
+The M1 scenarios use literal content rectangles for 800 by 600 outputs.
 The oracle checks exact color counts and bounds, every pixel of all four
 border strips, and omitted colors on every enabled output. It imports no
 production layout or scene calculation. Capture protocol failures fail at
@@ -160,30 +169,36 @@ The default command continues to use the pinned compiler from `cabal.project`.
 ## Layer-surface fixture
 
 `seki-layer-surface-fixture` is the exclusive-zone client for WP8's
-layer-shell scenario (`m1-layer-exclusive-zone`). It is a native Haskell
+layer-shell scenario (`m1-layer-exclusive-zone`) and the layer focus scenario
+(`m1-layer-focus`). It is a native Haskell
 wlr-layer-shell client built on seki's own Wayland transport, so it does not link `libwayland` and does not depend on a
 desktop bar.
 
 ```console
-seki-layer-surface-fixture [HEIGHT]
+seki-layer-surface-fixture [HEIGHT [INTERACTIVITY]]
 ```
 
-`HEIGHT` is a positive pixel count and defaults to 32. The fixture connects
+`HEIGHT` is a positive pixel count and defaults to 32. `INTERACTIVITY` is the
+layer surface's keyboard interactivity, named as in the protocol: `none` (the
+default), `exclusive`, or `on_demand`. The fixture connects
 through the standard `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` variables (or an
 inherited `WAYLAND_SOCKET`). It then does the following:
 
-1. Binds `wl_compositor`, `wl_shm`, and `zwlr_layer_shell_v1`, each at
-   version 1. A missing global is an error.
+1. Binds `wl_compositor` and `wl_shm` at version 1, and
+   `zwlr_layer_shell_v1` at the version that introduced `INTERACTIVITY`:
+   version 1 for `none` and `exclusive`, version 4 for `on_demand`. A missing
+   global, or a layer shell older than that version, is an error.
 2. Creates one layer surface on the top layer with no output, so the
    compositor chooses the output. The surface is anchored top, left, and
-   right, with size (0, `HEIGHT`) and exclusive zone `HEIGHT`, in namespace
-   `seki-layer-surface-fixture`.
+   right, with size (0, `HEIGHT`), exclusive zone `HEIGHT`, and keyboard
+   interactivity `INTERACTIVITY`, in namespace `seki-layer-surface-fixture`.
 3. Acks the first `configure`, attaches an XRGB8888 shared-memory buffer of
    the configured width by `HEIGHT`, and commits.
 4. Prints exactly one line to stdout, `ready <width> <height>`, after a
    `wl_display.sync` round trip that follows the buffer commit.
 
 At this point river has processed the mapped surface and its exclusive zone.
+River gives an `on_demand` surface non-exclusive keyboard focus when it maps.
 
 The fixture tears down on stdin EOF, on SIGTERM, or when the compositor sends
 the layer surface's `closed` event. It first waits for a sync, so that every
@@ -213,6 +228,16 @@ Regenerate it with:
 cabal run seki-scanner -- generate Seki.Fixture.Protocol.WlrLayerShellUnstableV1 protocol/river/upstream/wlr-layer-shell-unstable-v1.xml 'river v0.4.5, commit f6d961773711dc29d3eb5b60bd14744a6a33894f' tools-generated/layer-surface-fixture/Seki/Fixture/Protocol/WlrLayerShellUnstableV1.hs protocol/river/upstream/wlr-layer-shell-unstable-v1.xml protocol/wayland/wayland.xml protocol/wayland-protocols/xdg-shell.xml
 ```
 
+The probe's virtual pointer binding,
+`tools-generated/layer-surface-fixture/Seki/Fixture/Protocol/WlrVirtualPointerUnstableV1.hs`,
+is generated from `protocol/wlr-protocols/wlr-virtual-pointer-unstable-v1.xml`,
+copied from the `wayland-protocols-wlr` 0.3.12 crate. The same freshness test
+covers it. Regenerate it with:
+
+```console
+cabal run seki-scanner -- generate Seki.Fixture.Protocol.WlrVirtualPointerUnstableV1 protocol/wlr-protocols/wlr-virtual-pointer-unstable-v1.xml 'wayland-protocols-wlr 0.3.12' tools-generated/layer-surface-fixture/Seki/Fixture/Protocol/WlrVirtualPointerUnstableV1.hs protocol/wlr-protocols/wlr-virtual-pointer-unstable-v1.xml protocol/wayland/wayland.xml
+```
+
 ## Completion manifest and CI gate
 
 An enabled successful run must produce exactly:
@@ -231,6 +256,7 @@ m1-layout-cycle=passed
 m1-workspace-visibility=passed
 m1-greedy-view=passed
 m1-layer-exclusive-zone=passed
+m1-layer-focus=passed
 m1-output-readd=passed
 ```
 

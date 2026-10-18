@@ -11,4 +11,5 @@ m1-layout-cycle=passed
 m1-workspace-visibility=passed
 m1-greedy-view=passed
 m1-layer-exclusive-zone=passed
+m1-layer-focus=passed
 m1-output-readd=passed
