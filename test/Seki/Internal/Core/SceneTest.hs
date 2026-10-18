@@ -45,9 +45,10 @@ tests =
         let hw = HeadlessWorkspaces (Workspace (1 :: Int) Full Nothing) [] Map.empty
         sceneWindows (planScene defaultSceneStyle (HeadlessState hw{headlessCurrent = Workspace 1 Full (Just (Stack w1 [] []))}) Map.empty Map.empty) @?= Map.singleton w1 Omitted
     , testCase "parents and focused sibling branch are complete and stable" $ do
-        let st = state (Tall 1 0.03 0.5) (Stack w2 [w1] [w3])
+        let w5 = WindowId 5
+            st = state (Tall 1 0.03 0.5) (Stack w2 [w1] [w5, w3])
             result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) (rectangle 100 100)) (Map.fromList [(w2, Just w1), (w3, Just w1)])
-        sceneStacking result @?= [w4, w1, w3, w2]
+        sceneStacking result @?= [w4, w5, w1, w3, w2]
     , testProperty "every parent graph, including cycles, stacks every window exactly once" $ \(a :: NonNegative Int) (b :: NonNegative Int) (c :: NonNegative Int) ->
         let parentChoice (NonNegative n) = [Nothing, Just w1, Just w2, Just w3] !! (n `mod` 4)
             result = planScene defaultSceneStyle (state (Tall 1 0.03 0.5) (Stack w2 [w1] [w3])) (Map.singleton (OutputId 1) (rectangle 100 100)) (Map.fromList (zip [w1, w2, w3] (map parentChoice [a, b, c])))
