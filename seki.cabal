@@ -305,6 +305,7 @@ test-suite seki-integration
     Seki.Integration.Fixture
     Seki.Integration.Harness
     Seki.Integration.M1
+    Seki.Integration.M2
   build-depends:
     containers >=0.6.7 && <0.8,
     seki:layer-surface-fixture,
