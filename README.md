@@ -3,8 +3,8 @@
 A tiling window manager for [river](https://codeberg.org/river/river), written
 in Haskell and aiming for xmonad's semantics and configuration model.
 
-> **Status: M1 core, configuration, and real-river coverage are implemented through WP9.**
-> [Latency and GC evidence](docs/latency-baseline/report.md) is recorded. WP10 closeout remains.
+> **Status: M1 is implemented through WP10. Its pinned release gate is pending.**
+> [Latency and GC evidence](docs/latency-baseline/report.md) is recorded.
 > See the [milestones](docs/spec.md#62-milestones).
 
 ## Current status

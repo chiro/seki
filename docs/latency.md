@@ -4,7 +4,7 @@ WP9 provides an opt-in diagnostic, a repeated-trial runner, and reproducible rep
 creation. Production configuration and executable RTS defaults remain unchanged.
 The reviewed [reference report](latency-baseline/report.md) contains five
 alternating trials per collector and the retained compact evidence.
-WP10 still owns the M1 closeout. Ordinary unit CI does not enforce timing budgets.
+Ordinary unit CI does not enforce timing budgets.
 
 ## Run a comparison
 

@@ -1,21 +1,21 @@
 # M1 Core Implementation Plan
 
-Status: **WP1 through WP9 implemented, WP10 closeout pending** / Last updated: 2026-10-18
+Status: **WP1 through WP10 implemented, pinned release gate pending** / Last updated: 2026-10-18
 
 This document turns the M1 row in the specification into an ordered,
 testable implementation plan. It is intentionally narrower than the complete
 v1 design in `spec.md`.
 
 The review findings are tracked in [Open design issues](#9-open-design-issues).
-All seven are Decided, so the design review is complete. Verification against
-all required regressions remains open. M1 is not complete.
+All seven are Verified against their required regressions. M1 is not
+complete until the pinned release integration command passes.
 
 The [README](../README.md#project-direction) describes the current public API.
 The [wire and runtime reference](wire-protocol.md) and
 [integration guide](integration-testing.md) describe the implementation through
-WP9. The [WP9 report](latency-baseline/report.md) retains historical latency
+WP10. The [WP9 report](latency-baseline/report.md) retains historical latency
 and GC evidence. The [coverage ledger](#91-regression-coverage-and-closeout)
-records the remaining regression and closeout checks.
+links the regression evidence and records the closeout checks.
 
 ## 1. Outcome
 
@@ -104,12 +104,22 @@ Property disposition for M1 is explicit:
 
 - port all applicable properties from StackSet, Delete, Focus, GreedyView,
   Insert, Shift, Stack, Swap, View, and Workspace;
-- adapt Screen's StackSet and geometry properties, but defer its X11
-  resize/aspect-hint properties with `Tolerate` to M2;
+- adapt Screen's StackSet and geometry properties, but exclude its X11
+  resize/aspect-hint properties; M2 revisits them with `Tolerate`;
 - replace Failure's partial `abort` / invalid-`new` checks with total
   construction and configuration validation returning typed errors; and
 - port Floating's pure map-bookkeeping properties internally, while deferring
   public floating actions, scene generation, and interactive movement to M2.
+
+The module header of
+[StackSetTest](../test/Seki/Internal/Core/StackSetTest.hs) records each
+replaced or excluded property, and the
+[TallTest](../test/Seki/Internal/Layout/TallTest.hs) and
+[FullTest](../test/Seki/Internal/Layout/FullTest.hs) headers record the layout
+adaptations. Every other property is ported under its xmonad name. Of the 121
+`prop_*` definitions in xmonad 0.18.1's `tests/Properties`, 108 are ported by
+name and 12 are replaced or excluded. The remaining `prop_promote_reversible`
+is commented out upstream and not registered there.
 
 Record copied or closely derived BSD-3-Clause code in
 `THIRD_PARTY_NOTICES.md`. Keep the pure core independent of X11 and do not add
@@ -852,18 +862,18 @@ Status progression:
 
 The design review is complete when all seven entries are **Decided** or
 **Verified**. M1 completion requires every entry to be **Verified**. Proposed
-resolutions below remain as decision history. The coverage ledger records
-existing evidence and the remaining verification for each entry.
+resolutions below remain as decision history. The coverage ledger links the
+regression evidence for each entry.
 
 | ID | Issue | Priority | Status | Affected work |
 |---|---|---|---|---|
-| M1-D01 | Reclaiming non-exclusive layer focus | P1 | Decided | WP5, WP6 |
-| M1-D02 | Full visibility and layout-omitted windows | P2 | Decided | WP3, WP6 |
-| M1-D03 | Parent/child stacking versus focus raising | P2 | Decided | WP6 |
-| M1-D04 | Zero-sized tiles and their focus behavior | P2 | Decided | WP1, WP3, WP6 |
-| M1-D05 | Tiled flags at output boundaries | P2 | Decided | WP1, WP6 |
-| M1-D06 | Dialogs are tiled in M1 | P3 | Decided | WP6 |
-| M1-D07 | Borders outside the tile | P2 | Decided | WP6 |
+| M1-D01 | Reclaiming non-exclusive layer focus | P1 | Verified | WP5, WP6 |
+| M1-D02 | Full visibility and layout-omitted windows | P2 | Verified | WP3, WP6 |
+| M1-D03 | Parent/child stacking versus focus raising | P2 | Verified | WP6 |
+| M1-D04 | Zero-sized tiles and their focus behavior | P2 | Verified | WP1, WP3, WP6 |
+| M1-D05 | Tiled flags at output boundaries | P2 | Verified | WP1, WP6 |
+| M1-D06 | Dialogs are tiled in M1 | P3 | Verified | WP6 |
+| M1-D07 | Borders outside the tile | P2 | Verified | WP6 |
 
 ### M1-D01 — Reclaiming non-exclusive layer focus
 
@@ -1081,23 +1091,35 @@ existing evidence and the remaining verification for each entry.
 
 ### 9.1 Regression coverage and closeout
 
-This source audit records coverage through WP9. It does not mark a required
-regression as passed or promote any entry to Verified.
+WP10 ([#14](https://github.com/chiro/seki/pull/14)) closed the regression gaps
+that this ledger recorded through WP9. Each entry below names the tests that
+assert its required and additional regressions.
 
-| Decision | Existing coverage | Remaining verification |
-|---|---|---|
-| M1-D01 | `testLayerFocus` in [ReconcileTest](../test/Seki/Run/ReconcileTest.hs) covers key-action reclaim, borders, exclusive suppression, and repeated `focus_none`. `testFamilies` in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs) covers interaction reclaim and new windows retaining layer focus. | Real-river non-exclusive focus reclaim remains open. The live `layerScenario` in [M1.hs](../integration/Seki/Integration/M1.hs) checks exclusive-zone geometry, not keyboard ownership. |
-| M1-D02 | [SceneTest](../test/Seki/Internal/Core/SceneTest.hs) checks Full selection. `testLayouts` in [ReconcileTest](../test/Seki/Run/ReconcileTest.hs) checks two-window Tall/Full omission and retained dimensions. [M1.hs](../integration/Seki/Integration/M1.hs) checks live layout cycling. | The exact three-window Full case with a smaller focused commit and focus cycling, plus a custom layout omitting a window, is not established by these tests. |
-| M1-D03 | [SceneTest](../test/Seki/Internal/Core/SceneTest.hs) checks parent/sibling order and a pending parent. `testFamilies` in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs) checks family raising through requests. | The required parent-child-grandchild case with unrelated windows, parent close, and unchanged StackSet order still needs explicit evidence. |
-| M1-D04 | [TallTest](../test/Seki/Internal/Layout/TallTest.hs) covers one-pixel and extreme-ratio tiles through Mirror. [SceneTest](../test/Seki/Internal/Core/SceneTest.hs) checks omission and positive insets. `testTrace` and `testSettlement` in the reconciliation tests cover zero/border-sized areas and recovery. | Cross-check the full required combination of Tall/Mirror degenerate tiles, protocol focus, and recovery before marking Verified. |
-| M1-D05 | `testSettlement` in [ReconcileTest](../test/Seki/Run/ReconcileTest.hs) asserts all flags before the first Full proposal. `testLayouts` asserts flags for two Tall windows. | Explicit single-Tall and exclusive-zone-reduced-area flag assertions are not established. |
-| M1-D06 | [Scene.hs](../src-core/Seki/Internal/Core/Scene.hs) selects Full's focus without a dialog exception. The general window insertion and family tests cover parts of the behavior. | No dedicated request-level regression establishes child insertion under Full followed by parent refocus hiding the child. |
-| M1-D07 | [SceneTest](../test/Seki/Internal/Core/SceneTest.hs) checks inset properties. `testSettlement` checks border requests. [M1.hs](../integration/Seki/Integration/M1.hs) checks actual border pixels for conforming clients. | Audit the complete request-level border and degenerate-tile cases against the revised criterion. Actual oversized commits retain M1's accepted overflow behavior. |
+| Decision | Regression evidence |
+|---|---|
+| M1-D01 | `testLayerFocus` in [ReconcileTest](../test/Seki/Run/ReconcileTest.hs) covers key-action reclaim, its border transition and the following `focus_none`, and exclusive focus ignoring both a click and a focus key. `testFamilies` in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs) covers click reclaim, its focused border, the focus request resent after `focus_none`, and a new window leaving layer focus in place. The live `m1-layer-focus` scenario in [M1.hs](../integration/Seki/Integration/M1.hs) maps an on-demand layer surface on real river. It checks that a new window and a layout message keep keyboard input with the layer, and that a click and a focus key each return it to a window after river's `focus_none`. |
+| M1-D02 | "Full shows only a smaller focused commit and focus cycling hides it" in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs) covers three windows under Full and focus cycling. "a custom layout omitting windows hides them" in [SceneTest](../test/Seki/Internal/Core/SceneTest.hs) covers a custom omitting layout. `testLayouts` in [ReconcileTest](../test/Seki/Run/ReconcileTest.hs) covers Tall → Full → Tall with no proposal to omitted windows. The live `m1-layout-cycle` scenario checks the same transitions in pixels. |
+| M1-D03 | [SceneTest](../test/Seki/Internal/Core/SceneTest.hs) covers a focused parent with a child and grandchild above unrelated shown windows, a focused child with an unrelated shown window, a parent on another workspace, a closed parent, and hidden relatives below every shown window. `testFamilies` in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs) checks that a raise leaves the workspace stack order unchanged. |
+| M1-D04 | [TallTest](../test/Seki/Internal/Layout/TallTest.hs) covers one-pixel rectangles and extreme ratios through Mirror. "one-pixel Tall and Mirror Tall scenes omit every zero tile" and the generated scene property in [SceneTest](../test/Seki/Internal/Core/SceneTest.hs) cover omission and focus. The generated Full, Tall, and Mirror Tall traces in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs) assert that no degenerate tile is proposed or shown, focus only a shown settled window, and end in recovery. `testSettlement` in [ReconcileTest](../test/Seki/Run/ReconcileTest.hs) covers `clear_focus` and the `manage_dirty` recovery path. |
+| M1-D05 | `testSingleTall` in [ReconcileTest](../test/Seki/Run/ReconcileTest.hs) covers a single Tall window. `testSettlement` covers Full's selected window over a usable area that an exclusive zone reduced to 100x80 on a 1000x1000 output, flagged in the same sequence as its first proposal. `testLayouts` covers both tiles of a Tall split. The live probe does not observe xdg tiled states. |
+| M1-D06 | "Full focuses a new child and hides it when its parent is refocused" in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs) pins M1's tiled dialogs. M2 changes it deliberately when it floats dialogs. |
+| M1-D07 | [SceneTest](../test/Seki/Internal/Core/SceneTest.hs) checks the exact border inset of every placed window and degenerate tiles of at most `2b`. `testSettlement` and `testLayouts` in [ReconcileTest](../test/Seki/Run/ReconcileTest.hs) check the request-level content, border, and accepted oversized commit. `checkBorder` in [M1.hs](../integration/Seki/Integration/M1.hs) checks real border pixels outside the content of conforming clients in every M1 scenario. |
 
-WP10 must reconcile this ledger with every required regression, record the
-explicit xmonad-property disposition and high-count invariant results, and run
-the exit checks in section 6. Those include formatting, lint, unit and public
-API tests, package/Haddock validation, and the pinned real-river release gate.
-The historical [WP9 report](latency-baseline/report.md) remains the recorded
-latency evidence; it does not certify a new host or toolchain. Documentation
-updates alone do not close M1.
+The StackSet invariant, hotplug history, and generated event-sequence
+properties run at 1000 QuickCheck cases in `cabal test all`. Unsupported client
+requests leave the policy state unchanged in `testSettlement`.
+
+WP10 ran these closeout checks on 2026-10-18 with GHC 9.6.7 and system river
+0.5.0:
+
+- `cabal build all` and `cabal test all` pass;
+- `fourmolu --mode check` reports no changes, and `hlint` remains advisory;
+- `ci/check-package.sh` validates the source distribution and Haddock; and
+- `WLR_RENDERER=pixman ci/run-integration.sh --offline` passes all 14
+  scenarios and verifies the complete manifest.
+
+The pinned command `nix develop --no-write-lock-file .#ci --command
+ci/run-integration.sh` has not run, because the closeout host has no Nix. The
+milestone stays open until it passes. The historical
+[WP9 report](latency-baseline/report.md) remains the recorded latency evidence;
+it does not certify a new host or toolchain.
