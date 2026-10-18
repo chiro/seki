@@ -76,6 +76,7 @@ tests =
     , testCase "reports clean EOF idempotently" testCleanEof
     , testCase "drains delivered events before a reset as clean EOF" testResetAfterEvent
     , testCase "rejects a partial frame before a reset as at EOF" testResetAfterPartialFrame
+    , testCase "drains delivered events after a send to a closed peer" testSendAfterPeerClose
     , testCase "completes a mock registry synchronization" testRegistrySync
     ]
 
@@ -421,6 +422,26 @@ testResetAfterPartialFrame = do
       assertEqual "send partial frame" (Right ()) =<< sendMessage peer (ByteString.take 5 frame) []
       closeTransport peer
       dispatchNextEvent connection
+
+testSendAfterPeerClose :: Assertion
+testSendAfterPeerClose =
+  withConnectionPair $ \connection display peer -> do
+    callback <- createCallback connection display peer
+    handled <- newEmptyMVar
+    assertEqual
+      "register callback"
+      (Right ())
+      =<< registerEventRoute
+        connection
+        Wayland.wlCallbackInterface
+        callback
+        (eventRoute Wayland.decodeWlCallbackEvent (\_ event -> putMVar handled event))
+    sendEvent peer (objectId callback) (Opcode 0) (putUint 41) []
+    closeTransport peer
+    sendUnreadRequest connection display
+    expectDispatched =<< dispatchNextEvent connection
+    assertEqual "delivered event" (Wayland.WlCallbackDone 41) =<< takeMVar handled
+    assertEqual "closed peer ends the stream" (Right DispatchFinished) =<< dispatchNextEvent connection
 
 sendUnreadRequest :: Connection -> Object Wayland.WlDisplay -> IO ()
 sendUnreadRequest connection display =
