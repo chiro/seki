@@ -5,7 +5,7 @@ module Seki.Wire.Connection.DispatchTest (tests) where
 
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (bracket, onException)
-import Control.Monad (void)
+import Control.Monad (void, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
@@ -33,6 +33,7 @@ import Seki.Wire.Connection (
   submitRequest,
   wlDisplayEventRoute,
  )
+import Seki.Wire.Connection.Buffer (ReceiveBufferError (..))
 import Seki.Wire.Connection.ObjectTable (Object, ObjectTableError (..), defaultObjectLimit, objectId)
 import Seki.Wire.Connection.Request (RequestPreparationError (..))
 import Seki.Wire.Transport (
@@ -73,6 +74,8 @@ tests =
     , testCase "registers and routes a server-created object atomically" testServerObjectRoute
     , testCase "rejects an unhandled server-created object" testMissingServerObjectRoute
     , testCase "reports clean EOF idempotently" testCleanEof
+    , testCase "drains delivered events before a reset as clean EOF" testResetAfterEvent
+    , testCase "rejects a partial frame before a reset as at EOF" testResetAfterPartialFrame
     , testCase "completes a mock registry synchronization" testRegistrySync
     ]
 
@@ -384,6 +387,51 @@ testCleanEof =
         Wayland.wlDisplayInterface
         display
         (RequestEncoder "after_eof" (Opcode 0) 1 False (pure ()))
+
+testResetAfterEvent :: Assertion
+testResetAfterEvent =
+  withConnectionPair $ \connection display peer -> do
+    callback <- createCallback connection display peer
+    handled <- newEmptyMVar
+    assertEqual
+      "register callback"
+      (Right ())
+      =<< registerEventRoute
+        connection
+        Wayland.wlCallbackInterface
+        callback
+        (eventRoute Wayland.decodeWlCallbackEvent (\_ event -> putMVar handled event))
+    sendUnreadRequest connection display
+    sendEvent peer (objectId callback) (Opcode 0) (putUint 41) []
+    closeTransport peer
+    expectDispatched =<< dispatchNextEvent connection
+    assertEqual "delivered event" (Wayland.WlCallbackDone 41) =<< takeMVar handled
+    assertEqual "reset ends the stream" (Right DispatchFinished) =<< dispatchNextEvent connection
+
+testResetAfterPartialFrame :: Assertion
+testResetAfterPartialFrame = do
+  assertEqual "partial frame at clean EOF" truncatedHeader =<< partialFrameOutcome False
+  assertEqual "partial frame at reset" truncatedHeader =<< partialFrameOutcome True
+ where
+  truncatedHeader = Left (ConnectionReceiveBufferError (TruncatedFrameAtEof 5 3))
+  partialFrameOutcome leaveRequestUnread =
+    withConnectionPair $ \connection display peer -> do
+      when leaveRequestUnread (sendUnreadRequest connection display)
+      frame <- encodedFrame (objectId display) (Opcode 0) (putUint 41)
+      assertEqual "send partial frame" (Right ()) =<< sendMessage peer (ByteString.take 5 frame) []
+      closeTransport peer
+      dispatchNextEvent connection
+
+sendUnreadRequest :: Connection -> Object Wayland.WlDisplay -> IO ()
+sendUnreadRequest connection display =
+  void . expectRight
+    =<< submitNewObjectRequest
+      connection
+      Wayland.wlDisplayInterface
+      display
+      Wayland.wlCallbackInterface
+      1
+      (Wayland.encodeWlDisplaySync . objectId)
 
 testRegistrySync :: Assertion
 testRegistrySync =

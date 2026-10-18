@@ -40,7 +40,7 @@ import Data.Char (isDigit)
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Foreign.C.Error (Errno (..), eAGAIN, eINTR, eWOULDBLOCK)
+import Foreign.C.Error (Errno (..), eAGAIN, eCONNRESET, eINTR, eWOULDBLOCK)
 import Foreign.C.Types (CInt)
 import GHC.Conc (threadWaitRead, threadWaitWrite)
 import Network.Socket (
@@ -392,6 +392,9 @@ receiveAttempt transport byteCapacity = do
     RawReceiveSystemError errorNumber
       | errorNumber == errnoCode eINTR -> ReceiveInterrupted
       | wouldBlock errorNumber -> ReceiveWouldBlock
+      -- Linux reports a peer that closed with our bytes unread as ECONNRESET,
+      -- but only after it has delivered every byte the peer sent.
+      | errorNumber == errnoCode eCONNRESET -> ReceiveProgress (ByteString.empty, [])
       | otherwise -> ReceiveFailed (TransportSystemError ReceiveOperation errorNumber)
     RawReceiveRejected errorValue -> ReceiveFailed (TransportReceiveRejected (ancillaryError errorValue))
     RawReceived bytes descriptors -> ReceiveProgress (bytes, descriptors)

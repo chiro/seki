@@ -283,6 +283,11 @@ and no partial frame or descriptors remain. Partial frames and missing or
 surplus descriptors produce structured errors. Clean EOF does not prove that
 an application operation or river sequence completed.
 
+The transport treats `ECONNRESET` on receive as EOF. Linux returns it instead
+of EOF when the peer closes before it reads everything seki sent, and only
+after it delivers every byte the peer sent. A reset therefore loses seki's
+last requests but none of river's events, and the same EOF checks apply.
+
 ### 6.3 Sending and descriptor ownership
 
 Request preparation returns a `PreparedRequest` containing frame bytes and
