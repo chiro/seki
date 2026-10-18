@@ -43,6 +43,24 @@ Without `SEKI_RUN_INTEGRATION=1`, the component prints a disabled message and
 exits successfully so that ordinary `cabal test all` remains usable on systems
 without river.
 
+### Running a subset
+
+Set `SEKI_INTEGRATION_SCENARIOS` to a comma-separated list of manifest names
+to run only those scenarios. They run in suite order, whatever the order of
+the list. An unset or empty value runs every scenario.
+
+```console
+SEKI_INTEGRATION_SCENARIOS=m1-tall-three,m2-probe-self-test \
+WLR_RENDERER=pixman ci/run-integration.sh
+```
+
+A name that matches no scenario fails the run before any scenario starts,
+and the error lists the known names. With the variable set,
+`ci/run-integration.sh` expects `enabled=true` followed by the lines of
+`ci/expected-integration-manifest.txt` for the selected names, and writes
+that expectation to `expected-manifest.txt` beside the manifest. Without the
+variable, the check compares the full expected manifest.
+
 To capture a manifest during a direct run:
 
 ```console
@@ -76,11 +94,12 @@ nix develop --no-write-lock-file .#unit --command cabal test all
 | `m1-layer-exclusive-zone` | Native layer fixture map and teardown change usable area and actual client pixels | `wlr-randr` |
 | `m1-layer-focus` | An `on_demand` layer surface keeps keyboard focus through a new window and a layout message; a window click and a focus key binding each take it back, and the window keeps it with a focused border after `focus_none` | `wlr-randr` |
 | `m1-output-readd` | Actual WM output removal and addition through two, one, zero, one, and two outputs preserve stacks, layouts, focus, and window identities | `wlr-randr` |
+| `m2-probe-self-test` | Each probe window spec field and request against river's state: a custom and an absent app_id, the parent window, the dimensions hint, a fixed commit size, fullscreen and exit fullscreen requests, a move during a held press, and a pointer press, motion, and release with the logo modifier held | `wlr-randr` |
 
 All scenarios also use the core river, foot, and synthetic-input fixture as
 needed. The CI shell in `flake.nix` provides the integration dependency set,
 including fonts, runtime data, and `WLR_RENDERER=pixman`. Direct runs must set
-the renderer explicitly because the M1 fixture inherits it from the host.
+the renderer explicitly because the shared fixture inherits it from the host.
 
 ## Isolation and cleanup
 
@@ -125,12 +144,49 @@ keeps a virtual keyboard present for the fixture lifetime. It sends no keys.
 Separate short `wtype` commands drive the production policy bindings and input.
 The actor waits for observed events rather than a startup delay.
 
-Pointer input uses `click`. Each click opens a fresh native connection,
-creates a `zwlr_virtual_pointer_v1` on the default seat, moves it to an
-absolute point of the output layout, presses and releases the left button, and
-destroys it after a round trip. River turns a click on a window into
-`window_interaction` for seki and a click on an `on_demand` layer surface into
-layer keyboard focus.
+`openWindowWith` takes a `WindowSpec`. `windowSpec color` gives the defaults,
+and `openWindow` uses them, so its requests are the same as before the spec
+existed. The spec fields are:
+
+| Field | Request | Default |
+| --- | --- | --- |
+| `specAppId` | `NumberedAppId` sets `seki-color-probe-N`, `CustomAppId` sets the given text, and `NoAppId` sends no `set_app_id` | `NumberedAppId` |
+| `specParent` | `xdg_toplevel.set_parent` to an earlier probe window | none |
+| `specMinSize`, `specMaxSize` | `set_min_size` and `set_max_size` | none |
+| `specCommit` | `CommitFixed w h` paints `w` by `h` on every configure, whatever size it proposes | `CommitConfigured` |
+
+`requestFullscreen`, `requestExitFullscreen`, and `requestMove` send
+`set_fullscreen` with no output, `unset_fullscreen`, and `move` on an open
+window, and return after a round trip. `requestMove` uses the serial of the
+latest button press on that window and fails when there is none. River
+forwards `move` only while that button is still held.
+
+The probe binds `wl_pointer` when the seat advertises a pointer, and binds a
+new one when the capability returns after a removal. `pointerSnapshot`
+reports the window under the pointer, the surface-local position from the
+latest enter or motion, and press and release counts per window.
+`KeyboardSnapshot` also reports `depressedModifiers`, the `mods_depressed`
+value of the latest `wl_keyboard.modifiers`.
+
+Pointer input uses a `zwlr_virtual_pointer_v1` on the default seat.
+`withVirtualPointer` opens a native connection and keeps one virtual pointer
+for the length of an action, so a button can stay held across steps.
+`pointerMoveTo` sends absolute motion in the output layout, and
+`pointerPress` and `pointerRelease` send `LeftButton` (0x110) or
+`RightButton` (0x111). Each step ends with a frame and a round trip. `click`
+moves, presses, and releases the left button on a fresh virtual pointer.
+River turns a click on a window into `window_interaction` for seki and a click
+on an `on_demand` layer surface into layer keyboard focus.
+
+The shared fixture, `Seki.Integration.Fixture`, takes the policy
+configuration of its suite. It records each `fullscreen_requested`,
+`exit_fullscreen_requested`, `pointer_move_requested`, and
+`pointer_resize_requested` event by river window before the policy handles
+the event, and `windowRequests` reads that log. `withHeldLogo` holds the logo
+modifier for the length of an action with a separate
+`wtype -M logo -s 60000` process. It waits until the focused probe window
+reports bit 0x40 in `depressedModifiers`, and, after it stops that process,
+until the bit clears.
 
 Each screenshot uses a fresh native connection and the pinned
 ext-image-capture-source and ext-image-copy-capture protocols. Capture selects
@@ -258,6 +314,7 @@ m1-greedy-view=passed
 m1-layer-exclusive-zone=passed
 m1-layer-focus=passed
 m1-output-readd=passed
+m2-probe-self-test=passed
 ```
 
 `ci/run-integration.sh` byte-compares the generated file with
@@ -316,8 +373,8 @@ in a way that can hide deterministic failures.
 
 When adding, removing, or renaming a scenario:
 
-1. update the ordered scenario lists in `integration/Seki/Integration/Harness.hs`
-   and `integration/Seki/Integration/M1.hs`;
+1. update the ordered scenario lists in `integration/Seki/Integration/Harness.hs`,
+   `integration/Seki/Integration/M1.hs`, and `integration/Seki/Integration/M2.hs`;
 2. update `ci/expected-integration-manifest.txt` in the same order;
 3. add required programs and runtime data to the `ci` shell in `flake.nix`;
 4. add important component versions to
