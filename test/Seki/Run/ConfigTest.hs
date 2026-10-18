@@ -20,7 +20,7 @@ import Seki.Run.Runtime (RiverRuntimeHandlers (..))
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (assertEqual, assertFailure, testCase)
+import Test.Tasty.HUnit (assertBool, assertEqual, assertFailure, testCase)
 
 tests :: TestTree
 tests =
@@ -74,6 +74,26 @@ tests =
     , testCase "the startup hook reaches the policy" $ do
         assertEqual "the default hook does nothing" [] (intents (Action.runAction (policyStartupHook (policyConfigOf def)) initial))
         assertEqual "a configured hook" [Action.Spawn "bar"] (intents (Action.runAction (policyStartupHook (policyConfigOf def{startupHook = Action.spawnOnce "bar"})) initial))
+    , testCase "additionalKeys replaces a binding with the same identity" $ do
+        let config = additionalKeys def [(KeyBinding (Mod4 .|. Shift) (Keysym 0xff0d), Action.spawn "alacritty")]
+        assertEqual "the new action wins" [Action.Spawn "alacritty"] (intents (press config Shift 0xff0d initial))
+        assertEqual "the binding count is unchanged" 28 (length (keys config config))
+        prepareConfig config >>= either (assertFailure . ("validation rejected the replacement: " <>) . show) (const (pure ()))
+    , testCase "additionalKeys keeps the last of repeated new identities and adds new ones" $ do
+        let volume = KeyBinding (Mods 0) (Keysym 0x1008ff13)
+            config = additionalKeys def [(volume, Action.spawn "first"), (volume, Action.spawn "louder")]
+        assertEqual "the last repeat wins" [Action.Spawn "louder"] (intents (pressExactly config volume initial))
+        assertEqual "one binding added" 29 (length (keys config config))
+        prepareConfig config >>= either (assertFailure . ("validation rejected the addition: " <>) . show) (const (pure ()))
+    , testCase "additionalKeys keeps later record overrides" $ do
+        let config = (additionalKeys def [(KeyBinding Mod4 (Keysym 0x70), Action.spawn "menu")]){modMask = Mod1, terminal = "custom-terminal"}
+        assertEqual "default keys see the final modifier and terminal" [Action.Spawn "custom-terminal"] (intents (press config Shift 0xff0d initial))
+        assertEqual "the added binding keeps its literal modifier" [Action.Spawn "menu"] (intents (pressExactly config (KeyBinding Mod4 (Keysym 0x70)) initial))
+    , testCase "removeKeys removes a binding" $ do
+        let config = removeKeys def [KeyBinding (Mod4 .|. Shift) (Keysym 0x63)]
+        assertBool "kill is gone" (KeyBinding (Mod4 .|. Shift) (Keysym 0x63) `notElem` map fst (keys config config))
+        assertEqual "the rest remain" 27 (length (keys config config))
+        assertEqual "removed and re-added" [Action.Spawn "x"] (intents (pressExactly (additionalKeys config [(KeyBinding (Mod4 .|. Shift) (Keysym 0x63), Action.spawn "x")]) (KeyBinding (Mod4 .|. Shift) (Keysym 0x63)) initial))
     , testCase "invalid configuration fails before connecting" $
         bracket (lookupEnv "WAYLAND_DISPLAY") restore $ \_ -> do
           setEnv "WAYLAND_DISPLAY" "/this-wayland-display-does-not-exist"
@@ -112,8 +132,11 @@ stateWithTags tags = fromWorkspaces (AttachedState (StackSet.StackSet (StackSet.
   rest = [StackSet.Workspace tag (layoutHook def) Nothing | tag <- tail tags]
 
 press :: Config l -> Mods -> Word -> CoreState String l -> ((), CoreState String l, [Action.Intent])
-press config modifiers symbol core = case lookup (KeyBinding (modMask config .|. modifiers) (Keysym (fromIntegral symbol))) (keys config config) of
-  Nothing -> error "missing binding"
+press config modifiers symbol = pressExactly config (KeyBinding (modMask config .|. modifiers) (Keysym (fromIntegral symbol)))
+
+pressExactly :: Config l -> KeyBinding -> CoreState String l -> ((), CoreState String l, [Action.Intent])
+pressExactly config binding core = case lookup binding (keys config config) of
+  Nothing -> error ("missing binding " <> show binding)
   Just action -> Action.runAction action core
 
 -- | Run the policy's manage hook for window 2, already inserted in the state.
