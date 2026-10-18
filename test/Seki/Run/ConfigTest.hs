@@ -71,6 +71,9 @@ tests =
         let (_, changed, effects) = Action.runAction (Action.windows StackSet.focusDown >> Action.kill >> Action.spawn "one" >> Action.spawn "two") initial
         assertEqual "focus" (Just (StackSet.WindowId 3)) (peekState changed)
         assertEqual "ordered effects" [Action.ReclaimFocus, Action.CloseWindow (StackSet.WindowId 3), Action.Spawn "one", Action.Spawn "two"] effects
+    , testCase "the startup hook reaches the policy" $ do
+        assertEqual "the default hook does nothing" [] (intents (Action.runAction (policyStartupHook (policyConfigOf def)) initial))
+        assertEqual "a configured hook" [Action.Spawn "bar"] (intents (Action.runAction (policyStartupHook (policyConfigOf def{startupHook = Action.spawnOnce "bar"})) initial))
     , testCase "invalid configuration fails before connecting" $
         bracket (lookupEnv "WAYLAND_DISPLAY") restore $ \_ -> do
           setEnv "WAYLAND_DISPLAY" "/this-wayland-display-does-not-exist"
