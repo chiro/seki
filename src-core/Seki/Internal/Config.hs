@@ -22,10 +22,14 @@ module Seki.Internal.Config (
   KeyBinding (..),
   def,
   defaultKeys,
+  additionalKeys,
+  removeKeys,
 ) where
 
 import Data.Bits (Bits, (.|.))
+import Data.Function (on)
 import Data.Int (Int32)
+import Data.List (nubBy)
 import Data.Word (Word32)
 import Seki.Internal.Core.Action qualified as Core
 import Seki.Internal.Core.Layout (ChangeLayout (..), Choose, IncMasterN (..), LayoutClass, Mirror (..), Resize (..), (|||))
@@ -103,6 +107,19 @@ def =
     }
  where
   tall = Tall 1 (3 / 100) (1 / 2)
+
+{- | Add bindings, as EZConfig's @additionalKeys@ does. A new binding replaces
+an existing one with the same identity, and among repeated new identities the
+last wins. The existing bindings still see the final configuration.
+-}
+additionalKeys :: Config l -> Bindings l -> Config l
+additionalKeys config new = config{keys = \final -> added ++ filter ((`notElem` map fst added) . fst) (keys config final)}
+ where
+  added = reverse (nubBy ((==) `on` fst) (reverse new))
+
+-- | Remove bindings by identity, as EZConfig's @removeKeys@ does.
+removeKeys :: Config l -> [KeyBinding] -> Config l
+removeKeys config removed = config{keys = filter ((`notElem` removed) . fst) . keys config}
 
 -- | Build bindings from the final configuration, including record overrides.
 defaultKeys :: (LayoutClass l) => Config l -> Bindings l
