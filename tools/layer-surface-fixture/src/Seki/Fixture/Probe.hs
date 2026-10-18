@@ -75,6 +75,7 @@ data Window = Window
   , windowXdg :: Object Xdg.XdgSurface
   , windowColor :: Color
   , windowSize :: (Int32, Int32)
+  , windowPaintedSize :: Maybe (Int32, Int32)
   , windowReply :: Maybe (MVar ProbeWindow)
   }
 
@@ -191,19 +192,20 @@ actorLoop actor hasKeyboard windows =
           )
       send Xdg.xdgToplevelInterface top (Xdg.encodeXdgToplevelSetAppId (Data.Text.pack ("seki-color-probe-" <> show (Map.size windows + 1))))
       send W.wlSurfaceInterface surface W.encodeWlSurfaceCommit
-      continue hasKeyboard (Map.insert window (Window surface xdg color (100, 100) (Just reply)) windows)
+      continue hasKeyboard (Map.insert window (Window surface xdg color (100, 100) Nothing (Just reply)) windows)
     Size window width height -> continue hasKeyboard (Map.adjust (\w -> w{windowSize = if width > 0 && height > 0 then (width, height) else windowSize w}) window windows)
     Configure window serial -> case Map.lookup window windows of
       Nothing -> fail "configure for unknown probe window"
       Just w -> do
         let (width, height) = windowSize w
         send Xdg.xdgSurfaceInterface (windowXdg w) (Xdg.encodeXdgSurfaceAckConfigure serial)
-        (_, buffer, _) <- makeBuffer connection (actorShm actor) (actorFiles actor) width height W.WlShmFormatEnumXrgb8888 (colorBytes (windowColor w)) (\buffer descriptor -> writeChan (actorInputs actor) (Released buffer descriptor))
-        send W.wlSurfaceInterface (windowSurface w) (W.encodeWlSurfaceAttach (Just (objectId buffer)) 0 0)
-        send W.wlSurfaceInterface (windowSurface w) (W.encodeWlSurfaceDamage 0 0 width height)
+        when (windowPaintedSize w /= Just (width, height)) $ do
+          (_, buffer, _) <- makeBuffer connection (actorShm actor) (actorFiles actor) width height W.WlShmFormatEnumXrgb8888 (colorBytes (windowColor w)) (\buffer descriptor -> writeChan (actorInputs actor) (Released buffer descriptor))
+          send W.wlSurfaceInterface (windowSurface w) (W.encodeWlSurfaceAttach (Just (objectId buffer)) 0 0)
+          send W.wlSurfaceInterface (windowSurface w) (W.encodeWlSurfaceDamage 0 0 width height)
         send W.wlSurfaceInterface (windowSurface w) W.encodeWlSurfaceCommit
         mapM_ (\reply -> sync session (writeChan (actorInputs actor) (Synced reply window))) (windowReply w)
-        continue hasKeyboard (Map.insert window w{windowReply = Nothing} windows)
+        continue hasKeyboard (Map.insert window w{windowReply = Nothing, windowPaintedSize = Just (width, height)} windows)
     Synced reply window -> putMVar reply window >> continue hasKeyboard windows
  where
   session = actorSession actor

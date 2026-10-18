@@ -11,6 +11,7 @@ module Seki.Integration.Harness (
   withUnixListener,
   startManagedProcess,
   renderManagedProcessLogs,
+  managedProcessPid,
   stopManagedProcess,
   riverArguments,
   waitForRiverInit,
@@ -191,6 +192,9 @@ data ManagedProcess = ManagedProcess
   , managedProcessStdout :: BoundedLog
   , managedProcessStderr :: BoundedLog
   }
+
+managedProcessPid :: ManagedProcess -> IO (Maybe Int)
+managedProcessPid process = fmap fromIntegral <$> getPid (managedProcessHandle process)
 
 data ProbeSize = ProbeSize
   { probeRows :: Int

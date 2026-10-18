@@ -1,0 +1,171 @@
+{
+  "manifest": {
+    "schema": 1,
+    "machine": "Linux-7.2.9-arch1-1-x86_64-with-glibc2.44",
+    "cpu_count": 12,
+    "cpu_model": "AMD Ryzen 5 7535HS with Radeon Graphics",
+    "compiler": "9.6.7",
+    "river": "0.5.0 +xwayland",
+    "build_command": [
+      "cabal",
+      "build",
+      "seki-latency",
+      "-w",
+      "ghc-9.6.7",
+      "--offline",
+      "--enable-optimization=2",
+      "--builddir=dist-newstyle/latency"
+    ],
+    "build_provenance": "built by runner",
+    "binary": "/home/chir/src/github.com/chiro/seki/dist-newstyle/latency/build/x86_64-linux/ghc-9.6.7/seki-0.1.0.0/x/seki-latency/opt/build/seki-latency/seki-latency",
+    "binary_sha256": "9cc63fa9f521e2b0e29f0c1c7a18783662e7d98dc4b15431717291a4051bcc5b",
+    "seed": 1909,
+    "live_steps": 1023,
+    "pure_steps": 20000,
+    "pure_windows": 32,
+    "rts_common": [
+      "-N1",
+      "-T",
+      "-s"
+    ],
+    "rts_difference": "--nonmoving-gc",
+    "profile": true,
+    "clock_ticks_per_second": 100,
+    "trials": [
+      {
+        "directory": "00-profile",
+        "collector": "profile",
+        "load_before": [
+          2.24609375,
+          1.75244140625,
+          5.46484375
+        ],
+        "started_utc": "2026-10-18T06:28:18Z",
+        "load_after": [
+          1.6171875,
+          1.65185546875,
+          5.29248046875
+        ]
+      }
+    ],
+    "binary_reported_compiler": "ghc 9.6",
+    "compiler_provenance": "Exact compiler executable named by retained build command; patch metadata added after run because System.Info reports only ghc 9.6"
+  },
+  "driver": {
+    "end_ns": 209091244495628,
+    "final_focus_index": 3,
+    "final_visible": true,
+    "mode": "live",
+    "native_checks": true,
+    "observed_actions": 1023,
+    "seed": 1909,
+    "start_ns": 209062535238113,
+    "steps": 1023,
+    "valid": true,
+    "warmup": 24,
+    "windows": 8
+  },
+  "sample_count": 285,
+  "first": {
+    "monotonic_ns": 209062586579528,
+    "keyboard": {
+      "pid": 837361,
+      "user_ticks": 0,
+      "system_ticks": 0,
+      "start_ticks": 40885165
+    },
+    "wm": {
+      "pid": 837355,
+      "user_ticks": 2,
+      "system_ticks": 3,
+      "start_ticks": 40885161
+    },
+    "river": {
+      "pid": 837349,
+      "user_ticks": 5,
+      "system_ticks": 3,
+      "start_ticks": 40885158
+    },
+    "driver": {
+      "pid": 837344,
+      "user_ticks": 28,
+      "system_ticks": 20,
+      "start_ticks": 40885156
+    }
+  },
+  "last": {
+    "monotonic_ns": 209091186908339,
+    "keyboard": {
+      "pid": 837361,
+      "user_ticks": 0,
+      "system_ticks": 0,
+      "start_ticks": 40885165
+    },
+    "wm": {
+      "pid": 837355,
+      "user_ticks": 70,
+      "system_ticks": 41,
+      "start_ticks": 40885161
+    },
+    "river": {
+      "pid": 837349,
+      "user_ticks": 175,
+      "system_ticks": 74,
+      "start_ticks": 40885158
+    },
+    "driver": {
+      "pid": 837344,
+      "user_ticks": 99,
+      "system_ticks": 435,
+      "start_ticks": 40885156
+    }
+  },
+  "process_cpu": {
+    "wm": {
+      "samples": 285,
+      "cpu_s": 1.06,
+      "observed_wall_s": 28.600328811,
+      "one_core_percent": 3.7062510959395416
+    },
+    "river": {
+      "samples": 285,
+      "cpu_s": 2.41,
+      "observed_wall_s": 28.600328811,
+      "one_core_percent": 8.426476548315373
+    },
+    "driver": {
+      "samples": 285,
+      "cpu_s": 4.86,
+      "observed_wall_s": 28.600328811,
+      "one_core_percent": 16.992811628552996
+    },
+    "keyboard": {
+      "samples": 285,
+      "cpu_s": 0.0,
+      "observed_wall_s": 28.600328811,
+      "one_core_percent": 0.0
+    }
+  },
+  "wm_workload_rts_delta": {
+    "allocated_bytes": 1298506984,
+    "gc_cpu_ns": 24633811,
+    "gc_elapsed_ns": 25426963,
+    "gcs": 241,
+    "major_gcs": 1
+  },
+  "raw_sha256": {
+    "cpu.json": "29914f63b0207e0b896aaa49e4ef5babf7b574bbf7cc46f5f06b38bb7111db25",
+    "wm.eventlog": "c226efca7f394ae53ff13e185848a76e816eebbb75649713f2f1549a7673666d",
+    "wm.json": "17556c9882cd1d4cdccc0fa262105bd844e4ec2244dc462182aa2eab078951bd",
+    "wm.rts": "6e6e6b93bb63eaa7b5a918034ccae5eaf5ea48f04820975498f5a25a1c93f571",
+    "driver.json": "48be443c1573e0f6bb9b09f4eaac372ac5edb4fa9b91475875e6a377e41e2a49"
+  },
+  "eventlog_bytes": 903209,
+  "limitations": "CPU ticks have 10 ms resolution; short-lived per-action wtype subprocess CPU is excluded; eventlog retained locally, not parsed for source hotspots.",
+  "wm_recording": {
+    "successful": 6280,
+    "failed": 0,
+    "dropped": 0,
+    "clean_exit": true
+  }
+}

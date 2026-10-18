@@ -1,0 +1,188 @@
+{
+  "schema": 1,
+  "machine": "Linux-7.2.9-arch1-1-x86_64-with-glibc2.44",
+  "cpu_count": 12,
+  "cpu_model": "AMD Ryzen 5 7535HS with Radeon Graphics",
+  "compiler": "9.6.7",
+  "river": "0.5.0 +xwayland",
+  "build_command": [
+    "cabal",
+    "build",
+    "seki-latency",
+    "-w",
+    "ghc-9.6.7",
+    "--offline",
+    "--enable-optimization=2",
+    "--builddir=dist-newstyle/latency"
+  ],
+  "build_provenance": "built by runner",
+  "binary": "/home/chir/src/github.com/chiro/seki/dist-newstyle/latency/build/x86_64-linux/ghc-9.6.7/seki-0.1.0.0/x/seki-latency/opt/build/seki-latency/seki-latency",
+  "binary_sha256": "9cc63fa9f521e2b0e29f0c1c7a18783662e7d98dc4b15431717291a4051bcc5b",
+  "seed": 1909,
+  "live_steps": 1023,
+  "pure_steps": 20000,
+  "pure_windows": 32,
+  "rts_common": [
+    "-N1",
+    "-T",
+    "-s"
+  ],
+  "rts_difference": "--nonmoving-gc",
+  "profile": false,
+  "clock_ticks_per_second": 100,
+  "trials": [
+    {
+      "directory": "00-normal",
+      "collector": "normal",
+      "load_before": [
+        2.4365234375,
+        1.88330078125,
+        7.09716796875
+      ],
+      "started_utc": "2026-10-18T06:22:48Z",
+      "load_after": [
+        2.31591796875,
+        1.92236328125,
+        6.94384765625
+      ]
+    },
+    {
+      "directory": "01-nonmoving",
+      "collector": "nonmoving",
+      "load_before": [
+        2.31591796875,
+        1.92236328125,
+        6.94384765625
+      ],
+      "started_utc": "2026-10-18T06:23:21Z",
+      "load_after": [
+        2.34521484375,
+        1.96484375,
+        6.7705078125
+      ]
+    },
+    {
+      "directory": "02-normal",
+      "collector": "normal",
+      "load_before": [
+        2.34521484375,
+        1.96484375,
+        6.7705078125
+      ],
+      "started_utc": "2026-10-18T06:23:54Z",
+      "load_after": [
+        1.71533203125,
+        1.841796875,
+        6.5751953125
+      ]
+    },
+    {
+      "directory": "03-nonmoving",
+      "collector": "nonmoving",
+      "load_before": [
+        1.71533203125,
+        1.841796875,
+        6.5751953125
+      ],
+      "started_utc": "2026-10-18T06:24:26Z",
+      "load_after": [
+        1.3623046875,
+        1.744140625,
+        6.39111328125
+      ]
+    },
+    {
+      "directory": "04-normal",
+      "collector": "normal",
+      "load_before": [
+        1.3623046875,
+        1.744140625,
+        6.39111328125
+      ],
+      "started_utc": "2026-10-18T06:24:58Z",
+      "load_after": [
+        1.12841796875,
+        1.64453125,
+        6.1845703125
+      ]
+    },
+    {
+      "directory": "05-nonmoving",
+      "collector": "nonmoving",
+      "load_before": [
+        1.12841796875,
+        1.64453125,
+        6.1845703125
+      ],
+      "started_utc": "2026-10-18T06:25:30Z",
+      "load_after": [
+        0.99072265625,
+        1.552734375,
+        6.0078125
+      ]
+    },
+    {
+      "directory": "06-normal",
+      "collector": "normal",
+      "load_before": [
+        0.99072265625,
+        1.552734375,
+        6.0078125
+      ],
+      "started_utc": "2026-10-18T06:26:02Z",
+      "load_after": [
+        0.7734375,
+        1.44970703125,
+        5.8310546875
+      ]
+    },
+    {
+      "directory": "07-nonmoving",
+      "collector": "nonmoving",
+      "load_before": [
+        0.7734375,
+        1.44970703125,
+        5.8310546875
+      ],
+      "started_utc": "2026-10-18T06:26:33Z",
+      "load_after": [
+        1.10986328125,
+        1.462890625,
+        5.671875
+      ]
+    },
+    {
+      "directory": "08-normal",
+      "collector": "normal",
+      "load_before": [
+        1.10986328125,
+        1.462890625,
+        5.671875
+      ],
+      "started_utc": "2026-10-18T06:27:05Z",
+      "load_after": [
+        1.26171875,
+        1.466796875,
+        5.53759765625
+      ]
+    },
+    {
+      "directory": "09-nonmoving",
+      "collector": "nonmoving",
+      "load_before": [
+        1.26171875,
+        1.466796875,
+        5.53759765625
+      ],
+      "started_utc": "2026-10-18T06:27:37Z",
+      "load_after": [
+        2.44189453125,
+        1.7822265625,
+        5.49462890625
+      ]
+    }
+  ],
+  "binary_reported_compiler": "ghc 9.6",
+  "compiler_provenance": "Exact compiler executable named by retained build command; patch metadata added after run because System.Info reports only ghc 9.6",
+  "cabal": "3.10.3.0"
+}

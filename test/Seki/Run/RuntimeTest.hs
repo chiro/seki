@@ -3,7 +3,9 @@
 
 module Seki.Run.RuntimeTest (tests) where
 
+import Control.Exception (ErrorCall (..), throwIO, try)
 import Data.IORef (modifyIORef', newIORef, readIORef)
+import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Internal.Core.Geometry (GeometryError (..), Point (..), mkRect, mkSize)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
@@ -15,6 +17,7 @@ import Seki.Run.Inventory (
   riverInventoryOutputs,
   riverInventoryWindows,
  )
+import Seki.Run.Latency
 import Seki.Run.LayerShell (RiverLayerShellBootstrapError (..))
 import Seki.Run.MockRiver (
   callbackDoneFrame,
@@ -79,6 +82,7 @@ tests =
   testGroup
     "river runtime"
     [ testCase "opens, binds, dispatches, and closes an owned runtime" testOwnedRuntime
+    , testCase "counts and rethrows sequence handler exceptions" testHandlerException
     , testCase "retires removed inventory objects and their nodes" testInventoryRemoval
     , testCase "does not finish a sequence after a phase-plan failure" testPhasePlanFailure
     , testCase "rejects window interactions for untracked windows" testUnknownInteraction
@@ -100,6 +104,8 @@ tests =
 testOwnedRuntime :: Assertion
 testOwnedRuntime =
   withRuntimePair $ \target peer -> do
+    recorder <- newRecorder 10
+    callbackTimes <- newIORef []
     managerEvents <- newIORef []
     mockDone <- runMock $ do
       reader <- newFrameReader
@@ -129,7 +135,16 @@ testOwnedRuntime =
         =<< openRiverSessionAt
           target
           defaultObjectLimit
-          (runtimeHandlers (\event -> modifyIORef' managerEvents (<> [event])))
+          ( ( runtimeHandlers
+                ( \event -> do
+                    now <- getMonotonicTimeNSec
+                    modifyIORef' callbackTimes (<> [now])
+                    modifyIORef' managerEvents (<> [event])
+                )
+            )
+              { riverSequenceRecorder = Just recorder
+              }
+          )
     assertEqual "clean event-loop EOF" (Right ()) =<< runRiverSession session
     (managerId, xkbBindingsId, layerShellId) <- expectMockSuccess mockDone
     assertEqual "bound manager object" managerId (objectId (riverWindowManager session))
@@ -152,7 +167,40 @@ testOwnedRuntime =
       "event loop is one-shot"
       (Left RiverRuntimeEventLoopAlreadyOwned)
       =<< runRiverSession session
+    recording <- readRecording recorder
+    times <- readIORef callbackTimes
+    assertEqual "successful measured kinds" [ManageSequence, RenderSequence, RenderSequence, ManageSequence, RenderSequence] (map sampleKind (recordingSamples recording))
+    assertEqual "entry brackets handler and submission" True (and (zipWith (\sample now -> sampleStartedNS sample <= now && now <= sampleSubmittedNS sample) (recordingSamples recording) times))
+    assertEqual "no measurement failures" (5, 0, 0) (recordingSuccessful recording, recordingFailed recording, recordingDropped recording)
     closeRiverSession session
+
+testHandlerException :: Assertion
+testHandlerException = withRuntimePair $ \target peer -> do
+  recorder <- newRecorder 10
+  mockDone <- runMock $ do
+    reader <- newFrameReader
+    (registryId, callbackId) <- receiveStartupRequests reader peer
+    sendFrames
+      peer
+      [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+      , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+      , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
+      , callbackDoneFrame callbackId 91
+      ]
+    (managerId, _, _) <- receiveRuntimeBinds reader peer
+    sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
+    receiveChunk peer 8 >>= \case
+      Right Nothing -> pure ()
+      _ -> assertFailure "handler exception sent a successful finish"
+  let handlers = (runtimeHandlers (\_ -> throwIO (ErrorCall "latency exception sentinel"))){riverSequenceRecorder = Just recorder}
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
+  result <- try @ErrorCall (runRiverSession session)
+  case result of
+    Left exception -> assertEqual "original exception" "latency exception sentinel" (show exception)
+    Right value -> assertFailure ("exception swallowed: " <> show value)
+  expectMockSuccess mockDone
+  recording <- readRecording recorder
+  assertEqual "exception has no successful sample" (0, 1, []) (recordingSuccessful recording, recordingFailed recording, recordingSamples recording)
 
 testInventoryRemoval :: Assertion
 testInventoryRemoval =
@@ -205,6 +253,7 @@ testInventoryRemoval =
                   }
             , riverKeyBindings = []
             , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
+            , riverSequenceRecorder = Nothing
             , prepareRiverManagePlan = \_ -> pure (pure ())
             , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome False))
             }
@@ -219,6 +268,7 @@ testInventoryRemoval =
 testPhasePlanFailure :: Assertion
 testPhasePlanFailure =
   withRuntimePair $ \target peer -> do
+    recorder <- newRecorder 10
     mockDone <- runMock $ do
       reader <- newFrameReader
       (registryId, callbackId) <- receiveStartupRequests reader peer
@@ -247,6 +297,7 @@ testPhasePlanFailure =
             { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
             , riverKeyBindings = []
             , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
+            , riverSequenceRecorder = Just recorder
             , prepareRiverManagePlan = \snapshot ->
                 pure $ case riverInventoryWindows (riverRuntimeInventory snapshot) of
                   window : _ -> setWindowDimensionBounds (riverWindowObject window) 1920 1080
@@ -258,6 +309,8 @@ testPhasePlanFailure =
       Left (RiverRuntimeConnectionError _) -> pure ()
       result -> assertFailure ("expected phase-plan connection error, got: " <> show result)
     expectMockSuccess mockDone
+    recording <- readRecording recorder
+    assertEqual "failed phase has no successful sample" (0, 1, []) (recordingSuccessful recording, recordingFailed recording, recordingSamples recording)
 
 testInventoryFailure :: Assertion
 testInventoryFailure =
@@ -292,6 +345,7 @@ testInventoryFailure =
                   }
             , riverKeyBindings = []
             , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
+            , riverSequenceRecorder = Nothing
             , prepareRiverManagePlan = \_ -> pure (pure ())
             , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome False))
             }
@@ -374,6 +428,7 @@ testNodeAcquisitionFailure =
                   }
             , riverKeyBindings = []
             , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
+            , riverSequenceRecorder = Nothing
             , prepareRiverManagePlan = \_ -> pure (pure ())
             , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome False))
             }
@@ -466,6 +521,7 @@ testSeatBindingLifecycle =
                     modifyIORef' bindingPresses (<> [definition])
                     modifyIORef' disabledBindings (<> [binding])
                   _ -> pure ()
+            , riverSequenceRecorder = Nothing
             , prepareRiverManagePlan = \_ -> do
                 bindings <- readIORef disabledBindings
                 modifyIORef' disabledBindings (const [])
@@ -629,6 +685,7 @@ testSeatLayerShellLifecycle =
 testSequenceOrderError :: Assertion
 testSequenceOrderError =
   withRuntimePair $ \target peer -> do
+    recorder <- newRecorder 10
     managerEvents <- newIORef (0 :: Int)
     mockDone <- runMock $ do
       reader <- newFrameReader
@@ -647,7 +704,7 @@ testSequenceOrderError =
         =<< openRiverSessionAt
           target
           defaultObjectLimit
-          (runtimeHandlers (\_ -> modifyIORef' managerEvents (+ 1)))
+          ((runtimeHandlers (\_ -> modifyIORef' managerEvents (+ 1))){riverSequenceRecorder = Just recorder})
     expectMockSuccess mockDone
     assertEqual
       "sequence-order error"
@@ -661,6 +718,8 @@ testSequenceOrderError =
       )
       =<< runRiverSession session
     assertEqual "invalid event is not delivered" 0 =<< readIORef managerEvents
+    recording <- readRecording recorder
+    assertEqual "refused sequence counted as failure" (0, 1) (recordingSuccessful recording, recordingFailed recording)
 
 testMissingManager :: Assertion
 testMissingManager =
@@ -801,6 +860,7 @@ runtimeHandlers managerHandler =
     { riverProtocolHandlers = protocolHandlers managerHandler
     , riverKeyBindings = []
     , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
+    , riverSequenceRecorder = Nothing
     , prepareRiverManagePlan = \_ -> pure (pure ())
     , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome False))
     }
