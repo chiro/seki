@@ -84,6 +84,7 @@ import Network.Socket (
  )
 import Network.Socket.ByteString qualified as SocketByteString
 import Seki.Internal.Core.Action (kill, spawn)
+import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.Scene (SceneStyle (..), defaultSceneStyle)
 import Seki.Internal.Core.StackSet qualified as StackSet
 import Seki.Internal.Core.State (CoreState (..))
@@ -441,6 +442,7 @@ integrationConfig probeMode executable footConfigPath probeSocketPath clientEnvi
     , policyTags = ["1"]
     , policyBindings = [(functionKeyBinding 0xffbe, spawn "integration-terminal"), (functionKeyBinding 0xffbf, kill)]
     , policySceneStyle = defaultSceneStyle{sceneBorderWidth = 0}
+    , policyManageHook = idHook
     , policyLaunch = \_ -> do
         process <-
           startManagedProcess

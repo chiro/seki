@@ -5,6 +5,7 @@ module Seki.Run.ReconcileTest (tests) where
 import Control.Exception (onException)
 import Seki.Internal.Core.Action (sendMessage, windows)
 import Seki.Internal.Core.Layout (ChangeLayout (..), (|||))
+import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.Scene (defaultSceneStyle)
 import Seki.Internal.Core.StackSet (view)
 import Seki.Internal.Layout.Full (Full (..))
@@ -36,7 +37,7 @@ testSettlement = withRuntimePair $ \target peer -> do
   window <- requireObjectId 0xff000030
   output <- requireObjectId 0xff000031
   seat <- requireObjectId 0xff000032
-  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook)
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader
     (manager, _, layerShell) <- handshake reader peer
@@ -312,7 +313,7 @@ testLayerFocus = withRuntimePair $ \target peer -> do
     render
     renderEnd
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [(layoutKey, sendMessage NextLayout), (focusKey, windows id)] defaultSceneStyle (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [(layoutKey, sendMessage NextLayout), (focusKey, windows id)] defaultSceneStyle (\_ -> pure ()) idHook)
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -443,7 +444,7 @@ testLayouts = withRuntimePair $ \target peer -> do
     end
     closeTransport peer
   let actions = zip keys [sendMessage NextLayout, windows (view 2), windows (view 1)]
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 0.03 0.5 ||| Full) [1 :: Int, 2] actions defaultSceneStyle (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 0.03 0.5 ||| Full) [1 :: Int, 2] actions defaultSceneStyle (\_ -> pure ()) idHook)
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -479,7 +480,7 @@ testSingleTall = withRuntimePair $ \target peer -> do
     request window 4 (pure ())
     request manager 4 (pure ())
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 0.03 0.5) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 0.03 0.5) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook)
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done

@@ -12,8 +12,9 @@ module Seki.Internal.Core.Event (
 ) where
 
 import Data.List (foldl')
+import Data.Monoid (Endo (..))
 import Seki.Internal.Core.Action (Action, Intent, runAction)
-import Seki.Internal.Core.ManageHook (WindowProps)
+import Seki.Internal.Core.ManageHook (ManageHook, WindowProps, runQuery)
 import Seki.Internal.Core.StackSet (OutputId, WindowId)
 import Seki.Internal.Core.State (CoreState, addOutput, focusWindowIn, manageWindow, removeOutput, unmanageWindow)
 
@@ -28,9 +29,9 @@ data CoreEvent i l
   | RunAction (Action i l ())
 
 -- | Apply one event, returning the new state and the intents it recorded.
-stepCore :: (Eq i) => CoreEvent i l -> CoreState i l -> (CoreState i l, [Intent])
-stepCore event st = case event of
-  WindowCreated w _ -> (manageWindow w st, [])
+stepCore :: (Eq i) => ManageHook i l -> CoreEvent i l -> CoreState i l -> (CoreState i l, [Intent])
+stepCore hook event st = case event of
+  WindowCreated w props -> (manageWindow (appEndo (runQuery hook w props)) w st, [])
   WindowClosed w -> (unmanageWindow w st, [])
   OutputCreated o -> (addOutput o st, [])
   OutputRemoved o -> (removeOutput o st, [])
@@ -38,7 +39,7 @@ stepCore event st = case event of
   RunAction action -> let ((), st', intents) = runAction action st in (st', intents)
 
 -- | Apply events in arrival order, concatenating their intents in order.
-drainCore :: (Eq i) => [CoreEvent i l] -> CoreState i l -> (CoreState i l, [Intent])
-drainCore events st0 = foldl' step (st0, []) events
+drainCore :: (Eq i) => ManageHook i l -> [CoreEvent i l] -> CoreState i l -> (CoreState i l, [Intent])
+drainCore hook events st0 = foldl' step (st0, []) events
  where
-  step (st, intents) event = let (st', new) = stepCore event st in (st', intents ++ new)
+  step (st, intents) event = let (st', new) = stepCore hook event st in (st', intents ++ new)

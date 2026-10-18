@@ -22,6 +22,14 @@ Hotplug rules:
   The first surviving screen becomes current. With no screen left the state
   goes headless and remembers the removed workspace.
 * Adding a known output or removing an unknown one changes nothing.
+
+Managing a window runs its manage hook in either state. Headless, the hook
+sees the workspaces as a StackSet whose one screen shows the remembered
+workspace on an output no river object can have, and the result maps back:
+the current screen's workspace becomes the remembered one and every other
+workspace is hidden, in order. So a hook places a window the same way whether
+or not an output exists when it is created: @doShift@ to a hidden workspace
+leaves it hidden until that workspace is shown.
 -}
 module Seki.Internal.Core.State (
   CoreState (..),
@@ -39,16 +47,15 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Seki.Internal.Core.StackSet (
   FloatGeom,
-  OutputId,
+  OutputId (..),
   Screen (..),
-  Stack (..),
   StackSet (..),
   WindowId,
   Workspace (..),
   delete,
   focusWindow,
   insertUp,
-  integrate',
+  member,
   screens,
  )
 import Seki.Internal.Core.StackSet qualified as StackSet
@@ -118,16 +125,23 @@ removeOutput o st@(AttachedState ss unassigned)
               c : vs -> AttachedState ss{current = c, visible = vs, hidden = drop n freed} (drop n unassigned)
 
 {- | xmonad's manage: insert a window above the current workspace's focus and
-focus it. Headless, the remembered current workspace takes it, so it shows
-when an output arrives. A window already present anywhere changes nothing.
+focus it, then apply the manage hook's change. Headless, the remembered
+current workspace takes it, so it shows when an output arrives. A window
+already present anywhere changes nothing and skips the hook.
 -}
-manageWindow :: WindowId -> CoreState i l -> CoreState i l
-manageWindow w (AttachedState ss unassigned) = AttachedState (insertUp w ss) unassigned
-manageWindow w st@(HeadlessState hw@(HeadlessWorkspaces c hs _))
-  | any (elem w . integrate' . stack) (c : hs) = st
-  | otherwise = HeadlessState hw{headlessCurrent = c{stack = Just (maybe (Stack w [] []) above (stack c))}}
+manageWindow :: (StackSet i l -> StackSet i l) -> WindowId -> CoreState i l -> CoreState i l
+manageWindow hook w = onStackSet (\ss -> if member w ss then ss else hook (insertUp w ss))
+
+onStackSet :: (StackSet i l -> StackSet i l) -> CoreState i l -> CoreState i l
+onStackSet f (AttachedState ss unassigned) = AttachedState (f ss) unassigned
+onStackSet f (HeadlessState (HeadlessWorkspaces c hs fl)) =
+  HeadlessState (HeadlessWorkspaces (workspace (current ss)) (map workspace (visible ss) ++ hidden ss) (floating ss))
  where
-  above (Stack t l r) = Stack w l (t : r)
+  ss = f (StackSet (Screen c headlessOutput) [] hs fl)
+
+-- | The output headless workspaces stand on while a hook runs. Wayland never allocates object id 0, so no river output has it.
+headlessOutput :: OutputId
+headlessOutput = OutputId 0
 
 -- | xmonad's delete, from every workspace and the floating map, in either state.
 unmanageWindow :: WindowId -> CoreState i l -> CoreState i l
