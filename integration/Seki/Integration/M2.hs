@@ -10,6 +10,7 @@ import Seki.Fixture.Probe
 import Seki.Integration.Fixture hiding (Fixture)
 import Seki.Integration.Fixture qualified as Shared
 import Seki.Integration.Harness
+import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.Scene (BorderColor (..), SceneStyle (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Run.Inventory
@@ -83,5 +84,6 @@ m2Config =
     , policyTags = ["1", "2", "3"]
     , policyBindings = []
     , policySceneStyle = SceneStyle 2 (BorderColor maxBound 0 maxBound maxBound) (BorderColor 0x40404040 0x40404040 0x40404040 maxBound)
+    , policyManageHook = idHook
     , policyLaunch = \_ -> failIntegration "unexpected spawn in M2 policy"
     }

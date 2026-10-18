@@ -3,9 +3,10 @@ module Seki.Internal.Core.EventTest (tests) where
 import Data.List (sort)
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
+import Data.Text qualified as Text
 import Seki.Internal.Core.Action (Intent (..), spawn, windows)
 import Seki.Internal.Core.Event (CoreEvent (..), drainCore, stepCore)
-import Seki.Internal.Core.ManageHook (noWindowProps)
+import Seki.Internal.Core.ManageHook (WindowProps (..), appId, doShift, idHook, noWindowProps, (-->), (=?))
 import Seki.Internal.Core.StackSet (
   OutputId (..),
   Screen (..),
@@ -42,43 +43,46 @@ reducerTests =
   testGroup
     "reducer"
     [ testCase "starts headless with nothing to do" $
-        drainCore [] initial @?= (initial, [])
+        drainCore idHook [] initial @?= (initial, [])
     , testCase "attaches the first output to the remembered workspace" $
-        stepCore (OutputCreated o1) initial
+        stepCore idHook (OutputCreated o1) initial
           @?= (AttachedState (StackSet (Screen (ws 'a') o1) [] [ws 'b', ws 'c'] Map.empty) [], [])
     , testCase "shows a hidden workspace on a second output" $
-        drainCore [OutputCreated o1, OutputCreated o2] initial
+        drainCore idHook [OutputCreated o1, OutputCreated o2] initial
           @?= (twoOutputs, [])
     , testCase "hides a removed second output's workspace first" $
-        stepCore (OutputRemoved o2) twoOutputs
+        stepCore idHook (OutputRemoved o2) twoOutputs
           @?= (AttachedState (StackSet (Screen (ws 'a') o1) [] [ws 'b', ws 'c'] Map.empty) [], [])
     , testCase "goes headless when the last output is removed" $
-        drainCore [OutputCreated o1, OutputRemoved o1] initial
+        drainCore idHook [OutputCreated o1, OutputRemoved o1] initial
           @?= (initial, [])
     , testCase "manages and unmanages windows while attached" $
-        drainCore [OutputCreated o1, created w1, created w2, WindowClosed w2] initial
+        drainCore idHook [OutputCreated o1, created w1, created w2, WindowClosed w2] initial
           @?= (AttachedState (StackSet (Screen (wsWith 'a' (Stack w1 [] [])) o1) [] [ws 'b', ws 'c'] Map.empty) [], [])
     , testCase "manages and unmanages windows while headless" $
-        drainCore [created w1, created w2, WindowClosed w1] initial
+        drainCore idHook [created w1, created w2, WindowClosed w1] initial
           @?= (HeadlessState (HeadlessWorkspaces (wsWith 'a' (Stack w2 [] [])) [ws 'b', ws 'c'] Map.empty), [])
     , testCase "shows a window created while headless on the first output" $
-        drainCore [created w1, OutputCreated o1] initial
+        drainCore idHook [created w1, OutputCreated o1] initial
           @?= (AttachedState (StackSet (Screen (wsWith 'a' (Stack w1 [] [])) o1) [] [ws 'b', ws 'c'] Map.empty) [], [])
     , testCase "focuses an interacted window" $
-        drainCore [OutputCreated o1, created w1, created w2, WindowInteraction w1] initial
+        drainCore idHook [OutputCreated o1, created w1, created w2, WindowInteraction w1] initial
           @?= (AttachedState (StackSet (Screen (wsWith 'a' (Stack w1 [w2] [])) o1) [] [ws 'b', ws 'c'] Map.empty) [], [])
     , testCase "makes the output of an interacted window current" $
-        drainCore (onTwoOutputs ++ [WindowInteraction w2]) initial
+        drainCore idHook (onTwoOutputs ++ [WindowInteraction w2]) initial
           @?= ( AttachedState
                   (StackSet (Screen (wsWith 'b' (Stack w2 [] [])) o2) [Screen (wsWith 'a' (Stack w1 [] [])) o1] [ws 'c'] Map.empty)
                   []
               , [ReclaimFocus, ReclaimFocus]
               )
     , testCase "ignores interaction with an unknown window" $
-        let (st, _) = drainCore onTwoOutputs initial
-         in stepCore (WindowInteraction w3) st @?= (st, [])
+        let (st, _) = drainCore idHook onTwoOutputs initial
+         in stepCore idHook (WindowInteraction w3) st @?= (st, [])
+    , testCase "runs the manage hook on each created window's properties" $
+        drainCore (appId =? "mpv" --> doShift 'b') [OutputCreated o1, WindowCreated w1 foot, WindowCreated w2 mpv] initial
+          @?= (AttachedState (StackSet (Screen (wsWith 'a' (Stack w1 [] [])) o1) [] [wsWith 'b' (Stack w2 [] []), ws 'c'] Map.empty) [], [])
     , testCase "runs actions and keeps their intents in arrival order" $
-        drainCore [RunAction (spawn "x"), created w1, RunAction (spawn "y")] initial
+        drainCore idHook [RunAction (spawn "x"), created w1, RunAction (spawn "y")] initial
           @?= (HeadlessState (HeadlessWorkspaces (wsWith 'a' (Stack w1 [] [])) [ws 'b', ws 'c'] Map.empty), [Spawn "x", Spawn "y"])
     ]
 
@@ -109,6 +113,10 @@ o1, o2 :: OutputId
 o1 = OutputId 1
 o2 = OutputId 2
 
+foot, mpv :: WindowProps
+foot = noWindowProps{propAppId = Just (Text.pack "foot")}
+mpv = noWindowProps{propAppId = Just (Text.pack "mpv")}
+
 created :: WindowId -> CoreEvent i l
 created w = WindowCreated w noWindowProps
 
@@ -127,27 +135,27 @@ propInvariant h =
       | (n, st) <- zip [0 :: Int ..] prefixes
       ]
  where
-  prefixes = scanl (\st (EventStep _ e) -> fst (stepCore e st)) (historyStart h) (historySteps h)
+  prefixes = scanl (\st (EventStep _ e) -> fst (stepCore idHook e st)) (historyStart h) (historySteps h)
   isHeadless HeadlessState{} = True
   isHeadless AttachedState{} = False
 
 propManagedWindows :: EventHistory -> Property
 propManagedWindows h = managed final === Set.toList expected
  where
-  (final, _) = drainCore [e | EventStep _ e <- historySteps h] (historyStart h)
+  (final, _) = drainCore idHook [e | EventStep _ e <- historySteps h] (historyStart h)
   expected = foldl track Set.empty (historySteps h)
   track live (EventStep _ (WindowCreated w _)) = Set.insert w live
   track live (EventStep _ (WindowClosed w)) = Set.delete w live
   track live _ = live
 
 propDrainSteps :: EventHistory -> Property
-propDrainSteps h = drainCore events st0 === stepAll events st0
+propDrainSteps h = drainCore idHook events st0 === stepAll events st0
  where
   events = [e | EventStep _ e <- historySteps h]
   st0 = historyStart h
   stepAll [] st = (st, [])
   stepAll (e : es) st =
-    let (st1, is1) = stepCore e st
+    let (st1, is1) = stepCore idHook e st
         (st2, is2) = stepAll es st1
      in (st2, is1 ++ is2)
 

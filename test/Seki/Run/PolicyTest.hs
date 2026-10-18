@@ -10,8 +10,10 @@ import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (sort)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
+import Data.Text qualified as Text
 import Data.Word (Word32)
 import Seki.Internal.Core.Action (Action, kill, spawn, windows)
+import Seki.Internal.Core.ManageHook (ManageHook, appId, doShift, idHook, (-->), (=?))
 import Seki.Internal.Core.Scene (BorderColor (..), SceneStyle (..), defaultSceneStyle)
 import Seki.Internal.Core.StackSet (
   OutputId (..),
@@ -67,7 +69,7 @@ import Seki.Run.Runtime (
   runRiverSession,
  )
 import Seki.Run.Xkb (RiverKeyBinding (..))
-import Seki.Wire.Arguments (putNewId, putObject)
+import Seki.Wire.Arguments (putNewId, putNullableString, putObject)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit, objectId)
 import Seki.Wire.Transport (ConnectionTarget, Transport, closeTransport)
 import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..), objectIdValue)
@@ -83,6 +85,7 @@ tests =
     "runtime policy"
     [ testCase "rejects configuration errors before connecting" testConfigErrors
     , testCase "applies river events at the next manage_start" testEventsAtManageStart
+    , testCase "runs the manage hook on the properties river sent before manage_start" testManageHookProps
     , testCase "focuses on interaction and ignores pointer enter and leave" testSeatEvents
     , testCase "applies bindings pressed before one manage_start in press order" testBindingOrder
     , testCase "queues window events and bindings in one arrival order" testOneQueue
@@ -105,7 +108,7 @@ data Drain = Drain
 testConfigErrors :: Assertion
 testConfigErrors = do
   let binding = keyBinding 0x61
-      config tags bindings = PolicyConfig Full tags bindings defaultSceneStyle (\_ -> pure ())
+      config tags bindings = PolicyConfig Full tags bindings defaultSceneStyle (\_ -> pure ()) idHook
   let invalidWidth = defaultSceneStyle{sceneBorderWidth = -1}
       invalidColor = defaultSceneStyle{sceneFocusedColor = BorderColor 2 0 0 1}
   assertError (PolicyInvalidSceneStyle invalidWidth) =<< newPolicy (config [1] []){policySceneStyle = invalidWidth}
@@ -147,6 +150,37 @@ testEventsAtManageStart =
         assertEqual "the second manage_start manages it" (sort [wid w1, wid w2]) (managed (drainAfter d1))
       _ -> assertFailure ("expected two drains, got " <> show (length drains))
     mapM_ (\d -> assertEqual "every inventory window with a node is managed" (sort (drainNodeWindows d)) (managed (drainAfter d))) drains
+
+testManageHookProps :: Assertion
+testManageHookProps =
+  withRuntimePair $ \target peer -> do
+    w1 <- requireObjectId 0xff000038
+    w2 <- requireObjectId 0xff000039
+    o1 <- requireObjectId 0xff00003a
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (managerId, _, layerShellId) <- handshake reader peer
+      sendFrames
+        peer
+        [ newWindow managerId w1
+        , newWindow managerId w2
+        , encodedFrame w1 (Opcode 3) (putNullableString (Just (Text.pack "mpv")))
+        , newOutput managerId o1
+        , manageStart managerId
+        ]
+      _ <- receiveNewIdRequest reader peer w1 (Opcode 2)
+      _ <- receiveNewIdRequest reader peer w2 (Opcode 2)
+      ls1 <- receiveLayerShellOutputRequest reader peer layerShellId o1
+      finishManageDefault reader peer managerId ls1
+      closeTransport peer
+    (_, drains) <- runPolicyWith (appId =? "mpv" --> doShift 2) target mockDone []
+    case drains of
+      [d0] ->
+        assertEqual
+          "the app_id sent after the window event moves only that window, and w2 keeps focus"
+          (AttachedState (StackSet (Screen (Workspace 1 Full (Just (Stack (wid w2) [] []))) (oid o1)) [] [Workspace 2 Full (Just (Stack (wid w1) [] [])), empty 3] Map.empty) [])
+          (drainAfter d0)
+      _ -> assertFailure ("expected one drain, got " <> show (length drains))
 
 testSeatEvents :: Assertion
 testSeatEvents =
@@ -358,10 +392,18 @@ runPolicy ::
   MVar (Either SomeException ()) ->
   [(RiverKeyBinding, Action Int Full ())] ->
   IO ([String], [Drain])
-runPolicy target mockDone bindings = do
+runPolicy = runPolicyWith idHook
+
+runPolicyWith ::
+  ManageHook Int Full ->
+  ConnectionTarget ->
+  MVar (Either SomeException ()) ->
+  [(RiverKeyBinding, Action Int Full ())] ->
+  IO ([String], [Drain])
+runPolicyWith hook target mockDone bindings = do
   launches <- newIORef []
   drains <- newIORef []
-  policy <- expectRight =<< newPolicy (PolicyConfig Full [1, 2, 3] bindings defaultSceneStyle (record launches))
+  policy <- expectRight =<< newPolicy (PolicyConfig Full [1, 2, 3] bindings defaultSceneStyle (record launches) hook)
   let handlers = policyRuntimeHandlers policy
       observed =
         handlers

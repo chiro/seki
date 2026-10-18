@@ -20,6 +20,7 @@ import Seki.Integration.Harness
 import Seki.Internal.Core.Action (Action, sendMessage, windows)
 import Seki.Internal.Core.Geometry (rectHeight, rectWidth, rectX, rectY)
 import Seki.Internal.Core.Layout (ChangeLayout (..), Choose, IncMasterN (..), Mirror (..), Resize (..), (|||))
+import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.Scene (BorderColor (..), SceneStyle (..))
 import Seki.Internal.Core.StackSet qualified as SS
 import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..))
@@ -300,6 +301,7 @@ m1Config =
     , policyTags = ["1", "2", "3"]
     , policyBindings = [(RiverKeyBinding (0xffbe + fromIntegral (fromEnum key)) (River.RiverSeatV1ModifiersFlags 0) (Just 0), action key) | key <- [Down .. SelectTwo]]
     , policySceneStyle = SceneStyle 2 (BorderColor maxBound 0 maxBound maxBound) (BorderColor 0x40404040 0x40404040 0x40404040 maxBound)
+    , policyManageHook = idHook
     , policyLaunch = \_ -> failIntegration "unexpected spawn in M1 policy"
     }
  where

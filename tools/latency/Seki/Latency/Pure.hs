@@ -17,6 +17,7 @@ import Seki.Internal.Core.Action
 import Seki.Internal.Core.Event
 import Seki.Internal.Core.Geometry
 import Seki.Internal.Core.Layout
+import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.Scene
 import Seki.Internal.Core.StackSet qualified as S
 import Seki.Internal.Core.State
@@ -28,7 +29,7 @@ layout :: BenchLayout
 layout = Tall 1 (1 / 10) (1 / 2) ||| Mirror (Tall 1 (1 / 10) (1 / 2)) ||| Full
 
 initialState :: Int -> CoreState String BenchLayout
-initialState count = foldl' (flip manageWindow) attached [S.WindowId (fromIntegral i) | i <- [1 .. count]]
+initialState count = foldl' (flip (manageWindow id)) attached [S.WindowId (fromIntegral i) | i <- [1 .. count]]
  where
   attached = addOutput (S.OutputId 1) (either (error . show) id (newCoreState layout ["1", "2", "3"]))
 
@@ -140,14 +141,14 @@ runPure path seed windowCount steps = do
   (warmed, _, _) <- foldM (step False) (st0, 0, []) (take 128 events)
   (final, checksum, rows) <- foldM (step True) (warmed, 0, []) (drop 128 events)
   unless (validateResult windowCount final (plan final)) (fail "pure final invariants failed")
-  let replay = foldl' (\(!st, !hash) event -> let (next, intents) = drainCore [event] st; h = forceResult next intents (plan next) in (next, mix hash h)) (warmed, 0) (drop 128 events)
+  let replay = foldl' (\(!st, !hash) event -> let (next, intents) = drainCore idHook [event] st; h = forceResult next intents (plan next) in (next, mix hash h)) (warmed, 0) (drop 128 events)
   unless (snd replay == checksum) (fail "pure deterministic replay checksum mismatch")
   BL.writeFile path (encode (object ["mode" .= ("pure" :: String), "seed" .= seed, "windows" .= windowCount, "steps" .= steps, "warmup" .= (128 :: Int), "checksum" .= checksum, "samples_ns" .= reverse rows, "valid" .= True]))
  where
   plan st = planScene defaultSceneStyle st (Map.singleton (S.OutputId 1) area) Map.empty
   step measured (!st, !checksum, rows) event = do
     start <- getMonotonicTimeNSec
-    let (next, intents) = drainCore [event] st
+    let (next, intents) = drainCore idHook [event] st
         desired = plan next
     digest <- evaluate (forceResult next intents desired)
     end <- getMonotonicTimeNSec

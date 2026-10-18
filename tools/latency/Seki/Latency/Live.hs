@@ -18,6 +18,7 @@ import GHC.Stats
 import Seki.Fixture.Probe
 import Seki.Integration.Harness
 import Seki.Internal.Core.Action (windows)
+import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.Scene (defaultSceneStyle)
 import Seki.Internal.Core.StackSet qualified as S
 import Seki.Internal.Core.State (CoreState (..))
@@ -135,6 +136,7 @@ runWM socket directory = do
             [0xffbe ..]
             [S.focusDown, S.focusUp, S.greedyView "2", S.greedyView "1"]
       , policySceneStyle = defaultSceneStyle
+      , policyManageHook = idHook
       , policyLaunch = \_ -> fail "unexpected spawn"
       }
 

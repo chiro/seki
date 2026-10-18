@@ -9,6 +9,7 @@ import Data.Int (Int32)
 import Data.Maybe (isJust)
 import Seki.Internal.Core.Action (windows)
 import Seki.Internal.Core.Layout (LayoutClass, Mirror (..))
+import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.Scene (defaultSceneStyle)
 import Seki.Internal.Core.StackSet (WindowId (..), focusDown, index, peek)
 import Seki.Internal.Core.State (CoreState (..))
@@ -102,7 +103,7 @@ testTrace layout desiredSizes steps = withRuntimePair $ \target peer -> do
           pure (zipWith3 (\p s v -> Model p s (Just v)) pending' settled visible)
     _ <- foldM step (map (const (Model Nothing Nothing Nothing)) windows) (steps ++ replicate 3 (100, True))
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig layout [1 :: Int] [] defaultSceneStyle (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig layout [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook)
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -116,7 +117,7 @@ testFamilies = withRuntimePair $ \target peer -> do
   w4 <- requireObjectId 0xff0000a3
   output <- requireObjectId 0xff0000a4
   seat <- requireObjectId 0xff0000a5
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook)
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader
     (manager, _, layerShell) <- handshake reader peer
@@ -238,7 +239,7 @@ testChildUnderFull = withRuntimePair $ \target peer -> do
     requests seat 1 parentFocused @?= [parentPayload]
     _ <- render
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook)
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -289,7 +290,7 @@ testFullSelection = withRuntimePair $ \target peer -> do
     requests seat 1 refocused @?= [focusPayload]
     _ <- render
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [(focusKey, windows focusDown)] defaultSceneStyle (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [(focusKey, windows focusDown)] defaultSceneStyle (\_ -> pure ()) idHook)
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done

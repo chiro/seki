@@ -34,7 +34,7 @@ import Data.Word (Word32)
 import Seki.Internal.Core.Action (Action, Intent (..))
 import Seki.Internal.Core.Event (CoreEvent (..), drainCore)
 import Seki.Internal.Core.Layout (LayoutClass)
-import Seki.Internal.Core.ManageHook (DimensionsHint (..), WindowProps (..), noWindowProps)
+import Seki.Internal.Core.ManageHook (DimensionsHint (..), ManageHook, WindowProps (..), noWindowProps)
 import Seki.Internal.Core.Scene (BorderColor (..), DesiredScene (..), SceneStyle (..), planScene)
 import Seki.Internal.Core.StackSet (OutputId (..), WindowId (..))
 import Seki.Internal.Core.State (CoreState (..), WorkspaceTagError, newCoreState)
@@ -59,6 +59,7 @@ data PolicyConfig i l = PolicyConfig
   , policySceneStyle :: SceneStyle
   , policyLaunch :: String -> IO ()
   -- ^ Runs while a manage sequence is prepared, so it must not block; see 'launchDetached'.
+  , policyManageHook :: ManageHook i l
   }
 
 data PolicyError i
@@ -134,7 +135,7 @@ policyRuntimeHandlers policy =
 prepareManagePlan :: (Eq i, LayoutClass l) => Policy i l -> RiverRuntimeSnapshot -> IO (ManageM ())
 prepareManagePlan policy snapshot = do
   events <- map ($ inventory) . reverse <$> atomicModifyIORef' (policyQueue policy) ([],)
-  (st, intents) <- drainCore events <$> readIORef (policyState policy)
+  (st, intents) <- drainCore (policyManageHook (policyConfig policy)) events <$> readIORef (policyState policy)
   writeIORef (policyState policy) st
   mapM_ (policyLaunch (policyConfig policy)) [cmd | Spawn cmd <- intents]
   let scene =
