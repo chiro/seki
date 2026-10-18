@@ -24,6 +24,7 @@ module Seki (
   windows,
   sendMessage,
   spawn,
+  spawnOnce,
   kill,
   ManageHook,
   Query,
@@ -89,6 +90,10 @@ sendMessage = Core.sendMessage
 -- | Launch a shell command without waiting for it.
 spawn :: String -> Action l ()
 spawn = Core.spawn
+
+-- | Launch a shell command unless 'spawnOnce' already launched the same command string.
+spawnOnce :: String -> Action l ()
+spawnOnce = Core.spawnOnce
 
 -- | Ask river to close the focused window.
 kill :: Action l ()

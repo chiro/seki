@@ -1,7 +1,8 @@
 module Seki.Internal.Core.ActionTest (tests) where
 
 import Data.Map.Strict qualified as Map
-import Seki.Internal.Core.Action (Intent (..), kill, runAction, sendMessage, spawn, windows)
+import Data.Set qualified as Set
+import Seki.Internal.Core.Action (Action, Intent (..), kill, runAction, sendMessage, spawn, spawnOnce, windows)
 import Seki.Internal.Core.Layout (CLR (..), ChangeLayout (..), Choose (..), IncMasterN (..), Mirror (..), Resize (..))
 import Seki.Internal.Core.StackSet (
   OutputId (..),
@@ -16,7 +17,7 @@ import Seki.Internal.Core.StackSet (
   shift,
   swapMaster,
  )
-import Seki.Internal.Core.State (CoreState, HeadlessWorkspaces (..), Workspaces (..), fromWorkspaces, overWorkspaces)
+import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..), fromWorkspaces, overWorkspaces)
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Test.Tasty (TestTree, testGroup)
@@ -97,8 +98,21 @@ tests =
             runAction (spawn "foot") attached @?= ((), attached, [Spawn "foot"])
         , testCase "kill records a close for the focused window" $
             runAction kill attached @?= ((), attached, [CloseWindow w2])
+        , testCase "spawnOnce launches the same command once" $
+            intentsOf (spawnOnce "bar" >> spawnOnce "bar") attached @?= [Spawn "bar"]
+        , testCase "spawnOnce launches each different command" $
+            intentsOf (spawnOnce "bar" >> spawnOnce "dunst" >> spawnOnce "bar") attached @?= [Spawn "bar", Spawn "dunst"]
+        , testCase "spawnOnce remembers its commands across actions, headless included" $ do
+            let ((), st, first) = runAction (spawnOnce "bar") headless
+            first @?= [Spawn "bar"]
+            coreSpawnedOnce st @?= Set.singleton "bar"
+            intentsOf (spawnOnce "bar") st @?= []
+            intentsOf (spawn "bar") st @?= [Spawn "bar"]
         ]
     ]
+
+intentsOf :: Action Int L () -> CoreState Int L -> [Intent]
+intentsOf action st = let ((), _, intents) = runAction action st in intents
 
 tall :: Tall
 tall = Tall 1 (3 / 100) (1 / 2)

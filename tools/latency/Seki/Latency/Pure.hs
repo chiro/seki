@@ -11,6 +11,7 @@ import Data.ByteString.Lazy qualified as BL
 import Data.List (foldl', sort)
 import Data.Map.Strict qualified as Map
 import Data.Ratio (denominator, numerator)
+import Data.Set qualified as Set
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Internal.Core.Action
@@ -90,11 +91,13 @@ screen (S.Screen ws o) = mix (workspace ws) (output o)
 floats :: Map.Map S.WindowId S.FloatGeom -> Word64
 floats = Map.foldlWithKey' (\a w r -> mix a (mix (window w) (rect r))) 0
 state :: CoreState String BenchLayout -> Word64
-state st = case coreWorkspaces st of
+state st = mix (many command (Set.toList (coreSpawnedOnce st))) $ case coreWorkspaces st of
   HeadlessState (HeadlessWorkspaces c hs fs) -> many id [0, workspace c, many workspace hs, floats fs]
   AttachedState (S.StackSet c vs hs fs) os -> many id [1, screen c, many screen vs, many workspace hs, floats fs, many output os]
+command :: String -> Word64
+command = many (fromIntegral . fromEnum)
 intent :: Intent -> Word64
-intent (Spawn command) = mix 1 (many (fromIntegral . fromEnum) command)
+intent (Spawn cmd) = mix 1 (command cmd)
 intent (CloseWindow w) = mix 2 (window w)
 intent ReclaimFocus = 3
 scene :: DesiredScene -> Word64

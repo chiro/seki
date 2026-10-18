@@ -48,6 +48,8 @@ module Seki.Internal.Core.State (
 
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Set (Set)
+import Data.Set qualified as Set
 import Seki.Internal.Core.StackSet (
   FloatGeom,
   OutputId (..),
@@ -64,7 +66,11 @@ import Seki.Internal.Core.StackSet (
 import Seki.Internal.Core.StackSet qualified as StackSet
 
 -- | Everything the core reduces events into.
-data CoreState i l = CoreState {coreWorkspaces :: Workspaces i l}
+data CoreState i l = CoreState
+  { coreWorkspaces :: Workspaces i l
+  , coreSpawnedOnce :: Set String
+  -- ^ The commands 'Seki.Internal.Core.Action.spawnOnce' has launched.
+  }
   deriving (Eq, Show)
 
 -- | The core's workspaces, with or without outputs to show them on.
@@ -103,7 +109,7 @@ newCoreState l tags@(t : ts) = case firstRepeat [] tags of
 
 -- | A core state over these workspaces with nothing else recorded yet.
 fromWorkspaces :: Workspaces i l -> CoreState i l
-fromWorkspaces = CoreState
+fromWorkspaces ws = CoreState ws Set.empty
 
 -- | Change the workspaces and keep the rest of the core state.
 overWorkspaces :: (Workspaces i l -> Workspaces i l) -> CoreState i l -> CoreState i l
