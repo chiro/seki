@@ -13,10 +13,12 @@ module Seki.Internal.Core.Action (
   windows,
   sendMessage,
   spawn,
+  spawnOnce,
   kill,
 ) where
 
 import Control.Monad (ap)
+import Data.Set qualified as Set
 import Seki.Internal.Core.Layout (LayoutClass, Message, SomeMessage (..), messageCurrentLayout)
 import Seki.Internal.Core.StackSet (StackSet, WindowId, peek)
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..), overWorkspaces)
@@ -76,6 +78,16 @@ sendMessage m = modifyWindows (messageCurrentLayout (SomeMessage m))
 -- | Launch a shell command once the action has run.
 spawn :: String -> Action i l ()
 spawn cmd = record (const [Spawn cmd])
+
+{- | Launch a shell command unless 'spawnOnce' already launched the same
+command string, as xmonad-contrib's @SpawnOnce@ does. The recorded set is
+part of the core state, not of the process.
+-}
+spawnOnce :: String -> Action i l ()
+spawnOnce cmd = Action $ \st ->
+  if cmd `Set.member` coreSpawnedOnce st
+    then ((), st, [])
+    else ((), st{coreSpawnedOnce = Set.insert cmd (coreSpawnedOnce st)}, [Spawn cmd])
 
 {- | Ask river to close the window focused at this point in the action. The
 window stays managed until river reports it closed.
