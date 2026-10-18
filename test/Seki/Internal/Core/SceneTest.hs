@@ -6,9 +6,9 @@ import Data.List (sort)
 import Data.Map.Strict qualified as Map
 import Seki.Internal.Core.Geometry (Point (..), Rect, mkRect, mkSize, rectHeight, rectWidth, rectX, rectY)
 import Seki.Internal.Core.GeometryGen (genRatio, genRect)
-import Seki.Internal.Core.Layout (CLR (..), Choose (..), LayoutClass, Mirror (..), runLayout)
+import Seki.Internal.Core.Layout (CLR (..), Choose (..), LayoutClass (..), Mirror (..), runLayout)
 import Seki.Internal.Core.Scene (DesiredScene (..), Placement (..), SceneStyle (..), defaultSceneStyle, planScene, stackWindows)
-import Seki.Internal.Core.StackSet (OutputId (..), Screen (..), Stack (..), StackSet (..), WindowId (..), Workspace (..))
+import Seki.Internal.Core.StackSet (OutputId (..), Screen (..), Stack (..), StackSet (..), WindowId (..), Workspace (..), integrate)
 import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..))
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
@@ -104,6 +104,16 @@ tests =
                     , Map.keys (sceneWindows result) === [w1, w2, w3, w4, w5, w6]
                     , sort (sceneStacking result) === [w1, w2, w3, w4, w5, w6]
                     ]
+    , testCase "a custom layout omitting windows hides them" $ do
+        let result = scene MasterOnly (Stack w2 [w1] [w3])
+        sceneWindows result @?= Map.fromList [(w1, Placed content), (w2, Omitted), (w3, Omitted), (w4, Omitted)]
+        sceneFocus result @?= Nothing
+        sceneStacking result @?= [w2, w3, w4, w1]
     ]
  where
   content = either (error . show) id (mkSize 97 77 >>= mkRect (Point (-98) 22))
+
+data MasterOnly = MasterOnly deriving (Show)
+
+instance LayoutClass MasterOnly where
+  pureLayout _ r s = [(w, r) | w <- take 1 (integrate s)]
