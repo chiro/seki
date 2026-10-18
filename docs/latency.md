@@ -8,16 +8,22 @@ WP10 still owns the M1 closeout. Ordinary unit CI does not enforce timing budget
 
 ## Run a comparison
 
-Use the pinned development environment, including river, wtype, wlr-randr, Python
-3, and GHC. This implementation was exercised with GHC 9.6.7 and Cabal 3.10;
-the repository pin is GHC 9.6.6. Record the actual toolchain instead of presenting
-an unpinned run as a pinned release gate.
+Use the pinned `ci` environment for river, wtype, wlr-randr, and GHC 9.6.6.
+Python 3 is an additional prerequisite; `flake.nix` does not declare it in that
+shell. Make `python3` available when running these commands:
 
 ```sh
-python3 tools/latency/test_report.py
-python3 tools/latency/run.py artifacts/latency/reference --compiler ghc-9.6.7
-python3 tools/latency/run.py artifacts/latency/reference --report-only
+nix develop --no-write-lock-file .#ci --command python3 tools/latency/test_report.py
+nix develop --no-write-lock-file .#ci --command python3 tools/latency/run.py artifacts/latency/reference --compiler ghc
+nix develop --no-write-lock-file .#ci --command python3 tools/latency/run.py artifacts/latency/reference --report-only
 ```
+
+The 2026-10-18 reference report used local GHC 9.6.7 and Cabal 3.10. To
+reproduce that compiler choice with system-installed runtime dependencies, use
+`python3 tools/latency/run.py artifacts/latency/local-9.6.7 --compiler ghc-9.6.7`.
+This is a historical baseline command, not the pinned release toolchain.
+For collection and profile runs, pass `--compiler` explicitly; the runner
+defaults to `ghc-9.6.7`. Report-only mode does not use a compiler.
 
 The runner builds once with `--enable-optimization=2` into
 `dist-newstyle/latency`. It alternates normal/nonmoving trials five times using
@@ -112,7 +118,7 @@ select a collector winner without repeatable evidence and an identified limiter.
 ## Separate profile run
 
 ```sh
-python3 tools/latency/run.py artifacts/latency/profile --profile
+nix develop --no-write-lock-file .#ci --command python3 tools/latency/run.py artifacts/latency/profile --compiler ghc --profile
 ```
 
 Profile mode runs one normal-collector live workload with eventlog output and

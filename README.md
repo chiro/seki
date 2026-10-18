@@ -35,7 +35,7 @@ seki is intended for xmonad users moving from X11. The accepted v1 design has
 these goals:
 
 - **Your configuration is the window manager.** As in xmonad, there is no config file. You write a Haskell program that imports `Seki`; `def` is intended to provide a usable default configuration.
-- **The core is pure.** `StackSet`, the layout algebra (`|||`, `Mirror`, layout modifiers), and `ManageHook` are based on xmonad, with its semantics and QuickCheck properties retained where applicable. Layout is a pure function; only the reconciler touches IO.
+- **The core is pure.** `StackSet`, the layout algebra (`|||`, `Mirror`, layout modifiers), and `ManageHook` are based on xmonad, with its semantics and QuickCheck properties retained where applicable. Layouts and actions are pure. Policy owns mutable state and launches effects; the runtime owns connection IO.
 - **Workspaces use xmonad-style semantics.** They form a shared pool across outputs, with `greedyView` as the default. River itself has no workspace abstraction, so seki implements this policy in the window manager.
 
 A configuration program imports `Seki` and runs `seki def`. The current M1 API supports these overrides.
@@ -128,8 +128,8 @@ the pinned Nix environment with:
 nix develop --no-write-lock-file .#ci --command ci/run-integration.sh
 ```
 
-The command writes a bounded log and completion manifest beneath
-`artifacts/integration/`.
+The command writes a completion manifest and retains the final 1 MiB of its
+log beneath `artifacts/integration/`. The temporary raw log grows during the run.
 
 Format and lint Haskell sources with:
 
@@ -144,7 +144,8 @@ With a Wayland compositor running, print the synchronized global registry with:
 cabal run seki-registry-smoke
 ```
 
-Run the current Full-layout policy against the display selected by the standard
+Run the current default policy, with Tall, Mirror Tall, and Full, against the
+display selected by the standard
 `WAYLAND_DISPLAY`/`XDG_RUNTIME_DIR` environment variables with:
 
 ```console
@@ -174,7 +175,7 @@ Non-goals for seki itself: animations and window effects, multi-seat (v1 is sing
 - [`docs/spec.md`](docs/spec.md) — the design specification: pure core, protocol mapping, configuration model, risks, and milestones.
 - [`docs/m1-plan.md`](docs/m1-plan.md) — the implementation-ready scope,
   sequencing, tests, risks, and exit criteria for the M1 core milestone.
-- [`docs/wire-protocol.md`](docs/wire-protocol.md) — the implemented M0 design for the native Wayland transport and XML binding generator.
+- [`docs/wire-protocol.md`](docs/wire-protocol.md) — the native Wayland transport, XML binding generator, and current runtime.
 - [`docs/integration-testing.md`](docs/integration-testing.md) — how to run,
   diagnose, and maintain the isolated real-river integration suite.
 

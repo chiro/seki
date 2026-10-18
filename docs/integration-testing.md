@@ -35,7 +35,7 @@ For development with system-installed dependencies, run the component
 directly:
 
 ```console
-SEKI_RUN_INTEGRATION=1 cabal test seki-integration
+WLR_RENDERER=pixman SEKI_RUN_INTEGRATION=1 cabal test seki-integration
 ```
 
 An enabled run treats every missing prerequisite as a failure, not a skip.
@@ -46,7 +46,7 @@ without river.
 To capture a manifest during a direct run:
 
 ```console
-SEKI_RUN_INTEGRATION=1 \
+WLR_RENDERER=pixman SEKI_RUN_INTEGRATION=1 \
 SEKI_INTEGRATION_MANIFEST=/tmp/seki-integration-manifest.txt \
 cabal test seki-integration
 ```
@@ -77,8 +77,9 @@ nix develop --no-write-lock-file .#unit --command cabal test all
 | `m1-output-readd` | Actual WM output removal and addition through two, one, zero, one, and two outputs preserve stacks, layouts, focus, and window identities | `wlr-randr` |
 
 All scenarios also use the core river, foot, and synthetic-input fixture as
-needed. The CI shell in `flake.nix` provides the complete dependency set,
-including fonts and runtime data.
+needed. The CI shell in `flake.nix` provides the integration dependency set,
+including fonts, runtime data, and `WLR_RENDERER=pixman`. Direct runs must set
+the renderer explicitly because the M1 fixture inherits it from the host.
 
 ## Isolation and cleanup
 
@@ -126,7 +127,10 @@ The actor waits for observed events rather than a startup delay.
 Each screenshot uses a fresh native connection and the pinned
 ext-image-capture-source and ext-image-copy-capture protocols. Capture selects
 `wl_output.name`, excludes cursors, and reads real compositor SHM bytes after
-frame readiness. The fixture accepts only normal transform and unit scale.
+frame readiness. The compositor must advertise
+`ext_output_image_capture_source_manager_v1` and
+`ext_image_copy_capture_manager_v1`, with SHM XRGB8888 or ARGB8888 support.
+The fixture accepts only normal transform and unit scale.
 Each allocation is limited to 16 MiB and each connection to 128 allocations.
 Window buffers survive until release or connection close. Captures keep their
 local descriptor until the frame bytes have been read.
@@ -149,7 +153,8 @@ frames. Inventory and bounded child logs remain in the combined suite log.
 The scanner freshness test verifies all committed native fixture bindings.
 
 The release wrapper forwards optional arguments to Cabal. For an installed
-local compiler, for example, run `ci/run-integration.sh -w ghc-9.6.7 --offline`.
+local compiler, for example, run
+`WLR_RENDERER=pixman ci/run-integration.sh -w ghc-9.6.7 --offline`.
 The default command continues to use the pinned compiler from `cabal.project`.
 
 ## Layer-surface fixture
@@ -261,9 +266,11 @@ Every wait reports its phase and last observable state. Fixture failures also
 report the discovered Wayland globals, seki inventory, seat bindings, runtime
 result, child exit status, and bounded child logs.
 
-The harness retains the last 64 KiB of each child output stream in memory. The
-release wrapper retains the last 1 MiB of combined output on disk. These bounds
-prevent a protocol or client loop from exhausting memory, disk, or CI output.
+The harness retains the last 64 KiB of each child output stream in memory.
+On exit, the release wrapper retains the last 1 MiB of combined output in
+`integration.log` and removes `integration.raw.log`. The raw log grows during
+the run, so the final artifact limit is not a temporary disk-space limit.
+Combined output also streams to CI during the run.
 
 Common failure categories are:
 
@@ -306,7 +313,9 @@ tests and the complete release check.
   than claiming to reproduce every physical XKB modifier path.
 - Unit tests, rather than this fixture, pin the production
   Mod4-Shift-Return and Mod4-Shift-c defaults.
-- River does not report whether a response deadline was missed. The observable
-  proxy is a clean runtime result followed by successful dimension, focus,
-  input, and close effects.
-- The suite currently targets Linux and river 0.4.5 or later.
+- The pinned river does not enforce a WM response timer. A clean runtime result
+  and successful dimension, focus, input, and close effects establish protocol
+  behavior. The [latency diagnostic](latency.md) measures seki's budgets separately.
+- The pinned suite targets Linux and river 0.5.0. seki's runtime minimum of
+  river 0.4.5 does not establish the capture fixture's minimum version. Other
+  compositor builds must provide the capture globals and formats listed above.
