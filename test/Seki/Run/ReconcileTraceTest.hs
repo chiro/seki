@@ -3,10 +3,11 @@
 module Seki.Run.ReconcileTraceTest (tests) where
 
 import Control.Exception (onException)
-import Control.Monad (foldM, forM_, when)
+import Control.Monad (foldM, forM, forM_, when)
 import Data.ByteString (ByteString)
 import Data.Int (Int32)
 import Data.Maybe (isJust)
+import Seki.Internal.Core.Layout (LayoutClass)
 import Seki.Internal.Core.Scene (defaultSceneStyle)
 import Seki.Internal.Core.StackSet (WindowId (..), index, peek)
 import Seki.Internal.Core.State (CoreState (..))
@@ -30,59 +31,62 @@ tests =
     [ testProperty "generated area and dimensions traces preserve proposal, visibility, and focus invariants" $
         withMaxSuccess 30 $
           forAll (vectorOf 16 ((,) <$> elements [0, 4, 50, 100, 150] <*> arbitrary)) $ \steps ->
-            ioProperty (testTrace steps >> pure True)
+            ioProperty (testTrace Full (\width -> [if width > 4 then Just (width - 4, 96) else Nothing]) steps >> pure True)
     , testCase "focus raises a shown family and new windows retain nonexclusive layer focus" testFamilies
     ]
 
 data Model = Model
-  { pendingSize :: Maybe Int32
-  , settledSize :: Maybe Int32
+  { pendingSize :: Maybe (Int32, Int32)
+  , settledSize :: Maybe (Int32, Int32)
   , shown :: Maybe Bool
   }
 
-testTrace :: [(Int32, Bool)] -> Assertion
-testTrace steps = withRuntimePair $ \target peer -> do
-  window <- requireObjectId 0xff000090
+testTrace :: (LayoutClass l) => l -> (Int32 -> [Maybe (Int32, Int32)]) -> [(Int32, Bool)] -> Assertion
+testTrace layout desiredSizes steps = withRuntimePair $ \target peer -> do
+  windows <- mapM requireObjectId (take (length (desiredSizes 0)) [0xff000090, 0xff000093])
   output <- requireObjectId 0xff000091
   seat <- requireObjectId 0xff000092
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader
     (manager, _, layerShell) <- handshake reader peer
-    sendFrames peer [event manager 6 (putNewId window), event manager 7 (putNewId output), event manager 8 (putNewId seat)]
-    _ <- receiveNewIdRequest reader peer window (Opcode 2)
+    sendFrames peer (map (\w -> event manager 6 (putNewId w)) windows ++ [event manager 7 (putNewId output), event manager 8 (putNewId seat)])
+    mapM_ (\w -> receiveNewIdRequest reader peer w (Opcode 2)) windows
     ls <- receiveLayerShellOutputRequest reader peer layerShell output
     _ <- receiveLayerShellSeatRequest reader peer layerShell seat
     sendFrames peer [event output 2 (putInt 0 >> putInt 0), event output 3 (putInt 200 >> putInt 100)]
-    let step model (width, acknowledge) = do
+    let step models (width, acknowledge) = do
           sendFrames peer [event ls 0 (putInt 0 >> putInt 0 >> putInt width >> putInt 100), event manager 2 (pure ())]
           manage <- readUntil reader peer manager 2
-          let desired = if width > 4 then Just (width - 4) else Nothing
-              propose = pendingSize model == Nothing && isJust desired && settledSize model /= desired
-              pending = if propose then desired else pendingSize model
-          expected <- case (propose, desired) of
-            (True, Just size) -> (: []) <$> encodedPayload (putInt size >> putInt 96)
-            _ -> pure []
-          assertEqual "one proposal only when no earlier proposal is pending" expected (requests window 3 manage)
+          let desired = desiredSizes width
+          pending <- forM (zip3 windows desired models) $ \(window, size, model) -> do
+            let propose = pendingSize model == Nothing && isJust size && settledSize model /= size
+            expected <- case (propose, size) of
+              (True, Just (w, h)) -> (: []) <$> encodedPayload (putInt w >> putInt h)
+              _ -> pure []
+            assertEqual "one proposal only when no earlier proposal is pending" expected (requests window 3 manage)
+            pure (if propose then size else pendingSize model)
           when (not (null (requests seat 1 manage))) $ do
-            assertBool "focus requires an already shown settled selection" (shown model == Just True && pending == Nothing && isJust desired)
-            focusPayload <- encodedPayload (putObject window)
+            assertBool "focus requires an already shown settled selection" (shown (last models) == Just True && last pending == Nothing && isJust (last desired))
+            focusPayload <- encodedPayload (putObject (last windows))
             requests seat 1 manage @?= [focusPayload]
-          let settles = acknowledge && isJust pending
-              settled = if settles then pending else settledSize model
-              pending' = if settles then Nothing else pending
-              visible = isJust desired && isJust settled
-          when settles $ forM_ pending $ \size ->
-            sendFrames peer [event window 2 (putInt (size + 1) >> putInt 96)]
+          let settles = map (\p -> acknowledge && isJust p) pending
+              settled = [if s then p else settledSize model | (s, p, model) <- zip3 settles pending models]
+              pending' = [if s then Nothing else p | (s, p) <- zip settles pending]
+              visible = [isJust size && isJust s | (size, s) <- zip desired settled]
+          forM_ (zip3 windows settles pending) $ \(window, s, p) ->
+            when s $ forM_ p $ \(w, h) ->
+              sendFrames peer [event window 2 (putInt (w + 1) >> putInt h)]
           sendFrames peer [event manager 3 (pure ())]
           render <- readUntil reader peer manager 4
-          let visibility = [rawFrameOpcode frame | frame <- render, rawFrameSender frame == window, rawFrameOpcode frame `elem` [Opcode 4, Opcode 5]]
-              expectedVisibility = if shown model == Just visible then [] else [Opcode (if visible then 5 else 4)]
-          assertEqual "visibility follows selection and settlement" expectedVisibility visibility
+          forM_ (zip3 windows models visible) $ \(window, model, v) -> do
+            let visibility = [rawFrameOpcode frame | frame <- render, rawFrameSender frame == window, rawFrameOpcode frame `elem` [Opcode 4, Opcode 5]]
+                expectedVisibility = if shown model == Just v then [] else [Opcode (if v then 5 else 4)]
+            assertEqual "visibility follows selection and settlement" expectedVisibility visibility
           requests seat 1 render @?= []
-          pure (Model pending' settled (Just visible))
-    _ <- foldM step (Model Nothing Nothing Nothing) (steps ++ replicate 3 (100, True))
+          pure (zipWith3 (\p s v -> Model p s (Just v)) pending' settled visible)
+    _ <- foldM step (map (const (Model Nothing Nothing Nothing)) windows) (steps ++ replicate 3 (100, True))
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig layout [1 :: Int] [] defaultSceneStyle (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
