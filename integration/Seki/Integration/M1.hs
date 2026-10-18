@@ -116,6 +116,7 @@ m1Scenarios =
       delivery f p [a, b, c] b
   , scenario "m1-greedy-view" 2 greedyScenario
   , scenario "m1-layer-exclusive-zone" 1 layerScenario
+  , scenario "m1-layer-focus" 1 layerFocusScenario
   , scenario "m1-output-readd" 2 outputScenario
   ]
  where
@@ -169,6 +170,58 @@ layerScenario fixture probe = do
     unless (all (\(x, y) -> pixel frame x y == BS.pack [0x33, 0x66, 0x99]) [(x, y) | x <- [0 .. 799], y <- [0 .. 31]]) (failIntegration "exclusive-zone bar pixel strip differs")
   _ <- waitUntil "exclusive area restored" assertionTimeoutMicroseconds (readRiverInventory (mSession fixture)) (\inventory -> any (maybe False (\r -> rectX r == 0 && rectY r == 0 && rectWidth r == 800 && rectHeight r == 600) . riverOutputUsableArea) (riverInventoryOutputs inventory))
   onFirst fixture "layer teardown restores client" [full Red True]
+
+layerFocusScenario :: Fixture -> Probe -> IO ()
+layerFocusScenario fixture probe = do
+  a <- openWindow probe Red
+  onFirst fixture "window focused before layer" [full Red True]
+  delivery fixture probe [a] a
+  withLayer fixture Layer.KeyboardInteractivityOnDemand $ do
+    mapped <- layerTakesKeyboard fixture probe "mapped on-demand layer"
+    onFirst fixture "layer focus draws unfocused border" [Paint Red (Box 2 34 796 564) False]
+    b <- openWindow probe Green
+    onFirst fixture "new window leaves layer focus" [Paint Green (Box 2 34 396 564) False, Paint Red (Box 402 34 396 564) False]
+    press fixture ShrinkMaster
+    onFirst fixture "layout message leaves layer focus" (pair False False)
+    layerKeepsKeyboard fixture probe mapped "after new window and layout message"
+    click (mSocket fixture) (800, 600) (560, 300)
+    windowTakesKeyboard fixture probe mapped a "window click"
+    onFirst fixture "window click focuses border" (pair False True)
+    delivery fixture probe [a, b] a
+    click (mSocket fixture) (800, 600) (400, 16)
+    clicked <- layerTakesKeyboard fixture probe "clicked on-demand layer"
+    onFirst fixture "layer click draws unfocused border" (pair False False)
+    press fixture Down
+    windowTakesKeyboard fixture probe clicked b "focus key"
+    onFirst fixture "focus key focuses border" (pair True False)
+    delivery fixture probe [a, b] b
+ where
+  pair green red = [Paint Green (Box 2 34 316 564) green, Paint Red (Box 322 34 476 564) red]
+
+seatLayerFocus :: Fixture -> IO (Integer, RiverLayerFocus)
+seatLayerFocus fixture =
+  readRiverSeatBindings (mSession fixture) >>= \case
+    [seat] -> pure (riverSeatLayerFocusRevision seat, riverSeatLayerFocus seat)
+    seats -> failIntegration ("expected one seat, got " <> show (length seats))
+
+layerTakesKeyboard :: Fixture -> Probe -> String -> IO Integer
+layerTakesKeyboard fixture probe phase = do
+  (revision, _) <- waitUntil (phase <> " reported non-exclusive") assertionTimeoutMicroseconds (seatLayerFocus fixture) ((== RiverLayerFocusNonExclusive) . snd)
+  _ <- waitUntil (phase <> " leaves no window keyboard") assertionTimeoutMicroseconds (keyboardSnapshot probe) ((== Nothing) . keyboardOwner)
+  announce (mName fixture <> ": " <> phase <> " took keyboard focus")
+  pure revision
+
+layerKeepsKeyboard :: Fixture -> Probe -> Integer -> String -> IO ()
+layerKeepsKeyboard fixture probe revision phase = do
+  seatLayerFocus fixture >>= assertEqual (phase <> " layer focus") (revision, RiverLayerFocusNonExclusive)
+  keyboardSnapshot probe >>= assertEqual (phase <> " window keyboard owner") Nothing . keyboardOwner
+  announce (mName fixture <> ": layer kept keyboard focus " <> phase)
+
+windowTakesKeyboard :: Fixture -> Probe -> Integer -> ProbeWindow -> String -> IO ()
+windowTakesKeyboard fixture probe revision window phase = do
+  _ <- waitUntil (phase <> " ends layer focus") assertionTimeoutMicroseconds (seatLayerFocus fixture) (\(current, focus) -> current > revision && focus == RiverLayerFocusNone)
+  _ <- waitUntil (phase <> " keyboard after focus_none") assertionTimeoutMicroseconds (keyboardSnapshot probe) ((== Just window) . keyboardOwner)
+  announce (mName fixture <> ": " <> phase <> " took keyboard focus back")
 
 withLayer :: Fixture -> Layer.KeyboardInteractivity -> IO a -> IO a
 withLayer fixture interactivity action = do
