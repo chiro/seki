@@ -5,7 +5,6 @@ module Seki.Run.Config (ConfigRunError (..), policyConfigOf, prepareConfig, runC
 
 import Seki.Internal.Config (BorderConfig (..), Config (..), KeyBinding (..), Keysym (..), Mods (..))
 import Seki.Internal.Core.Layout (LayoutClass)
-import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.Scene (SceneStyle (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Policy (Policy, PolicyConfig (..), PolicyError, launchDetached, newPolicy, policyRuntimeHandlers)
@@ -26,7 +25,7 @@ policyConfigOf config =
     , policyBindings = [(lower binding, action) | (binding, action) <- keys config config]
     , policySceneStyle = SceneStyle (borderWidth style) (focusedBorderColor style) (unfocusedBorderColor style)
     , policyLaunch = launchDetached
-    , policyManageHook = idHook
+    , policyManageHook = manageHook config
     }
  where
   style = borders config

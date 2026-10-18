@@ -10,6 +10,7 @@ module Seki.Internal.Config (
   StdLayouts,
   Action,
   Bindings,
+  ManageHook,
   Mods (..),
   pattern Shift,
   pattern Control,
@@ -28,6 +29,8 @@ import Data.Int (Int32)
 import Data.Word (Word32)
 import Seki.Internal.Core.Action qualified as Core
 import Seki.Internal.Core.Layout (ChangeLayout (..), Choose, IncMasterN (..), LayoutClass, Mirror (..), Resize (..), (|||))
+import Seki.Internal.Core.ManageHook (idHook)
+import Seki.Internal.Core.ManageHook qualified as Core
 import Seki.Internal.Core.Scene (BorderColor (..))
 import Seki.Internal.Core.StackSet qualified as StackSet
 import Seki.Internal.Layout.Full (Full (..))
@@ -35,6 +38,7 @@ import Seki.Internal.Layout.Tall (Tall (..))
 
 type Action l a = Core.Action String l a
 type Bindings l = [(KeyBinding, Action l ())]
+type ManageHook l = Core.ManageHook String l
 type StdLayouts = Choose Tall (Choose (Mirror Tall) Full)
 
 -- | XKB modifier bits. Combine modifiers with @(.|.)@.
@@ -74,9 +78,11 @@ data Config l = Config
   , keys :: Config l -> Bindings l
   , borders :: BorderConfig
   , bindingsUseFixedLayout :: Bool
+  , manageHook :: ManageHook l
+  -- ^ Runs on every new window, after it is inserted above the focus.
   }
 
--- | Nine workspaces, Tall, Mirror Tall, Full, and xmonad-style bindings.
+-- | Nine workspaces, Tall, Mirror Tall, Full, xmonad-style bindings, and no manage hook.
 def :: Config StdLayouts
 def =
   Config
@@ -87,6 +93,7 @@ def =
     , keys = defaultKeys
     , borders = BorderConfig 2 (BorderColor 0 0x80000000 0xffffffff 0xffffffff) (BorderColor 0x40000000 0x40000000 0x40000000 0xffffffff)
     , bindingsUseFixedLayout = True
+    , manageHook = idHook
     }
  where
   tall = Tall 1 (3 / 100) (1 / 2)

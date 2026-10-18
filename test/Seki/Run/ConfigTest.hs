@@ -3,16 +3,19 @@ module Seki.Run.ConfigTest (tests) where
 import Control.Exception (bracket)
 import Data.Bits ((.|.))
 import Data.Map.Strict qualified as Map
+import Data.Monoid (Endo (..))
+import Data.Text qualified as Text
 import Seki.Internal.Config
 import Seki.Internal.Core.Action qualified as Action
 import Seki.Internal.Core.Layout (CLR (..), Choose (..), Mirror (..), description)
+import Seki.Internal.Core.ManageHook (WindowProps (..), appId, doShift, noWindowProps, runQuery, (-->), (=?))
 import Seki.Internal.Core.StackSet qualified as StackSet
 import Seki.Internal.Core.State (CoreState (..))
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
-import Seki.Run.Config (ConfigRunError (..), prepareConfig, runConfig)
-import Seki.Run.Policy (policyRuntimeHandlers)
+import Seki.Run.Config (ConfigRunError (..), policyConfigOf, prepareConfig, runConfig)
+import Seki.Run.Policy (PolicyConfig (..), policyRuntimeHandlers)
 import Seki.Run.Runtime (RiverRuntimeHandlers (..))
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import System.Environment (lookupEnv, setEnv, unsetEnv)
@@ -58,6 +61,12 @@ tests =
         assertEqual "Full selected" "Full" (description (currentLayout full))
         assertEqual "cycle wraps" "Tall" (description (currentLayout (state (press def (Mods 0) 0x20 full))))
         mapM_ checkTag (zip (workspaces def) [0x31 .. 0x39])
+    , testCase "the default manage hook leaves a new window where it was inserted" $
+        assertEqual "inserted window" (Just (StackSet.WindowId 2)) (peekState (manage def mpv initial))
+    , testCase "the configured manage hook reaches the policy" $ do
+        let config = def{manageHook = appId =? "mpv" --> doShift "2"}
+        assertEqual "matching window shifted" (Just "2") (findTagState (StackSet.WindowId 2) (manage config mpv initial))
+        assertEqual "other window kept" (Just "1") (findTagState (StackSet.WindowId 2) (manage config noWindowProps initial))
     , testCase "custom pure actions compose" $ do
         let (_, changed, effects) = Action.runAction (Action.windows StackSet.focusDown >> Action.kill >> Action.spawn "one" >> Action.spawn "two") initial
         assertEqual "focus" (Just (StackSet.WindowId 3)) (peekState changed)
@@ -103,6 +112,14 @@ press :: Config l -> Mods -> Word -> CoreState String l -> ((), CoreState String
 press config modifiers symbol core = case lookup (KeyBinding (modMask config .|. modifiers) (Keysym (fromIntegral symbol))) (keys config config) of
   Nothing -> error "missing binding"
   Just action -> Action.runAction action core
+
+-- | Run the policy's manage hook for window 2, already inserted in the state.
+manage :: Config l -> WindowProps -> CoreState String l -> CoreState String l
+manage config props (AttachedState ss u) = AttachedState (appEndo (runQuery (policyManageHook (policyConfigOf config)) (StackSet.WindowId 2) props) ss) u
+manage _ _ st = st
+
+mpv :: WindowProps
+mpv = noWindowProps{propAppId = Just (Text.pack "mpv")}
 
 state :: (a, b, c) -> b
 state (_, value, _) = value
