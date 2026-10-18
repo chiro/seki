@@ -88,7 +88,7 @@ data Stack a       = Stack { focus :: a, up :: [a], down :: [a] }
 - [RESOLVED] A hidden workspace means **explicitly sending** river_window_v1.hide (rendering state; borders and decorations are hidden along with it). New windows are shown by default, so hide must always be sent when placing a window on a hidden workspace. [DECIDED] Reconciler invariant: "placed by the active layout on a visible workspace, with settled dimensions ⇔ in the shown state". A window the layout omits (for example every non-focused window under `Full`) is hidden, as xmonad unmaps it, and keeps its last dimensions without a new proposal.
 - [RESOLVED] Inputs available to ManageHook: app_id (**may be null**), title (**may be null**), parent (for dialog detection), decoration_hint, dimensions_hint (min/max, 0 = unspecified), unreliable_pid, and the version 4 identifier (non-empty printable ASCII). These are guaranteed to arrive after the window event and before the next manage_start. Since app_id/title can be null for Xwayland windows, the core types are `Maybe Text`.
 - [RESOLVED] The parent event makes windows form a tree (the server guarantees there are no loops). The protocol recommends drawing child windows directly above their parent → fold this into the stacking-order computation in `plan`. This information was not directly available in xmonad's X11 model.
-- [DECIDED] Stacking order: parent links group the shown windows into families. The focused window's family is on top and the others follow StackSet order. Within a family each parent sits directly below its children, and among siblings the branch containing the focused window is on top. Hidden windows sit below every shown window. Stacking is derived from the StackSet and never changes it. Deviation from xmonad, which never raises the focused window.
+- [DECIDED] Stacking order: parent links group the shown windows into families. The focused window's family is on top of its tier and the others follow StackSet order. Within a family each parent sits directly below its children, and among siblings the branch containing the focused window is on top. Hidden windows sit below every shown window. Floating families form a tier above every tiled family, ordered by a remembered raise order in which the focused float's family is last; focusing a tile does not change that order (M2-D02). Stacking is derived from the StackSet and the raise order and never changes the StackSet. Deviation from xmonad, which never raises the focused window.
 
 ### 3.2 Multi-Monitor Semantics [DECIDED: xmonad standard]
 
@@ -123,8 +123,8 @@ reconcile :: DesiredScene -> ActualState -> Protocol ()      -- ③ apply the di
 - ③ sends proposed dimensions, focus, and so on in the manage sequence, then finalizes positions in the render sequence once the client's actually-committed dimensions (the dimensions event) arrive.
 - [DECIDED] A tile with zero width or zero height is never proposed, because a zero `propose_dimensions` value lets the client choose its own size. The window is treated as omitted by the layout (3.1): hidden, with its last dimensions kept.
 - Handling of the mismatch between proposed and actual dimensions is **selectable per layout**. [DECIDED: option (c)]
-  - `Tolerate`: place the window at its actual size and allow gaps (equivalent to xmonad honouring resize hints).
-  - `Crop`: maintain strict tiling using the protocol's window cropping.
+  - `Tolerate`: place the window at its actual size and allow gaps (equivalent to xmonad honouring resize hints). [DECIDED] Proposals are clamped to the min/max hints, the committed size is shown at the tile's top-left, and nothing is clipped, so an oversized client may overlap its neighbours (M2-D04).
+  - `Crop`: maintain strict tiling using the protocol's window cropping. [DECIDED] The content clip box equals the tile's content box on every render, including while a proposal is pending (M2-D04).
   - The default is `Crop` (favouring visual consistency as a tiling WM). Switch with the layout modifier `tolerant :: l -> ModifiedLayout Tolerate l` (an API isomorphic to xmonad's `layoutHints`).
   - [RESOLVED] Crop is implemented with set_content_clip_box (v3). It clips only the content, using a rectangle relative to the window's top-left; compositor-drawn borders are drawn around the intersected region after clipping, so the appearance does not break. It is ignored while fullscreen, but fullscreen is compositor-managed so this does not matter.
 - [RESOLVED, IMPORTANT] The dimensions event is **not guaranteed to come back in the render sequence immediately following** a propose (slow-to-respond clients). In that case the server sends it in some future render sequence. The reconciler therefore keeps a set of "proposed but not yet finalized" windows and calls render_finish with a provisional placement (or hidden) until they settle. Because the protocol guarantees a new window is not displayed until its first dimensions are settled, there is no flicker on initial display.
@@ -146,7 +146,7 @@ class Show l => LayoutClass l where
 
 ### 3.5 Floating [DECIDED: absolute logical pixel coordinates]
 
-- `FloatGeom = Rect` (logical pixels). The coordinate origin, however, is **the top-left of the output currently displaying that workspace** (not global coordinates).
+- `FloatGeom = Rect` (logical pixels) is the content box; the border is drawn outside it (M2-D01). The coordinate origin, however, is **the top-left of the output currently displaying that workspace** (not global coordinates).
   - Rationale: when a workspace moves to another output (a greedyView swap), global coordinates would strand the window in the old output's region. Making it output-relative gives the intuitive behaviour that floating windows travel with their workspace.
 - Normalization rules on inter-output moves and resolution changes:
   - Reinterpret the origin as the new output's top-left (coordinate values are preserved).
@@ -179,6 +179,7 @@ class Show l => LayoutClass l where
   - A protocol-compatible compositor exposing only version 3 can run the core WM, but state restoration degrades to placing re-enumerated windows on the configurable default workspace. Do not guess identity from unreliable_pid, which is explicitly unsuitable for identity and security decisions.
   - Validate identifier continuity across a real river WM reconnect during M2.
 - Layout internal state (master ratio, etc.) is also serialized via Read/Show (the same approach as xmonad).
+- [DECIDED] The state file is versioned Read/Show text holding every workspace's stack by identifier, focus, layouts, the output assignment, floats, the float raise order, the fullscreen set, and the spawned-once set. Restart execs the executable path recorded at startup, refuses when it is not executable, and reconnects in-process if exec fails (M2-D06).
 
 ### 3.8 Keybinding Model and Submaps [RESOLVED: river-xkb-bindings-v1 (v3) read]
 
@@ -238,8 +239,8 @@ Required functionality: river_window_manager_v1 **version 3** (depends on set_co
 | dimensions_hint | A hint to the layout (honoured under Tolerate) |
 | pointer_enter / pointer_leave | Change focus only when FFM is enabled |
 | window_interaction / shell_surface_interaction | click-to-focus, raise, handling clicks on the prompt |
-| maximize/minimize/fullscreen/menu _requested family | Policy hooks (equivalent to xmonad's ClientMessage handling). Default: honour only fullscreen_requested, ignore the rest |
-| pointer_move/resize_requested | Depending on configuration, float the window and start an op, or ignore |
+| maximize/minimize/fullscreen/menu _requested family | Policy hooks (equivalent to xmonad's ClientMessage handling). Default: honour only fullscreen_requested, ignore the rest. [DECIDED] Fullscreen uses river's native request and a fullscreen set beside the StackSet; moving focus to another window on the same output exits fullscreen (M2-D03) |
+| pointer_move/resize_requested | [DECIDED] Start a move or resize op for a floating window; ignore the request for a tiled window (M2-D05) |
 | output / removed / position / dimensions | Equivalent to rescreen (apply the rules in 3.2) |
 | session_locked / unlocked | Switch binding restrictions (minimize WM bindings while locked) |
 | unavailable | Duplicate instance → report an error and exit |
@@ -406,9 +407,9 @@ build, restart, and restoration workflow below belongs to later milestones.
 |---|---|---|---|
 | M0 Validation | **Complete** | Haskell wire protocol implementation without libwayland; own XML code generator; connection and window/output event handling; Full placement; terminal and close bindings; Japanese input and Xwayland validation | Completed on nested river, including exact fcitx5/Mozc input and the real-river release suite |
 | M1 Core | **Complete** | StackSet port + QuickCheck properties, Tall / Mirror / Full / `\|\|\|`, greedyView, focus movement, swapMaster, borders, non_exclusive_area, the two-phase monads (ManageM/RenderM) | Tiling operations follow the intended xmonad semantics. Sequence latency and GC pauses meet the documented seki budgets; see the [M1 implementation plan](m1-plan.md) |
-| M2 Practical | Planned | Floating (mod+drag), ManageHook, fullscreen, submaps, hot-swap + state restoration, inputRules, Crop/Tolerate | The main parts of my own xmonad.hs can be ported |
-| M3 Daily use | Planned | Bar IPC + `sekictl`, scratchpad, urgent handling, documentation and configuration skeleton | **Full migration from xmonad; used for daily work** |
-| M4 onwards | Planned | Prompt (shell surface + shm drawing), the contrib-equivalent extension set, IndependentScreens, further protocol integrations | — |
+| M2 Practical | Planned | Floating (mod+drag), ManageHook, startupHook and `spawnOnce`, fullscreen, restart + state restoration, Crop/Tolerate | The main parts of my own xmonad.hs can be ported; see the [M2 implementation plan](m2-plan.md) |
+| M3 Daily use | Planned | Bar IPC + `sekictl`, scratchpad, urgent handling, inputRules, `--recompile` / `--check`, documentation and configuration skeleton | **Full migration from xmonad; used for daily work** |
+| M4 onwards | Planned | Submaps, binding repeat, focus-follows-mouse, prompt (shell surface + shm drawing), the contrib-equivalent extension set, IndependentScreens, further protocol integrations | — |
 
 ### 6.3 Resolved Questions and Follow-up
 

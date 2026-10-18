@@ -180,6 +180,8 @@ Non-goals for seki itself: animations and window effects, multi-seat (v1 is sing
 - [`docs/spec.md`](docs/spec.md) — the design specification: pure core, protocol mapping, configuration model, risks, and milestones.
 - [`docs/m1-plan.md`](docs/m1-plan.md) — the M1 core milestone's scope,
   design decisions, work packages, exit criteria, and regression record.
+- [`docs/m2-plan.md`](docs/m2-plan.md) — the M2 practical milestone's scope,
+  decided design issues, work packages, and exit criteria.
 - [`docs/wire-protocol.md`](docs/wire-protocol.md) — the native Wayland transport, XML binding generator, and current runtime.
 - [`docs/reconciliation.md`](docs/reconciliation.md) — how layout selections
   become shown, sized, and focused windows across river's manage and render
