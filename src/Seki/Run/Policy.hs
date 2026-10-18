@@ -4,7 +4,8 @@
 
 River callbacks and key-binding presses append core events to one queue, so
 their arrival order is kept across kinds. Each @manage_start@ drains the
-queue into the core state, launches spawned commands, and sends close
+queue into the core state, giving each new window the properties the
+inventory holds by then, launches spawned commands, and sends close
 requests in the manage sequence. While an output is attached, every manage
 sequence then marks the current screen's output as the layer-shell default.
 The request is idempotent, and river forgets the default when that output's
@@ -33,12 +34,13 @@ import Data.Word (Word32)
 import Seki.Internal.Core.Action (Action, Intent (..))
 import Seki.Internal.Core.Event (CoreEvent (..), drainCore)
 import Seki.Internal.Core.Layout (LayoutClass)
+import Seki.Internal.Core.ManageHook (DimensionsHint (..), WindowProps (..), noWindowProps)
 import Seki.Internal.Core.Scene (BorderColor (..), DesiredScene (..), SceneStyle (..), planScene)
 import Seki.Internal.Core.StackSet (OutputId (..), WindowId (..))
 import Seki.Internal.Core.State (CoreState (..), WorkspaceTagError, newCoreState)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
-import Seki.Run.Inventory (RiverOutputState (..), RiverWindowState (..), lookupRiverWindow, riverInventoryOutputs, riverInventoryWindows, riverOutputRectangle)
+import Seki.Run.Inventory (RiverDimensionsHint (..), RiverInventory, RiverOutputState (..), RiverWindowState (..), lookupRiverWindow, riverInventoryOutputs, riverInventoryWindows, riverOutputRectangle)
 import Seki.Run.Phase (ManageM, RenderM, closeWindow)
 import Seki.Run.Reconcile (ReconcileState, emptyReconcileState, reconcileManage, reconcileRender)
 import Seki.Run.River (RiverWindowManagerHandlers (..))
@@ -71,7 +73,7 @@ data Policy i l = Policy
   , policyState :: IORef (CoreState i l)
   , policyReconcile :: IORef ReconcileState
   , policyScene :: IORef DesiredScene
-  , policyQueue :: IORef [CoreEvent i l]
+  , policyQueue :: IORef [RiverInventory -> CoreEvent i l]
   -- ^ Newest first.
   }
 
@@ -102,7 +104,7 @@ policyRuntimeHandlers policy =
     { riverProtocolHandlers =
         RiverWindowManagerHandlers
           { handleRiverWindowManagerEvent = \_ _ -> pure ()
-          , handleRiverWindowCreated = enqueue . WindowCreated . windowIdOf
+          , handleRiverWindowCreated = \window -> enqueueWith (WindowCreated (windowIdOf window) . windowProps window)
           , handleRiverWindowEvent = \window -> \case
               River.RiverWindowV1Closed -> enqueue (WindowClosed (windowIdOf window))
               _ -> pure ()
@@ -126,11 +128,12 @@ policyRuntimeHandlers policy =
     }
  where
   bindings = policyBindings (policyConfig policy)
-  enqueue event = atomicModifyIORef' (policyQueue policy) (\queue -> (event : queue, ()))
+  enqueue = enqueueWith . const
+  enqueueWith event = atomicModifyIORef' (policyQueue policy) (\queue -> (event : queue, ()))
 
 prepareManagePlan :: (Eq i, LayoutClass l) => Policy i l -> RiverRuntimeSnapshot -> IO (ManageM ())
 prepareManagePlan policy snapshot = do
-  events <- reverse <$> atomicModifyIORef' (policyQueue policy) ([],)
+  events <- map ($ inventory) . reverse <$> atomicModifyIORef' (policyQueue policy) ([],)
   (st, intents) <- drainCore events <$> readIORef (policyState policy)
   writeIORef (policyState policy) st
   mapM_ (policyLaunch (policyConfig policy)) [cmd | Spawn cmd <- intents]
@@ -183,6 +186,19 @@ launchDetached cmd = void . forkIO $ do
     check >>= \case
       Just _ -> pure ()
       Nothing -> threadDelay delay >> reap check (min 1000000 (delay * 2))
+
+-- | A window closed before the drain has left the inventory and reports nothing.
+windowProps :: Object River.RiverWindowV1 -> RiverInventory -> WindowProps
+windowProps window inventory = maybe noWindowProps props (lookupRiverWindow (objectId window) inventory)
+ where
+  props w =
+    WindowProps
+      { propAppId = riverWindowAppId w
+      , propTitle = riverWindowTitle w
+      , propParent = WindowId . objectIdValue <$> riverWindowParent w
+      , propDimensionsHint = hint <$> riverWindowDimensionsHint w
+      }
+  hint (RiverDimensionsHint minW minH maxW maxH) = DimensionsHint minW minH maxW maxH
 
 windowIdOf :: Object River.RiverWindowV1 -> WindowId
 windowIdOf = WindowId . rawId

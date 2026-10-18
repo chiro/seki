@@ -38,6 +38,7 @@ import Seki.Internal.Core.Action qualified as Action
 import Seki.Internal.Core.Event (CoreEvent (..))
 import Seki.Internal.Core.Geometry (Point (..), mkRect, mkSize)
 import Seki.Internal.Core.Layout (CLR (..), ChangeLayout (..), Choose (..), IncMasterN (..), Mirror (..), Resize (..))
+import Seki.Internal.Core.ManageHook (noWindowProps)
 import Seki.Internal.Core.StackSet
 import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), addOutput, newCoreState, removeOutput)
 import Seki.Internal.Layout.Full (Full (..))
@@ -265,7 +266,7 @@ instance Arbitrary EventHistory where
     steps <-
       listOf $
         frequency
-          [ (4, labelled "WindowCreated" WindowCreated <$> window)
+          [ (4, labelled "WindowCreated" (`WindowCreated` noWindowProps) <$> window)
           , (2, labelled "WindowClosed" WindowClosed <$> window)
           , (2, labelled "OutputCreated" OutputCreated <$> output')
           , (1, labelled "OutputRemoved" OutputRemoved <$> output')

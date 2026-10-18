@@ -13,12 +13,13 @@ module Seki.Internal.Core.Event (
 
 import Data.List (foldl')
 import Seki.Internal.Core.Action (Action, Intent, runAction)
+import Seki.Internal.Core.ManageHook (WindowProps)
 import Seki.Internal.Core.StackSet (OutputId, WindowId)
 import Seki.Internal.Core.State (CoreState, addOutput, focusWindowIn, manageWindow, removeOutput, unmanageWindow)
 
 -- | A change river reported, or a key binding's action.
 data CoreEvent i l
-  = WindowCreated WindowId
+  = WindowCreated WindowId WindowProps
   | WindowClosed WindowId
   | OutputCreated OutputId
   | OutputRemoved OutputId
@@ -29,7 +30,7 @@ data CoreEvent i l
 -- | Apply one event, returning the new state and the intents it recorded.
 stepCore :: (Eq i) => CoreEvent i l -> CoreState i l -> (CoreState i l, [Intent])
 stepCore event st = case event of
-  WindowCreated w -> (manageWindow w st, [])
+  WindowCreated w _ -> (manageWindow w st, [])
   WindowClosed w -> (unmanageWindow w st, [])
   OutputCreated o -> (addOutput o st, [])
   OutputRemoved o -> (removeOutput o st, [])
