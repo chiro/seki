@@ -10,7 +10,7 @@ import Seki.Internal.Core.Action qualified as Action
 import Seki.Internal.Core.Layout (CLR (..), Choose (..), Mirror (..), description)
 import Seki.Internal.Core.ManageHook (WindowProps (..), appId, doShift, noWindowProps, runQuery, (-->), (=?))
 import Seki.Internal.Core.StackSet qualified as StackSet
-import Seki.Internal.Core.State (CoreState (..))
+import Seki.Internal.Core.State (CoreState (..), Workspaces (..), fromWorkspaces)
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
@@ -103,7 +103,7 @@ initial :: CoreState String StdLayouts
 initial = stateWithTags (workspaces def)
 
 stateWithTags :: [String] -> CoreState String StdLayouts
-stateWithTags tags = AttachedState (StackSet.StackSet (StackSet.Screen first (StackSet.OutputId 1)) [] rest Map.empty) []
+stateWithTags tags = fromWorkspaces (AttachedState (StackSet.StackSet (StackSet.Screen first (StackSet.OutputId 1)) [] rest Map.empty) [])
  where
   first = StackSet.Workspace (head tags) (layoutHook def) (Just (StackSet.Stack (StackSet.WindowId 2) [StackSet.WindowId 1] [StackSet.WindowId 3]))
   rest = [StackSet.Workspace tag (layoutHook def) Nothing | tag <- tail tags]
@@ -115,8 +115,9 @@ press config modifiers symbol core = case lookup (KeyBinding (modMask config .|.
 
 -- | Run the policy's manage hook for window 2, already inserted in the state.
 manage :: Config l -> WindowProps -> CoreState String l -> CoreState String l
-manage config props (AttachedState ss u) = AttachedState (appEndo (runQuery (policyManageHook (policyConfigOf config)) (StackSet.WindowId 2) props) ss) u
-manage _ _ st = st
+manage config props st = case coreWorkspaces st of
+  AttachedState ss u -> fromWorkspaces (AttachedState (appEndo (runQuery (policyManageHook (policyConfigOf config)) (StackSet.WindowId 2) props) ss) u)
+  _ -> st
 
 mpv :: WindowProps
 mpv = noWindowProps{propAppId = Just (Text.pack "mpv")}
@@ -128,18 +129,20 @@ intents :: (a, b, c) -> c
 intents (_, _, value) = value
 
 peekState :: CoreState i l -> Maybe StackSet.WindowId
-peekState (AttachedState stackSet _) = StackSet.peek stackSet
-peekState HeadlessState{} = Nothing
+peekState st = case coreWorkspaces st of
+  AttachedState stackSet _ -> StackSet.peek stackSet
+  HeadlessState{} -> Nothing
 
 focused :: (a, CoreState i l, c) -> Maybe StackSet.WindowId
 focused = peekState . state
 
 currentLayout :: CoreState i l -> l
-currentLayout (AttachedState stackSet _) = StackSet.layout (StackSet.workspace (StackSet.current stackSet))
-currentLayout HeadlessState{} = error "expected attached state"
+currentLayout st = case coreWorkspaces st of
+  AttachedState stackSet _ -> StackSet.layout (StackSet.workspace (StackSet.current stackSet))
+  HeadlessState{} -> error "expected attached state"
 
 currentTag :: (a, CoreState String l, c) -> String
-currentTag (_, AttachedState stackSet _, _) = StackSet.currentTag stackSet
+currentTag (_, CoreState{coreWorkspaces = AttachedState stackSet _}, _) = StackSet.currentTag stackSet
 currentTag _ = error "expected attached state"
 
 ratio :: (a, CoreState i StdLayouts, c) -> Rational
@@ -149,9 +152,10 @@ masters :: (a, CoreState i StdLayouts, c) -> Int
 masters result = case currentLayout (state result) of Choose _ layout _ -> tallNMaster layout
 
 windowNumbers :: (a, CoreState i l, c) -> [Word]
-windowNumbers (_, AttachedState stackSet _, _) = [fromIntegral n | StackSet.WindowId n <- StackSet.index stackSet]
+windowNumbers (_, CoreState{coreWorkspaces = AttachedState stackSet _}, _) = [fromIntegral n | StackSet.WindowId n <- StackSet.index stackSet]
 windowNumbers _ = []
 
 findTagState :: StackSet.WindowId -> CoreState i l -> Maybe i
-findTagState window (AttachedState stackSet _) = StackSet.findTag window stackSet
-findTagState _ HeadlessState{} = Nothing
+findTagState window st = case coreWorkspaces st of
+  AttachedState stackSet _ -> StackSet.findTag window stackSet
+  HeadlessState{} -> Nothing

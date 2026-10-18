@@ -17,7 +17,7 @@ import Seki.Internal.Core.Action (windows)
 import Seki.Internal.Core.ManageHook (appId, doShift, idHook, (-->), (=?))
 import Seki.Internal.Core.Scene (BorderColor (..), SceneStyle (..))
 import Seki.Internal.Core.StackSet qualified as SS
-import Seki.Internal.Core.State (CoreState (..))
+import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Inventory
@@ -88,7 +88,7 @@ manageShift fixture probe = do
   _ <- forkIO (try @SomeException (openWindowWith probe (windowSpec Green){specAppId = CustomAppId shiftedAppId}) >>= putMVar pending)
   green <- coreId <$> riverWindow fixture "matching window reaches river" ((== Just shiftedAppId) . riverWindowAppId)
   _ <-
-    waitUntil "doShift puts the matching window on hidden workspace 2 and keeps focus" assertionTimeoutMicroseconds (readPolicyState (mPolicy fixture)) $ \case
+    waitUntil "doShift puts the matching window on hidden workspace 2 and keeps focus" assertionTimeoutMicroseconds (coreWorkspaces <$> readPolicyState (mPolicy fixture)) $ \case
       AttachedState ss _ -> SS.findTag green ss == Just "2" && SS.currentTag ss == "1" && SS.peek ss == Just redCore
       HeadlessState _ -> False
   onFirst "matching window is not shown" [Paint Red fullBox True]

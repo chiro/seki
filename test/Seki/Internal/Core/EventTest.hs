@@ -17,8 +17,8 @@ import Seki.Internal.Core.StackSet (
   integrate',
   view,
  )
-import Seki.Internal.Core.StackSetGen (EventHistory (..), EventStep (..), coreInvariant, coreWorkspaces, historyStart)
-import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), newCoreState)
+import Seki.Internal.Core.StackSetGen (EventHistory (..), EventStep (..), coreInvariant, historyStart, sortedWorkspaces)
+import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..), fromWorkspaces, newCoreState)
 import Test.QuickCheck (Property, checkCoverage, conjoin, counterexample, cover, (===))
 import Test.Tasty (TestTree, localOption, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
@@ -46,33 +46,35 @@ reducerTests =
         drainCore idHook [] initial @?= (initial, [])
     , testCase "attaches the first output to the remembered workspace" $
         stepCore idHook (OutputCreated o1) initial
-          @?= (AttachedState (StackSet (Screen (ws 'a') o1) [] [ws 'b', ws 'c'] Map.empty) [], [])
+          @?= (fromWorkspaces (AttachedState (StackSet (Screen (ws 'a') o1) [] [ws 'b', ws 'c'] Map.empty) []), [])
     , testCase "shows a hidden workspace on a second output" $
         drainCore idHook [OutputCreated o1, OutputCreated o2] initial
           @?= (twoOutputs, [])
     , testCase "hides a removed second output's workspace first" $
         stepCore idHook (OutputRemoved o2) twoOutputs
-          @?= (AttachedState (StackSet (Screen (ws 'a') o1) [] [ws 'b', ws 'c'] Map.empty) [], [])
+          @?= (fromWorkspaces (AttachedState (StackSet (Screen (ws 'a') o1) [] [ws 'b', ws 'c'] Map.empty) []), [])
     , testCase "goes headless when the last output is removed" $
         drainCore idHook [OutputCreated o1, OutputRemoved o1] initial
           @?= (initial, [])
     , testCase "manages and unmanages windows while attached" $
         drainCore idHook [OutputCreated o1, created w1, created w2, WindowClosed w2] initial
-          @?= (AttachedState (StackSet (Screen (wsWith 'a' (Stack w1 [] [])) o1) [] [ws 'b', ws 'c'] Map.empty) [], [])
+          @?= (fromWorkspaces (AttachedState (StackSet (Screen (wsWith 'a' (Stack w1 [] [])) o1) [] [ws 'b', ws 'c'] Map.empty) []), [])
     , testCase "manages and unmanages windows while headless" $
         drainCore idHook [created w1, created w2, WindowClosed w1] initial
-          @?= (HeadlessState (HeadlessWorkspaces (wsWith 'a' (Stack w2 [] [])) [ws 'b', ws 'c'] Map.empty), [])
+          @?= (fromWorkspaces (HeadlessState (HeadlessWorkspaces (wsWith 'a' (Stack w2 [] [])) [ws 'b', ws 'c'] Map.empty)), [])
     , testCase "shows a window created while headless on the first output" $
         drainCore idHook [created w1, OutputCreated o1] initial
-          @?= (AttachedState (StackSet (Screen (wsWith 'a' (Stack w1 [] [])) o1) [] [ws 'b', ws 'c'] Map.empty) [], [])
+          @?= (fromWorkspaces (AttachedState (StackSet (Screen (wsWith 'a' (Stack w1 [] [])) o1) [] [ws 'b', ws 'c'] Map.empty) []), [])
     , testCase "focuses an interacted window" $
         drainCore idHook [OutputCreated o1, created w1, created w2, WindowInteraction w1] initial
-          @?= (AttachedState (StackSet (Screen (wsWith 'a' (Stack w1 [w2] [])) o1) [] [ws 'b', ws 'c'] Map.empty) [], [])
+          @?= (fromWorkspaces (AttachedState (StackSet (Screen (wsWith 'a' (Stack w1 [w2] [])) o1) [] [ws 'b', ws 'c'] Map.empty) []), [])
     , testCase "makes the output of an interacted window current" $
         drainCore idHook (onTwoOutputs ++ [WindowInteraction w2]) initial
-          @?= ( AttachedState
-                  (StackSet (Screen (wsWith 'b' (Stack w2 [] [])) o2) [Screen (wsWith 'a' (Stack w1 [] [])) o1] [ws 'c'] Map.empty)
-                  []
+          @?= ( fromWorkspaces
+                  ( AttachedState
+                      (StackSet (Screen (wsWith 'b' (Stack w2 [] [])) o2) [Screen (wsWith 'a' (Stack w1 [] [])) o1] [ws 'c'] Map.empty)
+                      []
+                  )
               , [ReclaimFocus, ReclaimFocus]
               )
     , testCase "ignores interaction with an unknown window" $
@@ -80,10 +82,10 @@ reducerTests =
          in stepCore idHook (WindowInteraction w3) st @?= (st, [])
     , testCase "runs the manage hook on each created window's properties" $
         drainCore (appId =? "mpv" --> doShift 'b') [OutputCreated o1, WindowCreated w1 foot, WindowCreated w2 mpv] initial
-          @?= (AttachedState (StackSet (Screen (wsWith 'a' (Stack w1 [] [])) o1) [] [wsWith 'b' (Stack w2 [] []), ws 'c'] Map.empty) [], [])
+          @?= (fromWorkspaces (AttachedState (StackSet (Screen (wsWith 'a' (Stack w1 [] [])) o1) [] [wsWith 'b' (Stack w2 [] []), ws 'c'] Map.empty) []), [])
     , testCase "runs actions and keeps their intents in arrival order" $
         drainCore idHook [RunAction (spawn "x"), created w1, RunAction (spawn "y")] initial
-          @?= (HeadlessState (HeadlessWorkspaces (wsWith 'a' (Stack w1 [] [])) [ws 'b', ws 'c'] Map.empty), [Spawn "x", Spawn "y"])
+          @?= (fromWorkspaces (HeadlessState (HeadlessWorkspaces (wsWith 'a' (Stack w1 [] [])) [ws 'b', ws 'c'] Map.empty)), [Spawn "x", Spawn "y"])
     ]
 
 -- | w1 on workspace a (output 1, current) and w2 on workspace b (output 2).
@@ -98,7 +100,7 @@ onTwoOutputs =
   ]
 
 twoOutputs :: CoreState Char ()
-twoOutputs = AttachedState (StackSet (Screen (ws 'a') o1) [Screen (ws 'b') o2] [ws 'c'] Map.empty) []
+twoOutputs = fromWorkspaces (AttachedState (StackSet (Screen (ws 'a') o1) [Screen (ws 'b') o2] [ws 'c'] Map.empty) [])
 
 initial :: CoreState Char ()
 initial = either (error . show) id (newCoreState () "abc")
@@ -131,13 +133,14 @@ propInvariant h =
     . cover 10 (any isHeadless prefixes && not (all isHeadless prefixes)) "attached and headless"
     . cover 20 (not (all (null . managed) prefixes)) "managed windows"
     $ conjoin
-      [ counterexample ("after " ++ show n ++ " events") (coreInvariant (historyTags h) st)
+      [ counterexample ("after " ++ show n ++ " events") (coreInvariant (historyTags h) (coreWorkspaces st))
       | (n, st) <- zip [0 :: Int ..] prefixes
       ]
  where
   prefixes = scanl (\st (EventStep _ e) -> fst (stepCore idHook e st)) (historyStart h) (historySteps h)
-  isHeadless HeadlessState{} = True
-  isHeadless AttachedState{} = False
+  isHeadless st = case coreWorkspaces st of
+    HeadlessState{} -> True
+    AttachedState{} -> False
 
 propManagedWindows :: EventHistory -> Property
 propManagedWindows h = managed final === Set.toList expected
@@ -161,4 +164,4 @@ propDrainSteps h = drainCore idHook events st0 === stepAll events st0
 
 -- | Every managed window, sorted, with any duplicate kept.
 managed :: CoreState Int l -> [WindowId]
-managed = sort . concatMap (integrate' . stack) . coreWorkspaces
+managed = sort . concatMap (integrate' . stack) . sortedWorkspaces . coreWorkspaces

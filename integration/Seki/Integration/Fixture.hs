@@ -33,7 +33,7 @@ import Seki.Fixture.Probe
 import Seki.Integration.Harness
 import Seki.Internal.Core.Layout (LayoutClass)
 import Seki.Internal.Core.StackSet qualified as SS
-import Seki.Internal.Core.State (CoreState (..))
+import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Inventory
 import Seki.Run.Policy
@@ -93,7 +93,7 @@ withFixture policyConfig name outputCount action = do
             namesByGlobal <- outputNames socketPath
             initialState <- readPolicyState policy
             inventory <- readRiverInventory session
-            currentGlobal <- case initialState of
+            currentGlobal <- case coreWorkspaces initialState of
               AttachedState ss _ -> case find ((== SS.output (SS.current ss)) . SS.OutputId . objectIdValue . ObjectTable.objectId . riverOutputObject) (riverInventoryOutputs inventory) of
                 Just output -> maybe (failIntegration "current output lacks wl_output global") pure (riverOutputWlOutputName output)
                 Nothing -> failIntegration "current core output absent from inventory"
@@ -111,7 +111,7 @@ withFixture policyConfig name outputCount action = do
                 )
                 `onException` (renderManagedProcessLogs keeper >>= announce)
             _ <- waitUntil "probe windows closed" assertionTimeoutMicroseconds (readRiverInventory session) (null . riverInventoryWindows)
-            _ <- waitUntil "policy windows closed" assertionTimeoutMicroseconds (readPolicyState policy) (\case AttachedState ss _ -> null (SS.allWindows ss); HeadlessState _ -> False)
+            _ <- waitUntil "policy windows closed" assertionTimeoutMicroseconds (coreWorkspaces <$> readPolicyState policy) (\case AttachedState ss _ -> null (SS.allWindows ss); HeadlessState _ -> False)
             stopManagedProcess river
             requireRuntimeExit result >>= assertEqual "runtime shutdown" (Right ())
           )

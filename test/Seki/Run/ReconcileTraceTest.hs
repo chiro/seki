@@ -12,7 +12,7 @@ import Seki.Internal.Core.Layout (LayoutClass, Mirror (..))
 import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.Scene (defaultSceneStyle)
 import Seki.Internal.Core.StackSet (WindowId (..), focusDown, index, peek)
-import Seki.Internal.Core.State (CoreState (..))
+import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
@@ -131,8 +131,9 @@ testFamilies = withRuntimePair $ \target peer -> do
         assertLayerOwns frames = do
           requests seat 1 frames @?= []
           requests seat 3 frames @?= []
-        windowOrder (AttachedState ss _) = (index ss, peek ss)
-        windowOrder HeadlessState{} = ([], Nothing)
+        windowOrder st = case coreWorkspaces st of
+          AttachedState ss _ -> (index ss, peek ss)
+          HeadlessState{} -> ([], Nothing)
         order = map WindowId [0xff0000a2, 0xff0000a1, 0xff0000a0]
     sendFrames
       peer

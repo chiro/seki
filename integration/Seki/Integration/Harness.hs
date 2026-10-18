@@ -87,7 +87,7 @@ import Seki.Internal.Core.Action (kill, spawn)
 import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.Scene (SceneStyle (..), defaultSceneStyle)
 import Seki.Internal.Core.StackSet qualified as StackSet
-import Seki.Internal.Core.State (CoreState (..))
+import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Inventory (
@@ -993,7 +993,7 @@ rectanglesMatch expected actual =
 assertCurrentOutputSelected :: Policy String Full -> RuntimeObservation -> IO RiverRectangle
 assertCurrentOutputSelected policy observation = do
   state <- readPolicyState policy
-  case state of
+  case coreWorkspaces state of
     HeadlessState{} -> failIntegration "production policy has no current output"
     AttachedState stackSet _ ->
       case [ rectangle | output <- completeOutputs (observationInventory observation), ObjectTable.objectId (riverOutputObject output) == outputObjectId (StackSet.output (StackSet.current stackSet)), Just rectangle <- [riverOutputRectangle output]

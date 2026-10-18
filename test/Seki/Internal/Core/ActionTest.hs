@@ -16,7 +16,7 @@ import Seki.Internal.Core.StackSet (
   shift,
   swapMaster,
  )
-import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..))
+import Seki.Internal.Core.State (CoreState, HeadlessWorkspaces (..), Workspaces (..), fromWorkspaces, overWorkspaces)
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Test.Tasty (TestTree, testGroup)
@@ -75,20 +75,22 @@ tests =
         , testCase "windows (greedyView 2) shows workspace 2" $
             runAction (windows (greedyView 2)) attached
               @?= ( ()
-                  , AttachedState (StackSet (Screen (Workspace 2 layouts Nothing) o1) [] [ws1, Workspace 3 layouts Nothing] Map.empty) []
+                  , fromWorkspaces (AttachedState (StackSet (Screen (Workspace 2 layouts Nothing) o1) [] [ws1, Workspace 3 layouts Nothing] Map.empty) [])
                   , [ReclaimFocus]
                   )
         , testCase "windows (shift 2) moves the focused window to workspace 2" $
             runAction (windows (shift 2)) attached
               @?= ( ()
-                  , AttachedState
-                      ( StackSet
-                          (Screen (Workspace 1 layouts (Just (Stack w1 [w3] []))) o1)
+                  , fromWorkspaces
+                      ( AttachedState
+                          ( StackSet
+                              (Screen (Workspace 1 layouts (Just (Stack w1 [w3] []))) o1)
+                              []
+                              [Workspace 2 layouts (Just (Stack w2 [] [])), Workspace 3 layouts Nothing]
+                              Map.empty
+                          )
                           []
-                          [Workspace 2 layouts (Just (Stack w2 [] [])), Workspace 3 layouts Nothing]
-                          Map.empty
                       )
-                      []
                   , [ReclaimFocus]
                   )
         , testCase "spawn \"foot\" records a launch" $
@@ -120,13 +122,13 @@ ws1 = Workspace 1 layouts (Just (Stack w2 [w3] [w1]))
 
 -- | One output showing workspace 1, whose windows are w3, w2, w1 with w2 focused.
 attached :: CoreState Int L
-attached = AttachedState (StackSet (Screen ws1 o1) [] [Workspace 2 layouts Nothing, Workspace 3 layouts Nothing] Map.empty) []
+attached = fromWorkspaces (AttachedState (StackSet (Screen ws1 o1) [] [Workspace 2 layouts Nothing, Workspace 3 layouts Nothing] Map.empty) [])
 
 emptyAttached :: CoreState Int L
-emptyAttached = AttachedState (StackSet (Screen (Workspace 1 layouts Nothing) o1) [] [Workspace 2 layouts Nothing] Map.empty) []
+emptyAttached = fromWorkspaces (AttachedState (StackSet (Screen (Workspace 1 layouts Nothing) o1) [] [Workspace 2 layouts Nothing] Map.empty) [])
 
 headless :: CoreState Int L
-headless = HeadlessState (HeadlessWorkspaces ws1 [Workspace 2 layouts Nothing, Workspace 3 layouts Nothing] Map.empty)
+headless = fromWorkspaces (HeadlessState (HeadlessWorkspaces ws1 [Workspace 2 layouts Nothing, Workspace 3 layouts Nothing] Map.empty))
 
 withStack :: Stack WindowId -> CoreState Int L
 withStack s = onCurrent (\w -> w{stack = Just s})
@@ -135,6 +137,7 @@ withLayout :: L -> CoreState Int L
 withLayout l = onCurrent (\w -> w{layout = l})
 
 onCurrent :: (Workspace Int L -> Workspace Int L) -> CoreState Int L
-onCurrent f = case attached of
-  AttachedState ss u -> AttachedState ss{current = (current ss){workspace = f (workspace (current ss))}} u
-  HeadlessState{} -> error "attached is attached"
+onCurrent f = overWorkspaces onAttached attached
+ where
+  onAttached (AttachedState ss u) = AttachedState ss{current = (current ss){workspace = f (workspace (current ss))}} u
+  onAttached HeadlessState{} = error "attached is attached"

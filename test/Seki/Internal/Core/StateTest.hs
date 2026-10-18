@@ -18,13 +18,15 @@ import Seki.Internal.Core.StackSet (
   tag,
   view,
  )
-import Seki.Internal.Core.StackSetGen (Hotplug (..), coreFloating, coreInvariant, coreWorkspaces, hotplugState)
+import Seki.Internal.Core.StackSetGen (Hotplug (..), coreFloating, coreInvariant, hotplugState, sortedWorkspaces)
 import Seki.Internal.Core.State (
   CoreState (..),
   HeadlessWorkspaces (..),
   WorkspaceTagError (..),
+  Workspaces (..),
   addOutput,
   focusWindowIn,
+  fromWorkspaces,
   manageWindow,
   newCoreState,
   removeOutput,
@@ -48,11 +50,13 @@ tests =
         , testCase "starts headless on the first tag with the rest hidden" $
             newCoreState 'l' "abc"
               @?= Right
-                ( HeadlessState
-                    ( HeadlessWorkspaces
-                        (Workspace 'a' 'l' Nothing)
-                        [Workspace 'b' 'l' Nothing, Workspace 'c' 'l' Nothing]
-                        Map.empty
+                ( fromWorkspaces
+                    ( HeadlessState
+                        ( HeadlessWorkspaces
+                            (Workspace 'a' 'l' Nothing)
+                            [Workspace 'b' 'l' Nothing, Workspace 'c' 'l' Nothing]
+                            Map.empty
+                        )
                     )
                 )
         , testProperty "accepts exactly the non-empty duplicate-free tag lists" propAcceptsUnique
@@ -167,7 +171,7 @@ tests =
             let st = hotplugState h
              in forAll anyOutput $ \o ->
                   conjoin
-                    [ (coreWorkspaces (f st), coreFloating (f st)) === (coreWorkspaces st, coreFloating st)
+                    [ (sortedWorkspaces (f st), coreFloating (f st)) === (sortedWorkspaces st, coreFloating st)
                     | f <- [addOutput o, removeOutput o]
                     ]
         , testProperty "removing a freshly added output undoes the addition" $ \h ->
@@ -213,7 +217,7 @@ propManageShift h =
           . cover 10 (t /= currentTag) "shifted away from the current workspace"
           $ conjoin
             [ coreInvariant (hotplugTags h) st'
-            , [tag ws' | ws' <- coreWorkspaces st', fresh `elem` integrate' (stack ws')] === [t]
+            , [tag ws' | ws' <- sortedWorkspaces st', fresh `elem` integrate' (stack ws')] === [t]
             , if t == currentTag then focused st' === (t, Just fresh) else focused st' === (currentTag, currentFocus)
             ]
  where
@@ -225,11 +229,11 @@ propManageShift h =
 anyOutput :: Gen OutputId
 anyOutput = OutputId <$> elements [1 .. 8]
 
-unassignedCount :: CoreState i l -> Int
+unassignedCount :: Workspaces i l -> Int
 unassignedCount HeadlessState{} = 0
 unassignedCount (AttachedState _ u) = length u
 
-knownOutputs :: CoreState i l -> [OutputId]
+knownOutputs :: Workspaces i l -> [OutputId]
 knownOutputs HeadlessState{} = []
 knownOutputs (AttachedState ss u) = map output (screens ss) ++ u
 
@@ -241,7 +245,7 @@ attachedWith p = (hotplugState <$> arbitrary) `suchThatMap` matching
   matching _ = Nothing
 
 -- | The workspace shown on an output.
-shownOn :: OutputId -> CoreState i l -> Maybe (Workspace i l)
+shownOn :: OutputId -> Workspaces i l -> Maybe (Workspace i l)
 shownOn _ HeadlessState{} = Nothing
 shownOn o (AttachedState ss _) = workspace <$> find ((== o) . output) (screens ss)
 
@@ -266,16 +270,16 @@ w3 = WindowId 3
 floatRect :: Rect
 floatRect = either (error . show) id (mkSize 100 100 >>= mkRect (Point 10 10))
 
-initial :: CoreState Char ()
-initial = either (error . show) id (newCoreState () "abc")
+initial :: Workspaces Char ()
+initial = either (error . show) coreWorkspaces (newCoreState () "abc")
 
-single :: CoreState Char ()
-single = either (error . show) id (newCoreState () "a")
+single :: Workspaces Char ()
+single = either (error . show) coreWorkspaces (newCoreState () "a")
 
-full :: CoreState Char ()
+full :: Workspaces Char ()
 full = (addOutput o3 . addOutput o2 . addOutput o1) initial
 
-stackSetOf :: CoreState Char () -> StackSet Char ()
+stackSetOf :: Workspaces Char () -> StackSet Char ()
 stackSetOf (AttachedState ss _) = ss
 stackSetOf HeadlessState{} = error "expected an attached state"
 

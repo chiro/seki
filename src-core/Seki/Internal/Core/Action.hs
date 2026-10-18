@@ -19,7 +19,7 @@ module Seki.Internal.Core.Action (
 import Control.Monad (ap)
 import Seki.Internal.Core.Layout (LayoutClass, Message, SomeMessage (..), messageCurrentLayout)
 import Seki.Internal.Core.StackSet (StackSet, WindowId, peek)
-import Seki.Internal.Core.State (CoreState (..))
+import Seki.Internal.Core.State (CoreState (..), Workspaces (..), overWorkspaces)
 
 -- | An effect an action asks the runtime to perform.
 data Intent
@@ -65,7 +65,7 @@ windows f = do
   modifyWindows f
 
 modifyWindows :: (StackSet i l -> StackSet i l) -> Action i l ()
-modifyWindows f = modify $ \case
+modifyWindows f = modify . overWorkspaces $ \case
   AttachedState ss unassigned -> AttachedState (f ss) unassigned
   st@HeadlessState{} -> st
 
@@ -81,6 +81,6 @@ spawn cmd = record (const [Spawn cmd])
 window stays managed until river reports it closed.
 -}
 kill :: Action i l ()
-kill = record $ \case
+kill = record $ \st -> case coreWorkspaces st of
   AttachedState ss _ | Just w <- peek ss -> [CloseWindow w]
   _ -> []

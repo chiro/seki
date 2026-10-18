@@ -23,7 +23,7 @@ import Seki.Internal.Core.Layout (ChangeLayout (..), Choose, IncMasterN (..), Mi
 import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.Scene (BorderColor (..), SceneStyle (..))
 import Seki.Internal.Core.StackSet qualified as SS
-import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..))
+import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..))
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
@@ -243,7 +243,7 @@ outputScenario fixture probe = do
   delivery fixture probe [a, b, c] c
   workspaceSnapshot fixture >>= assertEqual "workspace state after 2 to 1" before
   disable fixture first 0
-  _ <- waitUntil "headless core" assertionTimeoutMicroseconds (readPolicyState (mPolicy fixture)) (\case HeadlessState _ -> True; _ -> False)
+  _ <- waitUntil "headless core" assertionTimeoutMicroseconds (coreWorkspaces <$> readPolicyState (mPolicy fixture)) (\case HeadlessState _ -> True; _ -> False)
   _ <- waitUntil "headless keyboard cleared" assertionTimeoutMicroseconds (keyboardSnapshot probe) ((== Nothing) . keyboardOwner)
   workspaceSnapshot fixture >>= assertEqual "headless workspace state" before
   inventoryWindowIds fixture >>= assertEqual "headless windows remain open" windowIds
@@ -266,7 +266,7 @@ twoOutputNames fixture = case mOutputs fixture of
 workspaceSnapshot :: Fixture -> IO [SS.Workspace String M1Layout]
 workspaceSnapshot fixture = do
   state <- readPolicyState (mPolicy fixture)
-  pure . sortOn SS.tag $ case state of
+  pure . sortOn SS.tag $ case coreWorkspaces state of
     AttachedState ss _ -> SS.workspaces ss
     HeadlessState hw -> headlessCurrent hw : headlessHidden hw
 
