@@ -120,6 +120,10 @@ tests =
         let st = state (Tall 1 0.03 0.5) (Stack w1 [] [w2, w3])
             result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) (rectangle 100 100)) (Map.fromList [(w2, Just w4), (w3, Just w2)])
         sceneStacking result @?= [w4, w2, w3, w1]
+    , testCase "a child of a closed parent starts its own family" $ do
+        let st = state (Tall 1 0.03 0.5) (Stack w2 [w1] [w3])
+            result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) (rectangle 100 100)) (Map.singleton w2 (Just (WindowId 9)))
+        sceneStacking result @?= [w4, w1, w3, w2]
     ]
  where
   content = either (error . show) id (mkSize 97 77 >>= mkRect (Point (-98) 22))
