@@ -13,6 +13,21 @@ mkdir -p -- "$artifact_directory"
 : >"$manifest"
 : >"$raw_log"
 
+if [[ -n ${SEKI_INTEGRATION_SCENARIOS:-} ]]; then
+  selected_manifest="$artifact_directory/expected-manifest.txt"
+  awk -F= -v selection="$SEKI_INTEGRATION_SCENARIOS" '
+    BEGIN {
+      count = split(selection, names, ",")
+      for (i = 1; i <= count; i++) {
+        gsub(/^[ \t]+|[ \t]+$/, "", names[i])
+        selected[names[i]] = 1
+      }
+    }
+    $0 == "enabled=true" || ($1 in selected)
+  ' "$expected_manifest" >"$selected_manifest"
+  expected_manifest=$selected_manifest
+fi
+
 finalize_log() {
   tail -c 1048576 -- "$raw_log" >"$bounded_log" 2>/dev/null || true
   rm -f -- "$raw_log"

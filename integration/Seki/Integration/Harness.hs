@@ -267,19 +267,31 @@ integrationMain additionalScenarios = do
   if enabled /= Just "1"
     then putStrLn "seki-integration: real-river suite disabled (set SEKI_RUN_INTEGRATION=1 to enable)"
     else do
+      selection <- lookupEnv "SEKI_INTEGRATION_SCENARIOS"
+      selected <-
+        either failIntegration pure . selectScenarios selection $
+          [ ("native-wayland-full", runNativeWaylandFull)
+          , ("two-output-full", runTwoOutputFull)
+          , ("xwayland", runXwayland)
+          , ("fcitx5-mozc", runFcitx5Mozc)
+          ]
+            <> additionalScenarios
       manifest <- lookupEnv "SEKI_INTEGRATION_MANIFEST"
       initializeManifest manifest
-      results <-
-        forM
-          ( [ ("native-wayland-full", runNativeWaylandFull)
-            , ("two-output-full", runTwoOutputFull)
-            , ("xwayland", runXwayland)
-            , ("fcitx5-mozc", runFcitx5Mozc)
-            ]
-              <> additionalScenarios
-          )
-          (uncurry (runScenario manifest))
+      results <- forM selected (uncurry (runScenario manifest))
       unless (and results) exitFailure
+
+selectScenarios :: Maybe String -> [(String, a)] -> Either String [(String, a)]
+selectScenarios selection scenarios = case filter (not . null) (map trimAscii (splitCommas (fromMaybe "" selection))) of
+  [] -> Right scenarios
+  names -> case filter (`notElem` known) names of
+    [] -> Right (filter ((`elem` names) . fst) scenarios)
+    unknown -> Left ("SEKI_INTEGRATION_SCENARIOS names unknown scenarios " <> intercalate ", " unknown <> "; known scenarios: " <> intercalate ", " known)
+ where
+  known = map fst scenarios
+  splitCommas value = case break (== ',') value of
+    (name, []) -> [name]
+    (name, _ : rest) -> name : splitCommas rest
 
 runScenario :: Maybe FilePath -> String -> IO () -> IO Bool
 runScenario manifest scenarioName action = do
