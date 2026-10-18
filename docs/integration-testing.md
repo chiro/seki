@@ -96,6 +96,7 @@ nix develop --no-write-lock-file .#unit --command cabal test all
 | `m1-output-readd` | Actual WM output removal and addition through two, one, zero, one, and two outputs preserve stacks, layouts, focus, and window identities | `wlr-randr` |
 | `m2-probe-self-test` | Each probe window spec field and request against river's state: a custom and an absent app_id, the parent window, the dimensions hint, a fixed commit size, fullscreen and exit fullscreen requests, a move during a held press, and a pointer press, motion, and release with the logo modifier held | `wlr-randr` |
 | `m2-manage-shift` | A `doShift` manage hook keyed on a probe window's custom app_id puts it on hidden workspace 2: it is not shown and focus stays on the earlier window. Viewing workspace 2 shows it, and a window with another app_id still tiles on workspace 1 | `wlr-randr` |
+| `m2-startup-keys` | A public configuration's startup hook `spawnOnce` runs once after the first output, and an unmodified `XF86AudioRaiseVolume` press from `wtype` runs its bound `spawn`; both append to a file the scenario polls | `wlr-randr` |
 
 All scenarios also use the core river, foot, and synthetic-input fixture as
 needed. The CI shell in `flake.nix` provides the integration dependency set,
@@ -321,6 +322,7 @@ m1-layer-focus=passed
 m1-output-readd=passed
 m2-probe-self-test=passed
 m2-manage-shift=passed
+m2-startup-keys=passed
 ```
 
 `ci/run-integration.sh` byte-compares the generated file with

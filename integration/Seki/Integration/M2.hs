@@ -7,25 +7,31 @@ import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (SomeException, throwIO, try)
 import Control.Monad (void)
+import Data.ByteString.Char8 qualified as BS8
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Seki.Fixture.Probe
 import Seki.Integration.Fixture hiding (Fixture)
 import Seki.Integration.Fixture qualified as Shared
 import Seki.Integration.Harness
-import Seki.Internal.Core.Action (windows)
+import Seki.Internal.Config (Config (..), KeyBinding (..), Keysym (..), Mods (..), additionalKeys, def)
+import Seki.Internal.Core.Action (spawn, spawnOnce, windows)
 import Seki.Internal.Core.ManageHook (appId, doShift, idHook, (-->), (=?))
 import Seki.Internal.Core.Scene (BorderColor (..), SceneStyle (..))
 import Seki.Internal.Core.StackSet qualified as SS
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Run.Config (policyConfigOf)
 import Seki.Run.Inventory
 import Seki.Run.Policy
 import Seki.Run.Runtime
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable qualified as ObjectTable
 import Seki.Wire.Types (ObjectId, objectIdValue)
+import System.Directory (doesFileExist)
+import System.FilePath ((</>))
+import System.IO.Temp (withSystemTempDirectory)
 
 type Fixture = Shared.Fixture Tall
 
@@ -33,6 +39,7 @@ m2Scenarios :: [(String, IO ())]
 m2Scenarios =
   [ ("m2-probe-self-test", withFixture m2Config "m2-probe-self-test" 1 selfTest)
   , ("m2-manage-shift", withFixture manageShiftConfig "m2-manage-shift" 1 manageShift)
+  , ("m2-startup-keys", startupKeys)
   ]
 
 selfTest :: Fixture -> Probe -> IO ()
@@ -120,6 +127,24 @@ manageShiftConfig =
     { policyBindings = [(RiverKeyBinding (0xffbe + fromIntegral (fromEnum key)) (River.RiverSeatV1ModifiersFlags 0) (Just 0), windows (SS.view tag)) | (key, tag) <- [(ViewOne, "1"), (ViewTwo, "2")]]
     , policyManageHook = appId =? "seki-m2-shift" --> doShift "2"
     }
+
+{- | A public configuration whose startup hook and modifier-less media key
+each append a line to a file, launched through the production spawn path.
+-}
+startupKeys :: IO ()
+startupKeys = withSystemTempDirectory "seki-m2-startup-keys" $ \directory -> do
+  let launches = directory </> "launches"
+      append line = "printf '%s\\n' " <> line <> " >> '" <> launches <> "'"
+      config =
+        additionalKeys
+          def{startupHook = spawnOnce (append "startup")}
+          [(KeyBinding (Mods 0) (Keysym 0x1008ff13), spawn (append "raise-volume"))]
+      recorded = doesFileExist launches >>= \exists -> if exists then lines . BS8.unpack <$> BS8.readFile launches else pure []
+  withFixture (policyConfigOf config) "m2-startup-keys" 1 $ \fixture _ -> do
+    _ <- waitUntil "the startup hook spawns once the first output arrives" assertionTimeoutMicroseconds recorded (== ["startup"])
+    runInputDriver (mEnvironment fixture) ["-k", "XF86AudioRaiseVolume"]
+    _ <- waitUntil "the unmodified key spawns its command and the startup hook does not repeat" assertionTimeoutMicroseconds recorded (== ["startup", "raise-volume"])
+    pure ()
 
 riverWindow :: Fixture -> String -> (RiverWindowState -> Bool) -> IO RiverWindowState
 riverWindow fixture phase predicate =
