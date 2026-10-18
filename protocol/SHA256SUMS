@@ -7,3 +7,4 @@ b25919ad9bb60e4fd1937d9bb69729dca726d16bd9e32472e7434afabfe39fa1  protocol/river
 4ef41d15e4cdb9f550158391358ceec724a6708b43b7efedec03121a6bb8458d  protocol/wayland-protocols/ext-image-capture-source-v1.xml
 41a446653f788fabb404cab3168c0bd667c1ff4b54f1f0bb1e18810a1f47d73f  protocol/wayland-protocols/ext-image-copy-capture-v1.xml
 6b2ffb3a07d679d1c4170263adfefb9a7c37dd34ed3db5180bf58cb8ff8fbd0b  protocol/wayland-protocols/ext-foreign-toplevel-list-v1.xml
+3ff6d540be0bc5228195bf072bde42117ea17945a5c2061add5d3cf97d6bb524  protocol/wlr-protocols/wlr-virtual-pointer-unstable-v1.xml

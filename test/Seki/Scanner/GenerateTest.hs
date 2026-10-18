@@ -35,6 +35,7 @@ tests =
     , testCase "matches the committed river bindings" testGeneratedRiverBindingsFreshness
     , testCase "matches the committed layer-surface fixture binding" testGeneratedFixtureBindingFreshness
     , testCase "matches the committed native probe bindings" testProbeBindingsFreshness
+    , testCase "matches the committed virtual pointer binding" testVirtualPointerBindingFreshness
     , testCase "produces identical output on repeated runs" testDeterministicGeneration
     , testCase "resolves cross-protocol enums to qualified modules" testCrossProtocolEnum
     , testCase "encodes static and dynamic new IDs" testRequestEncoders
@@ -334,6 +335,24 @@ protocolPaths =
   , riverWindowProtocolPath
   , riverXkbProtocolPath
   ]
+
+testVirtualPointerBindingFreshness :: Assertion
+testVirtualPointerBindingFreshness = do
+  wayland <- expectProtocolFile waylandProtocolPath
+  target <- expectProtocolFile path
+  generated <-
+    expectGenerated
+      GenerationConfig
+        { generationModuleName = "Seki.Fixture.Protocol.WlrVirtualPointerUnstableV1"
+        , generationSourcePath = Text.pack path
+        , generationSourcePin = "wayland-protocols-wlr 0.3.12"
+        }
+      [target, wayland]
+      target
+  committed <- TextIO.readFile "tools-generated/layer-surface-fixture/Seki/Fixture/Protocol/WlrVirtualPointerUnstableV1.hs"
+  assertEqual "virtual pointer generated binding" committed generated
+ where
+  path = "protocol/wlr-protocols/wlr-virtual-pointer-unstable-v1.xml"
 
 testProbeBindingsFreshness :: Assertion
 testProbeBindingsFreshness = do

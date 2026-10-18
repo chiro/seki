@@ -30,6 +30,7 @@ extra-source-files:
   protocol/wayland-protocols/ext-image-copy-capture-v1.xml
   protocol/wayland-protocols/ext-foreign-toplevel-list-v1.xml
   protocol/wayland/wayland.xml
+  protocol/wlr-protocols/wlr-virtual-pointer-unstable-v1.xml
 extra-doc-files:
   README.md
   THIRD_PARTY_NOTICES.md
@@ -173,6 +174,7 @@ library layer-surface-fixture
     Seki.Fixture.Protocol.ExtImageCaptureSourceV1
     Seki.Fixture.Protocol.ExtImageCopyCaptureV1
     Seki.Fixture.Protocol.WlrLayerShellUnstableV1
+    Seki.Fixture.Protocol.WlrVirtualPointerUnstableV1
   build-depends:
     containers >=0.6.7 && <0.8,
     base >=4.18 && <4.19,
