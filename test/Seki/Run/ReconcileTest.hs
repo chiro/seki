@@ -261,6 +261,11 @@ testLayerFocus = withRuntimePair $ \target peer -> do
 
     border False
     request manager 4 (pure ())
+    sendFrames peer [event focusBinding 0 (pure ())]
+    start
+    manageEnd
+    render
+    renderEnd
     sendFrames peer [event seat 4 (putObject window)]
     start
     manageEnd
