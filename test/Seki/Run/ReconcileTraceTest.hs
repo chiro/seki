@@ -137,6 +137,8 @@ testFamilies = withRuntimePair $ \target peer -> do
     case nodes of
       [n1, n2, n3] -> stacked raised @?= [n1, n3, n2]
       _ -> fail "expected three nodes"
+    focusedBorder <- encodedPayload (putUint 15 >> putInt 2 >> mapM_ putUint [0, 0x80000000, 0xffffffff, 0xffffffff])
+    requests w2 8 raised @?= [focusedBorder]
     sendFrames peer [event layerSeat 1 (pure ()), event manager 6 (putNewId w4)]
     _ <- receiveNewIdRequest reader peer w4 (Opcode 2)
     created <- manage
