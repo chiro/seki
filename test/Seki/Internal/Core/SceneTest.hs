@@ -2,6 +2,7 @@
 
 module Seki.Internal.Core.SceneTest (tests) where
 
+import Control.Monad (forM_)
 import Data.List (sort)
 import Data.Map.Strict qualified as Map
 import Seki.Internal.Core.Geometry (Point (..), Rect, mkRect, mkSize, rectHeight, rectWidth, rectX, rectY)
@@ -124,6 +125,13 @@ tests =
         let st = state (Tall 1 0.03 0.5) (Stack w2 [w1] [w3])
             result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) (rectangle 100 100)) (Map.singleton w2 (Just (WindowId 9)))
         sceneStacking result @?= [w4, w1, w3, w2]
+    , testCase "one-pixel Tall and Mirror Tall scenes omit every zero tile" $
+        forM_ [CL, CR] $ \side -> do
+          let tall = Tall 1 (1 / 10) (1 / 2)
+              st = state (Choose side tall (Mirror tall)) (Stack w1 [] [w2, w3])
+              result = planScene defaultSceneStyle{sceneBorderWidth = 0} st (Map.singleton (OutputId 1) (rectangle 1 1)) Map.empty
+          sceneWindows result @?= Map.fromList [(w1, Omitted), (w2, Omitted), (w3, Placed (rectangle 1 1)), (w4, Omitted)]
+          sceneFocus result @?= Nothing
     ]
  where
   content = either (error . show) id (mkSize 97 77 >>= mkRect (Point (-98) 22))
