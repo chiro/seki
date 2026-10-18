@@ -1,14 +1,14 @@
 # M1 Core Implementation Plan
 
-Status: **WP1 through WP10 implemented, pinned release gate pending** / Last updated: 2026-10-18
+Status: **Complete** / Last updated: 2026-10-18
 
 This document turns the M1 row in the specification into an ordered,
 testable implementation plan. It is intentionally narrower than the complete
 v1 design in `spec.md`.
 
 The review findings are tracked in [Open design issues](#9-open-design-issues).
-All seven are Verified against their required regressions. M1 is not
-complete until the pinned release integration command passes.
+All seven are Verified against their required regressions, and every
+[exit criterion](#6-exit-criteria) is met. M1 is complete.
 
 The [README](../README.md#project-direction) describes the current public API.
 The [wire and runtime reference](wire-protocol.md) and
@@ -1119,7 +1119,8 @@ WP10 ran these closeout checks on 2026-10-18 with GHC 9.6.7 and system river
   scenarios and verifies the complete manifest.
 
 The pinned command `nix develop --no-write-lock-file .#ci --command
-ci/run-integration.sh` has not run, because the closeout host has no Nix. The
-milestone stays open until it passes. The historical
+ci/run-integration.sh` passed in the CI `integration` job of
+[run 39114975118](https://github.com/chiro/seki/actions/runs/39114975118) on the same tree that
+[#14](https://github.com/chiro/seki/pull/14) merged. The historical
 [WP9 report](latency-baseline/report.md) remains the recorded latency evidence;
 it does not certify a new host or toolchain.
