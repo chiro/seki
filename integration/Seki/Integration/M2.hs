@@ -15,7 +15,7 @@ import Seki.Integration.Fixture hiding (Fixture)
 import Seki.Integration.Fixture qualified as Shared
 import Seki.Integration.Harness
 import Seki.Internal.Config (Config (..), KeyBinding (..), Keysym (..), Mods (..), additionalKeys, def, defaultManageHook)
-import Seki.Internal.Core.Action (spawn, spawnOnce, windows)
+import Seki.Internal.Core.Action (Action, spawn, spawnOnce, windows)
 import Seki.Internal.Core.ManageHook (appId, doShift, idHook, (-->), (=?))
 import Seki.Internal.Core.Scene (BorderColor (..), SceneStyle (..))
 import Seki.Internal.Core.StackSet qualified as SS
@@ -41,6 +41,7 @@ m2Scenarios =
   , ("m2-manage-shift", withFixture manageShiftConfig "m2-manage-shift" 1 manageShift)
   , ("m2-startup-keys", startupKeys)
   , ("m2-float-dialog", withFixture m2Config{policyManageHook = defaultManageHook} "m2-float-dialog" 1 floatDialog)
+  , ("m2-fullscreen", withFixture m2Config{policyBindings = viewBindings} "m2-fullscreen" 1 fullscreen)
   ]
 
 selfTest :: Fixture -> Probe -> IO ()
@@ -101,11 +102,11 @@ manageShift fixture probe = do
       HeadlessState _ -> False
   onFirst "matching window is not shown" [Paint Red fullBox True]
   keyboardSnapshot probe >>= assertEqual "keyboard focus stays on the first window" (Just red) . keyboardOwner
-  press ViewTwo
+  pressView fixture ViewTwo
   onFirst "workspace 2 shows the shifted window" [Paint Green fullBox True]
   shifted <- takeMVar pending >>= either throwIO pure
   _ <- waitUntil "shifted window takes keyboard focus on its workspace" assertionTimeoutMicroseconds (keyboardSnapshot probe) ((== Just shifted) . keyboardOwner)
-  press ViewOne
+  pressView fixture ViewOne
   onFirst "workspace 1 restored" [Paint Red fullBox True]
   blue <- openWindow probe Blue
   onFirst "non-matching window tiles as before" [Paint Blue (Box 2 2 396 596) True, Paint Red (Box 402 2 396 596) False]
@@ -115,17 +116,23 @@ manageShift fixture probe = do
   coreId = SS.WindowId . objectIdValue . riverId
   onFirst phase paints = picture fixture phase [(head (mOutputs fixture), paints)]
   fullBox = Box 2 2 796 596
-  press key = runInputDriver (mEnvironment fixture) ["-k", "F" <> show (fromEnum key + 1)]
 
 shiftedAppId :: Text
 shiftedAppId = "seki-m2-shift"
 
-data ManageShiftKey = ViewOne | ViewTwo deriving (Enum, Show)
+data ViewKey = ViewOne | ViewTwo deriving (Enum, Show)
+
+-- | F1 and F2 with no modifier view workspaces 1 and 2.
+viewBindings :: [(RiverKeyBinding, Action String Tall ())]
+viewBindings = [(RiverKeyBinding (0xffbe + fromIntegral (fromEnum key)) (River.RiverSeatV1ModifiersFlags 0) (Just 0), windows (SS.view tag)) | (key, tag) <- [(ViewOne, "1"), (ViewTwo, "2")]]
+
+pressView :: Fixture -> ViewKey -> IO ()
+pressView fixture key = runInputDriver (mEnvironment fixture) ["-k", "F" <> show (fromEnum key + 1)]
 
 manageShiftConfig :: PolicyConfig String Tall
 manageShiftConfig =
   m2Config
-    { policyBindings = [(RiverKeyBinding (0xffbe + fromIntegral (fromEnum key)) (River.RiverSeatV1ModifiersFlags 0) (Just 0), windows (SS.view tag)) | (key, tag) <- [(ViewOne, "1"), (ViewTwo, "2")]]
+    { policyBindings = viewBindings
     , policyManageHook = appId =? "seki-m2-shift" --> doShift "2"
     }
 
@@ -169,6 +176,41 @@ floatDialog fixture probe = do
   onFirst phase paints = picture fixture phase [(head (mOutputs fixture), paints)]
   fullBox = Box 2 2 796 596
   dialogBox = Box 250 200 300 200
+
+{- | The focused probe window covers the whole output when it requests
+fullscreen, and returns to its tile with its border when it requests exit.
+While its workspace is hidden it covers nothing, so another workspace's
+window shows, and it covers the output again when its workspace returns.
+-}
+fullscreen :: Fixture -> Probe -> IO ()
+fullscreen fixture probe = do
+  pressView fixture ViewTwo
+  _ <- openWindow probe Blue
+  onFirst "workspace 2 tiles its window alone" otherWorkspace
+  pressView fixture ViewOne
+  _ <- openWindow probe Red
+  onFirst "the first window tiles alone" [Paint Red (Box 2 2 796 596) True]
+  green <- openWindow probe Green
+  onFirst "the second window tiles as master" tiled
+  greenCore <- riverWindow fixture "the second window reaches river" ((== Just "seki-color-probe-3") . riverWindowAppId)
+  requestFullscreen probe green
+  requested fixture "the fullscreen request reaches seki" greenCore FullscreenRequested
+  onFirst "the fullscreen window covers the output" covering
+  pressView fixture ViewTwo
+  onFirst "workspace 2's window shows while the fullscreen window's workspace is hidden" otherWorkspace
+  pressView fixture ViewOne
+  onFirst "the fullscreen window covers the output again" covering
+  _ <- waitUntil "the fullscreen window has keyboard focus again" assertionTimeoutMicroseconds (keyboardSnapshot probe) ((== Just green) . keyboardOwner)
+  requestExitFullscreen probe green
+  requested fixture "the exit request reaches seki" greenCore ExitFullscreenRequested
+  onFirst "exit returns the window to its tile" tiled
+  _ <- waitUntil "the window keeps keyboard focus after exit" assertionTimeoutMicroseconds (keyboardSnapshot probe) ((== Just green) . keyboardOwner)
+  pure ()
+ where
+  onFirst phase paints = picture fixture phase [(head (mOutputs fixture), paints)]
+  tiled = [Paint Green (Box 2 2 396 596) True, Paint Red (Box 402 2 396 596) False]
+  covering = [Paint Green (Box 0 0 800 600) True]
+  otherWorkspace = [Paint Blue (Box 2 2 796 596) True]
 
 riverWindow :: Fixture -> String -> (RiverWindowState -> Bool) -> IO RiverWindowState
 riverWindow fixture phase predicate =
