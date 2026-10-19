@@ -63,8 +63,15 @@ The default modifier is Mod4. Mod-Shift-Return launches `terminal`, and
 Mod-Shift-c closes the focused window. Mod-Space cycles layouts. Mod-j and
 Mod-k move focus, and Mod-Return swaps the focused window with the master.
 Mod-h and Mod-l resize the master area. Mod-comma and Mod-period change the
-master count. Mod-1 through Mod-9 select workspaces with `greedyView`; adding
-Shift moves the focused window there.
+master count. Mod-t tiles a floating window again. Mod-1 through Mod-9
+select workspaces with `greedyView`; adding Shift moves the focused window
+there.
+
+`def`'s `manageHook` is `defaultManageHook`, which floats dialogs: the windows
+whose client set a parent. A floating window sits above every tiled window
+and keeps the size its client picks, centered on its output. `float` and
+`sink` float and tile a window, so `withFocused float` floats the focused one.
+`doFloat` floats a new window from a manage hook.
 
 `keys` receives the final configuration, so changing `modMask`, `terminal`,
 or `workspaces` also changes `defaultKeys`. Bindings use XKB keysym numbers,
@@ -84,14 +91,16 @@ that must start only once.
 
 When changing the layout's type, replace the layout-dependent key function,
 manage hook, and startup hook in the same record update, as in
-`def{layoutHook = Full, keys = defaultKeys, manageHook = idHook, startupHook = pure ()}`.
+`def{layoutHook = Full, keys = defaultKeys, manageHook = defaultManageHook, startupHook = pure ()}`.
+`defaultManageHook` names no layout, so it composes with a hook of your own,
+as in `composeAll [appId =? "mpv" --> doShift "2", defaultManageHook]`.
 Custom bindings are an association list of `(KeyBinding, Action l ())` pairs.
 Duplicate identities, empty workspace lists or duplicate tags, negative borders,
 and colors whose RGB channels exceed alpha fail before Wayland startup.
 `BorderColor` channels are unsigned 32-bit premultiplied RGBA values.
 
-`Action` is pure. Use `windows`, `sendMessage`, `spawn`, `spawnOnce`, and `kill` to change
-state or record effects. Arbitrary IO is not part of the configuration API.
+`Action` is pure. Use `windows`, `sendMessage`, `spawn`, `spawnOnce`, `kill`,
+`float`, `sink`, and `withFocused` to change state or record effects. Arbitrary IO is not part of the configuration API.
 Import `Seki.Core.StackSet` qualified for its full operation set; `Seki`
 exports selected operations without conflicting with `Config.workspaces`.
 
