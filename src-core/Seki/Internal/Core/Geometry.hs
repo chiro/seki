@@ -31,6 +31,7 @@ module Seki.Internal.Core.Geometry (
   rectWidth,
   rectHeight,
   mkRect,
+  OutputRect (..),
   GeometryError (..),
   translate,
   mirror,
@@ -62,6 +63,10 @@ data Rect = Rect
   , rectSize :: !Size
   }
   deriving (Eq, Ord, Show)
+
+-- | A rectangle whose origin is an output's top-left rather than the global origin.
+newtype OutputRect = OutputRect Rect
+  deriving (Eq, Show)
 
 -- | Why a size or rectangle could not be constructed.
 data GeometryError

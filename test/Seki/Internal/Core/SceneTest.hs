@@ -6,7 +6,7 @@ import Control.Monad (forM_)
 import Data.List (sort)
 import Data.Map.Strict qualified as Map
 import Seki.Internal.Core.Event (CoreEvent (..), drainCore)
-import Seki.Internal.Core.Geometry (Point (..), Rect, mkRect, mkSize, rectHeight, rectWidth, rectX, rectY)
+import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), Rect, mkRect, mkSize, rectHeight, rectWidth, rectX, rectY)
 import Seki.Internal.Core.GeometryGen (genRatio, genRect)
 import Seki.Internal.Core.Layout (CLR (..), Choose (..), LayoutClass (..), Mirror (..), runLayout)
 import Seki.Internal.Core.ManageHook (idHook)
@@ -159,27 +159,27 @@ floatTests =
   testGroup
     "floating windows"
     [ testCase "M2-D01: a float's content rectangle is its stored geometry plus the output origin" $
-        Map.lookup w2 (sceneWindows (floatScene (Tall 1 0.03 0.5) (Stack w2 [w1] []) [(w2, FloatAt (rectAt 30 40 200 100))] [w2] Map.empty))
+        Map.lookup w2 (sceneWindows (floatScene (Tall 1 0.03 0.5) (Stack w2 [w1] []) [(w2, FloatAt (OutputRect (rectAt 30 40 200 100)))] [w2] Map.empty))
           @?= Just (Floating (rectAt 830 40 200 100))
     , testCase "a float leaves the layout, which tiles the rest of the stack in the usable area" $
-        sceneWindows (floatScene Full (Stack w2 [w1] [w3]) [(w2, FloatAt (rectAt 30 40 200 100))] [w2] Map.empty)
+        sceneWindows (floatScene Full (Stack w2 [w1] [w3]) [(w2, FloatAt (OutputRect (rectAt 30 40 200 100)))] [w2] Map.empty)
           @?= Map.fromList [(w1, Omitted), (w2, Floating (rectAt 830 40 200 100)), (w3, Placed (rectAt 802 32 796 566))]
     , testCase "a float with no stored box is centered on the whole output inside its border" $
         Map.lookup w2 (sceneWindows (floatScene Full (Stack w2 [w1] []) [(w2, ClientSized)] [w2] Map.empty))
           @?= Just (Centered (rectAt 802 2 796 596))
     , testCase "a float on a hidden workspace is omitted" $
-        let st = floatState Full (Stack w1 [] []) [(w4, FloatAt (rectAt 0 0 10 10))] [w4]
-            hiddenFloat = st{coreWorkspaces = AttachedState (StackSet (Screen (Workspace (1 :: Int) Full (Just (Stack w1 [] []))) (OutputId 1)) [] [Workspace 2 Full (Just (Stack w4 [] []))] (Map.singleton w4 (FloatAt (rectAt 0 0 10 10)))) []}
+        let st = floatState Full (Stack w1 [] []) [(w4, FloatAt (OutputRect (rectAt 0 0 10 10)))] [w4]
+            hiddenFloat = st{coreWorkspaces = AttachedState (StackSet (Screen (Workspace (1 :: Int) Full (Just (Stack w1 [] []))) (OutputId 1)) [] [Workspace 2 Full (Just (Stack w4 [] []))] (Map.singleton w4 (FloatAt (OutputRect (rectAt 0 0 10 10))))) []}
          in Map.lookup w4 (sceneWindows (planScene defaultSceneStyle hiddenFloat (Map.singleton (OutputId 1) secondOutput) Map.empty)) @?= Just Omitted
     , testCase "clamping moves a float back onto its output and shrinks only one larger than it" $
-        [ Map.lookup w2 (sceneWindows (floatScene Full (Stack w2 [w1] []) [(w2, FloatAt stored)] [w2] Map.empty))
+        [ Map.lookup w2 (sceneWindows (floatScene Full (Stack w2 [w1] []) [(w2, FloatAt (OutputRect stored))] [w2] Map.empty))
         | stored <- [rectAt 700 550 200 100, rectAt (-50) (-50) 200 100, rectAt 10 10 2000 100]
         ]
           @?= map (Just . Floating) [rectAt 1398 498 200 100, rectAt 802 2 200 100, rectAt 802 10 796 100]
     , testCase "clamping leaves the stored geometry unchanged" $
-        let st = floatState Full (Stack w2 [w1] []) [(w2, FloatAt (rectAt 700 550 200 100))] [w2]
+        let st = floatState Full (Stack w2 [w1] []) [(w2, FloatAt (OutputRect (rectAt 700 550 200 100)))] [w2]
          in case coreWorkspaces st of
-              AttachedState ss _ -> Map.lookup w2 (floating ss) @?= Just (FloatAt (rectAt 700 550 200 100))
+              AttachedState ss _ -> Map.lookup w2 (floating ss) @?= Just (FloatAt (OutputRect (rectAt 700 550 200 100)))
               HeadlessState{} -> fail "attached"
     , testCase "M2-D02: a floating dialog stacks over its tiled parent, focused or not" $ do
         let parents = Map.singleton w2 (Just w1)
@@ -188,7 +188,7 @@ floatTests =
         sceneStacking dialogFocused @?= [w1, w3, w2]
         sceneStacking parentFocused @?= [w3, w1, w2]
     , testCase "M2-D02: focus moving to a tile leaves two overlapping floats in their order" $ do
-        let overlapping = [(w2, FloatAt (rectAt 10 10 300 300)), (w3, FloatAt (rectAt 100 100 300 300))]
+        let overlapping = [(w2, FloatAt (OutputRect (rectAt 10 10 300 300))), (w3, FloatAt (OutputRect (rectAt 100 100 300 300)))]
             (st, _) = drainCore idHook [WindowInteraction w3, WindowInteraction w2, WindowInteraction w1] (floatState Full (Stack w1 [] [w2, w3]) overlapping [])
             result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) secondOutput) Map.empty
         sceneFocus result @?= Just w1
@@ -199,7 +199,7 @@ floatTests =
     , testProperty "every float lies inside its output with its border, and no float reaches a layout" $
         forAll ((,,) <$> genRect <*> vectorOf 4 genRect <*> sublistOf [w1, w2, w3, w4]) $ \(bounds, stored, floated) ->
           forAll (chooseInt (0, 20)) $ \border ->
-            let geoms = Map.fromList [(w, g) | (w, r, sized) <- zip3 [w1, w2, w3, w4] stored (cycle [True, False, True]), w `elem` floated, let g = if sized then FloatAt r else ClientSized]
+            let geoms = Map.fromList [(w, g) | (w, r, sized) <- zip3 [w1, w2, w3, w4] stored (cycle [True, False, True]), w `elem` floated, let g = if sized then FloatAt (OutputRect r) else ClientSized]
                 st = (fromWorkspaces (AttachedState (StackSet (Screen (Workspace (1 :: Int) Everything (Just (Stack w1 [] [w2, w3, w4]))) (OutputId 1)) [] [] geoms) [])){coreRaiseOrder = Map.keys geoms}
                 result = planScene defaultSceneStyle{sceneBorderWidth = fromIntegral border} st (Map.singleton (OutputId 1) (OutputArea bounds bounds)) Map.empty
                 b = fromIntegral border

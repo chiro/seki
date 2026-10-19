@@ -36,7 +36,7 @@ import Data.Maybe (maybeToList)
 import Seki.Internal.Core.Action (Action)
 import Seki.Internal.Core.Action qualified as Action
 import Seki.Internal.Core.Event (CoreEvent (..))
-import Seki.Internal.Core.Geometry (Point (..), mkRect, mkSize)
+import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), mkRect, mkSize)
 import Seki.Internal.Core.Layout (CLR (..), ChangeLayout (..), Choose (..), IncMasterN (..), Mirror (..), Resize (..))
 import Seki.Internal.Core.ManageHook (noWindowProps)
 import Seki.Internal.Core.StackSet
@@ -208,7 +208,7 @@ hotplugState (Hotplug ts steps) = foldl (flip apply) initial steps
   apply (GreedyViewTag t) = attached (greedyView t)
   attached f (AttachedState ss unassigned) = AttachedState (f ss) unassigned
   attached _ st = st
-  floatRect = FloatAt (either (error . show) id (mkSize 100 100 >>= mkRect (Point 100 100)))
+  floatRect = FloatAt (OutputRect (either (error . show) id (mkSize 100 100 >>= mkRect (Point 100 100))))
 
 -- | Every workspace, sorted by tag.
 sortedWorkspaces :: (Ord i) => Workspaces i l -> [Workspace i l]

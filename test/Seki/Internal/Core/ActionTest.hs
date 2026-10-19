@@ -3,7 +3,7 @@ module Seki.Internal.Core.ActionTest (tests) where
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Seki.Internal.Core.Action (Action, Intent (..), float, kill, runAction, sendMessage, sink, spawn, spawnOnce, windows, withFocused)
-import Seki.Internal.Core.Geometry (Point (..), mkRect, mkSize)
+import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), mkRect, mkSize)
 import Seki.Internal.Core.Layout (CLR (..), ChangeLayout (..), Choose (..), IncMasterN (..), Mirror (..), Resize (..))
 import Seki.Internal.Core.StackSet (
   FloatGeom (..),
@@ -168,7 +168,7 @@ withFloating fl = overWorkspaces onAttached attached
   onAttached HeadlessState{} = error "attached is attached"
 
 stored :: FloatGeom
-stored = FloatAt (either (error . show) id (mkSize 300 200 >>= mkRect (Point 40 30)))
+stored = FloatAt (OutputRect (either (error . show) id (mkSize 300 200 >>= mkRect (Point 40 30))))
 
 withLayout :: L -> CoreState Int L
 withLayout l = onCurrent (\w -> w{layout = l})

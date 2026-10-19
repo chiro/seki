@@ -8,9 +8,8 @@ differences:
   identities, rather than type parameters.
 * A 'Screen' carries no geometry. The scene planner reads each output's
   usable rectangle separately.
-* 'FloatGeom' holds a content box in logical pixels relative to the output
-  showing the window's workspace, or no box while the client picks its own
-  size, rather than a @RationalRect@ of the screen.
+* 'FloatGeom' holds a content box in logical pixels, or no box while the
+  client picks its own size, rather than a @RationalRect@ of the screen.
 * There is no @new@ and no @abort@. Construction is total and lives in
   "Seki.Internal.Core.State", which returns typed errors.
 * The workspace set is fixed once validated, so @renameTag@ and
@@ -83,7 +82,7 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, listToMaybe)
 import Data.Word (Word32)
-import Seki.Internal.Core.Geometry (Rect)
+import Seki.Internal.Core.Geometry (OutputRect)
 
 -- | A river window's identity.
 newtype WindowId = WindowId Word32
@@ -93,14 +92,13 @@ newtype WindowId = WindowId Word32
 newtype OutputId = OutputId Word32
   deriving (Eq, Ord, Show)
 
-{- | Where a floating window goes. A stored box is the window's content, with
-the border drawn outside it, relative to the top-left of the output showing
-its workspace, so the window travels with its workspace between outputs.
+{- | Where a floating window goes. A stored box is its content, with the border
+outside, relative to the output showing its workspace.
 -}
 data FloatGeom
   = -- | No stored box: the client picks its size and the window is centered on its output.
     ClientSized
-  | FloatAt Rect
+  | FloatAt OutputRect
   deriving (Eq, Show)
 
 {- | Every workspace exactly once: the focused screen's, the other screens',
