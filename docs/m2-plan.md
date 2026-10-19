@@ -9,8 +9,8 @@ configuration needs, plus the floating, restart, and size-mismatch behavior
 that daily use hits first.
 
 Design questions are tracked in [Open design issues](#9-open-design-issues).
-All six issues are **Decided**. Each becomes **Verified** when its required
-regression lands.
+All six issues are **Decided**, and M2-D01 and M2-D02 are **Verified**. Each
+other issue becomes **Verified** when its required regression lands.
 
 ## 1. Outcome
 
@@ -130,8 +130,8 @@ river events -> Inventory -> CoreEvent (WindowCreated carries WindowProps)
   have arrived.
 - `Query a` is a reader over `WindowProps`. `ManageHook = Query (Endo
   StackSet)`, as in xmonad. It is pure and has no IO.
-- `Placement` gains `Floating Rect` and `Fullscreen OutputId` beside `Omitted`
-  and `Placed Rect`.
+- `Placement` gains `Floating Rect`, `Centered Rect` for a float with no
+  stored box, and `Fullscreen OutputId` beside `Omitted` and `Placed Rect`.
 - `CoreState` gains a fullscreen set, the float raise order (M2-D02), an
   optional in-progress pointer operation, and a spawned-once set. These live beside the StackSet, not in it,
   so the ported StackSet properties remain unchanged.
@@ -427,8 +427,8 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
 
 | ID | Issue | Priority | Status | Affected work |
 |---|---|---|---|---|
-| M2-D01 | Float geometry and the border | P1 | Decided | WP4, WP5 |
-| M2-D02 | Float stacking against families | P2 | Decided | WP4 |
+| M2-D01 | Float geometry and the border | P1 | Verified | WP4, WP5 |
+| M2-D02 | Float stacking against families | P2 | Verified | WP4 |
 | M2-D03 | Fullscreen representation and exit | P1 | Decided | WP6, WP8 |
 | M2-D04 | Crop while a proposal is pending | P1 | Decided | WP7 |
 | M2-D05 | Client move and resize requests | P3 | Decided | WP5 |
@@ -454,6 +454,13 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
   `src-core/Seki/Internal/Core/StackSet.hs`.
 - **Required regression:** a scene test that a float's content rectangle
   equals its stored geometry plus the output origin.
+- **Verified (WP4):** "M2-D01: a float's content rectangle is its stored
+  geometry plus the output origin" in
+  [SceneTest](../test/Seki/Internal/Core/SceneTest.hs). The `FloatGeom`
+  comment in `StackSet.hs` and spec 3.5 now describe the output-relative
+  content box. A float with no stored box is `ClientSized`, proposed 0 × 0
+  and centered at its committed size; the committed size never becomes
+  stored geometry.
 
 ### M2-D02. Float stacking against families
 
@@ -475,6 +482,16 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
   M2-D06.
 - **Required regression:** scene tests for a floating dialog over its tiled
   parent and for focus moving to a tile while two floats overlap.
+- **Verified (WP4):** "M2-D02: a floating dialog stacks over its tiled parent,
+  focused or not" and "M2-D02: focus moving to a tile leaves two overlapping
+  floats in their order" in
+  [SceneTest](../test/Seki/Internal/Core/SceneTest.hs), the raise-order
+  reducer tests and generated property in
+  [EventTest](../test/Seki/Internal/Core/EventTest.hs), the M1-D06 trace in
+  [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs), and the
+  real-river scenario `m2-float-dialog`. The raise order is
+  `coreRaiseOrder :: [WindowId]`, bottom to top. Floating families follow
+  the raise order of their most recently raised member.
 
 ### M2-D03. Fullscreen representation and exit
 

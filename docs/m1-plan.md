@@ -1051,6 +1051,9 @@ regression evidence for each entry.
   child window is inserted and focused like any window, and under `Full`
   focusing its parent hides it. M2 changes this test deliberately when it
   floats dialogs.
+- **Superseded (M2 WP4):** `def`'s `manageHook` is `defaultManageHook`,
+  `isDialog --> doFloat`. The trace test now asserts that under `Full` a
+  floating dialog stays shown above its refocused parent.
 
 ### M1-D07 — Borders outside the tile
 
