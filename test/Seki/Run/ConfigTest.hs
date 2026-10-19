@@ -10,7 +10,7 @@ import Data.Text qualified as Text
 import Seki.Internal.Config
 import Seki.Internal.Core.Action qualified as Action
 import Seki.Internal.Core.Layout (CLR (..), Choose (..), Mirror (..), description)
-import Seki.Internal.Core.ManageHook (WindowProps (..), appId, doShift, noWindowProps, runQuery, (-->), (=?))
+import Seki.Internal.Core.ManageHook (WindowProps (..), appId, composeAll, doShift, noWindowProps, runQuery, (-->), (=?))
 import Seki.Internal.Core.StackSet qualified as StackSet
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..), fromWorkspaces)
 import Seki.Internal.Layout.Full (Full (..))
@@ -35,16 +35,16 @@ tests =
         assertEqual "layout" (Choose CL tall (Choose CL (Mirror tall) Full)) (layoutHook def)
         assertEqual "border width" 2 (borderWidth (borders def))
         assertEqual "fixed group" True (bindingsUseFixedLayout def)
-        assertEqual "binding count" 28 (length (keys def def))
+        assertEqual "binding count" 29 (length (keys def def))
         policy <- prepareConfig def >>= either (assertFailure . show) pure
-        assertEqual "lowered fixed group" (replicate 28 (Just 0)) (map riverKeyBindingLayoutOverride (riverKeyBindings (policyRuntimeHandlers policy)))
+        assertEqual "lowered fixed group" (replicate 29 (Just 0)) (map riverKeyBindingLayoutOverride (riverKeyBindings (policyRuntimeHandlers policy)))
     , testCase "final overrides reach keys and wire binding identity" $ do
         let config = def{modMask = Mod1, terminal = "custom-terminal", workspaces = ["a", "b"], bindingsUseFixedLayout = False}
         assertEqual "terminal action" [Action.Spawn "custom-terminal"] (intents (press config Shift 0xff0d initial))
         policy <- prepareConfig config >>= either (assertFailure . show) pure
         let bindings = riverKeyBindings (policyRuntimeHandlers policy)
         assertEqual "all modifiers" [River.RiverSeatV1ModifiersFlags 9, River.RiverSeatV1ModifiersFlags 9] (map riverKeyBindingModifiers (take 2 bindings))
-        assertEqual "no fixed layout" (replicate 14 Nothing) (map riverKeyBindingLayoutOverride bindings)
+        assertEqual "no fixed layout" (replicate 15 Nothing) (map riverKeyBindingLayoutOverride bindings)
         assertEqual "overridden tags" "b" (currentTag (press config (Mods 0) 0x32 (stateWithTags ["a", "b"])))
     , testCase "every default action changes the intended core state" $ do
         assertEqual "spawn" [Action.Spawn "foot"] (intents (press def Shift 0xff0d initial))
@@ -63,8 +63,18 @@ tests =
         assertEqual "Full selected" "Full" (description (currentLayout full))
         assertEqual "cycle wraps" "Tall" (description (currentLayout (state (press def (Mods 0) 0x20 full))))
         mapM_ checkTag (zip (workspaces def) [0x31 .. 0x39])
-    , testCase "the default manage hook leaves a new window where it was inserted" $
+    , testCase "the default manage hook floats a dialog and leaves other windows tiled where they were inserted" $ do
         assertEqual "inserted window" (Just (StackSet.WindowId 2)) (peekState (manage def mpv initial))
+        assertEqual "other window tiled" Map.empty (floatingState (manage def mpv initial))
+        assertEqual "dialog floats with no stored box" (Map.singleton (StackSet.WindowId 2) StackSet.ClientSized) (floatingState (manage def noWindowProps{propParent = Just (StackSet.WindowId 1)} initial))
+    , testCase "defaultManageHook composes with a hook of another layout type" $ do
+        let config = def{layoutHook = Full, keys = defaultKeys, manageHook = composeAll [appId =? "mpv" --> doShift "2", defaultManageHook], startupHook = pure ()}
+            fullInitial = fromWorkspaces (AttachedState (StackSet.StackSet (StackSet.Screen (StackSet.Workspace "1" Full (Just (StackSet.Stack (StackSet.WindowId 2) [] []))) (StackSet.OutputId 1)) [] [StackSet.Workspace "2" Full Nothing] Map.empty) [])
+        assertEqual "dialog floats" (Map.singleton (StackSet.WindowId 2) StackSet.ClientSized) (floatingState (manage config noWindowProps{propParent = Just (StackSet.WindowId 1)} fullInitial))
+    , testCase "mod-t tiles the focused floating window again" $ do
+        let floated = state (Action.runAction (Action.float (StackSet.WindowId 2)) initial)
+        assertEqual "floated first" (Map.singleton (StackSet.WindowId 2) StackSet.ClientSized) (floatingState floated)
+        assertEqual "sunk" Map.empty (floatingState (state (press def (Mods 0) 0x74 floated)))
     , testCase "the configured manage hook reaches the policy" $ do
         let config = def{manageHook = appId =? "mpv" --> doShift "2"}
         assertEqual "matching window shifted" (Just "2") (findTagState (StackSet.WindowId 2) (manage config mpv initial))
@@ -79,13 +89,13 @@ tests =
     , testCase "additionalKeys replaces a binding with the same identity" $ do
         let config = additionalKeys def [(KeyBinding (Mod4 .|. Shift) (Keysym 0xff0d), Action.spawn "alacritty")]
         assertEqual "the new action wins" [Action.Spawn "alacritty"] (intents (press config Shift 0xff0d initial))
-        assertEqual "the binding count is unchanged" 28 (length (keys config config))
+        assertEqual "the binding count is unchanged" 29 (length (keys config config))
         prepareConfig config >>= either (assertFailure . ("validation rejected the replacement: " <>) . show) (const (pure ()))
     , testCase "additionalKeys keeps the last of repeated new identities and adds new ones" $ do
         let volume = KeyBinding (Mods 0) (Keysym 0x1008ff13)
             config = additionalKeys def [(volume, Action.spawn "first"), (volume, Action.spawn "louder")]
         assertEqual "the last repeat wins" [Action.Spawn "louder"] (intents (pressExactly config volume initial))
-        assertEqual "one binding added" 29 (length (keys config config))
+        assertEqual "one binding added" 30 (length (keys config config))
         prepareConfig config >>= either (assertFailure . ("validation rejected the addition: " <>) . show) (const (pure ()))
     , testCase "additionalKeys keeps later record overrides" $ do
         let config = (additionalKeys def [(KeyBinding Mod4 (Keysym 0x70), Action.spawn "menu")]){modMask = Mod1, terminal = "custom-terminal"}
@@ -94,7 +104,7 @@ tests =
     , testCase "removeKeys removes a binding" $ do
         let config = removeKeys def [KeyBinding (Mod4 .|. Shift) (Keysym 0x63)]
         assertBool "kill is gone" (KeyBinding (Mod4 .|. Shift) (Keysym 0x63) `notElem` map fst (keys config config))
-        assertEqual "the rest remain" 27 (length (keys config config))
+        assertEqual "the rest remain" 28 (length (keys config config))
         assertEqual "removed and re-added" [Action.Spawn "x"] (intents (pressExactly (additionalKeys config [(KeyBinding (Mod4 .|. Shift) (Keysym 0x63), Action.spawn "x")]) (KeyBinding (Mod4 .|. Shift) (Keysym 0x63)) initial))
     , testCase "a binding with no modifier passes validation and lowers with no modifier" $
         bracket (lookupEnv "WAYLAND_DISPLAY") restore $ \_ -> do
@@ -198,3 +208,8 @@ findTagState :: StackSet.WindowId -> CoreState i l -> Maybe i
 findTagState window st = case coreWorkspaces st of
   AttachedState stackSet _ -> StackSet.findTag window stackSet
   HeadlessState{} -> Nothing
+
+floatingState :: CoreState i l -> Map.Map StackSet.WindowId StackSet.FloatGeom
+floatingState st = case coreWorkspaces st of
+  AttachedState stackSet _ -> StackSet.floating stackSet
+  HeadlessState{} -> Map.empty
