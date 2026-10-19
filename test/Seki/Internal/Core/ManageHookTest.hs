@@ -12,6 +12,7 @@ import Seki.Internal.Core.ManageHook (
   askWindow,
   composeAll,
   doF,
+  doFloat,
   doShift,
   doSink,
   idHook,
@@ -62,6 +63,10 @@ tests =
               @?= shiftWin 3 w1 (sink w1 floated)
         , testCase "doSink drops the window's floating rectangle" $
             Map.member w1 (floating (apply doSink w1 noWindowProps floated)) @?= False
+        , testCase "doFloat floats the window with no stored box, so the client picks its size" $
+            Map.lookup w1 (floating (apply doFloat w1 noWindowProps full)) @?= Just ClientSized
+        , testCase "isDialog --> doFloat floats only a window with a parent" $
+            map (\props -> Map.member w1 (floating (apply (isDialog --> doFloat) w1 props full))) [noWindowProps{propParent = Just w2}, noWindowProps] @?= [True, False]
         , testCase "doShift to an unknown tag changes nothing" $
             apply (doShift 99) w1 noWindowProps full @?= full
         , testCase "idHook and an empty composeAll change nothing" $
@@ -75,6 +80,7 @@ tests =
         , testProperty "idHook is the identity of composition" propIdentity
         , testProperty "doShift i is shiftWin i on the managed window" propDoShift
         , testProperty "doSink is sink on the managed window" propDoSink
+        , testProperty "doFloat is a client-sized float of the managed window" propDoFloat
         ]
     ]
 
@@ -113,6 +119,7 @@ genHook ss =
     , (\t -> ("appId =? \"foot\" --> doShift " ++ show t, appId =? "foot" --> doShift t)) <$> arbitraryTag ss
     , (\t -> ("isDialog --> doShift " ++ show t, isDialog --> doShift t)) <$> arbitraryTag ss
     , pure ("doF (float w rect)", doF . (`float` rect) =<< askWindow)
+    , pure ("doFloat", doFloat)
     ]
 
 -- | A StackSet with a window in it, a window to manage, and its properties.
@@ -153,3 +160,7 @@ propDoShift = forAll genManaged $ \(Managed ss w props) -> forAll (arbitraryTag 
 propDoSink :: Property
 propDoSink = forAll genManaged $ \(Managed ss w props) ->
   apply doSink w props (float w rect ss) === sink w (float w rect ss)
+
+propDoFloat :: Property
+propDoFloat = forAll genManaged $ \(Managed ss w props) ->
+  apply doFloat w props ss === float w ClientSized ss

@@ -15,12 +15,17 @@ module Seki.Internal.Core.Action (
   spawn,
   spawnOnce,
   kill,
+  withFocused,
+  float,
+  sink,
 ) where
 
 import Control.Monad (ap)
+import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Seki.Internal.Core.Layout (LayoutClass, Message, SomeMessage (..), messageCurrentLayout)
-import Seki.Internal.Core.StackSet (StackSet, WindowId, peek)
+import Seki.Internal.Core.StackSet (FloatGeom (..), StackSet (..), WindowId, member, peek)
+import Seki.Internal.Core.StackSet qualified as StackSet
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..), overWorkspaces)
 
 -- | An effect an action asks the runtime to perform.
@@ -88,6 +93,25 @@ spawnOnce cmd = Action $ \st ->
   if cmd `Set.member` coreSpawnedOnce st
     then ((), st, [])
     else ((), st{coreSpawnedOnce = Set.insert cmd (coreSpawnedOnce st)}, [Spawn cmd])
+
+-- | Run an action on the window focused at this point, if there is one.
+withFocused :: (WindowId -> Action i l ()) -> Action i l ()
+withFocused f = Action (\st -> runAction (maybe (pure ()) f (focused st)) st)
+ where
+  focused st = case coreWorkspaces st of
+    AttachedState ss _ -> peek ss
+    HeadlessState{} -> Nothing
+
+{- | Float a managed window. A tiled window gets no stored box, so its client
+picks its size and it is centered on its output; a floating window keeps its
+box. xmonad floats a tiled window at its current rectangle instead.
+-}
+float :: WindowId -> Action i l ()
+float w = windows $ \ss -> if member w ss && Map.notMember w (floating ss) then StackSet.float w ClientSized ss else ss
+
+-- | Tile a floating window again.
+sink :: WindowId -> Action i l ()
+sink = windows . StackSet.sink
 
 {- | Ask river to close the window focused at this point in the action. The
 window stays managed until river reports it closed.
