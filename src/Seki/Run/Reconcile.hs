@@ -1,8 +1,15 @@
+{-# LANGUAGE LambdaCase #-}
+
 {- | Reconcile pure selections against river's dimensions reports.
 
 Every proposal records the inventory revision at submission. A newer report
 settles it even when the accepted size differs or repeats the previous size.
 River supplies no proposal correlation identifier.
+
+A tile gets all four tiled edges and a float none. A float with no stored box
+is proposed zero by zero, so its client picks its size, and every render
+centers whatever size the client last committed. That size never becomes
+stored geometry, so the window stays centered when its client resizes it.
 -}
 module Seki.Run.Reconcile (
   ReconcileState,
@@ -15,8 +22,8 @@ import Control.Monad (unless, when)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (mapMaybe)
-import Seki.Internal.Core.Geometry (Rect, Size, mkRect, mkSize, rectHeight, rectOrigin, rectSize, rectWidth, rectX, rectY)
+import Data.Maybe (fromMaybe, mapMaybe)
+import Seki.Internal.Core.Geometry (Point (..), Rect, Size, mkRect, mkSize, rectHeight, rectOrigin, rectSize, rectWidth, rectX, rectY, sizeHeight, sizeWidth)
 import Seki.Internal.Core.Scene (BorderColor (..), DesiredScene (..), Placement (..), SceneStyle (..), stackWindows)
 import Seki.Internal.Core.StackSet (OutputId (..), WindowId (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
@@ -74,21 +81,21 @@ reconcileManage reclaim scene snapshot (ReconcileState old oldSeats stacking) = 
   windows = riverInventoryWindows inventory
   desired w = Map.findWithDefault Omitted (windowIdOf w) (sceneWindows scene)
   needsProposal w a = case (desired w, proposal a) of
-    (Placed rect, NoProposal) -> settledRequest a /= Just (rectSize rect)
+    (placement, NoProposal) | Just size <- proposalSize placement -> settledRequest a /= Just size
     _ -> False
   proposed = Map.fromList [(windowIdOf w, ()) | w <- windows, needsProposal w (states Map.! windowIdOf w)]
   update w =
     let a = states Map.! windowIdOf w
      in a
           { initialized = True
-          , tiled = tiled a || isPlaced (desired w)
-          , proposal = case desired w of
-              Placed rect | Map.member (windowIdOf w) proposed -> AwaitingDimensions (rectSize rect) (riverWindowDimensionsRevision w)
+          , tiled = fromMaybe (tiled a) (tiledEdges (desired w))
+          , proposal = case proposalSize (desired w) of
+              Just size | Map.member (windowIdOf w) proposed -> AwaitingDimensions size (riverWindowDimensionsRevision w)
               _ -> proposal a
           }
   managed = Map.fromList [(windowIdOf w, update w) | w <- windows]
   eligible w = case (Map.lookup w states, Map.lookup w (sceneWindows scene)) of
-    (Just a, Just Placed{}) -> appliedShown a == Just True && proposal a == NoProposal && Map.notMember w proposed
+    (Just a, Just placement) | placement /= Omitted -> appliedShown a == Just True && proposal a == NoProposal && Map.notMember w proposed
     _ -> False
   focus = sceneFocus scene >>= \w -> if eligible w then Just w else Nothing
   seatSteps = map seatStep (riverRuntimeSeatBindings snapshot)
@@ -114,13 +121,15 @@ reconcileManage reclaim scene snapshot (ReconcileState old oldSeats stacking) = 
   initialize w = unless (initialized (states Map.! windowIdOf w)) $ do
     useWindowSsd (riverWindowObject w)
     setWindowCapabilities (riverWindowObject w) (River.RiverWindowV1CapabilitiesFlags 0)
-  applyTiled w =
-    when (isPlaced (desired w) && not (tiled (states Map.! windowIdOf w))) $
-      setWindowTiled (riverWindowObject w) (River.RiverWindowV1EdgesFlags 15)
-  propose w = case desired w of
-    Placed rect
+  applyTiled w = case tiledEdges (desired w) of
+    Just edges
+      | edges /= tiled (states Map.! windowIdOf w) ->
+          setWindowTiled (riverWindowObject w) (River.RiverWindowV1EdgesFlags (if edges then 15 else 0))
+    _ -> pure ()
+  propose w = case proposalSize (desired w) of
+    Just size
       | Map.member (windowIdOf w) proposed ->
-          proposeWindowDimensions (riverWindowObject w) (rectWidth rect) (rectHeight rect)
+          proposeWindowDimensions (riverWindowObject w) (sizeWidth size) (sizeHeight size)
     _ -> pure ()
   plan = do
     mapM_ initialize windows
@@ -144,11 +153,12 @@ reconcileRender style scene snapshot (ReconcileState old seats oldStacking) = (R
     | not layerFocused && sceneFocus scene == Just w = sceneFocusedColor style
     | otherwise = sceneUnfocusedColor style
   settledTargetRect w a = do
-    Placed r <- Map.lookup (windowIdOf w) (sceneWindows scene)
+    placement <- Map.lookup (windowIdOf w) (sceneWindows scene)
     _ <- settledRequest a
     size <- actual a
     _ <- riverWindowNode w
-    either (const Nothing) Just (mkRect (rectOrigin r) size)
+    origin <- topLeft placement size
+    either (const Nothing) Just (mkRect origin size)
   targets = Map.fromList [(windowIdOf w, settledTargetRect w (states Map.! windowIdOf w)) | w <- windows]
   update w =
     let wid = windowIdOf w
@@ -183,7 +193,7 @@ reconcileRender style scene snapshot (ReconcileState old seats oldStacking) = (R
   superseded =
     any
       ( \w -> case (Map.lookup (windowIdOf w) (sceneWindows scene), proposal (states Map.! windowIdOf w)) of
-          (Just (Placed rect), NoProposal) -> settledRequest (states Map.! windowIdOf w) /= Just (rectSize rect)
+          (Just placement, NoProposal) | Just size <- proposalSize placement -> settledRequest (states Map.! windowIdOf w) /= Just size
           _ -> False
       )
       windows
@@ -218,6 +228,27 @@ reconcileRender style scene snapshot (ReconcileState old seats oldStacking) = (R
 lookupWindow :: RiverInventory -> WindowId -> Maybe RiverWindowState
 lookupWindow inventory (WindowId w) = mkObjectId w >>= (`lookupRiverWindow` inventory)
 
-isPlaced :: Placement -> Bool
-isPlaced Placed{} = True
-isPlaced _ = False
+-- | The size to propose: a box's size, or zero by zero so the client picks its own.
+proposalSize :: Placement -> Maybe Size
+proposalSize = \case
+  Omitted -> Nothing
+  Placed r -> Just (rectSize r)
+  Floating r -> Just (rectSize r)
+  Centered _ -> either (const Nothing) Just (mkSize 0 0)
+
+-- | Whether a placement sets all four tiled edges or none; an omitted window keeps its edges.
+tiledEdges :: Placement -> Maybe Bool
+tiledEdges = \case
+  Omitted -> Nothing
+  Placed _ -> Just True
+  Floating _ -> Just False
+  Centered _ -> Just False
+
+topLeft :: Placement -> Size -> Maybe Point
+topLeft placement size = case placement of
+  Omitted -> Nothing
+  Placed r -> Just (rectOrigin r)
+  Floating r -> Just (rectOrigin r)
+  Centered r -> Just (Point (centre (rectX r) (rectWidth r) (sizeWidth size)) (centre (rectY r) (rectHeight r) (sizeHeight size)))
+ where
+  centre origin extent len = origin + max 0 ((extent - len) `div` 2)
