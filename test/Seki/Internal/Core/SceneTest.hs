@@ -5,17 +5,19 @@ module Seki.Internal.Core.SceneTest (tests) where
 import Control.Monad (forM_)
 import Data.List (sort)
 import Data.Map.Strict qualified as Map
+import Seki.Internal.Core.Event (CoreEvent (..), drainCore)
 import Seki.Internal.Core.Geometry (Point (..), Rect, mkRect, mkSize, rectHeight, rectWidth, rectX, rectY)
 import Seki.Internal.Core.GeometryGen (genRatio, genRect)
 import Seki.Internal.Core.Layout (CLR (..), Choose (..), LayoutClass (..), Mirror (..), runLayout)
-import Seki.Internal.Core.Scene (DesiredScene (..), Placement (..), SceneStyle (..), defaultSceneStyle, planScene, stackWindows)
-import Seki.Internal.Core.StackSet (OutputId (..), Screen (..), Stack (..), StackSet (..), WindowId (..), Workspace (..), integrate)
-import Seki.Internal.Core.State (CoreState, HeadlessWorkspaces (..), Workspaces (..), fromWorkspaces)
+import Seki.Internal.Core.ManageHook (idHook)
+import Seki.Internal.Core.Scene (DesiredScene (..), OutputArea (..), Placement (..), SceneStyle (..), defaultSceneStyle, planScene, stackWindows)
+import Seki.Internal.Core.StackSet (FloatGeom (..), OutputId (..), Screen (..), Stack (..), StackSet (..), WindowId (..), Workspace (..), integrate)
+import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..), fromWorkspaces)
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
-import Test.Tasty.QuickCheck (NonNegative (..), chooseInt, conjoin, forAll, property, sublistOf, testProperty, (===))
+import Test.Tasty.QuickCheck (NonNegative (..), chooseInt, conjoin, counterexample, forAll, property, sublistOf, testProperty, vectorOf, (===))
 
 rectangle :: Int -> Int -> Rect
 rectangle w h = either (error . show) id (mkSize (fromIntegral w) (fromIntegral h) >>= mkRect (Point (-100) 20))
@@ -27,7 +29,7 @@ w4 = WindowId 4
 state :: l -> Stack WindowId -> CoreState Int l
 state l s = fromWorkspaces (AttachedState (StackSet (Screen (Workspace 1 l (Just s)) (OutputId 1)) [] [Workspace 2 l (Just (Stack w4 [] []))] Map.empty) [])
 scene :: (LayoutClass l) => l -> Stack WindowId -> DesiredScene
-scene l s = planScene defaultSceneStyle (state l s) (Map.singleton (OutputId 1) (rectangle 101 81)) Map.empty
+scene l s = planScene defaultSceneStyle (state l s) (Map.singleton (OutputId 1) (whole (rectangle 101 81))) Map.empty
 
 tests :: TestTree
 tests =
@@ -48,25 +50,25 @@ tests =
     , testCase "parents and focused sibling branch are complete and stable" $ do
         let w5 = WindowId 5
             st = state (Tall 1 0.03 0.5) (Stack w2 [w1] [w5, w3])
-            result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) (rectangle 100 100)) (Map.fromList [(w2, Just w1), (w3, Just w1)])
+            result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) (whole (rectangle 100 100))) (Map.fromList [(w2, Just w1), (w3, Just w1)])
         sceneStacking result @?= [w4, w5, w1, w3, w2]
     , testProperty "every parent graph, including cycles, stacks every window exactly once" $ \(a :: NonNegative Int) (b :: NonNegative Int) (c :: NonNegative Int) ->
         let parentChoice (NonNegative n) = [Nothing, Just w1, Just w2, Just w3] !! (n `mod` 4)
-            result = planScene defaultSceneStyle (state (Tall 1 0.03 0.5) (Stack w2 [w1] [w3])) (Map.singleton (OutputId 1) (rectangle 100 100)) (Map.fromList (zip [w1, w2, w3] (map parentChoice [a, b, c])))
+            result = planScene defaultSceneStyle (state (Tall 1 0.03 0.5) (Stack w2 [w1] [w3])) (Map.singleton (OutputId 1) (whole (rectangle 100 100))) (Map.fromList (zip [w1, w2, w3] (map parentChoice [a, b, c])))
          in sort (sceneStacking result) === [w1, w2, w3, w4]
     , testCase "a pending parent does not group its shown descendants" $
-        stackWindows [w1, w2, w3, w4] [w2, w3, w4] (Just w3) (Map.fromList [(w2, Just w1), (w3, Just w2)])
+        stackWindows [w1, w2, w3, w4] [] [w2, w3, w4] (Just w3) (Map.fromList [(w2, Just w1), (w3, Just w2)])
           @?= [w1, w4, w2, w3]
     , testProperty "actual shown subsets keep a complete order with every hidden node below" $ \(a :: NonNegative Int) (b :: NonNegative Int) (c :: NonNegative Int) ->
         forAll (sublistOf [w1, w2, w3, w4]) $ \shown ->
           let parentChoice (NonNegative n) = [Nothing, Just w1, Just w2, Just w3] !! (n `mod` 4)
               parents = Map.fromList (zip [w1, w2, w3] (map parentChoice [a, b, c]))
-              ordered = stackWindows [w1, w2, w3, w4] shown (Just w2) parents
+              ordered = stackWindows [w1, w2, w3, w4] [] shown (Just w2) parents
               hidden = [w | w <- [w1, w2, w3, w4], w `notElem` shown]
            in conjoin [sort ordered === [w1, w2, w3, w4], take (length hidden) ordered === hidden, sort (drop (length hidden) ordered) === sort shown]
     , testProperty "zero or border-sized tiles are omitted without losing windows" $ \(NonNegative n) ->
         let extent = n `mod` 5
-            result = planScene defaultSceneStyle (state Full (Stack w1 [] [w2])) (Map.singleton (OutputId 1) (rectangle extent 100)) Map.empty
+            result = planScene defaultSceneStyle (state Full (Stack w1 [] [w2])) (Map.singleton (OutputId 1) (whole (rectangle extent 100))) Map.empty
          in sceneWindows result === Map.fromList [(w1, Omitted), (w2, Omitted), (w4, Omitted)]
     , testProperty "multi-output scenes keep positive content and borders inside tiles with a placed focus" $ \(NonNegative masters) ->
         forAll ((,,,) <$> genRect <*> genRect <*> chooseInt (0, 20) <*> chooseInt (0, 2)) $ \(area1, area2, border, choice) ->
@@ -79,10 +81,10 @@ tests =
                   first = Screen (Workspace (1 :: Int) selected (Just (Stack w2 [w1] [w3]))) (OutputId 1)
                   second = Screen (Workspace 2 selected (Just (Stack w4 [] [w5]))) (OutputId 2)
                   st = fromWorkspaces (AttachedState (StackSet first [second] [Workspace 3 selected (Just (Stack w6 [] []))] Map.empty) [])
-                  areas = Map.fromList [(o, area) | (o, area) <- [(OutputId 1, area1), (OutputId 2, area2)], o `elem` available]
+                  areas = Map.fromList [(o, whole area) | (o, area) <- [(OutputId 1, area1), (OutputId 2, area2)], o `elem` available]
                   style = defaultSceneStyle{sceneBorderWidth = fromIntegral border}
                   result = planScene style st areas Map.empty
-                  tiles = Map.fromList [(w, tile) | s <- [first, second], Just area <- [Map.lookup (output s) areas], (w, tile) <- runLayout (workspace s) area]
+                  tiles = Map.fromList [(w, tile) | s <- [first, second], Just area <- [Map.lookup (output s) areas], (w, tile) <- runLayout (workspace s) (outputUsable area)]
                   placed = [(w, r) | (w, Placed r) <- Map.toList (sceneWindows result)]
                   containsBorders (w, r) = case Map.lookup w tiles of
                     Nothing -> False
@@ -115,26 +117,106 @@ tests =
         let w5 = WindowId 5
             w6 = WindowId 6
             st = state (Tall 1 0.03 0.5) (Stack w1 [w5] [w2, w6, w3])
-            result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) (rectangle 100 100)) (Map.fromList [(w2, Just w1), (w3, Just w2)])
+            result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) (whole (rectangle 100 100))) (Map.fromList [(w2, Just w1), (w3, Just w2)])
         sceneStacking result @?= [w4, w5, w6, w1, w2, w3]
     , testCase "a parent on another workspace leaves its child a family of its own" $ do
         let st = state (Tall 1 0.03 0.5) (Stack w1 [] [w2, w3])
-            result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) (rectangle 100 100)) (Map.fromList [(w2, Just w4), (w3, Just w2)])
+            result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) (whole (rectangle 100 100))) (Map.fromList [(w2, Just w4), (w3, Just w2)])
         sceneStacking result @?= [w4, w2, w3, w1]
     , testCase "a child of a closed parent starts its own family" $ do
         let st = state (Tall 1 0.03 0.5) (Stack w2 [w1] [w3])
-            result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) (rectangle 100 100)) (Map.singleton w2 (Just (WindowId 9)))
+            result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) (whole (rectangle 100 100))) (Map.singleton w2 (Just (WindowId 9)))
         sceneStacking result @?= [w4, w1, w3, w2]
     , testCase "one-pixel Tall and Mirror Tall scenes omit every zero tile" $
         forM_ [CL, CR] $ \side -> do
           let tall = Tall 1 (1 / 10) (1 / 2)
               st = state (Choose side tall (Mirror tall)) (Stack w1 [] [w2, w3])
-              result = planScene defaultSceneStyle{sceneBorderWidth = 0} st (Map.singleton (OutputId 1) (rectangle 1 1)) Map.empty
+              result = planScene defaultSceneStyle{sceneBorderWidth = 0} st (Map.singleton (OutputId 1) (whole (rectangle 1 1))) Map.empty
           sceneWindows result @?= Map.fromList [(w1, Omitted), (w2, Omitted), (w3, Placed (rectangle 1 1)), (w4, Omitted)]
           sceneFocus result @?= Nothing
+    , floatTests
     ]
  where
   content = either (error . show) id (mkSize 97 77 >>= mkRect (Point (-98) 22))
+
+whole :: Rect -> OutputArea
+whole r = OutputArea r r
+
+rectAt :: Int -> Int -> Int -> Int -> Rect
+rectAt x y w h = either (error . show) id (mkSize (fromIntegral w) (fromIntegral h) >>= mkRect (Point (fromIntegral x) (fromIntegral y)))
+
+secondOutput :: OutputArea
+secondOutput = OutputArea (rectAt 800 0 800 600) (rectAt 800 30 800 570)
+
+floatState :: l -> Stack WindowId -> [(WindowId, FloatGeom)] -> [WindowId] -> CoreState Int l
+floatState l s fl order = (fromWorkspaces (AttachedState (StackSet (Screen (Workspace 1 l (Just s)) (OutputId 1)) [] [Workspace 2 l Nothing] (Map.fromList fl)) [])){coreRaiseOrder = order}
+
+floatScene :: (LayoutClass l) => l -> Stack WindowId -> [(WindowId, FloatGeom)] -> [WindowId] -> Map.Map WindowId (Maybe WindowId) -> DesiredScene
+floatScene l s fl order = planScene defaultSceneStyle (floatState l s fl order) (Map.singleton (OutputId 1) secondOutput)
+
+floatTests :: TestTree
+floatTests =
+  testGroup
+    "floating windows"
+    [ testCase "M2-D01: a float's content rectangle is its stored geometry plus the output origin" $
+        Map.lookup w2 (sceneWindows (floatScene (Tall 1 0.03 0.5) (Stack w2 [w1] []) [(w2, FloatAt (rectAt 30 40 200 100))] [w2] Map.empty))
+          @?= Just (Floating (rectAt 830 40 200 100))
+    , testCase "a float leaves the layout, which tiles the rest of the stack in the usable area" $
+        sceneWindows (floatScene Full (Stack w2 [w1] [w3]) [(w2, FloatAt (rectAt 30 40 200 100))] [w2] Map.empty)
+          @?= Map.fromList [(w1, Omitted), (w2, Floating (rectAt 830 40 200 100)), (w3, Placed (rectAt 802 32 796 566))]
+    , testCase "a float with no stored box is centered on the whole output inside its border" $
+        Map.lookup w2 (sceneWindows (floatScene Full (Stack w2 [w1] []) [(w2, ClientSized)] [w2] Map.empty))
+          @?= Just (Centered (rectAt 802 2 796 596))
+    , testCase "a float on a hidden workspace is omitted" $
+        let st = floatState Full (Stack w1 [] []) [(w4, FloatAt (rectAt 0 0 10 10))] [w4]
+            hiddenFloat = st{coreWorkspaces = AttachedState (StackSet (Screen (Workspace (1 :: Int) Full (Just (Stack w1 [] []))) (OutputId 1)) [] [Workspace 2 Full (Just (Stack w4 [] []))] (Map.singleton w4 (FloatAt (rectAt 0 0 10 10)))) []}
+         in Map.lookup w4 (sceneWindows (planScene defaultSceneStyle hiddenFloat (Map.singleton (OutputId 1) secondOutput) Map.empty)) @?= Just Omitted
+    , testCase "clamping moves a float back onto its output and shrinks only one larger than it" $
+        [ Map.lookup w2 (sceneWindows (floatScene Full (Stack w2 [w1] []) [(w2, FloatAt stored)] [w2] Map.empty))
+        | stored <- [rectAt 700 550 200 100, rectAt (-50) (-50) 200 100, rectAt 10 10 2000 100]
+        ]
+          @?= map (Just . Floating) [rectAt 1398 498 200 100, rectAt 802 2 200 100, rectAt 802 10 796 100]
+    , testCase "clamping leaves the stored geometry unchanged" $
+        let st = floatState Full (Stack w2 [w1] []) [(w2, FloatAt (rectAt 700 550 200 100))] [w2]
+         in case coreWorkspaces st of
+              AttachedState ss _ -> Map.lookup w2 (floating ss) @?= Just (FloatAt (rectAt 700 550 200 100))
+              HeadlessState{} -> fail "attached"
+    , testCase "M2-D02: a floating dialog stacks over its tiled parent, focused or not" $ do
+        let parents = Map.singleton w2 (Just w1)
+            dialogFocused = floatScene (Tall 1 0.03 0.5) (Stack w2 [] [w1, w3]) [(w2, ClientSized)] [w2] parents
+            parentFocused = floatScene (Tall 1 0.03 0.5) (Stack w1 [w2] [w3]) [(w2, ClientSized)] [w2] parents
+        sceneStacking dialogFocused @?= [w1, w3, w2]
+        sceneStacking parentFocused @?= [w3, w1, w2]
+    , testCase "M2-D02: focus moving to a tile leaves two overlapping floats in their order" $ do
+        let overlapping = [(w2, FloatAt (rectAt 10 10 300 300)), (w3, FloatAt (rectAt 100 100 300 300))]
+            (st, _) = drainCore idHook [WindowInteraction w3, WindowInteraction w2, WindowInteraction w1] (floatState Full (Stack w1 [] [w2, w3]) overlapping [])
+            result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) secondOutput) Map.empty
+        sceneFocus result @?= Just w1
+        sceneStacking result @?= [w1, w3, w2]
+    , testCase "floating families follow their most recently raised member, the focused family last" $
+        stackWindows [w1, w2, w3, w4] [w1, w4, w3] [w1, w2, w3, w4] (Just w2) (Map.singleton w3 (Just w1))
+          @?= [w2, w4, w1, w3]
+    , testProperty "every float lies inside its output with its border, and no float reaches a layout" $
+        forAll ((,,) <$> genRect <*> vectorOf 4 genRect <*> sublistOf [w1, w2, w3, w4]) $ \(bounds, stored, floated) ->
+          forAll (chooseInt (0, 20)) $ \border ->
+            let geoms = Map.fromList [(w, g) | (w, r, sized) <- zip3 [w1, w2, w3, w4] stored (cycle [True, False, True]), w `elem` floated, let g = if sized then FloatAt r else ClientSized]
+                st = (fromWorkspaces (AttachedState (StackSet (Screen (Workspace (1 :: Int) Everything (Just (Stack w1 [] [w2, w3, w4]))) (OutputId 1)) [] [] geoms) [])){coreRaiseOrder = Map.keys geoms}
+                result = planScene defaultSceneStyle{sceneBorderWidth = fromIntegral border} st (Map.singleton (OutputId 1) (OutputArea bounds bounds)) Map.empty
+                b = fromIntegral border
+                outer r = toInteger (rectX r) - b >= toInteger (rectX bounds) && toInteger (rectY r) - b >= toInteger (rectY bounds) && toInteger (rectX r) + toInteger (rectWidth r) + b <= toInteger (rectX bounds) + toInteger (rectWidth bounds) && toInteger (rectY r) + toInteger (rectHeight r) + b <= toInteger (rectY bounds) + toInteger (rectHeight bounds)
+                check (w, p) = case p of
+                  Placed r -> counterexample (show w ++ " floats, or the layout saw a float") (property (w `notElem` floated && toInteger (rectHeight r) + 2 * b == 100 * toInteger (4 - length floated)))
+                  Floating r -> property (w `elem` floated && outer r)
+                  Centered r -> property (w `elem` floated && outer r)
+                  Omitted -> property True
+             in conjoin (map check (Map.toList (sceneWindows result)))
+    ]
+
+-- | Places every window it is given at the area's top-left, 100 pixels tall per window it is given.
+data Everything = Everything deriving (Show)
+
+instance LayoutClass Everything where
+  pureLayout _ r s = [(w, tile) | let n = length (integrate s), Right tile <- [mkSize (rectWidth r) (fromIntegral (100 * n)) >>= mkRect (Point (rectX r) (rectY r))], w <- integrate s]
 
 data MasterOnly = MasterOnly deriving (Show)
 

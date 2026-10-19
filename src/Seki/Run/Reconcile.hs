@@ -166,7 +166,7 @@ reconcileRender style scene snapshot (ReconcileState old seats oldStacking) = (R
   parents = Map.fromList [(windowIdOf w, WindowId . objectIdValue <$> riverWindowParent w) | w <- windows]
   stacking =
     mapMaybe (\wid -> lookupWindow inventory wid >>= riverWindowNode) $
-      stackWindows liveOrder shownWindows (sceneFocus scene) parents
+      stackWindows liveOrder (sceneRaiseOrder scene) shownWindows (sceneFocus scene) parents
   rendered = Map.fromList [(windowIdOf w, update w) | w <- windows]
   changedFocusVisibility = case sceneFocus scene of
     Nothing -> False
@@ -220,4 +220,4 @@ lookupWindow inventory (WindowId w) = mkObjectId w >>= (`lookupRiverWindow` inve
 
 isPlaced :: Placement -> Bool
 isPlaced Placed{} = True
-isPlaced Omitted = False
+isPlaced _ = False

@@ -37,14 +37,15 @@ import Data.Maybe (mapMaybe)
 import Data.Word (Word32)
 import Seki.Internal.Core.Action (Action, Intent (..))
 import Seki.Internal.Core.Event (CoreEvent (..), drainCore)
+import Seki.Internal.Core.Geometry (Point (..), Rect, mkRect, mkSize)
 import Seki.Internal.Core.Layout (LayoutClass)
 import Seki.Internal.Core.ManageHook (DimensionsHint (..), ManageHook, WindowProps (..), noWindowProps)
-import Seki.Internal.Core.Scene (BorderColor (..), DesiredScene (..), SceneStyle (..), planScene)
+import Seki.Internal.Core.Scene (BorderColor (..), DesiredScene (..), OutputArea (..), SceneStyle (..), planScene)
 import Seki.Internal.Core.StackSet (OutputId (..), WindowId (..))
 import Seki.Internal.Core.State (CoreState (..), WorkspaceTagError, newCoreState)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
-import Seki.Run.Inventory (RiverDimensionsHint (..), RiverInventory, RiverOutputState (..), RiverWindowState (..), lookupRiverWindow, riverInventoryOutputs, riverInventoryWindows, riverOutputRectangle)
+import Seki.Run.Inventory (RiverDimensionsHint (..), RiverInventory, RiverOutputState (..), RiverRectangle (..), RiverWindowState (..), lookupRiverWindow, riverInventoryOutputs, riverInventoryWindows, riverOutputRectangle)
 import Seki.Run.Phase (ManageM, RenderM, closeWindow)
 import Seki.Run.Reconcile (ReconcileState, emptyReconcileState, reconcileManage, reconcileRender)
 import Seki.Run.River (RiverWindowManagerHandlers (..))
@@ -95,7 +96,7 @@ newPolicy config
       Left e -> pure (Left (PolicyTagError e))
       Right st -> case firstRepeat [] (map fst (policyBindings config)) of
         Just binding -> pure (Left (PolicyBindingConflict binding))
-        Nothing -> Right <$> (Policy config <$> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)))
+        Nothing -> Right <$> (Policy config <$> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)))
  where
   -- River excludes capslock and numlock bits from its modifier enum.
   invalidModifiers binding = River.riverSeatV1ModifiersFlagsValue (riverKeyBindingModifiers binding) .&. complement 0xed /= 0
@@ -152,7 +153,7 @@ prepareManagePlan policy snapshot = do
         planScene
           (policySceneStyle (policyConfig policy))
           st
-          (Map.fromList [(outputIdOf (riverOutputObject o), area) | o <- riverInventoryOutputs inventory, Just _ <- [riverOutputRectangle o], Just area <- [riverOutputUsableArea o]])
+          (Map.fromList [(outputIdOf (riverOutputObject o), OutputArea bounds area) | o <- riverInventoryOutputs inventory, Just bounds <- [outputRect o], Just area <- [riverOutputUsableArea o]])
           (Map.fromList [(windowIdOf (riverWindowObject w), WindowId . objectIdValue <$> riverWindowParent w) | w <- riverInventoryWindows inventory])
       reclaim = ReclaimFocus `elem` intents || any isInteraction events
   writeIORef (policyScene policy) scene
@@ -219,3 +220,8 @@ outputIdOf = OutputId . rawId
 
 rawId :: Object interface -> Word32
 rawId = objectIdValue . objectId
+
+outputRect :: RiverOutputState -> Maybe Rect
+outputRect output = do
+  RiverRectangle x y width height <- riverOutputRectangle output
+  either (const Nothing) Just (mkSize width height >>= mkRect (Point x y))
