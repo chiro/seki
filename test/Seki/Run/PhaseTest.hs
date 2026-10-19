@@ -15,7 +15,10 @@ import Seki.Run.Phase (
   closeWindow,
   disableKeyBinding,
   enableKeyBinding,
+  exitWindowFullscreen,
   hideWindow,
+  informWindowFullscreen,
+  informWindowNotFullscreen,
   placeNodeAbove,
   placeNodeBelow,
   placeNodeBottom,
@@ -73,6 +76,9 @@ testManagePlan =
         useWindowSsd window
         setWindowTiled window (River.RiverWindowV1EdgesFlags 15)
         setWindowCapabilities window (River.RiverWindowV1CapabilitiesFlags 4)
+        informWindowFullscreen window
+        exitWindowFullscreen window
+        informWindowNotFullscreen window
         closeWindow window
         pure (42 :: Int)
     assertEqual "plan result" (Right 42) result
@@ -81,6 +87,9 @@ testManagePlan =
     expectRequest reader peer window (Opcode 7) (pure ())
     expectRequest reader peer window (Opcode 9) (putUint 15)
     expectRequest reader peer window (Opcode 14) (putUint 4)
+    expectRequest reader peer window (Opcode 17) (pure ())
+    expectRequest reader peer window (Opcode 20) (pure ())
+    expectRequest reader peer window (Opcode 18) (pure ())
     expectRequest reader peer window (Opcode 1) (pure ())
 
 testKeyBindingManagePlan :: Assertion

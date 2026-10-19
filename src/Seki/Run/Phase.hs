@@ -14,6 +14,10 @@ module Seki.Run.Phase (
   setWindowTiled,
   setWindowCapabilities,
   setWindowDimensionBounds,
+  fullscreenWindow,
+  exitWindowFullscreen,
+  informWindowFullscreen,
+  informWindowNotFullscreen,
   setKeyBindingLayoutOverride,
   enableKeyBinding,
   disableKeyBinding,
@@ -152,6 +156,25 @@ setWindowDimensionBounds window maximumWidth maximumHeight =
     River.riverWindowV1Interface
     window
     (River.encodeRiverWindowV1SetDimensionBounds maximumWidth maximumHeight)
+
+fullscreenWindow :: Object River.RiverWindowV1 -> Object River.RiverOutputV1 -> ManageM ()
+fullscreenWindow window output =
+  phaseRequest
+    River.riverWindowV1Interface
+    window
+    (River.encodeRiverWindowV1Fullscreen (objectId output))
+
+exitWindowFullscreen :: Object River.RiverWindowV1 -> ManageM ()
+exitWindowFullscreen window =
+  phaseRequest River.riverWindowV1Interface window River.encodeRiverWindowV1ExitFullscreen
+
+informWindowFullscreen :: Object River.RiverWindowV1 -> ManageM ()
+informWindowFullscreen window =
+  phaseRequest River.riverWindowV1Interface window River.encodeRiverWindowV1InformFullscreen
+
+informWindowNotFullscreen :: Object River.RiverWindowV1 -> ManageM ()
+informWindowNotFullscreen window =
+  phaseRequest River.riverWindowV1Interface window River.encodeRiverWindowV1InformNotFullscreen
 
 -- | Pin a binding to an XKB layout index.
 setKeyBindingLayoutOverride :: Object Xkb.RiverXkbBindingV1 -> Word32 -> ManageM ()
