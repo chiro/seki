@@ -94,7 +94,7 @@ floats = Map.foldlWithKey' (\a w g -> mix a (mix (window w) (geometry g))) 0
   geometry S.ClientSized = 0
   geometry (S.FloatAt r) = mix 1 (rect r)
 state :: CoreState String BenchLayout -> Word64
-state st = mix (many command (Set.toList (coreSpawnedOnce st))) $ case coreWorkspaces st of
+state st = mix (mix (many command (Set.toList (coreSpawnedOnce st))) (many window (coreRaiseOrder st))) $ case coreWorkspaces st of
   HeadlessState (HeadlessWorkspaces c hs fs) -> many id [0, workspace c, many workspace hs, floats fs]
   AttachedState (S.StackSet c vs hs fs) os -> many id [1, screen c, many screen vs, many workspace hs, floats fs, many output os]
 command :: String -> Word64
