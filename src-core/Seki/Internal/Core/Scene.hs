@@ -4,11 +4,9 @@ A 'Placement' selects a content box in global logical coordinates, with the
 border drawn outside it. Protocol readiness determines whether a selection can
 actually be shown, and belongs to the runtime reconciler.
 
-Floating windows never reach a layout. A stored float box is relative to the
-top-left of the output showing its workspace (M2-D01), so it travels with the
-workspace. The planner never rewrites it; it only clamps the placement, so a
-float returns to its stored position when its workspace is shown on a larger
-output again (spec 3.5).
+Floating windows never reach a layout. The planner never rewrites a stored
+float box; it only clamps the placement, so a float returns to its stored
+position when its workspace is shown on a larger output again (spec 3.5).
 -}
 module Seki.Internal.Core.Scene (
   Placement (..),
@@ -26,7 +24,7 @@ import Data.List (elemIndex, sortOn)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Word (Word32)
-import Seki.Internal.Core.Geometry (Point (..), Rect, mkRect, mkSize, rectHeight, rectWidth, rectX, rectY)
+import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), Rect, mkRect, mkSize, rectHeight, rectWidth, rectX, rectY)
 import Seki.Internal.Core.Layout (LayoutClass, runLayout)
 import Seki.Internal.Core.StackSet (FloatGeom (..), OutputId, Screen (..), StackSet (..), WindowId, Workspace (..), integrate', peek, screens)
 import Seki.Internal.Core.StackSet qualified as StackSet
@@ -101,7 +99,7 @@ planScene style st areas parents = DesiredScene placements stable raiseOrder ord
   floatPlacement bounds g =
     inset bounds >>= \inner -> case g of
       ClientSized -> Just (Centered inner)
-      FloatAt r -> either (const Nothing) (Just . Floating) $ do
+      FloatAt (OutputRect r) -> either (const Nothing) (Just . Floating) $ do
         let width = min (rectWidth r) (rectWidth inner)
             height = min (rectHeight r) (rectHeight inner)
             clampTo lo extent len v = max (toInteger lo) (min (toInteger lo + toInteger extent - toInteger len) v)

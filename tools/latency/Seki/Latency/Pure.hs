@@ -56,7 +56,7 @@ eventFor code = RunAction $ case code of
   9 -> windows (S.greedyView "2")
   10 -> windows (S.shift "2")
   11 -> windows (S.shift "1")
-  12 -> windows (S.float (S.WindowId 1) (S.FloatAt area))
+  12 -> windows (S.float (S.WindowId 1) (S.FloatAt (OutputRect area)))
   13 -> windows (S.sink (S.WindowId 1))
   14 -> spawn "diagnostic-intent"
   _ -> kill
@@ -92,7 +92,7 @@ floats :: Map.Map S.WindowId S.FloatGeom -> Word64
 floats = Map.foldlWithKey' (\a w g -> mix a (mix (window w) (geometry g))) 0
  where
   geometry S.ClientSized = 0
-  geometry (S.FloatAt r) = mix 1 (rect r)
+  geometry (S.FloatAt (OutputRect r)) = mix 1 (rect r)
 state :: CoreState String BenchLayout -> Word64
 state st = mix (mix (many command (Set.toList (coreSpawnedOnce st))) (many window (coreRaiseOrder st))) $ case coreWorkspaces st of
   HeadlessState (HeadlessWorkspaces c hs fs) -> many id [0, workspace c, many workspace hs, floats fs]

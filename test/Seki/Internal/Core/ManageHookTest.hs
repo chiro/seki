@@ -4,7 +4,7 @@ module Seki.Internal.Core.ManageHookTest (tests) where
 
 import Data.Map.Strict qualified as Map
 import Data.Monoid (Endo (..))
-import Seki.Internal.Core.Geometry (Point (..), mkRect, mkSize)
+import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), mkRect, mkSize)
 import Seki.Internal.Core.ManageHook (
   ManageHook,
   WindowProps (..),
@@ -102,7 +102,7 @@ floated :: T
 floated = float w1 rect full
 
 rect :: FloatGeom
-rect = FloatAt (either (error . show) id (mkSize 100 100 >>= mkRect (Point 10 10)))
+rect = FloatAt (OutputRect (either (error . show) id (mkSize 100 100 >>= mkRect (Point 10 10))))
 
 genProps :: Gen WindowProps
 genProps = do
