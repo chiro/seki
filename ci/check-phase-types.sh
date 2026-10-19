@@ -10,21 +10,37 @@ compiler_version=$(cabal exec "$@" -- ghc --numeric-version)
 package_db="dist-newstyle/packagedb/ghc-$compiler_version"
 wire_package=$(cabal exec "$@" -- ghc-pkg --package-db="$package_db" field z-seki-z-seki-wire id --simple-output)
 
-cat >"$scratch/Valid.hs" <<'HASKELL'
+manage_requests=(
+  "proposeWindowDimensions w 100 100"
+  "fullscreenWindow w o"
+  "exitWindowFullscreen w"
+  "informWindowFullscreen w"
+  "informWindowNotFullscreen w"
+)
+
+{
+  cat <<'HASKELL'
 module Valid where
-import Seki.Run.Phase (ManageM, RenderM, hideWindow, proposeWindowDimensions)
-import Seki.Protocol.RiverWindowManagementV1 (RiverWindowV1)
+import Seki.Run.Phase (ManageM, RenderM, exitWindowFullscreen, fullscreenWindow, hideWindow, informWindowFullscreen, informWindowNotFullscreen, proposeWindowDimensions)
+import Seki.Protocol.RiverWindowManagementV1 (RiverOutputV1, RiverWindowV1)
 import Seki.Wire.Connection.ObjectTable (Object)
-manage :: Object RiverWindowV1 -> ManageM ()
-manage w = proposeWindowDimensions w 100 100
 render :: Object RiverWindowV1 -> RenderM ()
 render = hideWindow
 HASKELL
+  for index in "${!manage_requests[@]}"; do
+    echo "manage$index :: Object RiverWindowV1 -> Object RiverOutputV1 -> ManageM ()"
+    echo "manage$index w o = const (${manage_requests[$index]}) o"
+  done
+} >"$scratch/Valid.hs"
 
-sed 's/manage :: Object RiverWindowV1 -> ManageM ()/manage :: Object RiverWindowV1 -> RenderM ()/' \
-  "$scratch/Valid.hs" >"$scratch/ManageInRender.hs"
+invalid_sources=(RenderInManage)
 sed 's/render :: Object RiverWindowV1 -> RenderM ()/render :: Object RiverWindowV1 -> ManageM ()/' \
   "$scratch/Valid.hs" >"$scratch/RenderInManage.hs"
+for index in "${!manage_requests[@]}"; do
+  invalid_sources+=("ManageInRender$index")
+  sed "s/^manage$index :: \(.*\) -> ManageM ()/manage$index :: \1 -> RenderM ()/" \
+    "$scratch/Valid.hs" >"$scratch/ManageInRender$index.hs"
+done
 
 compile() {
   cabal exec "$@" -- ghc -dynamic -fno-code -package-db "$package_db" -package-id "$wire_package" "$source_file"
@@ -32,7 +48,7 @@ compile() {
 
 source_file="$scratch/Valid.hs"
 compile "$@"
-for invalid in ManageInRender RenderInManage; do
+for invalid in "${invalid_sources[@]}"; do
   source_file="$scratch/$invalid.hs"
   if compile "$@" >"$scratch/$invalid.log" 2>&1; then
     echo "check-phase-types: $invalid unexpectedly compiled" >&2
