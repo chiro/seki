@@ -17,7 +17,7 @@ import Data.Monoid (Endo (..))
 import Seki.Internal.Core.Action (Action, Intent, runAction)
 import Seki.Internal.Core.ManageHook (ManageHook, WindowProps, runQuery)
 import Seki.Internal.Core.StackSet (OutputId, WindowId)
-import Seki.Internal.Core.State (CoreState, addOutput, focusWindowIn, manageWindow, overWorkspaces, raiseFocusedFloat, removeOutput, unmanageWindow)
+import Seki.Internal.Core.State (CoreState, addOutput, focusWindowIn, manageWindow, overWorkspaces, removeOutput, syncRaiseOrder, unmanageWindow)
 
 -- | A change river reported, or a key binding's action.
 data CoreEvent i l
@@ -30,10 +30,10 @@ data CoreEvent i l
   | RunAction (Action i l ())
 
 {- | Apply one event, returning the new state and the intents it recorded. Every
-event ends by raising a focused float, so no focus change can miss it.
+event ends by raising a focused float.
 -}
 stepCore :: (Eq i) => ManageHook i l -> CoreEvent i l -> CoreState i l -> (CoreState i l, [Intent])
-stepCore hook event = first raiseFocusedFloat . reduce hook event
+stepCore hook event = first syncRaiseOrder . reduce hook event
 
 reduce :: (Eq i) => ManageHook i l -> CoreEvent i l -> CoreState i l -> (CoreState i l, [Intent])
 reduce hook event st = case event of

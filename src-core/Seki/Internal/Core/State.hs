@@ -44,7 +44,7 @@ module Seki.Internal.Core.State (
   manageWindow,
   unmanageWindow,
   focusWindowIn,
-  raiseFocusedFloat,
+  syncRaiseOrder,
 ) where
 
 import Data.Map.Strict (Map)
@@ -73,7 +73,7 @@ data CoreState i l = CoreState
   , coreSpawnedOnce :: Set String
   -- ^ The commands 'Seki.Internal.Core.Action.spawnOnce' has launched.
   , coreRaiseOrder :: [WindowId]
-  -- ^ Every floating window once, bottom to top. See 'raiseFocusedFloat'.
+  -- ^ Every floating window once, bottom to top. See 'syncRaiseOrder'.
   }
   deriving (Eq, Show)
 
@@ -183,13 +183,9 @@ focusWindowIn :: (Eq i) => WindowId -> Workspaces i l -> Workspaces i l
 focusWindowIn w (AttachedState ss unassigned) = AttachedState (focusWindow w ss) unassigned
 focusWindowIn _ st@HeadlessState{} = st
 
-{- | Keep the raise order to the floating windows, put a window that has just
-floated on top, and then put the focused window on top when it floats. Focusing
-a tile leaves the order alone, so floats keep their order while focus is
-elsewhere (M2-D02). Applying it twice changes nothing more.
--}
-raiseFocusedFloat :: CoreState i l -> CoreState i l
-raiseFocusedFloat st = st{coreRaiseOrder = filter (not . isFocused) order ++ filter isFocused order}
+-- | Focusing a tile leaves the raise order alone (M2-D02). Syncing twice changes nothing more.
+syncRaiseOrder :: CoreState i l -> CoreState i l
+syncRaiseOrder st = st{coreRaiseOrder = filter (not . isFocused) order ++ filter isFocused order}
  where
   (floats, focused) = case coreWorkspaces st of
     AttachedState ss _ -> (floating ss, peek ss)
