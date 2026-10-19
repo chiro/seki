@@ -22,7 +22,7 @@ import Control.Monad (unless, when)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Maybe (mapMaybe)
 import Seki.Internal.Core.Geometry (Point (..), Rect, Size, mkRect, mkSize, rectHeight, rectOrigin, rectSize, rectWidth, rectX, rectY, sizeHeight, sizeWidth)
 import Seki.Internal.Core.Scene (BorderColor (..), DesiredScene (..), Placement (..), SceneStyle (..), stackWindows)
 import Seki.Internal.Core.StackSet (OutputId (..), WindowId (..))
@@ -38,7 +38,7 @@ data Proposal = NoProposal | AwaitingDimensions Size Integer deriving (Eq, Show)
 data Applied = Applied
   { appliedWindow :: Object River.RiverWindowV1
   , initialized :: Bool
-  , tiled :: Bool
+  , tiled :: River.RiverWindowV1EdgesFlags
   , proposal :: Proposal
   , settledRequest :: Maybe Size
   , actual :: Maybe Size
@@ -56,7 +56,7 @@ emptyReconcileState :: ReconcileState
 emptyReconcileState = ReconcileState Map.empty Map.empty []
 
 fresh :: RiverWindowState -> Applied
-fresh window = Applied (riverWindowObject window) False False NoProposal Nothing Nothing Nothing Nothing Nothing Nothing
+fresh window = Applied (riverWindowObject window) False River.RiverWindowV1EdgesFlagsNone NoProposal Nothing Nothing Nothing Nothing Nothing Nothing
 
 windowIdOf :: RiverWindowState -> WindowId
 windowIdOf = WindowId . objectIdValue . objectId . riverWindowObject
@@ -88,7 +88,7 @@ reconcileManage reclaim scene snapshot (ReconcileState old oldSeats stacking) = 
     let a = states Map.! windowIdOf w
      in a
           { initialized = True
-          , tiled = fromMaybe (tiled a) (tiledEdges (desired w))
+          , tiled = tiledEdges (desired w) (tiled a)
           , proposal = case proposalSize (desired w) of
               Just size | Map.member (windowIdOf w) proposed -> AwaitingDimensions size (riverWindowDimensionsRevision w)
               _ -> proposal a
@@ -121,11 +121,10 @@ reconcileManage reclaim scene snapshot (ReconcileState old oldSeats stacking) = 
   initialize w = unless (initialized (states Map.! windowIdOf w)) $ do
     useWindowSsd (riverWindowObject w)
     setWindowCapabilities (riverWindowObject w) (River.RiverWindowV1CapabilitiesFlags 0)
-  applyTiled w = case tiledEdges (desired w) of
-    Just edges
-      | edges /= tiled (states Map.! windowIdOf w) ->
-          setWindowTiled (riverWindowObject w) (River.RiverWindowV1EdgesFlags (if edges then 15 else 0))
-    _ -> pure ()
+  applyTiled w =
+    let current = tiled (states Map.! windowIdOf w)
+        edges = tiledEdges (desired w) current
+     in when (edges /= current) (setWindowTiled (riverWindowObject w) edges)
   propose w = case proposalSize (desired w) of
     Just size
       | Map.member (windowIdOf w) proposed ->
@@ -236,13 +235,12 @@ proposalSize = \case
   Floating r -> Just (rectSize r)
   Centered _ -> either (const Nothing) Just (mkSize 0 0)
 
--- | Whether a placement sets all four tiled edges or none; an omitted window keeps its edges.
-tiledEdges :: Placement -> Maybe Bool
-tiledEdges = \case
-  Omitted -> Nothing
-  Placed _ -> Just True
-  Floating _ -> Just False
-  Centered _ -> Just False
+tiledEdges :: Placement -> River.RiverWindowV1EdgesFlags -> River.RiverWindowV1EdgesFlags
+tiledEdges placement current = case placement of
+  Omitted -> current
+  Placed _ -> River.RiverWindowV1EdgesFlags 15
+  Floating _ -> River.RiverWindowV1EdgesFlagsNone
+  Centered _ -> River.RiverWindowV1EdgesFlagsNone
 
 topLeft :: Placement -> Size -> Maybe Point
 topLeft placement size = case placement of
