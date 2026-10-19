@@ -1,6 +1,6 @@
 # M2 Practical Implementation Plan
 
-Status: **Draft** / Last updated: 2026-10-18
+Status: **Draft** / Last updated: 2026-10-20
 
 This document turns the M2 row in the specification into an ordered, testable
 implementation plan. It builds on the completed [M1 plan](m1-plan.md) and
@@ -9,8 +9,9 @@ configuration needs, plus the floating, restart, and size-mismatch behavior
 that daily use hits first.
 
 Design questions are tracked in [Open design issues](#9-open-design-issues).
-All six issues are **Decided**, and M2-D01 and M2-D02 are **Verified**. Each
-other issue becomes **Verified** when its required regression lands.
+All six issues are **Decided**, and M2-D01, M2-D02, and M2-D03 are
+**Verified**. Each other issue becomes **Verified** when its required
+regression lands.
 
 ## 1. Outcome
 
@@ -270,10 +271,14 @@ Tests:
 
 - the unsupported-request test changes on purpose: fullscreen requests now
   change state, and maximize and minimize still do not;
-- removing the fullscreen output returns the window to its tile in one
-  sequence;
-- a hidden workspace's fullscreen window is not fullscreen on any output;
-  and
+- removing the fullscreen window's output places it where its workspace went
+  in one sequence: fullscreen on the output that now shows the workspace, or
+  hidden with no request when the workspace is hidden. River has already
+  exited fullscreen, so seki sends no `exit_fullscreen`;
+- a hidden workspace's fullscreen window covers no output: it is hidden, and
+  a workspace switch sends no fullscreen request. Showing the workspace on
+  another output sends `fullscreen` alone, and a window that leaves the set
+  while hidden exits fullscreen at once; and
 - real-river scenario `m2-fullscreen`.
 
 ### WP7. Crop and Tolerate
@@ -429,7 +434,7 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
 |---|---|---|---|---|
 | M2-D01 | Float geometry and the border | P1 | Verified | WP4, WP5 |
 | M2-D02 | Float stacking against families | P2 | Verified | WP4 |
-| M2-D03 | Fullscreen representation and exit | P1 | Decided | WP6, WP8 |
+| M2-D03 | Fullscreen representation and exit | P1 | Verified | WP6, WP8 |
 | M2-D04 | Crop while a proposal is pending | P1 | Decided | WP7 |
 | M2-D05 | Client move and resize requests | P3 | Decided | WP5 |
 | M2-D06 | Restore state contents and output mapping | P1 | Decided | WP8 |
@@ -519,10 +524,36 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
     includes a key binding, a click, and a new window that the ManageHook
     inserts and focuses there. Switching workspaces keeps the window in the
     set.
+  - Refinement (WP6, 2026-10-20): the focus rule is an invariant that
+    `syncFullscreen` restores after every core event. A window stays in the
+    set only while it is managed and is its own workspace's focus, on a shown
+    or hidden workspace. A fullscreen request from a window that is not its
+    workspace's focus is dropped, so a client request never steals focus.
+    The output hint in `fullscreen_requested` is ignored: the window goes
+    fullscreen on its own workspace's output, since honoring the hint would
+    move the window to another workspace.
+  - Hidden workspace: the window stays fullscreen in river on its last
+    output and its client stays informed, so a workspace switch sends no
+    fullscreen request. It is hidden, so it covers no output and the
+    workspace shown there stays visible. Showing its workspace on the same
+    output sends nothing fullscreen-related, and on another output
+    `fullscreen` alone. A window that leaves the set while hidden gets
+    `exit_fullscreen` and `inform_not_fullscreen` at once, so river and the
+    client never hold a fullscreen state the core has dropped.
+  - Output removal: river exits fullscreen itself, as if `exit_fullscreen`
+    were made in the manage sequence that reports the removal. In that
+    sequence seki sends `fullscreen` for the output that now shows the
+    window's workspace. When the workspace becomes hidden seki sends
+    nothing, since the client still believes it is fullscreen, and showing
+    the workspace later sends `fullscreen` alone. A window that leaves the
+    set before then gets `inform_not_fullscreen` alone.
   - Proposals: entering fullscreen drops the window's proposal state, and
     `dimensions` events while fullscreen settle nothing. Exit sends a new
     proposal for the window's tile or float in the same sequence, regardless
-    of any earlier pending proposal.
+    of any earlier pending proposal. `set_position` is rendering state, which
+    river applies at the next `render_finish` whichever sequence carries it.
+    Seki sends it in the render sequence once the client commits the proposed
+    size, as it does for every tile.
   - Rejected: xmonad's `doFullFloat` and `sink`, which returns a previously
     floating window to the tiled layer and draws the border itself; leaving
     the fullscreen window above a newly focused window, which sends keyboard
@@ -534,6 +565,22 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
   proposal pending and settles to the tile, and a reducer test that a focus
   change on the same output exits fullscreen while a workspace switch does
   not.
+- **Verified (WP6):** "M2-D03: exiting fullscreen with a proposal pending
+  proposes the tile again and settles to it" in
+  [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs), and "M2-D03:
+  a focus change on the same output exits fullscreen while a workspace switch
+  does not" in [EventTest](../test/Seki/Internal/Core/EventTest.hs). The
+  generated property "the fullscreen set holds only managed windows that
+  focus their own workspace" checks the invariant. "M2-D03: a fullscreen
+  tile keeps its slot and covers its workspace's output above both tiers" in
+  [SceneTest](../test/Seki/Internal/Core/SceneTest.hs) checks placement and
+  stacking. The output-removal and hidden-workspace traces, and the
+  real-river scenario `m2-fullscreen`, check the rest. The set is
+  `coreFullscreen :: Set WindowId`. A hidden workspace's member is placed
+  `HiddenFullscreen`, distinct from `Omitted`, so the reconciler keeps its
+  fullscreen state while hidden. The reconciler records per window
+  whether river has it fullscreen on an output, or dropped it with a removed
+  output while the client still believes it is fullscreen.
 
 ### M2-D04. Crop while a proposal is pending
 

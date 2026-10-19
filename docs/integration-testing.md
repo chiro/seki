@@ -98,6 +98,7 @@ nix develop --no-write-lock-file .#unit --command cabal test all
 | `m2-manage-shift` | A `doShift` manage hook keyed on a probe window's custom app_id puts it on hidden workspace 2: it is not shown and focus stays on the earlier window. Viewing workspace 2 shows it, and a window with another app_id still tiles on workspace 1 | `wlr-randr` |
 | `m2-startup-keys` | A public configuration's startup hook `spawnOnce` runs once after the first output, and an unmodified `XF86AudioRaiseVolume` press from `wtype` runs its bound `spawn`; both append to a file the scenario polls | `wlr-randr` |
 | `m2-float-dialog` | Under the default manage hook, a probe window with a parent and a fixed 300 by 200 commit floats over its tiled parent, centered on the output at its own size, with no stored geometry in the core. A click on the parent takes keyboard focus and the focused border, and the dialog stays shown above it | `wlr-randr` |
+| `m2-fullscreen` | The focused probe window of two tiles requests fullscreen and covers the whole output, hiding the other tile. Viewing workspace 2 shows its window uncovered, and viewing workspace 1 again shows the fullscreen window covering the output with keyboard focus. It then requests exit and returns to its master tile with its focused border and keyboard focus | `wlr-randr` |
 
 All scenarios also use the core river, foot, and synthetic-input fixture as
 needed. The CI shell in `flake.nix` provides the integration dependency set,
@@ -212,7 +213,9 @@ The oracle checks exact color counts and bounds, every pixel of all four
 border strips, and omitted colors on every enabled output. A picture lists
 its windows bottom to top. A later window's content and 2-pixel border hide
 the pixels under them, so the oracle expects only the visible part of an
-earlier window and of its border. It imports no production layout or scene
+earlier window and of its border. Border pixels outside the 800 by 600
+frame are not checked, so a fullscreen window's paint covers the whole frame
+with no border. It imports no production layout or scene
 calculation. Capture protocol failures fail at
 once. Only a disagreement in rendered pixels is polled.
 
@@ -328,6 +331,7 @@ m2-probe-self-test=passed
 m2-manage-shift=passed
 m2-startup-keys=passed
 m2-float-dialog=passed
+m2-fullscreen=passed
 ```
 
 `ci/run-integration.sh` byte-compares the generated file with
