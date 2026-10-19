@@ -17,7 +17,7 @@ Dispositions:
 * Screen: @prop_resize_inc@, @prop_resize_inc_extra@, @prop_resize_max@,
   @prop_resize_max_extra@, @prop_aspect_hint_shrink@, @prop_aspect_fits@ are
   excluded; they test X11 size hints, deferred to M2.
-* Floating: a fixed 'Rect' replaces @RationalRect 100 100 100 100@.
+* Floating: a fixed @FloatAt@ 'Rect' replaces @RationalRect 100 100 100 100@.
 -}
 module Seki.Internal.Core.StackSetTest (tests) where
 
@@ -307,7 +307,7 @@ succTag w = w{tag = succ (tag w)}
 predTag w = w{tag = pred (tag w)}
 
 geom :: FloatGeom
-geom = either (error . show) id (mkSize 100 100 >>= mkRect (Point 100 100))
+geom = FloatAt (either (error . show) id (mkSize 100 100 >>= mkRect (Point 100 100)))
 
 pointWithin :: Int32 -> Int32 -> Rect -> Bool
 pointWithin x y r =
