@@ -208,7 +208,7 @@ hotplugState (Hotplug ts steps) = foldl (flip apply) initial steps
   apply (GreedyViewTag t) = attached (greedyView t)
   attached f (AttachedState ss unassigned) = AttachedState (f ss) unassigned
   attached _ st = st
-  floatRect = either (error . show) id (mkSize 100 100 >>= mkRect (Point 100 100))
+  floatRect = FloatAt (either (error . show) id (mkSize 100 100 >>= mkRect (Point 100 100)))
 
 -- | Every workspace, sorted by tag.
 sortedWorkspaces :: (Ord i) => Workspaces i l -> [Workspace i l]

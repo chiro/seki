@@ -8,7 +8,9 @@ differences:
   identities, rather than type parameters.
 * A 'Screen' carries no geometry. The scene planner reads each output's
   usable rectangle separately.
-* 'FloatGeom' is an absolute 'Rect', not a @RationalRect@.
+* 'FloatGeom' holds a content box in logical pixels relative to the output
+  showing the window's workspace, or no box while the client picks its own
+  size, rather than a @RationalRect@ of the screen.
 * There is no @new@ and no @abort@. Construction is total and lives in
   "Seki.Internal.Core.State", which returns typed errors.
 * The workspace set is fixed once validated, so @renameTag@ and
@@ -22,7 +24,7 @@ module Seki.Internal.Core.StackSet (
   Stack (..),
   WindowId (..),
   OutputId (..),
-  FloatGeom,
+  FloatGeom (..),
 
   -- * Observation
   peek,
@@ -91,8 +93,15 @@ newtype WindowId = WindowId Word32
 newtype OutputId = OutputId Word32
   deriving (Eq, Ord, Show)
 
--- | A floating window's rectangle in global logical coordinates.
-type FloatGeom = Rect
+{- | Where a floating window goes. A stored box is the window's content, with
+the border drawn outside it, relative to the top-left of the output showing
+its workspace, so the window travels with its workspace between outputs.
+-}
+data FloatGeom
+  = -- | No stored box: the client picks its size and the window is centered on its output.
+    ClientSized
+  | FloatAt Rect
+  deriving (Eq, Show)
 
 {- | Every workspace exactly once: the focused screen's, the other screens',
 and the hidden ones, plus the floating windows' rectangles.
@@ -371,10 +380,10 @@ mapLayout f (StackSet v vs hs m) = StackSet (fScreen v) (map fScreen vs) (map fW
   fScreen (Screen ws o) = Screen (fWorkspace ws) o
   fWorkspace (Workspace t l s) = Workspace t (f l) s
 
--- | Record a window's floating rectangle.
+-- | Record where a floating window goes.
 float :: WindowId -> FloatGeom -> StackSet i l -> StackSet i l
 float w r s = s{floating = Map.insert w r (floating s)}
 
--- | Forget a window's floating rectangle.
+-- | Forget a window's floating geometry, tiling it again.
 sink :: WindowId -> StackSet i l -> StackSet i l
 sink w s = s{floating = Map.delete w (floating s)}

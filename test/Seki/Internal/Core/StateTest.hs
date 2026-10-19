@@ -4,8 +4,9 @@ import Data.Either (isRight)
 import Data.List (find, nub)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (listToMaybe)
-import Seki.Internal.Core.Geometry (Point (..), Rect, mkRect, mkSize)
+import Seki.Internal.Core.Geometry (Point (..), mkRect, mkSize)
 import Seki.Internal.Core.StackSet (
+  FloatGeom (..),
   OutputId (..),
   Screen (..),
   Stack (..),
@@ -267,8 +268,8 @@ w1 = WindowId 1
 w2 = WindowId 2
 w3 = WindowId 3
 
-floatRect :: Rect
-floatRect = either (error . show) id (mkSize 100 100 >>= mkRect (Point 10 10))
+floatRect :: FloatGeom
+floatRect = FloatAt (either (error . show) id (mkSize 100 100 >>= mkRect (Point 10 10)))
 
 initial :: Workspaces Char ()
 initial = either (error . show) coreWorkspaces (newCoreState () "abc")

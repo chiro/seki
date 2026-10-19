@@ -4,7 +4,7 @@ module Seki.Internal.Core.ManageHookTest (tests) where
 
 import Data.Map.Strict qualified as Map
 import Data.Monoid (Endo (..))
-import Seki.Internal.Core.Geometry (Point (..), Rect, mkRect, mkSize)
+import Seki.Internal.Core.Geometry (Point (..), mkRect, mkSize)
 import Seki.Internal.Core.ManageHook (
   ManageHook,
   WindowProps (..),
@@ -22,7 +22,7 @@ import Seki.Internal.Core.ManageHook (
   (-->),
   (=?),
  )
-import Seki.Internal.Core.StackSet (StackSet (..), WindowId (..), float, insertUp, shiftWin, sink)
+import Seki.Internal.Core.StackSet (FloatGeom (..), StackSet (..), WindowId (..), float, insertUp, shiftWin, sink)
 import Seki.Internal.Core.StackSetGen (NonEmptyWindowsStackSet (..), T, arbitraryTag, arbitraryWindow, attach)
 import Test.QuickCheck (Gen, Property, arbitrary, elements, forAll, forAllShow, listOf, oneof, (===))
 import Test.Tasty (TestTree, testGroup)
@@ -95,8 +95,8 @@ full = insertUp w1 (attach 1 0 [1, 2, 3])
 floated :: T
 floated = float w1 rect full
 
-rect :: Rect
-rect = either (error . show) id (mkSize 100 100 >>= mkRect (Point 10 10))
+rect :: FloatGeom
+rect = FloatAt (either (error . show) id (mkSize 100 100 >>= mkRect (Point 10 10)))
 
 genProps :: Gen WindowProps
 genProps = do
