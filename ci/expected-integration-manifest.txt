@@ -16,3 +16,4 @@ m1-output-readd=passed
 m2-probe-self-test=passed
 m2-manage-shift=passed
 m2-startup-keys=passed
+m2-float-dialog=passed
