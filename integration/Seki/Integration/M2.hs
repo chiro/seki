@@ -14,7 +14,7 @@ import Seki.Fixture.Probe
 import Seki.Integration.Fixture hiding (Fixture)
 import Seki.Integration.Fixture qualified as Shared
 import Seki.Integration.Harness
-import Seki.Internal.Config (Config (..), KeyBinding (..), Keysym (..), Mods (..), additionalKeys, def)
+import Seki.Internal.Config (Config (..), KeyBinding (..), Keysym (..), Mods (..), additionalKeys, def, defaultManageHook)
 import Seki.Internal.Core.Action (spawn, spawnOnce, windows)
 import Seki.Internal.Core.ManageHook (appId, doShift, idHook, (-->), (=?))
 import Seki.Internal.Core.Scene (BorderColor (..), SceneStyle (..))
@@ -40,6 +40,7 @@ m2Scenarios =
   [ ("m2-probe-self-test", withFixture m2Config "m2-probe-self-test" 1 selfTest)
   , ("m2-manage-shift", withFixture manageShiftConfig "m2-manage-shift" 1 manageShift)
   , ("m2-startup-keys", startupKeys)
+  , ("m2-float-dialog", withFixture m2Config{policyManageHook = defaultManageHook} "m2-float-dialog" 1 floatDialog)
   ]
 
 selfTest :: Fixture -> Probe -> IO ()
@@ -145,6 +146,29 @@ startupKeys = withSystemTempDirectory "seki-m2-startup-keys" $ \directory -> do
     runInputDriver (mEnvironment fixture) ["-k", "XF86AudioRaiseVolume"]
     _ <- waitUntil "the unmodified key spawns its command and the startup hook does not repeat" assertionTimeoutMicroseconds recorded (== ["startup", "raise-volume"])
     pure ()
+
+{- | Under the default manage hook a window with a parent floats over its tiled
+parent, at the size its client commits, centered on the 800 by 600 output.
+-}
+floatDialog :: Fixture -> Probe -> IO ()
+floatDialog fixture probe = do
+  parent <- openWindow probe Red
+  onFirst "the parent tiles alone" [Paint Red fullBox True]
+  dialog <- openWindowWith probe (windowSpec Green){specParent = Just parent, specCommit = CommitFixed 300 200}
+  onFirst "the dialog floats centered over its parent at its own size" [Paint Red fullBox False, Paint Green dialogBox True]
+  _ <- waitUntil "the dialog has keyboard focus" assertionTimeoutMicroseconds (keyboardSnapshot probe) ((== Just dialog) . keyboardOwner)
+  dialogCore <- riverWindow fixture "the dialog reaches river" ((== Just "seki-color-probe-2") . riverWindowAppId)
+  state <- coreWorkspaces <$> readPolicyState (mPolicy fixture)
+  case state of
+    AttachedState ss _ -> assertEqual "the dialog floats with no stored box" (Map.singleton (SS.WindowId (objectIdValue (riverId dialogCore))) SS.ClientSized) (SS.floating ss)
+    HeadlessState _ -> failIntegration "core unexpectedly headless"
+  click (mSocket fixture) (800, 600) (100, 100)
+  _ <- waitUntil "a click on the parent takes keyboard focus" assertionTimeoutMicroseconds (keyboardSnapshot probe) ((== Just parent) . keyboardOwner)
+  onFirst "refocusing the parent keeps the dialog above it" [Paint Red fullBox True, Paint Green dialogBox False]
+ where
+  onFirst phase paints = picture fixture phase [(head (mOutputs fixture), paints)]
+  fullBox = Box 2 2 796 596
+  dialogBox = Box 250 200 300 200
 
 riverWindow :: Fixture -> String -> (RiverWindowState -> Bool) -> IO RiverWindowState
 riverWindow fixture phase predicate =

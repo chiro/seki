@@ -63,6 +63,8 @@ data Fixture l = Fixture
 data WindowRequest = FullscreenRequested | ExitFullscreenRequested | PointerMoveRequested | PointerResizeRequested deriving (Eq, Show)
 
 data Box = Box Int Int Int Int deriving (Eq, Show)
+
+-- | A window's content box and whether its border is focused. A picture lists paints bottom to top, so a later paint's content and border hide what lies under them.
 data Paint = Paint Color Box Bool deriving (Eq, Show)
 
 withFixture :: (LayoutClass l) => PolicyConfig String l -> String -> Int -> (Fixture l -> Probe -> IO ()) -> IO ()
@@ -178,16 +180,19 @@ pictureError :: [Paint] -> Image -> Maybe String
 pictureError paints frame
   | (imageWidth frame, imageHeight frame) /= (800, 600) = Just ("capture dimensions " <> show (imageWidth frame, imageHeight frame))
   | BS.length (imageRgb frame) /= 800 * 600 * 3 = Just "capture byte count"
-  | otherwise = firstError (map checkColor [Red, Green, Blue] <> map checkBorder paints)
+  | otherwise = firstError (map checkColor [Red, Green, Blue] <> zipWith checkBorder [1 ..] paints)
  where
+  covered index (px, py) = any (\(Paint _ (Box x y width height) _) -> px >= x - 2 && px < x + width + 2 && py >= y - 2 && py < y + height + 2) (drop index paints)
+  bounds points = case points of [] -> Nothing; _ -> Just (length points, Box (minimum (map fst points)) (minimum (map snd points)) (maximum (map fst points) - minimum (map fst points) + 1) (maximum (map snd points) - minimum (map snd points) + 1))
   checkColor color =
-    let points = [(x, y) | y <- [0 .. 599], x <- [0 .. 799], pixel frame x y == rgb color]
-        actual = case points of [] -> Nothing; _ -> Just (length points, Box (minimum (map fst points)) (minimum (map snd points)) (maximum (map fst points) - minimum (map fst points) + 1) (maximum (map snd points) - minimum (map snd points) + 1))
-        expected = case find (\(Paint c _ _) -> c == color) paints of Nothing -> Nothing; Just (Paint _ box@(Box _ _ width height) _) -> Just (width * height, box)
+    let actual = bounds [(x, y) | y <- [0 .. 599], x <- [0 .. 799], pixel frame x y == rgb color]
+        expected = case break (\(Paint c _ _) -> c == color) paints of
+          (_, []) -> Nothing
+          (below, Paint _ (Box x y width height) _ : _) -> bounds [(px, py) | py <- [y .. y + height - 1], px <- [x .. x + width - 1], not (covered (length below + 1) (px, py))]
      in if actual == expected then Nothing else Just (show color <> " coverage expected " <> show expected <> ", got " <> show actual)
-  checkBorder (Paint color (Box x y width height) focused) =
+  checkBorder index (Paint color (Box x y width height) focused) =
     let target = if focused then BS.pack [255, 0, 255] else BS.pack [64, 64, 64]
-        strips = [(px, py) | py <- [y - 2 .. y + height + 1], px <- [x - 2 .. x + width + 1], px < x || px >= x + width || py < y || py >= y + height]
+        strips = [(px, py) | py <- [y - 2 .. y + height + 1], px <- [x - 2 .. x + width + 1], px < x || px >= x + width || py < y || py >= y + height, not (covered index (px, py))]
      in case find (\(px, py) -> pixel frame px py /= target) strips of
           Nothing -> Nothing
           Just point@(px, py) -> Just (show color <> " border mismatch at " <> show point <> ", expected " <> show target <> ", got " <> show (pixel frame px py))

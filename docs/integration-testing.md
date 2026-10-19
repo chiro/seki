@@ -97,6 +97,7 @@ nix develop --no-write-lock-file .#unit --command cabal test all
 | `m2-probe-self-test` | Each probe window spec field and request against river's state: a custom and an absent app_id, the parent window, the dimensions hint, a fixed commit size, fullscreen and exit fullscreen requests, a move during a held press, and a pointer press, motion, and release with the logo modifier held | `wlr-randr` |
 | `m2-manage-shift` | A `doShift` manage hook keyed on a probe window's custom app_id puts it on hidden workspace 2: it is not shown and focus stays on the earlier window. Viewing workspace 2 shows it, and a window with another app_id still tiles on workspace 1 | `wlr-randr` |
 | `m2-startup-keys` | A public configuration's startup hook `spawnOnce` runs once after the first output, and an unmodified `XF86AudioRaiseVolume` press from `wtype` runs its bound `spawn`; both append to a file the scenario polls | `wlr-randr` |
+| `m2-float-dialog` | Under the default manage hook, a probe window with a parent and a fixed 300 by 200 commit floats over its tiled parent, centered on the output at its own size, with no stored geometry in the core. A click on the parent takes keyboard focus and the focused border, and the dialog stays shown above it | `wlr-randr` |
 
 All scenarios also use the core river, foot, and synthetic-input fixture as
 needed. The CI shell in `flake.nix` provides the integration dependency set,
@@ -208,8 +209,11 @@ local descriptor until the frame bytes have been read.
 
 The M1 scenarios use literal content rectangles for 800 by 600 outputs.
 The oracle checks exact color counts and bounds, every pixel of all four
-border strips, and omitted colors on every enabled output. It imports no
-production layout or scene calculation. Capture protocol failures fail at
+border strips, and omitted colors on every enabled output. A picture lists
+its windows bottom to top. A later window's content and 2-pixel border hide
+the pixels under them, so the oracle expects only the visible part of an
+earlier window and of its border. It imports no production layout or scene
+calculation. Capture protocol failures fail at
 once. Only a disagreement in rendered pixels is polled.
 
 The output lifecycle case uses `wlr-randr --off` and `--on` and waits for actual
@@ -323,6 +327,7 @@ m1-output-readd=passed
 m2-probe-self-test=passed
 m2-manage-shift=passed
 m2-startup-keys=passed
+m2-float-dialog=passed
 ```
 
 `ci/run-integration.sh` byte-compares the generated file with
