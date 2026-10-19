@@ -73,6 +73,12 @@ and keeps the size its client picks, centered on its output. `float` and
 `sink` float and tile a window, so `withFocused float` floats the focused one.
 `doFloat` floats a new window from a manage hook.
 
+A client's fullscreen request makes it cover its workspace's output above
+every other window, using river's native fullscreen. Only a workspace's
+focused window can be fullscreen: focusing another window on that workspace
+ends it, and switching workspaces does not. `withFocused toggleFullscreen`
+does the same from a key binding.
+
 `keys` receives the final configuration, so changing `modMask`, `terminal`,
 or `workspaces` also changes `defaultKeys`. Bindings use XKB keysym numbers,
 with `Keysym 0xff0d` representing Return. Combine `Mods` with `(.|.)`, which
@@ -100,7 +106,7 @@ and colors whose RGB channels exceed alpha fail before Wayland startup.
 `BorderColor` channels are unsigned 32-bit premultiplied RGBA values.
 
 `Action` is pure. Use `windows`, `sendMessage`, `spawn`, `spawnOnce`, `kill`,
-`float`, `sink`, and `withFocused` to change state or record effects. Arbitrary IO is not part of the configuration API.
+`float`, `sink`, `toggleFullscreen`, and `withFocused` to change state or record effects. Arbitrary IO is not part of the configuration API.
 Import `Seki.Core.StackSet` qualified for its full operation set; `Seki`
 exports selected operations without conflicting with `Config.workspaces`.
 
