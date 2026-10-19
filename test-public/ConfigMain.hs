@@ -13,13 +13,13 @@ customConfig :: Config CustomLayout
 customConfig =
   def
     { layoutHook = CustomLayout Full
-    , keys = \config -> (KeyBinding (modMask config .|. Shift) (Keysym 0xffbe), windows focusDown >> kill >> spawn "true") : defaultKeys config
+    , keys = \config -> (KeyBinding (modMask config .|. Shift) (Keysym 0xffbe), windows focusDown >> kill >> spawn "true") : (KeyBinding (modMask config) (Keysym 0x66), withFocused float) : (KeyBinding (modMask config .|. Shift) (Keysym 0x74), withFocused sink) : defaultKeys config
     , manageHook = idHook
     , startupHook = spawnOnce "true"
     }
 
 fullConfig :: Config Full
-fullConfig = def{layoutHook = Full, keys = defaultKeys, manageHook = idHook, startupHook = pure ()}
+fullConfig = def{layoutHook = Full, keys = defaultKeys, manageHook = composeAll [appId =? "mpv" --> doShift "2", defaultManageHook], startupHook = pure ()}
 
 hookedConfig :: Config StdLayouts
 hookedConfig =
@@ -28,6 +28,7 @@ hookedConfig =
         composeAll
           [ appId =? "mpv" --> doShift "2"
           , title =? "scratch" --> doShift "9"
+          , title =? "picture-in-picture" --> doFloat
           , isDialog --> doSink
           ]
     }

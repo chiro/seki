@@ -22,6 +22,7 @@ module Seki.Internal.Config (
   KeyBinding (..),
   def,
   defaultKeys,
+  defaultManageHook,
   additionalKeys,
   removeKeys,
 ) where
@@ -33,7 +34,7 @@ import Data.List (nubBy)
 import Data.Word (Word32)
 import Seki.Internal.Core.Action qualified as Core
 import Seki.Internal.Core.Layout (ChangeLayout (..), Choose, IncMasterN (..), LayoutClass, Mirror (..), Resize (..), (|||))
-import Seki.Internal.Core.ManageHook (idHook)
+import Seki.Internal.Core.ManageHook (isDialog, (-->))
 import Seki.Internal.Core.ManageHook qualified as Core
 import Seki.Internal.Core.Scene (BorderColor (..))
 import Seki.Internal.Core.StackSet qualified as StackSet
@@ -91,7 +92,7 @@ data Config l = Config
   -- again, as it does 'keys' and 'manageHook'.
   }
 
--- | Nine workspaces, Tall, Mirror Tall, Full, xmonad-style bindings, and no manage or startup hook.
+-- | Nine workspaces, Tall, Mirror Tall, Full, xmonad-style bindings, floating dialogs, and no startup hook.
 def :: Config StdLayouts
 def =
   Config
@@ -102,7 +103,7 @@ def =
     , keys = defaultKeys
     , borders = BorderConfig 2 (BorderColor 0 0x80000000 0xffffffff 0xffffffff) (BorderColor 0x40000000 0x40000000 0x40000000 0xffffffff)
     , bindingsUseFixedLayout = True
-    , manageHook = idHook
+    , manageHook = defaultManageHook
     , startupHook = pure ()
     }
  where
@@ -134,6 +135,7 @@ defaultKeys config =
   , key (Mods 0) 0x6c (Core.sendMessage Expand)
   , key (Mods 0) 0x2c (Core.sendMessage (IncMasterN 1))
   , key (Mods 0) 0x2e (Core.sendMessage (IncMasterN (-1)))
+  , key (Mods 0) 0x74 (Core.withFocused Core.sink)
   ]
     ++ concat
       [ [key (Mods 0) symbol (Core.windows (StackSet.greedyView tag)), key Shift symbol (Core.windows (StackSet.shift tag))]
@@ -141,3 +143,10 @@ defaultKeys config =
       ]
  where
   key modifiers symbol action = (KeyBinding (modMask config .|. modifiers) (Keysym symbol), action)
+
+{- | Float dialogs, the windows with a parent, as 'def' does.
+
+> manageHook = composeAll [myHook, defaultManageHook]
+-}
+defaultManageHook :: ManageHook l
+defaultManageHook = isDialog --> Core.doFloat
