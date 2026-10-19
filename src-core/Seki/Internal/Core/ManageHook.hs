@@ -40,6 +40,7 @@ module Seki.Internal.Core.ManageHook (
   doF,
   doShift,
   doSink,
+  doFloat,
 ) where
 
 import Data.Int (Int32)
@@ -47,7 +48,7 @@ import Data.Maybe (isJust)
 import Data.Monoid (Endo (..))
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Seki.Internal.Core.StackSet (StackSet, WindowId, shiftWin, sink)
+import Seki.Internal.Core.StackSet (FloatGeom (..), StackSet, WindowId, float, shiftWin, sink)
 
 -- | A new window's properties, each absent until the client sets it.
 data WindowProps = WindowProps
@@ -125,3 +126,11 @@ doShift i = doF . shiftWin i =<< askWindow
 -- | Tile the window, dropping any floating rectangle.
 doSink :: ManageHook i l
 doSink = doF . sink =<< askWindow
+
+{- | Float the window with no stored box, so it is proposed no size, keeps the
+size its client commits, and is centered on its output. xmonad's @doFloat@
+keeps the X11 window's own geometry instead, which a new river window does not
+have yet.
+-}
+doFloat :: ManageHook i l
+doFloat = doF . (`float` ClientSized) =<< askWindow

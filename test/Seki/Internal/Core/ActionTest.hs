@@ -2,9 +2,11 @@ module Seki.Internal.Core.ActionTest (tests) where
 
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
-import Seki.Internal.Core.Action (Action, Intent (..), kill, runAction, sendMessage, spawn, spawnOnce, windows)
+import Seki.Internal.Core.Action (Action, Intent (..), float, kill, runAction, sendMessage, sink, spawn, spawnOnce, windows, withFocused)
+import Seki.Internal.Core.Geometry (Point (..), mkRect, mkSize)
 import Seki.Internal.Core.Layout (CLR (..), ChangeLayout (..), Choose (..), IncMasterN (..), Mirror (..), Resize (..))
 import Seki.Internal.Core.StackSet (
+  FloatGeom (..),
   OutputId (..),
   Screen (..),
   Stack (..),
@@ -50,6 +52,10 @@ tests =
         , testCase "intents accumulate in order across binds" $
             runAction (spawn "a" >> kill >>= \() -> spawn "b") attached
               @?= ((), attached, [Spawn "a", CloseWindow w2, Spawn "b"])
+        , testCase "withFocused passes the focused window" $
+            intentsOf (withFocused (\w -> spawn (show w))) attached @?= [Spawn (show w2)]
+        , testCase "withFocused does nothing without a focused window" $
+            runAction (withFocused (const (spawn "x"))) emptyAttached @?= ((), emptyAttached, [])
         , testCase "kill closes the window focused by an earlier step" $
             runAction (windows focusDown >> kill) attached
               @?= ((), withStack (Stack w1 [w2, w3] []), [ReclaimFocus, CloseWindow w1])
@@ -98,6 +104,14 @@ tests =
             runAction (spawn "foot") attached @?= ((), attached, [Spawn "foot"])
         , testCase "kill records a close for the focused window" $
             runAction kill attached @?= ((), attached, [CloseWindow w2])
+        , testCase "float floats a tiled window with no stored box" $
+            runAction (float w2) attached @?= ((), withFloating (Map.singleton w2 ClientSized), [ReclaimFocus])
+        , testCase "float keeps a floating window's stored box" $
+            runAction (float w2) (withFloating (Map.singleton w2 stored)) @?= ((), withFloating (Map.singleton w2 stored), [ReclaimFocus])
+        , testCase "float ignores a window it does not manage" $
+            runAction (float (WindowId 9)) attached @?= ((), attached, [ReclaimFocus])
+        , testCase "sink tiles a floating window again" $
+            runAction (sink w2) (withFloating (Map.singleton w2 stored)) @?= ((), attached, [ReclaimFocus])
         , testCase "spawnOnce launches the same command once" $
             intentsOf (spawnOnce "bar" >> spawnOnce "bar") attached @?= [Spawn "bar"]
         , testCase "spawnOnce launches each different command" $
@@ -146,6 +160,15 @@ headless = fromWorkspaces (HeadlessState (HeadlessWorkspaces ws1 [Workspace 2 la
 
 withStack :: Stack WindowId -> CoreState Int L
 withStack s = onCurrent (\w -> w{stack = Just s})
+
+withFloating :: Map.Map WindowId FloatGeom -> CoreState Int L
+withFloating fl = overWorkspaces onAttached attached
+ where
+  onAttached (AttachedState ss u) = AttachedState ss{floating = fl} u
+  onAttached HeadlessState{} = error "attached is attached"
+
+stored :: FloatGeom
+stored = FloatAt (either (error . show) id (mkSize 300 200 >>= mkRect (Point 40 30)))
 
 withLayout :: L -> CoreState Int L
 withLayout l = onCurrent (\w -> w{layout = l})
