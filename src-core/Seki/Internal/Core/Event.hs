@@ -11,12 +11,13 @@ module Seki.Internal.Core.Event (
   drainCore,
 ) where
 
+import Data.Bifunctor (first)
 import Data.List (foldl')
 import Data.Monoid (Endo (..))
 import Seki.Internal.Core.Action (Action, Intent, runAction)
 import Seki.Internal.Core.ManageHook (ManageHook, WindowProps, runQuery)
 import Seki.Internal.Core.StackSet (OutputId, WindowId)
-import Seki.Internal.Core.State (CoreState, addOutput, focusWindowIn, manageWindow, overWorkspaces, removeOutput, unmanageWindow)
+import Seki.Internal.Core.State (CoreState, addOutput, focusWindowIn, manageWindow, overWorkspaces, raiseFocusedFloat, removeOutput, unmanageWindow)
 
 -- | A change river reported, or a key binding's action.
 data CoreEvent i l
@@ -28,9 +29,14 @@ data CoreEvent i l
     WindowInteraction WindowId
   | RunAction (Action i l ())
 
--- | Apply one event, returning the new state and the intents it recorded.
+{- | Apply one event, returning the new state and the intents it recorded. Every
+event ends by raising a focused float, so no focus change can miss it.
+-}
 stepCore :: (Eq i) => ManageHook i l -> CoreEvent i l -> CoreState i l -> (CoreState i l, [Intent])
-stepCore hook event st = case event of
+stepCore hook event = first raiseFocusedFloat . reduce hook event
+
+reduce :: (Eq i) => ManageHook i l -> CoreEvent i l -> CoreState i l -> (CoreState i l, [Intent])
+reduce hook event st = case event of
   WindowCreated w props -> (overWorkspaces (manageWindow (appEndo (runQuery hook w props)) w) st, [])
   WindowClosed w -> (overWorkspaces (unmanageWindow w) st, [])
   OutputCreated o -> (overWorkspaces (addOutput o) st, [])

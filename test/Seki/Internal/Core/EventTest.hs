@@ -4,9 +4,9 @@ import Data.List (sort)
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text qualified as Text
-import Seki.Internal.Core.Action (Intent (..), spawn, windows)
+import Seki.Internal.Core.Action (Intent (..), sink, spawn, windows)
 import Seki.Internal.Core.Event (CoreEvent (..), drainCore, stepCore)
-import Seki.Internal.Core.ManageHook (WindowProps (..), appId, doShift, idHook, noWindowProps, (-->), (=?))
+import Seki.Internal.Core.ManageHook (ManageHook, WindowProps (..), appId, askWindow, doFloat, doShift, idHook, isDialog, noWindowProps, (-->), (=?))
 import Seki.Internal.Core.StackSet (
   OutputId (..),
   Screen (..),
@@ -14,7 +14,9 @@ import Seki.Internal.Core.StackSet (
   StackSet (..),
   WindowId (..),
   Workspace (..),
+  focusWindow,
   integrate',
+  peek,
   view,
  )
 import Seki.Internal.Core.StackSetGen (EventHistory (..), EventStep (..), coreInvariant, historyStart, sortedWorkspaces)
@@ -35,6 +37,7 @@ tests =
           [ testProperty "every prefix keeps the core invariant" propInvariant
           , testProperty "managed windows are those created and not yet closed" propManagedWindows
           , testProperty "draining equals stepping one event at a time" propDrainSteps
+          , testProperty "the raise order holds each float once, with a focused float on top" propRaiseOrder
           ]
     ]
 
@@ -83,6 +86,18 @@ reducerTests =
     , testCase "runs the manage hook on each created window's properties" $
         drainCore (appId =? "mpv" --> doShift 'b') [OutputCreated o1, WindowCreated w1 foot, WindowCreated w2 mpv] initial
           @?= (fromWorkspaces (AttachedState (StackSet (Screen (wsWith 'a' (Stack w1 [] [])) o1) [] [wsWith 'b' (Stack w2 [] []), ws 'c'] Map.empty) []), [])
+    , testCase "a new floating dialog goes on top of the raise order" $
+        coreRaiseOrder (fst (drainCore dialogs [OutputCreated o1, created w1, dialog w2 w1, dialog w3 w1] initial)) @?= [w2, w3]
+    , testCase "focusing a float raises it and focusing a tile leaves the order alone" $ do
+        let (st, _) = drainCore dialogs [OutputCreated o1, created w1, dialog w2 w1, dialog w3 w1] initial
+            raised = fst (stepCore dialogs (WindowInteraction w2) st)
+        coreRaiseOrder raised @?= [w3, w2]
+        coreRaiseOrder (fst (stepCore dialogs (WindowInteraction w1) raised)) @?= [w3, w2]
+        coreRaiseOrder (fst (stepCore dialogs (RunAction (windows (focusWindow w1))) raised)) @?= [w3, w2]
+    , testCase "closing or sinking a float drops it from the raise order" $ do
+        let (st, _) = drainCore dialogs [OutputCreated o1, created w1, dialog w2 w1, dialog w3 w1] initial
+        coreRaiseOrder (fst (stepCore dialogs (WindowClosed w3) st)) @?= [w2]
+        coreRaiseOrder (fst (stepCore dialogs (RunAction (sink w2)) st)) @?= [w3]
     , testCase "runs actions and keeps their intents in arrival order" $
         drainCore idHook [RunAction (spawn "x"), created w1, RunAction (spawn "y")] initial
           @?= (fromWorkspaces (HeadlessState (HeadlessWorkspaces (wsWith 'a' (Stack w1 [] [])) [ws 'b', ws 'c'] Map.empty)), [Spawn "x", Spawn "y"])
@@ -118,6 +133,12 @@ o2 = OutputId 2
 foot, mpv :: WindowProps
 foot = noWindowProps{propAppId = Just (Text.pack "foot")}
 mpv = noWindowProps{propAppId = Just (Text.pack "mpv")}
+
+dialogs :: ManageHook Char ()
+dialogs = isDialog --> doFloat
+
+dialog :: WindowId -> WindowId -> CoreEvent i l
+dialog w parent = WindowCreated w noWindowProps{propParent = Just parent}
 
 created :: WindowId -> CoreEvent i l
 created w = WindowCreated w noWindowProps
@@ -165,3 +186,23 @@ propDrainSteps h = drainCore idHook events st0 === stepAll events st0
 -- | Every managed window, sorted, with any duplicate kept.
 managed :: CoreState Int l -> [WindowId]
 managed = sort . concatMap (integrate' . stack) . sortedWorkspaces . coreWorkspaces
+
+propRaiseOrder :: EventHistory -> Property
+propRaiseOrder h =
+  checkCoverage
+    . cover 20 (any (\st -> length (coreRaiseOrder st) > 1) prefixes) "two or more floats"
+    $ conjoin
+      [ counterexample ("after " ++ show n ++ " events") $
+        conjoin
+          [ sort (coreRaiseOrder st) === Map.keys floats
+          , counterexample "a focused float is on top" (all (\w -> Map.notMember w floats || lastMaybe (coreRaiseOrder st) == Just w) focused)
+          ]
+      | (n, st) <- zip [0 :: Int ..] prefixes
+      , let (floats, focused) = case coreWorkspaces st of
+              AttachedState ss _ -> (floating ss, peek ss)
+              HeadlessState hw -> (headlessFloating hw, Nothing)
+      ]
+ where
+  prefixes = scanl (\st (EventStep _ e) -> fst (stepCore oddFloat e st)) (historyStart h) (historySteps h)
+  oddFloat = fmap (\(WindowId n) -> odd n) askWindow --> doFloat
+  lastMaybe xs = if null xs then Nothing else Just (last xs)

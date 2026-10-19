@@ -296,4 +296,6 @@ defaultActions t =
   , ("windows (shift " ++ show t ++ ")", Action.windows (shift t))
   , ("spawn \"foot\"", Action.spawn "foot")
   , ("kill", Action.kill)
+  , ("withFocused float", Action.withFocused Action.float)
+  , ("withFocused sink", Action.withFocused Action.sink)
   ]

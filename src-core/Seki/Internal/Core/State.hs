@@ -44,6 +44,7 @@ module Seki.Internal.Core.State (
   manageWindow,
   unmanageWindow,
   focusWindowIn,
+  raiseFocusedFloat,
 ) where
 
 import Data.Map.Strict (Map)
@@ -61,6 +62,7 @@ import Seki.Internal.Core.StackSet (
   focusWindow,
   insertUp,
   member,
+  peek,
   screens,
  )
 import Seki.Internal.Core.StackSet qualified as StackSet
@@ -70,6 +72,8 @@ data CoreState i l = CoreState
   { coreWorkspaces :: Workspaces i l
   , coreSpawnedOnce :: Set String
   -- ^ The commands 'Seki.Internal.Core.Action.spawnOnce' has launched.
+  , coreRaiseOrder :: [WindowId]
+  -- ^ Every floating window once, bottom to top. See 'raiseFocusedFloat'.
   }
   deriving (Eq, Show)
 
@@ -109,7 +113,7 @@ newCoreState l tags@(t : ts) = case firstRepeat [] tags of
 
 -- | A core state over these workspaces with nothing else recorded yet.
 fromWorkspaces :: Workspaces i l -> CoreState i l
-fromWorkspaces ws = CoreState ws Set.empty
+fromWorkspaces ws = CoreState ws Set.empty []
 
 -- | Change the workspaces and keep the rest of the core state.
 overWorkspaces :: (Workspaces i l -> Workspaces i l) -> CoreState i l -> CoreState i l
@@ -178,3 +182,18 @@ or for an unknown window, nothing changes.
 focusWindowIn :: (Eq i) => WindowId -> Workspaces i l -> Workspaces i l
 focusWindowIn w (AttachedState ss unassigned) = AttachedState (focusWindow w ss) unassigned
 focusWindowIn _ st@HeadlessState{} = st
+
+{- | Keep the raise order to the floating windows, put a window that has just
+floated on top, and then put the focused window on top when it floats. Focusing
+a tile leaves the order alone, so floats keep their order while focus is
+elsewhere (M2-D02). Applying it twice changes nothing more.
+-}
+raiseFocusedFloat :: CoreState i l -> CoreState i l
+raiseFocusedFloat st = st{coreRaiseOrder = filter (not . isFocused) order ++ filter isFocused order}
+ where
+  (floats, focused) = case coreWorkspaces st of
+    AttachedState ss _ -> (floating ss, peek ss)
+    HeadlessState hw -> (headlessFloating hw, Nothing)
+  kept = filter (`Map.member` floats) (coreRaiseOrder st)
+  order = kept ++ filter (`notElem` kept) (Map.keys floats)
+  isFocused w = Just w == focused
