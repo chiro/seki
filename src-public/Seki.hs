@@ -31,6 +31,7 @@ module Seki (
   withFocused,
   float,
   sink,
+  toggleFullscreen,
   ManageHook,
   Query,
   appId,
@@ -131,3 +132,10 @@ float = Core.float
 -- | Tile a floating window again.
 sink :: WindowId -> Action l ()
 sink = Core.sink
+
+{- | Make a window fullscreen on its workspace's output, or end its fullscreen.
+Only a workspace's focused window can be fullscreen, and focusing another
+window on that workspace ends it.
+-}
+toggleFullscreen :: WindowId -> Action l ()
+toggleFullscreen = Core.toggleFullscreen

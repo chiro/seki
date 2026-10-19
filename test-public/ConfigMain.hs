@@ -13,7 +13,7 @@ customConfig :: Config CustomLayout
 customConfig =
   def
     { layoutHook = CustomLayout Full
-    , keys = \config -> (KeyBinding (modMask config .|. Shift) (Keysym 0xffbe), windows focusDown >> kill >> spawn "true") : (KeyBinding (modMask config) (Keysym 0x66), withFocused float) : (KeyBinding (modMask config .|. Shift) (Keysym 0x74), withFocused sink) : defaultKeys config
+    , keys = \config -> (KeyBinding (modMask config .|. Shift) (Keysym 0xffbe), windows focusDown >> kill >> spawn "true") : (KeyBinding (modMask config) (Keysym 0x66), withFocused float) : (KeyBinding (modMask config .|. Shift) (Keysym 0x74), withFocused sink) : (KeyBinding (modMask config .|. Shift) (Keysym 0x66), withFocused toggleFullscreen) : defaultKeys config
     , manageHook = idHook
     , startupHook = spawnOnce "true"
     }
