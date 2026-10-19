@@ -104,17 +104,18 @@ intent (Spawn cmd) = mix 1 (command cmd)
 intent (CloseWindow w) = mix 2 (window w)
 intent ReclaimFocus = 3
 scene :: DesiredScene -> Word64
-scene (DesiredScene ws order stacking focus out) =
+scene (DesiredScene ws order raised stacking focus out) =
   many
     id
     [ Map.foldlWithKey' (\a w p -> mix a (mix (window w) (placement p))) 0 ws
     , many window order
+    , many window raised
     , many window stacking
     , optional window focus
     , optional output out
     ]
  where
-  placement Omitted = 0; placement (Placed r) = mix 1 (rect r)
+  placement Omitted = 0; placement (Placed r) = mix 1 (rect r); placement (Floating r) = mix 2 (rect r); placement (Centered r) = mix 3 (rect r)
 
 forceResult :: CoreState String BenchLayout -> [Intent] -> DesiredScene -> Word64
 forceResult st intents desired = many id [state st, many intent intents, scene desired]
@@ -130,11 +131,14 @@ validateResult count st desired = case coreWorkspaces st of
       && sort (sceneStacking desired) == expected
       && Map.keys (sceneWindows desired) == expected
       && all validPlacement (Map.elems (sceneWindows desired))
-      && maybe True (\w -> case Map.lookup w (sceneWindows desired) of Just Placed{} -> True; _ -> False) (sceneFocus desired)
+      && maybe True (\w -> maybe False (/= Omitted) (Map.lookup w (sceneWindows desired))) (sceneFocus desired)
  where
   expected = [S.WindowId (fromIntegral i) | i <- [1 .. count]]
   validPlacement Omitted = True
-  validPlacement (Placed r) = rectWidth r > 0 && rectHeight r > 0 && rectX r >= 0 && rectY r >= 0 && rectX r + rectWidth r <= 1920 && rectY r + rectHeight r <= 1080
+  validPlacement (Placed r) = inScreen r
+  validPlacement (Floating r) = inScreen r
+  validPlacement (Centered r) = inScreen r
+  inScreen r = rectWidth r > 0 && rectHeight r > 0 && rectX r >= 0 && rectY r >= 0 && rectX r + rectWidth r <= 1920 && rectY r + rectHeight r <= 1080
 
 runPure :: FilePath -> Word64 -> Int -> Int -> IO ()
 runPure path seed windowCount steps = do
@@ -152,7 +156,7 @@ runPure path seed windowCount steps = do
   unless (snd replay == checksum) (fail "pure deterministic replay checksum mismatch")
   BL.writeFile path (encode (object ["mode" .= ("pure" :: String), "seed" .= seed, "windows" .= windowCount, "steps" .= steps, "warmup" .= (128 :: Int), "checksum" .= checksum, "samples_ns" .= reverse rows, "valid" .= True]))
  where
-  plan st = planScene defaultSceneStyle st (Map.singleton (S.OutputId 1) area) Map.empty
+  plan st = planScene defaultSceneStyle st (Map.singleton (S.OutputId 1) (OutputArea area area)) Map.empty
   step measured (!st, !checksum, rows) event = do
     start <- getMonotonicTimeNSec
     let (next, intents) = drainCore idHook [event] st
