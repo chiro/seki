@@ -8,11 +8,12 @@ import Data.ByteString (ByteString)
 import Data.Int (Int32)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
+import Data.Set qualified as Set
 import Seki.Internal.Core.Action (float, windows, withFocused)
 import Seki.Internal.Core.Layout (LayoutClass, Mirror (..))
-import Seki.Internal.Core.ManageHook (doFloat, idHook, isDialog, (-->))
+import Seki.Internal.Core.ManageHook (appId, doFloat, doShift, idHook, isDialog, (-->), (=?))
 import Seki.Internal.Core.Scene (defaultSceneStyle)
-import Seki.Internal.Core.StackSet (FloatGeom (..), StackSet (..), WindowId (..), focusDown, index, peek)
+import Seki.Internal.Core.StackSet (FloatGeom (..), StackSet (..), WindowId (..), focusDown, index, peek, view)
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
@@ -21,7 +22,7 @@ import Seki.Run.MockRiver (FrameReader, callbackDoneFrame, encodedFrame, encoded
 import Seki.Run.Policy (PolicyConfig (..), newPolicy, policyRuntimeHandlers, readPolicyState)
 import Seki.Run.Runtime (openRiverSessionAt, runRiverSession)
 import Seki.Run.Xkb (RiverKeyBinding (..))
-import Seki.Wire.Arguments (ArgumentEncoder, putInt, putNewId, putObject, putUint)
+import Seki.Wire.Arguments (ArgumentEncoder, putInt, putNewId, putNullableObject, putNullableString, putObject, putUint)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
 import Seki.Wire.Transport (Transport, closeTransport)
 import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..))
@@ -43,6 +44,12 @@ tests =
     , testCase "M1-D06 superseded: Full keeps a floating dialog centered above its refocused parent" testChildUnderFull
     , testCase "Full shows only a smaller focused commit and focus cycling hides it" testFullSelection
     , testCase "floating a tile clears its tiled edges, lets the client pick its size, and keeps it centered" testTileFloats
+    , testCase "M2-D03: exiting fullscreen with a proposal pending proposes the tile again and settles to it" testFullscreenExit
+    , testCase "removing a fullscreen window's output makes it fullscreen where its workspace went" testFullscreenOutputMoved
+    , testCase "removing a fullscreen window's output hides it with its workspace and sends no fullscreen request" testFullscreenOutputHidden
+    , testCase "switching away from a fullscreen window and back hides and shows it with no fullscreen request" testFullscreenHidden
+    , testCase "a fullscreen window's workspace shown on another output sends fullscreen for that output alone" testFullscreenShownElsewhere
+    , testCase "a hidden window that leaves the fullscreen set exits fullscreen at once" testFullscreenLostWhileHidden
     ]
  where
   content width height = if width > 4 && height > 4 then Just (width - 4, height - 4) else Nothing
@@ -149,8 +156,8 @@ testFamilies = withRuntimePair $ \target peer -> do
     first <- manage
     assertLayerOwns first
     forM_ [w1, w2, w3] $ \w -> do
-      emptyCapabilities <- encodedPayload (putUint 0)
-      requests w 14 first @?= [emptyCapabilities]
+      fullscreenOnly <- encodedPayload (putUint 4)
+      requests w 14 first @?= [fullscreenOnly]
     sendFrames peer [event w3 2 (putInt 146 >> putInt 96), event w2 2 (putInt 146 >> putInt 46), event w1 2 (putInt 146 >> putInt 46)]
     initialRender <- render
     stacked initialRender @?= nodes
@@ -358,6 +365,262 @@ testTileFloats = withRuntimePair $ \target peer -> do
     HeadlessState{} -> assertFailure "expected an attached state"
  where
   floatKey = RiverKeyBinding 0x74 (River.RiverSeatV1ModifiersFlags 0) Nothing
+
+testFullscreenExit :: Assertion
+testFullscreenExit = withRuntimePair $ \target peer -> do
+  window <- requireObjectId 0xff0000e0
+  output <- requireObjectId 0xff0000e1
+  seat <- requireObjectId 0xff0000e2
+  done <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (manager, _, layerShell) <- handshake reader peer
+    sendFrames peer [event manager 6 (putNewId window), event manager 7 (putNewId output), event manager 8 (putNewId seat)]
+    node <- receiveNewIdRequest reader peer window (Opcode 2)
+    ls <- receiveLayerShellOutputRequest reader peer layerShell output
+    _ <- receiveLayerShellSeatRequest reader peer layerShell seat
+    let manage = sendFrames peer [event manager 2 (pure ())] >> readUntil reader peer manager 2
+        render = sendFrames peer [event manager 3 (pure ())] >> readUntil reader peer manager 4
+    sendFrames peer [event output 2 (putInt 0 >> putInt 0), event output 3 (putInt 200 >> putInt 100), event ls 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100)]
+    first <- manage
+    tile <- encodedPayload (putInt 196 >> putInt 96)
+    requests window 3 first @?= [tile]
+    _ <- render
+    sendFrames peer [event window 12 (putNullableObject Nothing)]
+    entered <- manage
+    onOutput <- encodedPayload (putObject output)
+    requests window 19 entered @?= [onOutput]
+    requests window 17 entered @?= [mempty]
+    requests window 3 entered @?= []
+    sendFrames peer [event window 2 (putInt 200 >> putInt 100)]
+    covering <- render
+    requests window 5 covering @?= [mempty]
+    requests node 1 covering @?= []
+    stillCovering <- manage
+    requests window 3 stillCovering @?= []
+    _ <- render
+    sendFrames peer [event window 13 (pure ())]
+    exited <- manage
+    [rawFrameOpcode f | f <- exited, rawFrameSender f == window] @?= map Opcode [20, 18, 3]
+    requests window 3 exited @?= [tile]
+    sendFrames peer [event window 2 (putInt 196 >> putInt 96)]
+    settled <- render
+    position <- encodedPayload (putInt 2 >> putInt 2)
+    requests node 1 settled @?= [position]
+    requests window 4 settled @?= []
+    closeTransport peer
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
+  result <- runRiverSession session
+  expectMockSuccess done
+  result @?= Right ()
+
+-- | One window fullscreen on the first of two outputs, then that output removed.
+fullscreenOnRemovedOutput :: [Int] -> ([RawFrame] -> ObjectId -> ObjectId -> IO ()) -> Assertion
+fullscreenOnRemovedOutput tags afterRemoval = withRuntimePair $ \target peer -> do
+  window <- requireObjectId 0xff0000f0
+  first <- requireObjectId 0xff0000f1
+  second <- requireObjectId 0xff0000f2
+  seat <- requireObjectId 0xff0000f3
+  done <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (manager, _, layerShell) <- handshake reader peer
+    sendFrames peer [event manager 6 (putNewId window), event manager 7 (putNewId first), event manager 7 (putNewId second), event manager 8 (putNewId seat)]
+    _ <- receiveNewIdRequest reader peer window (Opcode 2)
+    ls1 <- receiveLayerShellOutputRequest reader peer layerShell first
+    ls2 <- receiveLayerShellOutputRequest reader peer layerShell second
+    _ <- receiveLayerShellSeatRequest reader peer layerShell seat
+    let manage = sendFrames peer [event manager 2 (pure ())] >> readUntil reader peer manager 2
+        render = sendFrames peer [event manager 3 (pure ())] >> readUntil reader peer manager 4
+    sendFrames
+      peer
+      [ event first 2 (putInt 0 >> putInt 0)
+      , event first 3 (putInt 200 >> putInt 100)
+      , event ls1 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100)
+      , event second 2 (putInt 200 >> putInt 0)
+      , event second 3 (putInt 200 >> putInt 100)
+      , event ls2 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100)
+      ]
+    _ <- manage
+    sendFrames peer [event window 2 (putInt 196 >> putInt 96)]
+    _ <- render
+    sendFrames peer [event window 12 (putNullableObject Nothing)]
+    entered <- manage
+    onFirst <- encodedPayload (putObject first)
+    requests window 19 entered @?= [onFirst]
+    sendFrames peer [event window 2 (putInt 200 >> putInt 100)]
+    _ <- render
+    sendFrames peer [event first 0 (pure ())]
+    removed <- manage
+    forM_ [20, 3] $ \opcode -> requests window opcode removed @?= []
+    afterRemoval removed window second
+    closeTransport peer
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) tags [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
+  result <- runRiverSession session
+  expectMockSuccess done
+  result @?= Right ()
+
+testFullscreenOutputMoved :: Assertion
+testFullscreenOutputMoved = fullscreenOnRemovedOutput [1] $ \removed window second -> do
+  onSecond <- encodedPayload (putObject second)
+  requests window 19 removed @?= [onSecond]
+  forM_ [17, 18] $ \opcode -> requests window opcode removed @?= []
+
+testFullscreenOutputHidden :: Assertion
+testFullscreenOutputHidden = fullscreenOnRemovedOutput [1, 2] $ \removed window _ ->
+  fullscreenRequests window removed @?= []
+
+testFullscreenHidden :: Assertion
+testFullscreenHidden = withRuntimePair $ \target peer -> do
+  window <- requireObjectId 0xff000100
+  output <- requireObjectId 0xff000101
+  seat <- requireObjectId 0xff000102
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2] [(viewKey 1, windows (view 1)), (viewKey 2, windows (view 2))] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
+  done <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (manager, xkb, layerShell) <- handshake reader peer
+    sendFrames peer [event manager 6 (putNewId window), event manager 7 (putNewId output), event manager 8 (putNewId seat)]
+    _ <- receiveNewIdRequest reader peer window (Opcode 2)
+    ls <- receiveLayerShellOutputRequest reader peer layerShell output
+    _ <- receiveLayerShellSeatRequest reader peer layerShell seat
+    one <- receiveKeyBindingRequest reader peer xkb seat (viewKey 1)
+    two <- receiveKeyBindingRequest reader peer xkb seat (viewKey 2)
+    let manage = sendFrames peer [event manager 2 (pure ())] >> readUntil reader peer manager 2
+        render = sendFrames peer [event manager 3 (pure ())] >> readUntil reader peer manager 4
+    sendFrames peer [event output 2 (putInt 0 >> putInt 0), event output 3 (putInt 200 >> putInt 100), event ls 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100)]
+    _ <- manage
+    sendFrames peer [event window 2 (putInt 196 >> putInt 96)]
+    _ <- render
+    sendFrames peer [event window 12 (putNullableObject Nothing)]
+    _ <- manage
+    sendFrames peer [event window 2 (putInt 200 >> putInt 100)]
+    _ <- render
+    sendFrames peer [event two 0 (pure ())]
+    away <- manage
+    fullscreenRequests window away @?= []
+    hiddenRender <- render
+    requests window 4 hiddenRender @?= [mempty]
+    stillFullscreen <- coreFullscreen <$> readPolicyState policy
+    stillFullscreen @?= Set.singleton (WindowId 0xff000100)
+    sendFrames peer [event one 0 (pure ())]
+    back <- manage
+    fullscreenRequests window back @?= []
+    requests window 3 back @?= []
+    shownRender <- render
+    requests window 5 shownRender @?= [mempty]
+    closeTransport peer
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
+  result <- runRiverSession session
+  expectMockSuccess done
+  result @?= Right ()
+
+testFullscreenShownElsewhere :: Assertion
+testFullscreenShownElsewhere = withRuntimePair $ \target peer -> do
+  window <- requireObjectId 0xff000110
+  first <- requireObjectId 0xff000111
+  second <- requireObjectId 0xff000112
+  seat <- requireObjectId 0xff000113
+  done <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (manager, xkb, layerShell) <- handshake reader peer
+    sendFrames peer [event manager 6 (putNewId window), event manager 7 (putNewId first), event manager 7 (putNewId second), event manager 8 (putNewId seat)]
+    _ <- receiveNewIdRequest reader peer window (Opcode 2)
+    ls1 <- receiveLayerShellOutputRequest reader peer layerShell first
+    ls2 <- receiveLayerShellOutputRequest reader peer layerShell second
+    _ <- receiveLayerShellSeatRequest reader peer layerShell seat
+    keys <- mapM (receiveKeyBindingRequest reader peer xkb seat . viewKey) [1, 2, 3]
+    let manage = sendFrames peer [event manager 2 (pure ())] >> readUntil reader peer manager 2
+        render = sendFrames peer [event manager 3 (pure ())] >> readUntil reader peer manager 4
+        press tag = sendFrames peer [event (keys !! (tag - 1)) 0 (pure ())]
+    sendFrames
+      peer
+      [ event first 2 (putInt 0 >> putInt 0)
+      , event first 3 (putInt 200 >> putInt 100)
+      , event ls1 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100)
+      , event second 2 (putInt 200 >> putInt 0)
+      , event second 3 (putInt 200 >> putInt 100)
+      , event ls2 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100)
+      ]
+    _ <- manage
+    sendFrames peer [event window 2 (putInt 196 >> putInt 96)]
+    _ <- render
+    sendFrames peer [event window 12 (putNullableObject Nothing)]
+    entered <- manage
+    onFirst <- encodedPayload (putObject first)
+    requests window 19 entered @?= [onFirst]
+    sendFrames peer [event window 2 (putInt 200 >> putInt 100)]
+    _ <- render
+    press 3
+    hidden <- manage
+    fullscreenRequests window hidden @?= []
+    hiddenRender <- render
+    requests window 4 hiddenRender @?= [mempty]
+    press 2
+    onOther <- manage
+    fullscreenRequests window onOther @?= []
+    _ <- render
+    press 1
+    shownElsewhere <- manage
+    onSecond <- encodedPayload (putObject second)
+    fullscreenRequests window shownElsewhere @?= [Opcode 19]
+    requests window 19 shownElsewhere @?= [onSecond]
+    requests window 3 shownElsewhere @?= []
+    shownRender <- render
+    requests window 5 shownRender @?= [mempty]
+    closeTransport peer
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2, 3] [(viewKey t, windows (view t)) | t <- [1, 2, 3]] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
+  result <- runRiverSession session
+  expectMockSuccess done
+  result @?= Right ()
+
+testFullscreenLostWhileHidden :: Assertion
+testFullscreenLostWhileHidden = withRuntimePair $ \target peer -> do
+  window <- requireObjectId 0xff000120
+  output <- requireObjectId 0xff000121
+  seat <- requireObjectId 0xff000122
+  shifted <- requireObjectId 0xff000123
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2] [(viewKey 2, windows (view 2))] defaultSceneStyle (\_ -> pure ()) (appId =? "mpv" --> doShift 1) (pure ()))
+  done <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (manager, xkb, layerShell) <- handshake reader peer
+    sendFrames peer [event manager 6 (putNewId window), event manager 7 (putNewId output), event manager 8 (putNewId seat)]
+    _ <- receiveNewIdRequest reader peer window (Opcode 2)
+    ls <- receiveLayerShellOutputRequest reader peer layerShell output
+    _ <- receiveLayerShellSeatRequest reader peer layerShell seat
+    two <- receiveKeyBindingRequest reader peer xkb seat (viewKey 2)
+    let manage = sendFrames peer [event manager 2 (pure ())] >> readUntil reader peer manager 2
+        render = sendFrames peer [event manager 3 (pure ())] >> readUntil reader peer manager 4
+    sendFrames peer [event output 2 (putInt 0 >> putInt 0), event output 3 (putInt 200 >> putInt 100), event ls 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100)]
+    _ <- manage
+    sendFrames peer [event window 2 (putInt 196 >> putInt 96)]
+    _ <- render
+    sendFrames peer [event window 12 (putNullableObject Nothing)]
+    _ <- manage
+    sendFrames peer [event window 2 (putInt 200 >> putInt 100)]
+    _ <- render
+    sendFrames peer [event two 0 (pure ())]
+    away <- manage
+    fullscreenRequests window away @?= []
+    _ <- render
+    sendFrames peer [event manager 6 (putNewId shifted), event shifted 3 (putNullableString (Just "mpv"))]
+    _ <- receiveNewIdRequest reader peer shifted (Opcode 2)
+    lost <- manage
+    fullscreenRequests window lost @?= map Opcode [20, 18]
+    requests window 3 lost @?= []
+    closeTransport peer
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
+  result <- runRiverSession session
+  expectMockSuccess done
+  result @?= Right ()
+  remaining <- coreFullscreen <$> readPolicyState policy
+  remaining @?= Set.empty
+
+viewKey :: Int -> RiverKeyBinding
+viewKey tag = RiverKeyBinding (0x30 + fromIntegral tag) (River.RiverSeatV1ModifiersFlags 0) Nothing
+
+fullscreenRequests :: ObjectId -> [RawFrame] -> [Opcode]
+fullscreenRequests window frames = [rawFrameOpcode f | f <- frames, rawFrameSender f == window, rawFrameOpcode f `elem` map Opcode [17 .. 20]]
 
 requests :: ObjectId -> Int -> [RawFrame] -> [ByteString]
 requests sender opcode frames = [rawFramePayload f | f <- frames, rawFrameSender f == sender, rawFrameOpcode f == Opcode (fromIntegral opcode)]

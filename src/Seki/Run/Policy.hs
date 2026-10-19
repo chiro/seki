@@ -117,6 +117,8 @@ policyRuntimeHandlers policy =
           , handleRiverWindowCreated = \window -> enqueueWith (WindowCreated (windowIdOf window) . windowProps window)
           , handleRiverWindowEvent = \window -> \case
               River.RiverWindowV1Closed -> enqueue (WindowClosed (windowIdOf window))
+              River.RiverWindowV1FullscreenRequested _ -> enqueue (FullscreenRequested (windowIdOf window))
+              River.RiverWindowV1ExitFullscreenRequested -> enqueue (ExitFullscreenRequested (windowIdOf window))
               _ -> pure ()
           , handleRiverOutputCreated = \output -> do
               enqueue (OutputCreated (outputIdOf output))

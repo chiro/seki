@@ -5,6 +5,7 @@ module Seki.Internal.Core.SceneTest (tests) where
 import Control.Monad (forM_)
 import Data.List (sort)
 import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
 import Seki.Internal.Core.Event (CoreEvent (..), drainCore)
 import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), Rect, mkRect, mkSize, rectHeight, rectWidth, rectX, rectY)
 import Seki.Internal.Core.GeometryGen (genRatio, genRect)
@@ -57,13 +58,13 @@ tests =
             result = planScene defaultSceneStyle (state (Tall 1 0.03 0.5) (Stack w2 [w1] [w3])) (Map.singleton (OutputId 1) (whole (rectangle 100 100))) (Map.fromList (zip [w1, w2, w3] (map parentChoice [a, b, c])))
          in sort (sceneStacking result) === [w1, w2, w3, w4]
     , testCase "a pending parent does not group its shown descendants" $
-        stackWindows [w1, w2, w3, w4] [] [w2, w3, w4] (Just w3) (Map.fromList [(w2, Just w1), (w3, Just w2)])
+        stackWindows [w1, w2, w3, w4] [] [] [w2, w3, w4] (Just w3) (Map.fromList [(w2, Just w1), (w3, Just w2)])
           @?= [w1, w4, w2, w3]
     , testProperty "actual shown subsets keep a complete order with every hidden node below" $ \(a :: NonNegative Int) (b :: NonNegative Int) (c :: NonNegative Int) ->
         forAll (sublistOf [w1, w2, w3, w4]) $ \shown ->
           let parentChoice (NonNegative n) = [Nothing, Just w1, Just w2, Just w3] !! (n `mod` 4)
               parents = Map.fromList (zip [w1, w2, w3] (map parentChoice [a, b, c]))
-              ordered = stackWindows [w1, w2, w3, w4] [] shown (Just w2) parents
+              ordered = stackWindows [w1, w2, w3, w4] [] [] shown (Just w2) parents
               hidden = [w | w <- [w1, w2, w3, w4], w `notElem` shown]
            in conjoin [sort ordered === [w1, w2, w3, w4], take (length hidden) ordered === hidden, sort (drop (length hidden) ordered) === sort shown]
     , testProperty "zero or border-sized tiles are omitted without losing windows" $ \(NonNegative n) ->
@@ -135,6 +136,7 @@ tests =
           sceneWindows result @?= Map.fromList [(w1, Omitted), (w2, Omitted), (w3, Placed (rectangle 1 1)), (w4, Omitted)]
           sceneFocus result @?= Nothing
     , floatTests
+    , fullscreenTests
     ]
  where
   content = either (error . show) id (mkSize 97 77 >>= mkRect (Point (-98) 22))
@@ -194,7 +196,7 @@ floatTests =
         sceneFocus result @?= Just w1
         sceneStacking result @?= [w1, w3, w2]
     , testCase "floating families follow their most recently raised member, the focused family last" $
-        stackWindows [w1, w2, w3, w4] [w1, w4, w3] [w1, w2, w3, w4] (Just w2) (Map.singleton w3 (Just w1))
+        stackWindows [w1, w2, w3, w4] [w1, w4, w3] [] [w1, w2, w3, w4] (Just w2) (Map.singleton w3 (Just w1))
           @?= [w2, w4, w1, w3]
     , testProperty "every float lies inside its output with its border, and no float reaches a layout" $
         forAll ((,,) <$> genRect <*> vectorOf 4 genRect <*> sublistOf [w1, w2, w3, w4]) $ \(bounds, stored, floated) ->
@@ -208,8 +210,36 @@ floatTests =
                   Placed r -> counterexample (show w ++ " floats, or the layout saw a float") (property (w `notElem` floated && toInteger (rectHeight r) + 2 * b == 100 * toInteger (4 - length floated)))
                   Floating r -> property (w `elem` floated && outer r)
                   Centered r -> property (w `elem` floated && outer r)
+                  Fullscreen _ -> counterexample (show w ++ " is fullscreen") (property False)
+                  HiddenFullscreen -> counterexample (show w ++ " is fullscreen") (property False)
                   Omitted -> property True
              in conjoin (map check (Map.toList (sceneWindows result)))
+    ]
+
+fullscreenTests :: TestTree
+fullscreenTests =
+  testGroup
+    "fullscreen windows"
+    [ testCase "M2-D03: a fullscreen tile keeps its slot and covers its workspace's output above both tiers" $ do
+        let st = (floatState (Tall 1 0.03 0.5) (Stack w2 [w1] [w3]) [(w3, FloatAt (OutputRect (rectAt 10 10 100 100)))] [w3]){coreFullscreen = Set.singleton w2}
+            result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) secondOutput) Map.empty
+        sceneWindows result @?= Map.fromList [(w1, Placed (rectAt 802 32 396 566)), (w2, Fullscreen (OutputId 1)), (w3, Floating (rectAt 810 10 100 100))]
+        sceneFocus result @?= Just w2
+        sceneStacking result @?= [w1, w3, w2]
+    , testCase "a fullscreen float keeps its float state and covers its output" $ do
+        let st = (floatState Full (Stack w3 [w1] []) [(w3, FloatAt (OutputRect (rectAt 10 10 100 100)))] [w3]){coreFullscreen = Set.singleton w3}
+            result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) secondOutput) Map.empty
+        sceneWindows result @?= Map.fromList [(w1, Placed (rectAt 802 32 796 566)), (w3, Fullscreen (OutputId 1))]
+        sceneStacking result @?= [w1, w3]
+    , testCase "a hidden workspace's fullscreen window stays fullscreen and covers no output" $ do
+        let st = (state Full (Stack w1 [] [])){coreFullscreen = Set.singleton w4}
+            result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) secondOutput) Map.empty
+        Map.lookup w4 (sceneWindows result) @?= Just HiddenFullscreen
+        Map.lookup w1 (sceneWindows result) @?= Just (Placed (rectAt 802 32 796 566))
+        sceneStacking result @?= [w4, w1]
+    , testCase "fullscreen windows stack above the tiled and floating tiers" $
+        stackWindows [w1, w2, w3, w4] [w3] [w1] [w1, w2, w3, w4] (Just w2) Map.empty
+          @?= [w4, w2, w3, w1]
     ]
 
 -- | Places every window it is given at the area's top-left, 100 pixels tall per window it is given.

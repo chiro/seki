@@ -7,9 +7,14 @@ actually be shown, and belongs to the runtime reconciler.
 Floating windows never reach a layout. The planner never rewrites a stored
 float box; it only clamps the placement, so a float returns to its stored
 position when its workspace is shown on a larger output again (spec 3.5).
+
+A fullscreen window still reaches the layout if it is tiled, so it keeps its
+tile slot, and only its placement changes (M2-D03). On a hidden workspace it
+stays fullscreen but covers no output.
 -}
 module Seki.Internal.Core.Scene (
   Placement (..),
+  placementShown,
   OutputArea (..),
   DesiredScene (..),
   SceneStyle (..),
@@ -23,6 +28,7 @@ import Data.Int (Int32)
 import Data.List (elemIndex, sortOn)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
 import Data.Word (Word32)
 import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), Rect, mkRect, mkSize, rectHeight, rectWidth, rectX, rectY)
 import Seki.Internal.Core.Layout (LayoutClass, runLayout)
@@ -39,7 +45,21 @@ data Placement
   | -- | A float with no stored box: center whatever size the client commits
     -- in this box, the output less its border, keeping the top-left inside it.
     Centered Rect
+  | -- | A fullscreen window, which river places to cover this output.
+    Fullscreen OutputId
+  | -- | A fullscreen window whose workspace is hidden: hidden like 'Omitted',
+    -- and still fullscreen, so its workspace returns to an output fullscreen.
+    HiddenFullscreen
   deriving (Eq, Show)
+
+placementShown :: Placement -> Bool
+placementShown placement = case placement of
+  Omitted -> False
+  HiddenFullscreen -> False
+  Placed _ -> True
+  Floating _ -> True
+  Centered _ -> True
+  Fullscreen _ -> True
 
 -- | An output's whole rectangle, where floats go, and the usable part layouts tile.
 data OutputArea = OutputArea
@@ -84,11 +104,12 @@ planScene style st areas parents = DesiredScene placements stable raiseOrder ord
     AttachedState ss _ -> (map workspace (screens ss) ++ hidden ss, screens ss, floating ss, peek ss, Just (output (current ss)))
   raiseOrder = coreRaiseOrder st
   stable = concatMap (integrate' . stack) allWorkspaces
-  placements = Map.union (Map.fromList placed) (Map.fromList [(w, Omitted) | w <- stable])
+  placements = Map.union (Map.fromList placed) (Map.fromList [(w, if w `Set.member` coreFullscreen st then HiddenFullscreen else Omitted) | w <- stable])
   placed =
     concat
       [ [(w, Placed r) | (w, tile) <- runLayout tiled (outputUsable area), Just r <- [inset tile]]
         ++ [(w, p) | w <- integrate' (stack (workspace s)), Just g <- [Map.lookup w floats], Just p <- [floatPlacement (outputBounds area) g]]
+        ++ [(w, Fullscreen (output s)) | w <- integrate' (stack (workspace s)), w `Set.member` coreFullscreen st]
       | s <- assigned
       , Just area <- [Map.lookup (output s) areas]
       , let tiled = (workspace s){stack = stack (workspace s) >>= StackSet.filter (`Map.notMember` floats)}
@@ -108,26 +129,24 @@ planScene style st areas parents = DesiredScene placements stable raiseOrder ord
         mkSize width height >>= mkRect (Point (fromInteger x) (fromInteger y))
   border = max 0 (sceneBorderWidth style)
   b = toInteger border
-  shown w = case Map.lookup w placements of
-    Just Omitted -> False
-    Just _ -> True
-    Nothing -> False
-  ordering = stackWindows stable raiseOrder (filter shown stable) preferred parents
+  shown w = maybe False placementShown (Map.lookup w placements)
+  fullscreen = [w | w <- stable, Just (Fullscreen _) <- [Map.lookup w placements]]
+  ordering = stackWindows stable raiseOrder fullscreen (filter shown stable) preferred parents
 
 {- | The complete bottom-to-top order: hidden windows, then the tiled tier, then
-the floating tier (M2-D02). Parent links group a tier's shown windows into
-families, each parent directly below its children and the branch holding the
-focus on top among siblings (M1-D03); a parent in the other tier or not shown
-starts no family. Tiled families follow StackSet order and floating families
+the floating tier (M2-D02), then the shown fullscreen windows (M2-D03). Parent
+links group a tier's shown windows into families, each parent directly below
+its children and the branch holding the focus on top among siblings (M1-D03);
+a parent in another tier or not shown starts no family. Tiled families follow StackSet order and floating families
 the raise order of their most recently raised member. Within each tier the
 focused window's family is on top.
 -}
-stackWindows :: [WindowId] -> [WindowId] -> [WindowId] -> Maybe WindowId -> Map WindowId (Maybe WindowId) -> [WindowId]
-stackWindows stable raiseOrder visibleWindows preferred parents =
-  filter (`notElem` visibleWindows) stable ++ tier id tiles ++ tier (sortOn latestRaise) floats
+stackWindows :: [WindowId] -> [WindowId] -> [WindowId] -> [WindowId] -> Maybe WindowId -> Map WindowId (Maybe WindowId) -> [WindowId]
+stackWindows stable raiseOrder fullscreen visibleWindows preferred parents =
+  filter (`notElem` visibleWindows) stable ++ tier id tiles ++ tier (sortOn latestRaise) floats ++ filter (`elem` visibleWindows) fullscreen
  where
-  floats = filter (`elem` visibleWindows) raiseOrder
-  tiles = filter (\w -> w `elem` visibleWindows && w `notElem` floats) stable
+  floats = filter (\w -> w `elem` visibleWindows && w `notElem` fullscreen) raiseOrder
+  tiles = filter (\w -> w `elem` visibleWindows && w `notElem` floats && w `notElem` fullscreen) stable
   latestRaise = maximum . map (`elemIndex` floats)
   tier arrange ws = concat (lastMatching (\f -> maybe False (`elem` f) preferred) (arrange (map (descend []) roots)))
    where
