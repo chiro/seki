@@ -45,6 +45,7 @@ module Seki.Internal.Core.State (
   unmanageWindow,
   focusWindowIn,
   syncRaiseOrder,
+  syncFullscreen,
 ) where
 
 import Data.Map.Strict (Map)
@@ -74,6 +75,8 @@ data CoreState i l = CoreState
   -- ^ The commands 'Seki.Internal.Core.Action.spawnOnce' has launched.
   , coreRaiseOrder :: [WindowId]
   -- ^ Every floating window once, bottom to top. See 'syncRaiseOrder'.
+  , coreFullscreen :: Set WindowId
+  -- ^ The fullscreen windows. See 'syncFullscreen'.
   }
   deriving (Eq, Show)
 
@@ -113,7 +116,7 @@ newCoreState l tags@(t : ts) = case firstRepeat [] tags of
 
 -- | A core state over these workspaces with nothing else recorded yet.
 fromWorkspaces :: Workspaces i l -> CoreState i l
-fromWorkspaces ws = CoreState ws Set.empty []
+fromWorkspaces ws = CoreState ws Set.empty [] Set.empty
 
 -- | Change the workspaces and keep the rest of the core state.
 overWorkspaces :: (Workspaces i l -> Workspaces i l) -> CoreState i l -> CoreState i l
@@ -193,3 +196,16 @@ syncRaiseOrder st = st{coreRaiseOrder = filter (not . isFocused) order ++ filter
   kept = filter (`Map.member` floats) (coreRaiseOrder st)
   order = kept ++ filter (`notElem` kept) (Map.keys floats)
   isFocused w = Just w == focused
+
+{- | Keep only fullscreen windows that are their own workspace's focus, shown
+or hidden. So a focus change to another window on the same workspace exits
+fullscreen (M2-D03), while viewing another workspace does not, and a window
+that is not its workspace's focus cannot enter.
+-}
+syncFullscreen :: CoreState i l -> CoreState i l
+syncFullscreen st = st{coreFullscreen = Set.intersection (coreFullscreen st) focuses}
+ where
+  focuses = Set.fromList [StackSet.focus s | Just s <- map stack allWorkspaces]
+  allWorkspaces = case coreWorkspaces st of
+    AttachedState ss _ -> map workspace (screens ss) ++ hidden ss
+    HeadlessState hw -> headlessCurrent hw : headlessHidden hw

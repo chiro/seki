@@ -14,10 +14,11 @@ module Seki.Internal.Core.Event (
 import Data.Bifunctor (first)
 import Data.List (foldl')
 import Data.Monoid (Endo (..))
+import Data.Set qualified as Set
 import Seki.Internal.Core.Action (Action, Intent, runAction)
 import Seki.Internal.Core.ManageHook (ManageHook, WindowProps, runQuery)
 import Seki.Internal.Core.StackSet (OutputId, WindowId)
-import Seki.Internal.Core.State (CoreState, addOutput, focusWindowIn, manageWindow, overWorkspaces, removeOutput, syncRaiseOrder, unmanageWindow)
+import Seki.Internal.Core.State (CoreState (..), addOutput, focusWindowIn, manageWindow, overWorkspaces, removeOutput, syncFullscreen, syncRaiseOrder, unmanageWindow)
 
 -- | A change river reported, or a key binding's action.
 data CoreEvent i l
@@ -27,13 +28,18 @@ data CoreEvent i l
   | OutputRemoved OutputId
   | -- | A click or other interaction with the window (click-to-focus).
     WindowInteraction WindowId
+  | -- | The client asked to be fullscreen. Its output hint is ignored: the
+    -- window goes fullscreen on its own workspace's output.
+    FullscreenRequested WindowId
+  | ExitFullscreenRequested WindowId
   | RunAction (Action i l ())
 
 {- | Apply one event, returning the new state and the intents it recorded. Every
-event ends by raising a focused float.
+event ends by raising a focused float and dropping fullscreen windows that no
+longer focus their workspace.
 -}
 stepCore :: (Eq i) => ManageHook i l -> CoreEvent i l -> CoreState i l -> (CoreState i l, [Intent])
-stepCore hook event = first syncRaiseOrder . reduce hook event
+stepCore hook event = first (syncFullscreen . syncRaiseOrder) . reduce hook event
 
 reduce :: (Eq i) => ManageHook i l -> CoreEvent i l -> CoreState i l -> (CoreState i l, [Intent])
 reduce hook event st = case event of
@@ -42,6 +48,8 @@ reduce hook event st = case event of
   OutputCreated o -> (overWorkspaces (addOutput o) st, [])
   OutputRemoved o -> (overWorkspaces (removeOutput o) st, [])
   WindowInteraction w -> (overWorkspaces (focusWindowIn w) st, [])
+  FullscreenRequested w -> (st{coreFullscreen = Set.insert w (coreFullscreen st)}, [])
+  ExitFullscreenRequested w -> (st{coreFullscreen = Set.delete w (coreFullscreen st)}, [])
   RunAction action -> let ((), st', intents) = runAction action st in (st', intents)
 
 -- | Apply events in arrival order, concatenating their intents in order.

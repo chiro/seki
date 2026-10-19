@@ -271,6 +271,8 @@ instance Arbitrary EventHistory where
           , (2, labelled "OutputCreated" OutputCreated <$> output')
           , (1, labelled "OutputRemoved" OutputRemoved <$> output')
           , (1, labelled "WindowInteraction" WindowInteraction <$> window)
+          , (1, labelled "FullscreenRequested" FullscreenRequested <$> window)
+          , (1, labelled "ExitFullscreenRequested" ExitFullscreenRequested <$> window)
           , (4, (\(d, a) -> EventStep ("RunAction (" ++ d ++ ")") (RunAction a)) <$> (tag' >>= elements . defaultActions))
           ]
     pure (EventHistory [1 .. numWs] steps)
@@ -298,4 +300,5 @@ defaultActions t =
   , ("kill", Action.kill)
   , ("withFocused float", Action.withFocused Action.float)
   , ("withFocused sink", Action.withFocused Action.sink)
+  , ("withFocused toggleFullscreen", Action.withFocused Action.toggleFullscreen)
   ]

@@ -4,7 +4,7 @@ import Data.List (sort)
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text qualified as Text
-import Seki.Internal.Core.Action (Intent (..), sink, spawn, windows)
+import Seki.Internal.Core.Action (Intent (..), sink, spawn, toggleFullscreen, windows)
 import Seki.Internal.Core.Event (CoreEvent (..), drainCore, stepCore)
 import Seki.Internal.Core.ManageHook (ManageHook, WindowProps (..), appId, askWindow, doFloat, doShift, idHook, isDialog, noWindowProps, (-->), (=?))
 import Seki.Internal.Core.StackSet (
@@ -14,7 +14,9 @@ import Seki.Internal.Core.StackSet (
   StackSet (..),
   WindowId (..),
   Workspace (..),
+  focusDown,
   focusWindow,
+  greedyView,
   integrate',
   peek,
   view,
@@ -38,6 +40,7 @@ tests =
           , testProperty "managed windows are those created and not yet closed" propManagedWindows
           , testProperty "draining equals stepping one event at a time" propDrainSteps
           , testProperty "the raise order holds each float once, with a focused float on top" propRaiseOrder
+          , testProperty "the fullscreen set holds only managed windows that focus their own workspace" propFullscreen
           ]
     ]
 
@@ -98,10 +101,47 @@ reducerTests =
         let (st, _) = drainCore dialogs [OutputCreated o1, created w1, dialog w2 w1, dialog w3 w1] initial
         coreRaiseOrder (fst (stepCore dialogs (WindowClosed w3) st)) @?= [w2]
         coreRaiseOrder (fst (stepCore dialogs (RunAction (sink w2)) st)) @?= [w3]
+    , testCase "a fullscreen request from its workspace's focus enters the fullscreen set" $
+        coreFullscreen (fst (drainCore idHook [OutputCreated o1, created w1, created w2, FullscreenRequested w2] initial)) @?= Set.singleton w2
+    , testCase "a fullscreen request from a window that is not its workspace's focus is dropped" $ do
+        let (st, _) = drainCore idHook [OutputCreated o1, created w1, created w2, FullscreenRequested w1] initial
+        coreFullscreen st @?= Set.empty
+        peekCurrent st @?= Just w2
+    , testCase "a fullscreen request from an unmanaged window is dropped" $
+        coreFullscreen (fst (drainCore idHook [OutputCreated o1, created w1, FullscreenRequested w3] initial)) @?= Set.empty
+    , testCase "an exit request and closing the window each leave the fullscreen set" $ do
+        let (st, _) = drainCore idHook [OutputCreated o1, created w1, FullscreenRequested w1] initial
+        coreFullscreen (fst (stepCore idHook (ExitFullscreenRequested w1) st)) @?= Set.empty
+        coreFullscreen (fst (stepCore idHook (WindowClosed w1) st)) @?= Set.empty
+    , testCase "toggleFullscreen enters and then exits" $ do
+        let (st, _) = drainCore idHook [OutputCreated o1, created w1, RunAction (toggleFullscreen w1)] initial
+        coreFullscreen st @?= Set.singleton w1
+        coreFullscreen (fst (stepCore idHook (RunAction (toggleFullscreen w1)) st)) @?= Set.empty
+    , testCase "M2-D03: a focus change on the same output exits fullscreen while a workspace switch does not" $ do
+        let (st, _) = drainCore idHook [OutputCreated o1, created w1, created w2, FullscreenRequested w2] initial
+            exits event = coreFullscreen (fst (stepCore idHook event st)) @?= Set.empty
+        exits (RunAction (windows focusDown))
+        exits (WindowInteraction w1)
+        exits (created w3)
+        let (away, _) = stepCore idHook (RunAction (windows (greedyView 'b'))) st
+        coreFullscreen away @?= Set.singleton w2
+        coreFullscreen (fst (stepCore idHook (RunAction (windows (greedyView 'a'))) away)) @?= Set.singleton w2
+    , testCase "a focus change on another output keeps the fullscreen window" $ do
+        let (st, _) = drainCore idHook (onTwoOutputs ++ [FullscreenRequested w1]) initial
+        coreFullscreen st @?= Set.singleton w1
+        coreFullscreen (fst (stepCore idHook (WindowInteraction w2) st)) @?= Set.singleton w1
+    , testCase "a new window shifted to another workspace keeps the fullscreen window" $ do
+        let (st, _) = drainCore (appId =? "mpv" --> doShift 'b') [OutputCreated o1, created w1, FullscreenRequested w1, WindowCreated w2 mpv] initial
+        coreFullscreen st @?= Set.singleton w1
     , testCase "runs actions and keeps their intents in arrival order" $
         drainCore idHook [RunAction (spawn "x"), created w1, RunAction (spawn "y")] initial
           @?= (fromWorkspaces (HeadlessState (HeadlessWorkspaces (wsWith 'a' (Stack w1 [] [])) [ws 'b', ws 'c'] Map.empty)), [Spawn "x", Spawn "y"])
     ]
+
+peekCurrent :: CoreState i l -> Maybe WindowId
+peekCurrent st = case coreWorkspaces st of
+  AttachedState ss _ -> peek ss
+  HeadlessState{} -> Nothing
 
 -- | w1 on workspace a (output 1, current) and w2 on workspace b (output 2).
 onTwoOutputs :: [CoreEvent Char ()]
@@ -206,3 +246,16 @@ propRaiseOrder h =
   prefixes = scanl (\st (EventStep _ e) -> fst (stepCore oddFloat e st)) (historyStart h) (historySteps h)
   oddFloat = fmap (\(WindowId n) -> odd n) askWindow --> doFloat
   lastMaybe xs = if null xs then Nothing else Just (last xs)
+
+propFullscreen :: EventHistory -> Property
+propFullscreen h =
+  checkCoverage
+    . cover 10 (any (not . Set.null . coreFullscreen) prefixes) "a fullscreen window"
+    $ conjoin
+      [ counterexample ("after " ++ show n ++ " events") $
+        counterexample "every fullscreen window is managed and focuses its own workspace" (coreFullscreen st `Set.isSubsetOf` focuses)
+      | (n, st) <- zip [0 :: Int ..] prefixes
+      , let focuses = Set.fromList [focus s | Just s <- map stack (sortedWorkspaces (coreWorkspaces st))]
+      ]
+ where
+  prefixes = scanl (\st (EventStep _ e) -> fst (stepCore idHook e st)) (historyStart h) (historySteps h)

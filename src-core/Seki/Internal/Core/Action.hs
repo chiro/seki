@@ -18,6 +18,7 @@ module Seki.Internal.Core.Action (
   withFocused,
   float,
   sink,
+  toggleFullscreen,
 ) where
 
 import Control.Monad (ap)
@@ -120,3 +121,11 @@ kill :: Action i l ()
 kill = record $ \st -> case coreWorkspaces st of
   AttachedState ss _ | Just w <- peek ss -> [CloseWindow w]
   _ -> []
+
+{- | Make a window fullscreen on its workspace's output, or end its fullscreen.
+Only a workspace's focused window can be fullscreen, so for any other window
+this does nothing.
+-}
+toggleFullscreen :: WindowId -> Action i l ()
+toggleFullscreen w = modify $ \st ->
+  st{coreFullscreen = (if w `Set.member` coreFullscreen st then Set.delete else Set.insert) w (coreFullscreen st)}
