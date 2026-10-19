@@ -192,7 +192,7 @@ pictureError paints frame
      in if actual == expected then Nothing else Just (show color <> " coverage expected " <> show expected <> ", got " <> show actual)
   checkBorder index (Paint color (Box x y width height) focused) =
     let target = if focused then BS.pack [255, 0, 255] else BS.pack [64, 64, 64]
-        strips = [(px, py) | py <- [y - 2 .. y + height + 1], px <- [x - 2 .. x + width + 1], px < x || px >= x + width || py < y || py >= y + height, not (covered index (px, py))]
+        strips = [(px, py) | py <- [max 0 (y - 2) .. min 599 (y + height + 1)], px <- [max 0 (x - 2) .. min 799 (x + width + 1)], px < x || px >= x + width || py < y || py >= y + height, not (covered index (px, py))]
      in case find (\(px, py) -> pixel frame px py /= target) strips of
           Nothing -> Nothing
           Just point@(px, py) -> Just (show color <> " border mismatch at " <> show point <> ", expected " <> show target <> ", got " <> show (pixel frame px py))
