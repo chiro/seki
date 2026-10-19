@@ -3,11 +3,13 @@
 module Seki.Run.ReconcileTest (tests) where
 
 import Control.Exception (onException)
+import Data.Set qualified as Set
 import Seki.Internal.Core.Action (sendMessage, windows)
 import Seki.Internal.Core.Layout (ChangeLayout (..), (|||))
 import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.Scene (defaultSceneStyle)
-import Seki.Internal.Core.StackSet (view)
+import Seki.Internal.Core.StackSet (WindowId (..), view)
+import Seki.Internal.Core.State (CoreState (..))
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
@@ -26,7 +28,7 @@ tests :: TestTree
 tests =
   testGroup
     "scene protocol reconciliation"
-    [ testCase "serializes proposals, restores focus, and accepts client size mismatch" testSettlement
+    [ testCase "serializes proposals, restores focus, accepts client size mismatch, and honors fullscreen but not maximize or minimize requests" testSettlement
     , testCase "retains omitted dimensions across layouts and prunes a pending close" testLayouts
     , testCase "respects layer focus and recovers on every focus_none report" testLayerFocus
     , testCase "flags a single Tall window tiled on every edge" testSingleTall
@@ -60,7 +62,7 @@ testSettlement = withRuntimePair $ \target peer -> do
     sendFrames peer [dimensions 96, area ls 100]
     start
     request window 7 (pure ())
-    request window 14 (putUint 0)
+    request window 14 (putUint 4)
     request window 9 (putUint 15)
     request window 3 (putInt 96 >> putInt 76)
     request ls 1 (pure ())
@@ -179,8 +181,6 @@ testSettlement = withRuntimePair $ \target peer -> do
       , event window 9 (putInt 4 >> putInt 5)
       , event window 10 (pure ())
       , event window 11 (pure ())
-      , event window 12 (putNullableObject Nothing)
-      , event window 13 (pure ())
       , event window 14 (pure ())
       ]
     start
@@ -189,13 +189,41 @@ testSettlement = withRuntimePair $ \target peer -> do
     unsupportedAfter @?= unsupportedBefore
     render
     request manager 4 (pure ())
+    sendFrames peer [event window 12 (putNullableObject Nothing)]
+    start
+    request window 19 (putObject output)
+    request window 17 (pure ())
+    manageEnd ls
+    fullscreen <- readPolicyState policy
+    coreFullscreen fullscreen @?= Set.singleton (WindowId 0xff000030)
+    render
+    request manager 4 (pure ())
+    sendFrames peer [event window 13 (pure ())]
+    start
+    request window 20 (pure ())
+    request window 18 (pure ())
+    request window 3 (putInt 196 >> putInt 76)
+    request ls 1 (pure ())
+    request seat 3 (pure ())
+    request manager 2 (pure ())
+    sendFrames peer [dimensions 196]
+    render
+    position
+    request manager 4 (pure ())
+    dirty
+    start
+    request ls 1 (pure ())
+    request seat 1 (putObject window)
+    request manager 2 (pure ())
+    render
+    request manager 4 (pure ())
     sendFrames peer [event window 0 (pure ()), event manager 6 (putNewId window)]
     request node 0 (pure ())
     request window 0 (pure ())
     replacementNode <- receiveNewIdRequest reader peer window (Opcode 2)
     start
     request window 7 (pure ())
-    request window 14 (putUint 0)
+    request window 14 (putUint 4)
     request window 9 (putUint 15)
     request window 3 (putInt 196 >> putInt 76)
     request ls 1 (pure ())
@@ -241,7 +269,7 @@ testLayerFocus = withRuntimePair $ \target peer -> do
     request layoutBinding 2 (pure ())
     request focusBinding 2 (pure ())
     request window 7 (pure ())
-    request window 14 (putUint 0)
+    request window 14 (putUint 4)
     request window 9 (putUint 15)
     request window 3 (putInt 96 >> putInt 76)
     request ls 1 (pure ())
@@ -356,7 +384,7 @@ testLayouts = withRuntimePair $ \target peer -> do
     sendFrames peer [event ls 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100)]
     start
     mapM_ (\binding -> request binding 2 (pure ())) [cycleBinding, hideBinding, showBinding]
-    mapM_ (\w -> request w 7 (pure ()) >> request w 14 (putUint 0)) [w1, w2]
+    mapM_ (\w -> request w 7 (pure ()) >> request w 14 (putUint 4)) [w1, w2]
     mapM_ (\w -> request w 9 (putUint 15)) [w1, w2]
     mapM_ (\w -> proposal w 96) [w1, w2]
     clearedManage
@@ -469,7 +497,7 @@ testSingleTall = withRuntimePair $ \target peer -> do
     _ <- receiveLayerShellSeatRequest reader peer layerShell seat
     sendFrames peer [event ls 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100), event manager 2 (pure ())]
     request window 7 (pure ())
-    request window 14 (putUint 0)
+    request window 14 (putUint 4)
     request window 9 (putUint 15)
     request window 3 (putInt 196 >> putInt 96)
     request ls 1 (pure ())

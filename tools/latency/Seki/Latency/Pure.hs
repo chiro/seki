@@ -115,7 +115,7 @@ scene (DesiredScene ws order raised stacking focus out) =
     , optional output out
     ]
  where
-  placement Omitted = 0; placement (Placed r) = mix 1 (rect r); placement (Floating r) = mix 2 (rect r); placement (Centered r) = mix 3 (rect r)
+  placement Omitted = 0; placement (Placed r) = mix 1 (rect r); placement (Floating r) = mix 2 (rect r); placement (Centered r) = mix 3 (rect r); placement (Fullscreen o) = mix 4 (output o); placement HiddenFullscreen = 5
 
 forceResult :: CoreState String BenchLayout -> [Intent] -> DesiredScene -> Word64
 forceResult st intents desired = many id [state st, many intent intents, scene desired]
@@ -131,13 +131,15 @@ validateResult count st desired = case coreWorkspaces st of
       && sort (sceneStacking desired) == expected
       && Map.keys (sceneWindows desired) == expected
       && all validPlacement (Map.elems (sceneWindows desired))
-      && maybe True (\w -> maybe False (/= Omitted) (Map.lookup w (sceneWindows desired))) (sceneFocus desired)
+      && maybe True (\w -> maybe False placementShown (Map.lookup w (sceneWindows desired))) (sceneFocus desired)
  where
   expected = [S.WindowId (fromIntegral i) | i <- [1 .. count]]
   validPlacement Omitted = True
   validPlacement (Placed r) = inScreen r
   validPlacement (Floating r) = inScreen r
   validPlacement (Centered r) = inScreen r
+  validPlacement (Fullscreen _) = True
+  validPlacement HiddenFullscreen = True
   inScreen r = rectWidth r > 0 && rectHeight r > 0 && rectX r >= 0 && rectY r >= 0 && rectX r + rectWidth r <= 1920 && rectY r + rectHeight r <= 1080
 
 runPure :: FilePath -> Word64 -> Int -> Int -> IO ()
