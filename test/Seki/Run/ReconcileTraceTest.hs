@@ -6,12 +6,13 @@ import Control.Exception (onException)
 import Control.Monad (foldM, forM, forM_, when)
 import Data.ByteString (ByteString)
 import Data.Int (Int32)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
-import Seki.Internal.Core.Action (windows)
+import Seki.Internal.Core.Action (float, windows, withFocused)
 import Seki.Internal.Core.Layout (LayoutClass, Mirror (..))
-import Seki.Internal.Core.ManageHook (idHook)
+import Seki.Internal.Core.ManageHook (doFloat, idHook, isDialog, (-->))
 import Seki.Internal.Core.Scene (defaultSceneStyle)
-import Seki.Internal.Core.StackSet (WindowId (..), focusDown, index, peek)
+import Seki.Internal.Core.StackSet (FloatGeom (..), StackSet (..), WindowId (..), focusDown, index, peek)
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
@@ -25,7 +26,7 @@ import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
 import Seki.Wire.Transport (Transport, closeTransport)
 import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..))
 import Test.Tasty (TestName, TestTree, testGroup)
-import Test.Tasty.HUnit (Assertion, assertBool, assertEqual, testCase, (@?=))
+import Test.Tasty.HUnit (Assertion, assertBool, assertEqual, assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck (arbitrary, elements, forAll, ioProperty, testProperty, vectorOf, withMaxSuccess)
 
 tests :: TestTree
@@ -39,8 +40,9 @@ tests =
     , traceProperty "generated Mirror Tall traces never propose or show a degenerate tile" (Mirror (Tall 1 (1 / 10) (1 / 2))) $ \width ->
         [content width 50, content width 50]
     , testCase "focus raises a shown family and new windows retain nonexclusive layer focus" testFamilies
-    , testCase "Full focuses a new child and hides it when its parent is refocused" testChildUnderFull
+    , testCase "M1-D06 superseded: Full keeps a floating dialog centered above its refocused parent" testChildUnderFull
     , testCase "Full shows only a smaller focused commit and focus cycling hides it" testFullSelection
+    , testCase "floating a tile clears its tiled edges, lets the client pick its size, and keeps it centered" testTileFloats
     ]
  where
   content width height = if width > 4 && height > 4 then Just (width - 4, height - 4) else Nothing
@@ -203,11 +205,12 @@ testChildUnderFull = withRuntimePair $ \target peer -> do
     reader <- newFrameReader
     (manager, _, layerShell) <- handshake reader peer
     sendFrames peer [event manager 6 (putNewId parent), event manager 7 (putNewId output), event manager 8 (putNewId seat)]
-    _ <- receiveNewIdRequest reader peer parent (Opcode 2)
+    parentNode <- receiveNewIdRequest reader peer parent (Opcode 2)
     ls <- receiveLayerShellOutputRequest reader peer layerShell output
     _ <- receiveLayerShellSeatRequest reader peer layerShell seat
     let manage = sendFrames peer [event manager 2 (pure ())] >> readUntil reader peer manager 2
         render = sendFrames peer [event manager 3 (pure ())] >> readUntil reader peer manager 4
+        stacked nodes frames = [s | f <- frames, let s = rawFrameSender f, s `elem` nodes, rawFrameOpcode f == Opcode 2]
     sendFrames peer [event output 2 (putInt 0 >> putInt 0), event output 3 (putInt 200 >> putInt 100), event ls 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100)]
     proposed <- encodedPayload (putInt 196 >> putInt 96)
     first <- manage
@@ -217,30 +220,34 @@ testChildUnderFull = withRuntimePair $ \target peer -> do
     _ <- manage
     _ <- render
     sendFrames peer [event manager 6 (putNewId child)]
-    _ <- receiveNewIdRequest reader peer child (Opcode 2)
+    childNode <- receiveNewIdRequest reader peer child (Opcode 2)
     sendFrames peer [event child 5 (putObject parent)]
     inserted <- manage
-    requests child 3 inserted @?= [proposed]
+    clientChooses <- encodedPayload (putInt 0 >> putInt 0)
+    requests child 3 inserted @?= [clientChooses]
+    requests child 9 inserted @?= []
     requests parent 3 inserted @?= []
-    sendFrames peer [event child 2 (putInt 196 >> putInt 96)]
+    sendFrames peer [event child 2 (putInt 80 >> putInt 40)]
     childShown <- render
-    requests parent 4 childShown @?= [mempty]
+    requests parent 4 childShown @?= []
     requests child 5 childShown @?= [mempty]
+    centered <- encodedPayload (putInt 60 >> putInt 30)
+    requests childNode 1 childShown @?= [centered]
+    stacked [parentNode, childNode] childShown @?= [parentNode, childNode]
     childFocused <- manage
     childPayload <- encodedPayload (putObject child)
     requests seat 1 childFocused @?= [childPayload]
     _ <- render
     sendFrames peer [event seat 4 (putObject parent)]
-    _ <- manage
-    parentShown <- render
-    requests child 4 parentShown @?= [mempty]
-    requests parent 5 parentShown @?= [mempty]
     parentFocused <- manage
     parentPayload <- encodedPayload (putObject parent)
     requests seat 1 parentFocused @?= [parentPayload]
-    _ <- render
+    parentFocusedRender <- render
+    requests child 4 parentFocusedRender @?= []
+    requests parent 4 parentFocusedRender @?= []
+    stacked [parentNode, childNode] parentFocusedRender @?= []
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) (isDialog --> doFloat) (pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -298,6 +305,59 @@ testFullSelection = withRuntimePair $ \target peer -> do
   result @?= Right ()
  where
   focusKey = RiverKeyBinding 0x62 (River.RiverSeatV1ModifiersFlags 0) Nothing
+
+testTileFloats :: Assertion
+testTileFloats = withRuntimePair $ \target peer -> do
+  window <- requireObjectId 0xff0000d0
+  output <- requireObjectId 0xff0000d1
+  seat <- requireObjectId 0xff0000d2
+  done <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (manager, xkb, layerShell) <- handshake reader peer
+    sendFrames peer [event manager 6 (putNewId window), event manager 7 (putNewId output), event manager 8 (putNewId seat)]
+    node <- receiveNewIdRequest reader peer window (Opcode 2)
+    ls <- receiveLayerShellOutputRequest reader peer layerShell output
+    _ <- receiveLayerShellSeatRequest reader peer layerShell seat
+    floatBinding <- receiveKeyBindingRequest reader peer xkb seat floatKey
+    let manage = sendFrames peer [event manager 2 (pure ())] >> readUntil reader peer manager 2
+        render = sendFrames peer [event manager 3 (pure ())] >> readUntil reader peer manager 4
+    sendFrames peer [event output 2 (putInt 0 >> putInt 0), event output 3 (putInt 200 >> putInt 100), event ls 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100)]
+    first <- manage
+    allEdges <- encodedPayload (putUint 15)
+    requests window 9 first @?= [allEdges]
+    sendFrames peer [event window 2 (putInt 196 >> putInt 96)]
+    _ <- render
+    _ <- manage
+    _ <- render
+    sendFrames peer [event floatBinding 0 (pure ())]
+    floated <- manage
+    noEdges <- encodedPayload (putUint 0)
+    clientChooses <- encodedPayload (putInt 0 >> putInt 0)
+    requests window 9 floated @?= [noEdges]
+    requests window 3 floated @?= [clientChooses]
+    sendFrames peer [event window 2 (putInt 120 >> putInt 50)]
+    centered <- render
+    position <- encodedPayload (putInt 40 >> putInt 25)
+    requests node 1 centered @?= [position]
+    again <- manage
+    requests window 3 again @?= []
+    requests window 9 again @?= []
+    sendFrames peer [event window 2 (putInt 150 >> putInt 60)]
+    resized <- render
+    recentered <- encodedPayload (putInt 25 >> putInt 20)
+    requests node 1 resized @?= [recentered]
+    closeTransport peer
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [(floatKey, withFocused float)] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
+  result <- runRiverSession session
+  expectMockSuccess done
+  result @?= Right ()
+  final <- readPolicyState policy
+  case coreWorkspaces final of
+    AttachedState ss _ -> assertEqual "committed sizes never become stored geometry" [ClientSized] (Map.elems (floating ss))
+    HeadlessState{} -> assertFailure "expected an attached state"
+ where
+  floatKey = RiverKeyBinding 0x74 (River.RiverSeatV1ModifiersFlags 0) Nothing
 
 requests :: ObjectId -> Int -> [RawFrame] -> [ByteString]
 requests sender opcode frames = [rawFramePayload f | f <- frames, rawFrameSender f == sender, rawFrameOpcode f == Opcode (fromIntegral opcode)]
