@@ -138,6 +138,7 @@ runWM socket directory = do
       , policySceneStyle = defaultSceneStyle
       , policyManageHook = idHook
       , policyStartupHook = pure ()
+      , policyPointerBindings = []
       , policyLaunch = \_ -> fail "unexpected spawn"
       }
 

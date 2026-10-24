@@ -109,7 +109,7 @@ data Drain = Drain
 testConfigErrors :: Assertion
 testConfigErrors = do
   let binding = keyBinding 0x61
-      config tags bindings = PolicyConfig Full tags bindings defaultSceneStyle (\_ -> pure ()) idHook (pure ())
+      config tags bindings = PolicyConfig Full tags bindings defaultSceneStyle (\_ -> pure ()) idHook (pure ()) []
   let invalidWidth = defaultSceneStyle{sceneBorderWidth = -1}
       invalidColor = defaultSceneStyle{sceneFocusedColor = BorderColor 2 0 0 1}
   assertError (PolicyInvalidSceneStyle invalidWidth) =<< newPolicy (config [1] []){policySceneStyle = invalidWidth}
@@ -435,7 +435,7 @@ runPolicyWith ::
 runPolicyWith hook startup target mockDone bindings = do
   launches <- newIORef []
   drains <- newIORef []
-  policy <- expectRight =<< newPolicy (PolicyConfig Full [1, 2, 3] bindings defaultSceneStyle (record launches) hook startup)
+  policy <- expectRight =<< newPolicy (PolicyConfig Full [1, 2, 3] bindings defaultSceneStyle (record launches) hook startup [])
   let handlers = policyRuntimeHandlers policy
       observed =
         handlers

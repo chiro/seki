@@ -26,13 +26,24 @@ fullscreen settle nothing and exit always proposes the tile or float again
 told, so a workspace switch sends no fullscreen request, and the window
 covers no output because it is hidden. River exits fullscreen by itself when
 the output is removed, so such a window is only sent @fullscreen@ for the
-output that later shows it, or informed if it leaves the set.
+the output that later shows it, or informed if it leaves the set.
+
+A pointer op is reconciled per seat the same way: the scene names the op river
+should run, and each seat remembers the op river runs, so a manage sequence
+sends @op_start_pointer@ or @op_end@ only where they differ. River keeps an op
+until the sequence carrying @op_end@ finishes and ignores a start in it
+(M2-D07), so replacing an op ends it in one sequence and starts the next one
+in the following sequence. A window under a resize op is informed of the
+resize before its first proposal, and every render anchors its committed size
+at the far edges of the dragged ones.
 -}
 module Seki.Run.Reconcile (
   ReconcileState,
   emptyReconcileState,
   reconcileManage,
   reconcileRender,
+  reconciledBoxes,
+  reconciledOps,
   clampToHint,
 ) where
 
@@ -44,11 +55,12 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
 import Seki.Internal.Core.Geometry (Point (..), Rect, Size, mkRect, mkSize, rectHeight, rectOrigin, rectSize, rectWidth, rectX, rectY, sizeHeight, sizeWidth)
 import Seki.Internal.Core.Layout (SizePolicy (..))
+import Seki.Internal.Core.PointerOp (HEdge (..), OpId, ResizeEdges (..), SeatId (..), VEdge (..))
 import Seki.Internal.Core.Scene (BorderColor (..), DesiredScene (..), Placement (..), SceneStyle (..), placementShown, stackWindows)
 import Seki.Internal.Core.StackSet (OutputId (..), WindowId (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Inventory (RiverDimensionsHint (..), RiverInventory, RiverOutputState (..), RiverSize (..), RiverWindowState (..), lookupRiverOutput, lookupRiverWindow, riverInventoryWindows)
-import Seki.Run.Phase (ManageM, RenderM, clearFocus, exitWindowFullscreen, focusWindow, fullscreenWindow, hideWindow, informWindowFullscreen, informWindowNotFullscreen, placeNodeTop, proposeWindowDimensions, setDefaultLayerShellOutput, setNodePosition, setWindowBorders, setWindowCapabilities, setWindowContentClipBox, setWindowTiled, showWindow, useWindowSsd)
+import Seki.Run.Phase (ManageM, RenderM, clearFocus, endPointerOp, exitWindowFullscreen, focusWindow, fullscreenWindow, hideWindow, informResizeEnd, informResizeStart, informWindowFullscreen, informWindowNotFullscreen, placeNodeTop, proposeWindowDimensions, setDefaultLayerShellOutput, setNodePosition, setWindowBorders, setWindowCapabilities, setWindowContentClipBox, setWindowTiled, showWindow, startPointerOp, useWindowSsd)
 import Seki.Run.Runtime (RenderOutcome (..), RiverLayerFocus (..), RiverRuntimeSnapshot (..), RiverSeatBindings (..))
 import Seki.Wire.Connection.ObjectTable (Object, objectId)
 import Seki.Wire.Types (ObjectId, mkObjectId, objectIdValue)
@@ -85,17 +97,37 @@ data Applied = Applied
   , appliedColor :: Maybe BorderColor
   , appliedBorderWidth :: Maybe Int32
   , appliedShown :: Maybe Bool
+  , informedResize :: Bool
+  -- ^ Whether the client was told of an interactive resize and not yet of its end.
   }
   deriving (Eq, Show)
 
-data SeatApplied = SeatApplied (Object River.RiverSeatV1) Integer (Maybe (Maybe WindowId)) Bool deriving (Eq, Show)
+-- | The seat, its layer focus revision, the focus seki last sent, whether it overrode layer focus, and the op river runs.
+data SeatApplied = SeatApplied (Object River.RiverSeatV1) Integer (Maybe (Maybe WindowId)) Bool (Maybe OpId) deriving (Eq, Show)
 
 data ReconcileState = ReconcileState (Map WindowId Applied) (Map ObjectId SeatApplied) [Object River.RiverNodeV1] deriving (Eq, Show)
 emptyReconcileState :: ReconcileState
 emptyReconcileState = ReconcileState Map.empty Map.empty []
 
+-- | Each window's content box as last rendered, less what its content clip box hides.
+reconciledBoxes :: ReconcileState -> Map WindowId Rect
+reconciledBoxes (ReconcileState applied _ _) = Map.mapMaybe shownBox applied
+ where
+  shownBox a = do
+    r <- appliedRect a
+    pure $ case appliedClip a of
+      Nothing -> r
+      Just c -> fromRight r (mkSize (min (rectWidth r) (sizeWidth c)) (min (rectHeight r) (sizeHeight c)) >>= mkRect (rectOrigin r))
+
+-- | The op river runs on each seat: what seki last sent, not what the core wants.
+reconciledOps :: ReconcileState -> Map SeatId OpId
+reconciledOps (ReconcileState _ seats _) = Map.fromList [(seatIdOf seat, op) | SeatApplied seat _ _ _ (Just op) <- Map.elems seats]
+
+seatIdOf :: Object River.RiverSeatV1 -> SeatId
+seatIdOf = SeatId . objectIdValue . objectId
+
 fresh :: RiverWindowState -> Applied
-fresh window = Applied (riverWindowObject window) False River.RiverWindowV1EdgesFlagsNone NoProposal Windowed Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+fresh window = Applied (riverWindowObject window) False River.RiverWindowV1EdgesFlagsNone NoProposal Windowed Nothing Nothing Nothing Nothing Nothing Nothing Nothing False
 
 windowIdOf :: RiverWindowState -> WindowId
 windowIdOf = WindowId . objectIdValue . objectId . riverWindowObject
@@ -132,6 +164,7 @@ reconcileManage reclaim scene snapshot (ReconcileState old oldSeats stacking) = 
     HiddenFullscreen -> KeepFullscreen
     _ -> NotFullscreen
   transitions = Map.fromList [(windowIdOf w, fullscreenTransition (riverWindowObject w) (fullscreen (states Map.! windowIdOf w)) (fullscreenGoal w)) | w <- windows]
+  resizes = Map.fromList [(windowIdOf w, resizeTransition (riverWindowObject w) (informedResize (states Map.! windowIdOf w)) (desired w)) | w <- windows]
   update w =
     let a = states Map.! windowIdOf w
         next =
@@ -142,6 +175,7 @@ reconcileManage reclaim scene snapshot (ReconcileState old oldSeats stacking) = 
                 Just size | Map.member (windowIdOf w) proposed -> AwaitingDimensions size (riverWindowDimensionsRevision w)
                 _ -> proposal a
             , fullscreen = fst (transitions Map.! windowIdOf w)
+            , informedResize = fst (resizes Map.! windowIdOf w)
             }
      in case fullscreen next of
           FullscreenOn _ -> next{proposal = NoProposal, settledRequest = Nothing}
@@ -152,15 +186,16 @@ reconcileManage reclaim scene snapshot (ReconcileState old oldSeats stacking) = 
     _ -> False
   focus = sceneFocus scene >>= \w -> if eligible w then Just w else Nothing
   seatSteps = map seatStep (riverRuntimeSeatBindings snapshot)
-  seats = Map.fromList [(identifier, value) | (identifier, value, _) <- seatSteps]
-  seatStep seat = (identifier, SeatApplied (riverBindingsSeat seat) revision nextFocus overridden, request)
+  seats = Map.fromList [(identifier, value) | (identifier, value, _, _) <- seatSteps]
+  seatStep seat = (identifier, SeatApplied (riverBindingsSeat seat) revision nextFocus overridden nextOp, request, opRequest)
    where
     identifier = objectId (riverBindingsSeat seat)
     revision = riverSeatLayerFocusRevision seat
     previous = Map.lookup identifier oldSeats
     (lastFocus, reclaimed) = case previous of
-      Just (SeatApplied handle r f override) | handle == riverBindingsSeat seat && r == revision -> (f, override)
+      Just (SeatApplied handle r f override _) | handle == riverBindingsSeat seat && r == revision -> (f, override)
       _ -> (Nothing, False)
+    (nextOp, opRequest) = opTransition (riverBindingsSeat seat) (appliedOpOf oldSeats seat) (desiredOpOf scene seat)
     layer = riverSeatLayerFocus seat
     allowed = layer == RiverLayerFocusNone || (layer == RiverLayerFocusNonExclusive && (reclaim || reclaimed))
     send = allowed && (lastFocus /= Just focus || (reclaim && layer == RiverLayerFocusNonExclusive && not reclaimed))
@@ -187,9 +222,11 @@ reconcileManage reclaim scene snapshot (ReconcileState old oldSeats stacking) = 
     mapM_ initialize windows
     mapM_ (snd . (transitions Map.!) . windowIdOf) windows
     mapM_ applyTiled windows
+    mapM_ (snd . (resizes Map.!) . windowIdOf) windows
     mapM_ propose windows
     mapM_ setDefaultLayerShellOutput currentOutput
-    mapM_ (\(_, _, request) -> request) seatSteps
+    mapM_ (\(_, _, request, _) -> request) seatSteps
+    mapM_ (\(_, _, _, request) -> request) seatSteps
   currentOutput = sceneOutput scene >>= \(OutputId o) -> mkObjectId o >>= (`lookupRiverOutput` inventory) >>= riverOutputLayerShell
 
 reconcileRender :: SceneStyle -> DesiredScene -> RiverRuntimeSnapshot -> ReconcileState -> (ReconcileState, RenderM RenderOutcome)
@@ -199,7 +236,7 @@ reconcileRender style scene snapshot (ReconcileState old seats oldStacking) = (R
   states = liveStates snapshot old
   windows = riverInventoryWindows inventory
   layerOwns seat = case Map.lookup (objectId (riverBindingsSeat seat)) seats of
-    Just (SeatApplied handle revision _ override) | handle == riverBindingsSeat seat && revision == riverSeatLayerFocusRevision seat -> riverSeatLayerFocus seat /= RiverLayerFocusNone && not override
+    Just (SeatApplied handle revision _ override _) | handle == riverBindingsSeat seat && revision == riverSeatLayerFocusRevision seat -> riverSeatLayerFocus seat /= RiverLayerFocusNone && not override
     _ -> riverSeatLayerFocus seat /= RiverLayerFocusNone
   layerFocused = any layerOwns (riverRuntimeSeatBindings snapshot)
   color w
@@ -236,7 +273,7 @@ reconcileRender style scene snapshot (ReconcileState old seats oldStacking) = (R
     Just w -> (appliedShown =<< Map.lookup w states) /= Just True && (appliedShown =<< Map.lookup w rendered) == Just True
   focusRecovery = any needsFocus (riverRuntimeSeatBindings snapshot)
   needsFocus seat = case Map.lookup (objectId (riverBindingsSeat seat)) seats of
-    Just (SeatApplied handle revision previous override)
+    Just (SeatApplied handle revision previous override _)
       | handle == riverBindingsSeat seat
       , revision == riverSeatLayerFocusRevision seat
       , riverSeatLayerFocus seat == RiverLayerFocusNone || override -> case sceneFocus scene of
@@ -250,6 +287,7 @@ reconcileRender style scene snapshot (ReconcileState old seats oldStacking) = (R
           _ -> False
       )
       windows
+  opPending = any (\seat -> appliedOpOf seats seat /= desiredOpOf scene seat) (riverRuntimeSeatBindings snapshot)
   borderWidth = max 0 (sceneBorderWidth style)
   position w = case targets Map.! windowIdOf w of
     ShownAt rect _
@@ -282,7 +320,7 @@ reconcileRender style scene snapshot (ReconcileState old seats oldStacking) = (R
       mapM_ placeNodeTop stacking
     mapM_ borders windows
     mapM_ visibility windows
-    pure (RenderOutcome (changedFocusVisibility || focusRecovery || superseded))
+    pure (RenderOutcome (changedFocusVisibility || focusRecovery || superseded || opPending))
 
 isShownAt :: RenderTarget -> Bool
 isShownAt = \case
@@ -309,6 +347,35 @@ fullscreenTransition window applied goal = case (applied, goal) of
   (FullscreenOn _, NotFullscreen) -> (Windowed, exitWindowFullscreen window >> informWindowNotFullscreen window)
   (Released, NotFullscreen) -> (Windowed, informWindowNotFullscreen window)
   (Windowed, NotFullscreen) -> (Windowed, pure ())
+
+appliedOpOf :: Map ObjectId SeatApplied -> RiverSeatBindings -> Maybe OpId
+appliedOpOf seats seat = case Map.lookup (objectId (riverBindingsSeat seat)) seats of
+  Just (SeatApplied handle _ _ _ op) | handle == riverBindingsSeat seat -> op
+  _ -> Nothing
+
+desiredOpOf :: DesiredScene -> RiverSeatBindings -> Maybe OpId
+desiredOpOf scene seat = case scenePointerOp scene of
+  Just (s, op) | s == seatIdOf (riverBindingsSeat seat) -> Just op
+  _ -> Nothing
+
+{- | Move the op river runs toward the desired one. Replacing an op only ends
+it, since river ignores a start in the sequence that ends an op (M2-D07); the
+render then asks for the sequence that starts the new one.
+-}
+opTransition :: Object River.RiverSeatV1 -> Maybe OpId -> Maybe OpId -> (Maybe OpId, ManageM ())
+opTransition seat applied goal = case (applied, goal) of
+  (Nothing, Nothing) -> (Nothing, pure ())
+  (Nothing, Just d) -> (Just d, startPointerOp seat)
+  (Just a, Just d) | a == d -> (applied, pure ())
+  (Just _, _) -> (Nothing, endPointerOp seat)
+
+-- | Tell the client a resize op starts when its window becomes 'Resizing', and ends when it leaves it.
+resizeTransition :: Object River.RiverWindowV1 -> Bool -> Placement -> (Bool, ManageM ())
+resizeTransition window informed placement = case (informed, placement) of
+  (False, Resizing _ _) -> (True, informResizeStart window)
+  (True, Resizing _ _) -> (True, pure ())
+  (True, _) -> (False, informResizeEnd window)
+  (False, _) -> (False, pure ())
 
 lookupWindow :: RiverInventory -> WindowId -> Maybe RiverWindowState
 lookupWindow inventory (WindowId w) = mkObjectId w >>= (`lookupRiverWindow` inventory)
@@ -353,9 +420,20 @@ topLeft placement size = case placement of
   Omitted -> Nothing
   Placed _ r -> Just (rectOrigin r)
   Floating r -> Just (rectOrigin r)
-  Resizing _ r -> Just (rectOrigin r)
+  Resizing edges r -> Just (Point (anchor (nearH edges) (rectX r) (rectWidth r) (sizeWidth size)) (anchor (nearV edges) (rectY r) (rectHeight r) (sizeHeight size)))
   Fullscreen _ -> Nothing
   HiddenFullscreen -> Nothing
   Centered r -> Just (Point (centre (rectX r) (rectWidth r) (sizeWidth size)) (centre (rectY r) (rectHeight r) (sizeHeight size)))
  where
   centre origin extent len = origin + max 0 ((extent - len) `div` 2)
+  anchor near origin extent len
+    | near = fromInteger (max (toInteger (minBound :: Int32)) (toInteger origin + toInteger extent - toInteger len))
+    | otherwise = origin
+  nearH = \case
+    Horizontal h -> h == LeftEdge
+    Corner h _ -> h == LeftEdge
+    Vertical _ -> False
+  nearV = \case
+    Vertical v -> v == TopEdge
+    Corner _ v -> v == TopEdge
+    Horizontal _ -> False

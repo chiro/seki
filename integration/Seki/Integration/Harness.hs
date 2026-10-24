@@ -444,6 +444,7 @@ integrationConfig probeMode executable footConfigPath probeSocketPath clientEnvi
     , policySceneStyle = defaultSceneStyle{sceneBorderWidth = 0}
     , policyManageHook = idHook
     , policyStartupHook = pure ()
+    , policyPointerBindings = []
     , policyLaunch = \_ -> do
         process <-
           startManagedProcess

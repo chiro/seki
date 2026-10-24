@@ -11,16 +11,20 @@ import Data.Int (Int32)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.Set qualified as Set
-import Seki.Internal.Core.Action (float, windows, withFocused)
+import Data.Word (Word32)
+import Seki.Internal.Core.Action (float, sink, windows, withFocused)
+import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), mkRect, mkSize, rectX, rectY)
 import Seki.Internal.Core.Layout (LayoutClass (..), Mirror (..), SizePolicy (..), tolerant)
-import Seki.Internal.Core.ManageHook (appId, doFloat, doShift, idHook, isDialog, (-->), (=?))
+import Seki.Internal.Core.ManageHook (ManageHook, appId, doFloat, doShift, idHook, isDialog, (-->), (=?))
+import Seki.Internal.Core.PointerOp (OpKind (..))
 import Seki.Internal.Core.Scene (defaultSceneStyle)
-import Seki.Internal.Core.StackSet (FloatGeom (..), StackSet (..), WindowId (..), focusDown, index, peek, view)
-import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
+import Seki.Internal.Core.StackSet (FloatGeom (..), StackSet (..), WindowId (..), focusDown, index, integrate, peek, view)
+import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..))
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
-import Seki.Run.MockRiver (FrameReader, callbackDoneFrame, encodedFrame, encodedPayload, expectMockSuccess, expectRight, newFrameReader, receiveFrame, receiveKeyBindingRequest, receiveLayerShellOutputRequest, receiveLayerShellSeatRequest, receiveNewIdRequest, receiveRuntimeBinds, receiveStartupRequests, registryGlobalFrame, requireObjectId, runMock, sendFrames, withRuntimePair)
+import Seki.Run.MockRiver (FrameReader, callbackDoneFrame, encodedFrame, encodedPayload, expectMockSuccess, expectRight, newFrameReader, receiveFrame, receiveKeyBindingRequest, receiveLayerShellOutputRequest, receiveLayerShellSeatRequest, receiveNewIdRequest, receivePointerBindingRequest, receiveRuntimeBinds, receiveStartupRequests, registryGlobalFrame, requireObjectId, runMock, sendFrames, withRuntimePair)
+import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Policy (PolicyConfig (..), newPolicy, policyRuntimeHandlers, readPolicyState)
 import Seki.Run.Runtime (openRiverSessionAt, runRiverSession)
 import Seki.Run.Xkb (RiverKeyBinding (..))
@@ -30,7 +34,7 @@ import Seki.Wire.Transport (Transport, closeTransport)
 import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..))
 import Test.Tasty (TestName, TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertEqual, assertFailure, testCase, (@?=))
-import Test.Tasty.QuickCheck (arbitrary, elements, forAll, ioProperty, testProperty, vectorOf, withMaxSuccess)
+import Test.Tasty.QuickCheck (arbitrary, elements, forAll, frequency, ioProperty, testProperty, vectorOf, withMaxSuccess)
 
 tests :: TestTree
 tests =
@@ -57,6 +61,10 @@ tests =
     , testCase "switching away from a fullscreen window and back hides and shows it with no fullscreen request" testFullscreenHidden
     , testCase "a fullscreen window's workspace shown on another output sends fullscreen for that output alone" testFullscreenShownElsewhere
     , testCase "a hidden window that leaves the fullscreen set exits fullscreen at once" testFullscreenLostWhileHidden
+    , testCase "a binding drag floats a tile at its shown box, moves it with set_position alone, and ends with op_end" testPointerMove
+    , testCase "a left-edge resize informs the client before proposing and keeps the right edge under a smaller commit" testPointerResize
+    , testCase "an op that replaces another starts in the sequence after the one that ends it" testPointerSwap
+    , pointerProperty
     ]
  where
   tall = Tall 1 (1 / 10) (1 / 2)
@@ -171,7 +179,7 @@ testTrace layout tiles steps = withRuntimePair $ \target peer -> do
             pure model'
     foldM_ run (map (const (Model Nothing Nothing Nothing Nothing Nothing Nothing Nothing)) traced) (steps ++ replicate 3 (Step 100 True (0, 0) []))
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig layout [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig layout [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -201,7 +209,7 @@ testFamilies = withRuntimePair $ \target peer -> do
   w4 <- requireObjectId 0xff0000a3
   output <- requireObjectId 0xff0000a4
   seat <- requireObjectId 0xff0000a5
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader
     (manager, _, layerShell) <- handshake reader peer
@@ -329,7 +337,7 @@ testChildUnderFull = withRuntimePair $ \target peer -> do
     requests parent 4 parentFocusedRender @?= []
     stacked [parentNode, childNode] parentFocusedRender @?= []
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) (isDialog --> doFloat) (pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) (isDialog --> doFloat) (pure ()) [])
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -380,7 +388,7 @@ testFullSelection = withRuntimePair $ \target peer -> do
     requests seat 1 refocused @?= [focusPayload]
     _ <- render
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [(focusKey, windows focusDown)] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [(focusKey, windows focusDown)] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -434,7 +442,7 @@ testTileFloats = withRuntimePair $ \target peer -> do
     requests node 1 resized @?= [recentered]
     assertEqual "a float stays unclipped" [] (requests window 22 resized)
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [(floatKey, withFocused float)] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [(floatKey, withFocused float)] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -488,7 +496,7 @@ testFullscreenExit = withRuntimePair $ \target peer -> do
     requests node 1 settled @?= [position]
     requests window 4 settled @?= []
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -533,7 +541,7 @@ testCropAcrossFullscreen = withRuntimePair $ \target peer -> do
     narrowClip <- clipBox 146 96
     assertEqual "after exit an oversized commit is clipped to the narrower tile" [narrowClip] (requests window 22 settled)
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -579,7 +587,7 @@ fullscreenOnRemovedOutput tags afterRemoval = withRuntimePair $ \target peer -> 
     forM_ [20, 3] $ \opcode -> requests window opcode removed @?= []
     afterRemoval removed window second
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) tags [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) tags [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -600,7 +608,7 @@ testFullscreenHidden = withRuntimePair $ \target peer -> do
   window <- requireObjectId 0xff000100
   output <- requireObjectId 0xff000101
   seat <- requireObjectId 0xff000102
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2] [(viewKey 1, windows (view 1)), (viewKey 2, windows (view 2))] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2] [(viewKey 1, windows (view 1)), (viewKey 2, windows (view 2))] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader
     (manager, xkb, layerShell) <- handshake reader peer
@@ -693,7 +701,7 @@ testFullscreenShownElsewhere = withRuntimePair $ \target peer -> do
     shownRender <- render
     requests window 5 shownRender @?= [mempty]
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2, 3] [(viewKey t, windows (view t)) | t <- [1, 2, 3]] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2, 3] [(viewKey t, windows (view t)) | t <- [1, 2, 3]] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -705,7 +713,7 @@ testFullscreenLostWhileHidden = withRuntimePair $ \target peer -> do
   output <- requireObjectId 0xff000121
   seat <- requireObjectId 0xff000122
   shifted <- requireObjectId 0xff000123
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2] [(viewKey 2, windows (view 2))] defaultSceneStyle (\_ -> pure ()) (appId =? "mpv" --> doShift 1) (pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2] [(viewKey 2, windows (view 2))] defaultSceneStyle (\_ -> pure ()) (appId =? "mpv" --> doShift 1) (pure ()) [])
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader
     (manager, xkb, layerShell) <- handshake reader peer
@@ -740,6 +748,205 @@ testFullscreenLostWhileHidden = withRuntimePair $ \target peer -> do
   result @?= Right ()
   remaining <- coreFullscreen <$> readPolicyState policy
   remaining @?= Set.empty
+
+moveBinding :: RiverPointerBinding
+moveBinding = RiverPointerBinding 0x110 (River.RiverSeatV1ModifiersFlags 64)
+
+pointerConfig :: l -> ManageHook Int l -> PolicyConfig Int l
+pointerConfig layout hook = PolicyConfig layout [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) hook (pure ()) [(moveBinding, Move)]
+
+-- | One window on a 200 by 100 output and a seat with the move binding, after the window is shown and focused.
+data PointerTrace = PointerTrace
+  { ptWindow :: ObjectId
+  , ptNode :: ObjectId
+  , ptSeat :: ObjectId
+  , ptBinding :: ObjectId
+  , ptManager :: ObjectId
+  , ptKeys :: [ObjectId]
+  , ptManage :: IO [RawFrame]
+  , ptRender :: IO [RawFrame]
+  , ptSend :: [IO ByteString] -> IO ()
+  }
+
+pointerTrace :: (LayoutClass l) => PolicyConfig Int l -> (Int32, Int32) -> (PointerTrace -> IO ()) -> (CoreState Int l -> Assertion) -> Assertion
+pointerTrace config (cw, ch) script final = withRuntimePair $ \target peer -> do
+  window <- requireObjectId 0xff000150
+  output <- requireObjectId 0xff000151
+  seat <- requireObjectId 0xff000152
+  policy <- expectRight =<< newPolicy config
+  done <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (manager, xkb, layerShell) <- handshake reader peer
+    sendFrames peer [event manager 6 (putNewId window), event manager 7 (putNewId output), event manager 8 (putNewId seat)]
+    node <- receiveNewIdRequest reader peer window (Opcode 2)
+    ls <- receiveLayerShellOutputRequest reader peer layerShell output
+    _ <- receiveLayerShellSeatRequest reader peer layerShell seat
+    keys <- mapM (receiveKeyBindingRequest reader peer xkb seat . fst) (policyBindings config)
+    binding <- receivePointerBindingRequest reader peer seat moveBinding
+    let manage = sendFrames peer [event manager 2 (pure ())] >> readUntil reader peer manager 2
+        render = sendFrames peer [event manager 3 (pure ())] >> readUntil reader peer manager 4
+    sendFrames peer [event output 2 (putInt 0 >> putInt 0), event output 3 (putInt 200 >> putInt 100), event ls 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100)]
+    first <- manage
+    requests binding 1 first @?= [mempty]
+    sendFrames peer [event window 2 (putInt cw >> putInt ch)]
+    _ <- render
+    _ <- manage
+    _ <- render
+    script (PointerTrace window node seat binding manager keys manage render (sendFrames peer))
+    closeTransport peer
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
+  result <- runRiverSession session
+  expectMockSuccess done
+  result @?= Right ()
+  final =<< readPolicyState policy
+
+floatsIn :: CoreState i l -> [FloatGeom]
+floatsIn st = case coreWorkspaces st of
+  AttachedState ss _ -> Map.elems (floating ss)
+  HeadlessState hw -> Map.elems (headlessFloating hw)
+
+outputBox :: Int32 -> Int32 -> Int32 -> Int32 -> FloatGeom
+outputBox x y w h = FloatAt (OutputRect (either (error . show) id (mkSize w h >>= mkRect (Point x y))))
+
+testPointerMove :: Assertion
+testPointerMove = pointerTrace (pointerConfig SmallTile idHook) (96, 46) script $ \st ->
+  floatsIn st @?= [outputBox 32 12 96 46]
+ where
+  script t = do
+    let seat = ptSeat t
+        window = ptWindow t
+    ptSend t [event seat 2 (putObject window), event (ptBinding t) 0 (pure ())]
+    clicked <- ptManage t
+    requests seat 4 clicked @?= [mempty]
+    _ <- ptRender t
+    ptSend t [event seat 7 (pure ()), event (ptBinding t) 1 (pure ())]
+    clickReleased <- ptManage t
+    requests seat 5 clickReleased @?= [mempty]
+    assertEqual "a mod+click with no motion leaves the tile tiled" [] (requests window 9 (clicked ++ clickReleased))
+    _ <- ptRender t
+    ptSend t [event (ptBinding t) 0 (pure ())]
+    pressed <- ptManage t
+    requests seat 4 pressed @?= [mempty]
+    _ <- ptRender t
+    ptSend t [event seat 6 (putInt 30 >> putInt 10)]
+    moved <- ptManage t
+    untiled <- encodedPayload (putUint 0)
+    requests window 9 moved @?= [untiled]
+    assertEqual "a tile floated at its shown box needs no proposal" [] (requests window 3 moved)
+    assertEqual "a running op is not started again" [] (requests seat 4 moved)
+    movedRender <- ptRender t
+    shifted <- encodedPayload (putInt 32 >> putInt 12)
+    requests (ptNode t) 1 movedRender @?= [shifted]
+    ptSend t [event seat 7 (pure ()), event (ptBinding t) 1 (pure ())]
+    released <- ptManage t
+    requests seat 5 released @?= [mempty]
+    _ <- ptRender t
+    ptSend t [event seat 6 (putInt 90 >> putInt 90)]
+    late <- ptManage t
+    assertEqual "a delta after the op ended changes nothing" [] (requests window 3 late ++ requests seat 4 late ++ requests seat 5 late)
+    lateRender <- ptRender t
+    requests (ptNode t) 1 lateRender @?= []
+
+-- | Tiles its first window in a 100 by 50 box at the area's top-left, leaving room to drag it.
+data SmallTile = SmallTile deriving (Show)
+
+instance LayoutClass SmallTile where
+  pureLayout _ r s = [(w, tile) | Right tile <- [mkSize 100 50 >>= mkRect (Point (rectX r) (rectY r))], w <- take 1 (integrate s)]
+
+testPointerResize :: Assertion
+testPointerResize = pointerTrace (pointerConfig (Tall 1 (1 / 10) (1 / 2)) doFloat) (80, 40) script $ \st ->
+  floatsIn st @?= [outputBox 40 30 100 40]
+ where
+  script t = do
+    let seat = ptSeat t
+        window = ptWindow t
+    ptSend t [event window 8 (putObject seat >> putUint 4)]
+    started <- ptManage t
+    requests seat 4 started @?= [mempty]
+    assertEqual "nothing resizes before the first delta" [] (requests window 12 started)
+    _ <- ptRender t
+    ptSend t [event seat 6 (putInt (-20) >> putInt 0)]
+    dragged <- ptManage t
+    assertEqual "inform_resize_start precedes the proposal" (map Opcode [12, 3]) [rawFrameOpcode f | f <- dragged, rawFrameSender f == window, rawFrameOpcode f `elem` map Opcode [12, 3, 13]]
+    proposed <- encodedPayload (putInt 100 >> putInt 40)
+    requests window 3 dragged @?= [proposed]
+    pendingRender <- ptRender t
+    assertEqual "while the proposal is pending the right edge stays" [] (requests (ptNode t) 1 pendingRender)
+    ptSend t [event window 2 (putInt 90 >> putInt 40)]
+    committed <- ptRender t
+    anchored <- encodedPayload (putInt 50 >> putInt 30)
+    assertEqual "a smaller commit keeps the right edge at 140" [anchored] (requests (ptNode t) 1 committed)
+    ptSend t [event seat 7 (pure ())]
+    released <- ptManage t
+    assertEqual "the release informs the end and ends the op" [Opcode 13] [rawFrameOpcode f | f <- released, rawFrameSender f == window, rawFrameOpcode f `elem` map Opcode [12, 13]]
+    requests seat 5 released @?= [mempty]
+    _ <- ptRender t
+    pure ()
+
+testPointerSwap :: Assertion
+testPointerSwap = pointerTrace (pointerConfig (Tall 1 (1 / 10) (1 / 2)) doFloat) (80, 40) script (const (pure ()))
+ where
+  script t = do
+    let seat = ptSeat t
+        window = ptWindow t
+    ptSend t [event seat 2 (putObject window), event (ptBinding t) 0 (pure ())]
+    first <- ptManage t
+    requests seat 4 first @?= [mempty]
+    _ <- ptRender t
+    ptSend t [event seat 7 (pure ()), event (ptBinding t) 1 (pure ()), event window 7 (putObject seat)]
+    swapped <- ptManage t
+    requests seat 5 swapped @?= [mempty]
+    assertEqual "the new op does not start in the sequence that ends the old one" [] (requests seat 4 swapped)
+    _ <- ptRender t
+    next <- ptManage t
+    assertEqual "the render asked for another manage sequence" [mempty] (requests (ptManager t) 3 next)
+    requests seat 4 next @?= [mempty]
+    requests seat 5 next @?= []
+
+data PointerStep = Press | Delta Int32 Int32 | OpRelease | BindingRelease | ClientMove | ClientResize Word32 | Commit Int32 Int32 | Sink
+  deriving (Show)
+
+-- | Never two starts without an end between, for ops per seat and for resizes per window.
+alternates :: [Bool] -> Bool
+alternates = go False
+ where
+  go _ [] = True
+  go running (start : rest) = start /= running && go start rest
+
+pointerProperty :: TestTree
+pointerProperty =
+  testProperty "generated pointer traces never repeat an op start or a resize start without the end between" $
+    withMaxSuccess 30 $
+      forAll (vectorOf 24 step) $ \steps ->
+        ioProperty (pointerTrace (sinkConfig (pointerConfig (Tall 1 (1 / 10) (1 / 2)) idHook)) (196, 96) (run steps) (const (pure ())) >> pure True)
+ where
+  step =
+    frequency
+      [ (3, pure Press)
+      , (4, Delta <$> elements [-150, -30, 0, 25, 120] <*> elements [-80, -10, 0, 15, 60])
+      , (2, pure OpRelease)
+      , (2, pure BindingRelease)
+      , (1, pure ClientMove)
+      , (2, ClientResize <$> elements [1, 2, 4, 8, 5, 10])
+      , (3, Commit <$> elements [1, 50, 120, 196] <*> elements [1, 40, 96])
+      , (1, pure Sink)
+      ]
+  sinkConfig config = config{policyBindings = [(RiverKeyBinding 0x74 (River.RiverSeatV1ModifiersFlags 0) Nothing, withFocused sink)]}
+  run steps t = do
+    frames <- concat <$> mapM (\s -> send t s >> (++) <$> ptManage t <*> ptRender t) steps
+    let ops = [rawFrameOpcode f == Opcode 4 | f <- frames, rawFrameSender f == ptSeat t, rawFrameOpcode f `elem` map Opcode [4, 5]]
+        resizes = [rawFrameOpcode f == Opcode 12 | f <- frames, rawFrameSender f == ptWindow t, rawFrameOpcode f `elem` map Opcode [12, 13]]
+    assertBool ("op_start_pointer and op_end alternate: " <> show ops) (alternates ops)
+    assertBool ("inform_resize_start and inform_resize_end alternate: " <> show resizes) (alternates resizes)
+  send t = \case
+    Press -> ptSend t [event (ptSeat t) 2 (putObject (ptWindow t)), event (ptBinding t) 0 (pure ())]
+    Delta dx dy -> ptSend t [event (ptSeat t) 6 (putInt dx >> putInt dy)]
+    OpRelease -> ptSend t [event (ptSeat t) 7 (pure ())]
+    BindingRelease -> ptSend t [event (ptBinding t) 1 (pure ())]
+    ClientMove -> ptSend t [event (ptWindow t) 7 (putObject (ptSeat t))]
+    ClientResize edges -> ptSend t [event (ptWindow t) 8 (putObject (ptSeat t) >> putUint edges)]
+    Commit w h -> ptSend t [event (ptWindow t) 2 (putInt w >> putInt h)]
+    Sink -> ptSend t [event k 0 (pure ()) | k <- take 1 (ptKeys t)]
 
 viewKey :: Int -> RiverKeyBinding
 viewKey tag = RiverKeyBinding (0x30 + fromIntegral tag) (River.RiverSeatV1ModifiersFlags 0) Nothing
