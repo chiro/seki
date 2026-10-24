@@ -28,7 +28,7 @@ where
 
 import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
 import Control.Exception (finally, mask, onException)
-import Control.Monad (void, when)
+import Control.Monad (void, when, (<=<))
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -631,7 +631,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
           )
         createPointerBindings seat rest
   handlePointerBindingEvent seat definition event = do
-    hovered <- (>>= riverSeatPointerWindow) . Map.lookup (objectId seat) <$> readIORef seatBindingsState
+    hovered <- (riverSeatPointerWindow <=< Map.lookup (objectId seat)) <$> readIORef seatBindingsState
     handleRiverPointerBindingEvent runtimeHandlers definition seat $ case event of
       River.RiverPointerBindingV1Pressed -> PointerPressed hovered
       River.RiverPointerBindingV1Released -> PointerReleased

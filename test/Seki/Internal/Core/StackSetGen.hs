@@ -275,7 +275,7 @@ instance Arbitrary EventHistory where
           , (1, labelled "FullscreenRequested" FullscreenRequested <$> window)
           , (1, labelled "ExitFullscreenRequested" ExitFullscreenRequested <$> window)
           , (3, labelled "StartOp" StartOp <$> opRequest window)
-          , (6, labelled "OpInput" (\(t, i) -> OpInput seat t i) <$> ((,) <$> opTag <*> opInput))
+          , (6, labelled "OpInput" (uncurry (OpInput seat)) <$> ((,) <$> opTag <*> opInput))
           , (1, labelled "SeatRemoved" SeatRemoved <$> elements [seat, SeatId 2])
           , (4, (\(d, a) -> EventStep ("RunAction (" ++ d ++ ")") (RunAction a)) <$> (tag' >>= elements . defaultActions))
           ]
