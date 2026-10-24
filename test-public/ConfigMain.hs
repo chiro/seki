@@ -1,4 +1,4 @@
-module ConfigMain (configuredMain, customConfig, fullConfig, hookedConfig, mediaConfig, raiseVolume) where
+module ConfigMain (configuredMain, customConfig, fullConfig, hookedConfig, mediaConfig, raiseVolume, tolerantConfig) where
 
 import Seki
 
@@ -41,6 +41,9 @@ mediaConfig =
   additionalKeys
     def{startupHook = spawnOnce "dunst"}
     [(raiseVolume, spawn "pactl set-sink-volume @DEFAULT_SINK@ +5%")]
+
+tolerantConfig :: Config (ModifiedLayout Tolerant StdLayouts)
+tolerantConfig = def{layoutHook = tolerant (layoutHook def), keys = defaultKeys, manageHook = defaultManageHook, startupHook = pure ()}
 
 configuredMain :: IO ()
 configuredMain = seki customConfig

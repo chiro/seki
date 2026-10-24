@@ -3,7 +3,9 @@
 
 A layout places a workspace's windows in a rectangle with 'pureLayout' and
 answers messages with 'pureMessage'. Combine layouts with '(|||)' and switch
-between them with 'NextLayout' and 'FirstLayout'.
+between them with 'NextLayout' and 'FirstLayout'. A layout crops a client that
+commits another size to its tile; wrap it in 'tolerant' to show the
+committed size instead.
 -}
 module Seki.Core.Layout (
   -- * Messages
@@ -16,11 +18,18 @@ module Seki.Core.Layout (
   LayoutMessages (..),
 
   -- * Layouts
+  SizePolicy (..),
   LayoutClass (..),
   runLayout,
   Mirror (..),
   Choose,
   (|||),
+
+  -- * Layout modifiers
+  LayoutModifier (..),
+  ModifiedLayout (..),
+  Tolerant (..),
+  tolerant,
 ) where
 
 import Seki.Internal.Core.Layout
