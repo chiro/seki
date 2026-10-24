@@ -160,8 +160,8 @@ pointerOpTests =
         let (released, _) = drainCore idHook [OpInput seat op0 OpReleased] moved
         corePointerOp released @?= Nothing
         floatsOf released @?= Map.singleton w1 (FloatAt (box 32 12 496 596))
-    , testCase "a binding press with no motion leaves a tile tiled" $ do
-        let (st, _) = drainCore idHook (twoTiles ++ [StartOp (request Move FromBinding w1 tileBox), OpInput seat op0 OpReleased]) initial
+    , testCase "a binding press with no motion, whose release repeats a zero delta, leaves a tile tiled" $ do
+        let (st, _) = drainCore idHook (twoTiles ++ [StartOp (request Move FromBinding w1 tileBox), OpInput seat op0 (OpMoved 0 0), OpInput seat op0 OpReleased]) initial
         floatsOf st @?= Map.empty
         corePointerOp st @?= Nothing
         peekCurrent st @?= Just w1

@@ -220,8 +220,9 @@ syncFullscreen st = st{coreFullscreen = Set.intersection (coreFullscreen st) foc
 
 {- | Start an op unless one is running, the window is unmanaged, not shown,
 or fullscreen, or a client asks to move or resize a tiled window (M2-D05). A
-binding focuses the window. Nothing floats until the first delta, so a
-binding press with no motion leaves a tile tiled.
+binding focuses the window. Nothing floats until the first nonzero delta, so
+a binding press with no motion leaves a tile tiled, although river repeats a
+zero delta with the release (M2-D07).
 -}
 startPointerOp :: (Eq i) => OpRequest -> CoreState i l -> CoreState i l
 startPointerOp request st = case (corePointerOp st, reqShownBox request, coreWorkspaces st) of
@@ -244,6 +245,7 @@ began. Input for any other op, or with no river op, changes nothing.
 applyOpInput :: SeatId -> Maybe OpId -> OpInput -> CoreState i l -> CoreState i l
 applyOpInput seat running input st = case corePointerOp st of
   Just op | opSeat op == seat && running == Just (opId op) -> case input of
+    OpMoved 0 0 | not (opMoved op) -> st
     OpMoved dx dy ->
       (overWorkspaces (onStackSet (StackSet.float (opWindow op) (FloatAt (opBox op dx dy)))) st)
         { corePointerOp = Just op{opMoved = True}

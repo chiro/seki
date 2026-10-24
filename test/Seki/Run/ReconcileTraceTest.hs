@@ -819,7 +819,7 @@ testPointerMove = pointerTrace (pointerConfig SmallTile idHook) (96, 46) script 
     clicked <- ptManage t
     requests seat 4 clicked @?= [mempty]
     _ <- ptRender t
-    ptSend t [event seat 7 (pure ()), event (ptBinding t) 1 (pure ())]
+    ptSend t [event seat 6 (putInt 0 >> putInt 0), event seat 7 (pure ()), event (ptBinding t) 1 (pure ())]
     clickReleased <- ptManage t
     requests seat 5 clickReleased @?= [mempty]
     assertEqual "a mod+click with no motion leaves the tile tiled" [] (requests window 9 (clicked ++ clickReleased))
