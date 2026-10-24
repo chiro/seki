@@ -9,7 +9,7 @@ import Data.Set qualified as Set
 import Seki.Internal.Core.Event (CoreEvent (..), drainCore)
 import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), Rect, mkRect, mkSize, rectHeight, rectWidth, rectX, rectY)
 import Seki.Internal.Core.GeometryGen (genRatio, genRect)
-import Seki.Internal.Core.Layout (CLR (..), Choose (..), LayoutClass (..), Mirror (..), runLayout)
+import Seki.Internal.Core.Layout (CLR (..), Choose (..), LayoutClass (..), Mirror (..), SizePolicy (..), runLayout, tolerant, (|||))
 import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.Scene (DesiredScene (..), OutputArea (..), Placement (..), SceneStyle (..), defaultSceneStyle, planScene, stackWindows)
 import Seki.Internal.Core.StackSet (FloatGeom (..), OutputId (..), Screen (..), Stack (..), StackSet (..), WindowId (..), Workspace (..), integrate)
@@ -38,7 +38,7 @@ tests =
     "desired scene"
     [ testCase "Full selects only focus and insets outside borders" $ do
         let result = scene Full (Stack w2 [w1] [w3])
-        sceneWindows result @?= Map.fromList [(w1, Omitted), (w2, Placed content), (w3, Omitted), (w4, Omitted)]
+        sceneWindows result @?= Map.fromList [(w1, Omitted), (w2, Placed Crop content), (w3, Omitted), (w4, Omitted)]
         sceneFocus result @?= Just w2
         sceneStacking result @?= [w1, w3, w4, w2]
     , testCase "missing usable area and headless retain all omitted windows" $ do
@@ -86,7 +86,7 @@ tests =
                   style = defaultSceneStyle{sceneBorderWidth = fromIntegral border}
                   result = planScene style st areas Map.empty
                   tiles = Map.fromList [(w, tile) | s <- [first, second], Just area <- [Map.lookup (output s) areas], (w, tile) <- runLayout (workspace s) (outputUsable area)]
-                  placed = [(w, r) | (w, Placed r) <- Map.toList (sceneWindows result)]
+                  placed = [(w, r) | (w, Placed _ r) <- Map.toList (sceneWindows result)]
                   containsBorders (w, r) = case Map.lookup w tiles of
                     Nothing -> False
                     Just tile ->
@@ -111,7 +111,7 @@ tests =
                     ]
     , testCase "a custom layout omitting windows hides them" $ do
         let result = scene MasterOnly (Stack w2 [w1] [w3])
-        sceneWindows result @?= Map.fromList [(w1, Placed content), (w2, Omitted), (w3, Omitted), (w4, Omitted)]
+        sceneWindows result @?= Map.fromList [(w1, Placed Crop content), (w2, Omitted), (w3, Omitted), (w4, Omitted)]
         sceneFocus result @?= Nothing
         sceneStacking result @?= [w2, w3, w4, w1]
     , testCase "focusing a parent raises its child and grandchild above unrelated windows" $ do
@@ -133,10 +133,20 @@ tests =
           let tall = Tall 1 (1 / 10) (1 / 2)
               st = state (Choose side tall (Mirror tall)) (Stack w1 [] [w2, w3])
               result = planScene defaultSceneStyle{sceneBorderWidth = 0} st (Map.singleton (OutputId 1) (whole (rectangle 1 1))) Map.empty
-          sceneWindows result @?= Map.fromList [(w1, Omitted), (w2, Omitted), (w3, Placed (rectangle 1 1)), (w4, Omitted)]
+          sceneWindows result @?= Map.fromList [(w1, Omitted), (w2, Omitted), (w3, Placed Crop (rectangle 1 1)), (w4, Omitted)]
           sceneFocus result @?= Nothing
     , floatTests
     , fullscreenTests
+    , testCase "M2-D04: each workspace's tiles take its layout's size policy, and floats and fullscreen windows take none" $ do
+        let layouts = Full ||| tolerant Full
+            w5 = WindowId 5
+            st =
+              (fromWorkspaces (AttachedState (StackSet (Screen (Workspace (1 :: Int) layouts (Just (Stack w1 [] [w2, w3]))) (OutputId 1)) [Screen (Workspace 2 (Choose CR Full (tolerant Full)) (Just (Stack w4 [] [w5]))) (OutputId 2)] [] (Map.singleton w2 (FloatAt (OutputRect (rectAt 10 10 100 100))))) []))
+                { coreFullscreen = Set.singleton w5
+                }
+            areas = Map.fromList [(OutputId 1, whole (rectAt 0 0 800 600)), (OutputId 2, secondOutput)]
+        sceneWindows (planScene defaultSceneStyle st areas Map.empty)
+          @?= Map.fromList [(w1, Placed Crop (rectAt 2 2 796 596)), (w2, Floating (rectAt 10 10 100 100)), (w3, Omitted), (w4, Placed Tolerate (rectAt 802 32 796 566)), (w5, Fullscreen (OutputId 2))]
     ]
  where
   content = either (error . show) id (mkSize 97 77 >>= mkRect (Point (-98) 22))
@@ -165,7 +175,7 @@ floatTests =
           @?= Just (Floating (rectAt 830 40 200 100))
     , testCase "a float leaves the layout, which tiles the rest of the stack in the usable area" $
         sceneWindows (floatScene Full (Stack w2 [w1] [w3]) [(w2, FloatAt (OutputRect (rectAt 30 40 200 100)))] [w2] Map.empty)
-          @?= Map.fromList [(w1, Omitted), (w2, Floating (rectAt 830 40 200 100)), (w3, Placed (rectAt 802 32 796 566))]
+          @?= Map.fromList [(w1, Omitted), (w2, Floating (rectAt 830 40 200 100)), (w3, Placed Crop (rectAt 802 32 796 566))]
     , testCase "a float with no stored box is centered on the whole output inside its border" $
         Map.lookup w2 (sceneWindows (floatScene Full (Stack w2 [w1] []) [(w2, ClientSized)] [w2] Map.empty))
           @?= Just (Centered (rectAt 802 2 796 596))
@@ -207,7 +217,7 @@ floatTests =
                 b = fromIntegral border
                 outer r = toInteger (rectX r) - b >= toInteger (rectX bounds) && toInteger (rectY r) - b >= toInteger (rectY bounds) && toInteger (rectX r) + toInteger (rectWidth r) + b <= toInteger (rectX bounds) + toInteger (rectWidth bounds) && toInteger (rectY r) + toInteger (rectHeight r) + b <= toInteger (rectY bounds) + toInteger (rectHeight bounds)
                 check (w, p) = case p of
-                  Placed r -> counterexample (show w ++ " floats, or the layout saw a float") (property (w `notElem` floated && toInteger (rectHeight r) + 2 * b == 100 * toInteger (4 - length floated)))
+                  Placed _ r -> counterexample (show w ++ " floats, or the layout saw a float") (property (w `notElem` floated && toInteger (rectHeight r) + 2 * b == 100 * toInteger (4 - length floated)))
                   Floating r -> property (w `elem` floated && outer r)
                   Centered r -> property (w `elem` floated && outer r)
                   Fullscreen _ -> counterexample (show w ++ " is fullscreen") (property False)
@@ -223,19 +233,19 @@ fullscreenTests =
     [ testCase "M2-D03: a fullscreen tile keeps its slot and covers its workspace's output above both tiers" $ do
         let st = (floatState (Tall 1 0.03 0.5) (Stack w2 [w1] [w3]) [(w3, FloatAt (OutputRect (rectAt 10 10 100 100)))] [w3]){coreFullscreen = Set.singleton w2}
             result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) secondOutput) Map.empty
-        sceneWindows result @?= Map.fromList [(w1, Placed (rectAt 802 32 396 566)), (w2, Fullscreen (OutputId 1)), (w3, Floating (rectAt 810 10 100 100))]
+        sceneWindows result @?= Map.fromList [(w1, Placed Crop (rectAt 802 32 396 566)), (w2, Fullscreen (OutputId 1)), (w3, Floating (rectAt 810 10 100 100))]
         sceneFocus result @?= Just w2
         sceneStacking result @?= [w1, w3, w2]
     , testCase "a fullscreen float keeps its float state and covers its output" $ do
         let st = (floatState Full (Stack w3 [w1] []) [(w3, FloatAt (OutputRect (rectAt 10 10 100 100)))] [w3]){coreFullscreen = Set.singleton w3}
             result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) secondOutput) Map.empty
-        sceneWindows result @?= Map.fromList [(w1, Placed (rectAt 802 32 796 566)), (w3, Fullscreen (OutputId 1))]
+        sceneWindows result @?= Map.fromList [(w1, Placed Crop (rectAt 802 32 796 566)), (w3, Fullscreen (OutputId 1))]
         sceneStacking result @?= [w1, w3]
     , testCase "a hidden workspace's fullscreen window stays fullscreen and covers no output" $ do
         let st = (state Full (Stack w1 [] [])){coreFullscreen = Set.singleton w4}
             result = planScene defaultSceneStyle st (Map.singleton (OutputId 1) secondOutput) Map.empty
         Map.lookup w4 (sceneWindows result) @?= Just HiddenFullscreen
-        Map.lookup w1 (sceneWindows result) @?= Just (Placed (rectAt 802 32 796 566))
+        Map.lookup w1 (sceneWindows result) @?= Just (Placed Crop (rectAt 802 32 796 566))
         sceneStacking result @?= [w4, w1]
     , testCase "fullscreen windows stack above the tiled and floating tiers" $
         stackWindows [w1, w2, w3, w4] [w3] [w1] [w1, w2, w3, w4] (Just w2) Map.empty

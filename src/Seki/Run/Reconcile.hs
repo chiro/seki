@@ -292,7 +292,7 @@ lookupWindow inventory (WindowId w) = mkObjectId w >>= (`lookupRiverWindow` inve
 proposalSize :: Placement -> Maybe Size
 proposalSize = \case
   Omitted -> Nothing
-  Placed r -> Just (rectSize r)
+  Placed _ r -> Just (rectSize r)
   Floating r -> Just (rectSize r)
   Centered _ -> either (const Nothing) Just (mkSize 0 0)
   Fullscreen _ -> Nothing
@@ -301,7 +301,7 @@ proposalSize = \case
 tiledEdges :: Placement -> River.RiverWindowV1EdgesFlags -> River.RiverWindowV1EdgesFlags
 tiledEdges placement current = case placement of
   Omitted -> current
-  Placed _ -> River.RiverWindowV1EdgesFlags 15
+  Placed _ _ -> River.RiverWindowV1EdgesFlags 15
   Floating _ -> River.RiverWindowV1EdgesFlagsNone
   Centered _ -> River.RiverWindowV1EdgesFlagsNone
   Fullscreen _ -> current
@@ -310,7 +310,7 @@ tiledEdges placement current = case placement of
 topLeft :: Placement -> Size -> Maybe Point
 topLeft placement size = case placement of
   Omitted -> Nothing
-  Placed r -> Just (rectOrigin r)
+  Placed _ r -> Just (rectOrigin r)
   Floating r -> Just (rectOrigin r)
   Fullscreen _ -> Nothing
   HiddenFullscreen -> Nothing

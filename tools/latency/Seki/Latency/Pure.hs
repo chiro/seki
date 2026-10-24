@@ -115,7 +115,7 @@ scene (DesiredScene ws order raised stacking focus out) =
     , optional output out
     ]
  where
-  placement Omitted = 0; placement (Placed r) = mix 1 (rect r); placement (Floating r) = mix 2 (rect r); placement (Centered r) = mix 3 (rect r); placement (Fullscreen o) = mix 4 (output o); placement HiddenFullscreen = 5
+  placement Omitted = 0; placement (Placed _ r) = mix 1 (rect r); placement (Floating r) = mix 2 (rect r); placement (Centered r) = mix 3 (rect r); placement (Fullscreen o) = mix 4 (output o); placement HiddenFullscreen = 5
 
 forceResult :: CoreState String BenchLayout -> [Intent] -> DesiredScene -> Word64
 forceResult st intents desired = many id [state st, many intent intents, scene desired]
@@ -135,7 +135,7 @@ validateResult count st desired = case coreWorkspaces st of
  where
   expected = [S.WindowId (fromIntegral i) | i <- [1 .. count]]
   validPlacement Omitted = True
-  validPlacement (Placed r) = inScreen r
+  validPlacement (Placed _ r) = inScreen r
   validPlacement (Floating r) = inScreen r
   validPlacement (Centered r) = inScreen r
   validPlacement (Fullscreen _) = True

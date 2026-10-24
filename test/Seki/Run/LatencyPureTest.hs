@@ -3,6 +3,7 @@ module Seki.Run.LatencyPureTest (tests) where
 import Control.Exception (ErrorCall, evaluate, try)
 import Data.Map.Strict qualified as Map
 import Seki.Internal.Core.Action (Intent (..))
+import Seki.Internal.Core.Layout (SizePolicy (..))
 import Seki.Internal.Core.Scene
 import Seki.Internal.Core.StackSet qualified as S
 import Seki.Internal.Core.State
@@ -15,7 +16,7 @@ tests =
   testGroup
     "pure latency forcing"
     [ testCase "consumes lazy intent payload" $ throws (forceResult initial [Spawn (error "unforced command")] emptyScene)
-    , testCase "consumes scene placement values" $ throws (forceResult initial [] emptyScene{sceneWindows = Map.singleton (S.WindowId 1) (Placed (error "unforced rectangle"))})
+    , testCase "consumes scene placement values" $ throws (forceResult initial [] emptyScene{sceneWindows = Map.singleton (S.WindowId 1) (Placed Crop (error "unforced rectangle"))})
     , testCase "consumes complete scene ordering" $ throws (forceResult initial [] emptyScene{sceneStacking = [S.WindowId 1, error "unforced tail"]})
     , testCase "consumes hidden workspace tags" $ case coreWorkspaces initial of
         AttachedState ss os -> throws (forceResult (fromWorkspaces (AttachedState ss{S.hidden = [S.Workspace (error "unforced tag") layout Nothing]} os)) [] emptyScene)

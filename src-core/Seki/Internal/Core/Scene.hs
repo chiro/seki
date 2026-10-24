@@ -31,15 +31,16 @@ import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Word (Word32)
 import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), Rect, mkRect, mkSize, rectHeight, rectWidth, rectX, rectY)
-import Seki.Internal.Core.Layout (LayoutClass, runLayout)
+import Seki.Internal.Core.Layout (LayoutClass (..), SizePolicy, runLayout)
 import Seki.Internal.Core.StackSet (FloatGeom (..), OutputId, Screen (..), StackSet (..), WindowId, Workspace (..), integrate', peek, screens)
 import Seki.Internal.Core.StackSet qualified as StackSet
 import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..))
 
 data Placement
   = Omitted
-  | -- | A tile's content box, inset from the layout's tile by the border.
-    Placed Rect
+  | -- | A tile's content box, inset from the layout's tile by the border, and
+    -- what to show when the client commits another size.
+    Placed SizePolicy Rect
   | -- | A float's stored content box moved onto its output and clamped inside it.
     Floating Rect
   | -- | A float with no stored box: center whatever size the client commits
@@ -56,7 +57,7 @@ placementShown :: Placement -> Bool
 placementShown placement = case placement of
   Omitted -> False
   HiddenFullscreen -> False
-  Placed _ -> True
+  Placed _ _ -> True
   Floating _ -> True
   Centered _ -> True
   Fullscreen _ -> True
@@ -107,7 +108,7 @@ planScene style st areas parents = DesiredScene placements stable raiseOrder ord
   placements = Map.union (Map.fromList placed) (Map.fromList [(w, if w `Set.member` coreFullscreen st then HiddenFullscreen else Omitted) | w <- stable])
   placed =
     concat
-      [ [(w, Placed r) | (w, tile) <- runLayout tiled (outputUsable area), Just r <- [inset tile]]
+      [ [(w, Placed (sizePolicy (layout tiled)) r) | (w, tile) <- runLayout tiled (outputUsable area), Just r <- [inset tile]]
         ++ [(w, p) | w <- integrate' (stack (workspace s)), Just g <- [Map.lookup w floats], Just p <- [floatPlacement (outputBounds area) g]]
         ++ [(w, Fullscreen (output s)) | w <- integrate' (stack (workspace s)), w `Set.member` coreFullscreen st]
       | s <- assigned
