@@ -5,6 +5,7 @@ module Seki.Run.ReconcileTest (tests) where
 import Control.Exception (onException)
 import Data.Set qualified as Set
 import Seki.Internal.Core.Action (sendMessage, windows)
+import Seki.Internal.Core.Geometry (mkSize)
 import Seki.Internal.Core.Layout (ChangeLayout (..), (|||))
 import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.Scene (defaultSceneStyle)
@@ -13,8 +14,10 @@ import Seki.Internal.Core.State (CoreState (..))
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Run.Inventory (RiverDimensionsHint (..))
 import Seki.Run.MockRiver (FrameReader, callbackDoneFrame, encodedFrame, expectMockSuccess, expectRight, newFrameReader, receiveExpectedRequest, receiveKeyBindingRequest, receiveLayerShellOutputRequest, receiveLayerShellSeatRequest, receiveNewIdRequest, receiveRuntimeBinds, receiveStartupRequests, registryGlobalFrame, requireObjectId, runMock, sendFrames, withRuntimePair)
 import Seki.Run.Policy (PolicyConfig (..), newPolicy, policyRuntimeHandlers, readPolicyState)
+import Seki.Run.Reconcile (clampToHint)
 import Seki.Run.Runtime (openRiverSessionAt, runRiverSession)
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Arguments (putInt, putNewId, putNullableObject, putObject, putUint)
@@ -32,7 +35,23 @@ tests =
     , testCase "retains omitted dimensions across layouts and prunes a pending close" testLayouts
     , testCase "respects layer focus and recovers on every focus_none report" testLayerFocus
     , testCase "flags a single Tall window tiled on every edge" testSingleTall
+    , testGroup
+        "Tolerate proposals"
+        [ testCase "no hint, or a hint of zeros, leaves the tile size" $ do
+            clampToHint Nothing (size 300 200) @?= size 300 200
+            clampToHint (Just (RiverDimensionsHint 0 0 0 0)) (size 300 200) @?= size 300 200
+        , testCase "each axis grows to its minimum" $
+            clampToHint (Just (RiverDimensionsHint 400 0 0 0)) (size 300 200) @?= size 400 200
+        , testCase "each axis shrinks to a nonzero maximum" $
+            clampToHint (Just (RiverDimensionsHint 0 0 0 150)) (size 300 200) @?= size 300 150
+        , testCase "a size inside the bounds stays" $
+            clampToHint (Just (RiverDimensionsHint 100 100 500 500)) (size 300 200) @?= size 300 200
+        , testCase "both bounds apply on different axes at once" $
+            clampToHint (Just (RiverDimensionsHint 350 10 600 120)) (size 300 200) @?= size 350 120
+        ]
     ]
+ where
+  size w h = either (error . show) id (mkSize w h)
 
 testSettlement :: Assertion
 testSettlement = withRuntimePair $ \target peer -> do

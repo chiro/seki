@@ -27,6 +27,7 @@ module Seki.Run.Reconcile (
   emptyReconcileState,
   reconcileManage,
   reconcileRender,
+  clampToHint,
 ) where
 
 import Control.Monad (unless, when)
@@ -38,7 +39,7 @@ import Seki.Internal.Core.Geometry (Point (..), Rect, Size, mkRect, mkSize, rect
 import Seki.Internal.Core.Scene (BorderColor (..), DesiredScene (..), Placement (..), SceneStyle (..), placementShown, stackWindows)
 import Seki.Internal.Core.StackSet (OutputId (..), WindowId (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
-import Seki.Run.Inventory (RiverInventory, RiverOutputState (..), RiverSize (..), RiverWindowState (..), lookupRiverOutput, lookupRiverWindow, riverInventoryWindows)
+import Seki.Run.Inventory (RiverDimensionsHint (..), RiverInventory, RiverOutputState (..), RiverSize (..), RiverWindowState (..), lookupRiverOutput, lookupRiverWindow, riverInventoryWindows)
 import Seki.Run.Phase (ManageM, RenderM, clearFocus, exitWindowFullscreen, focusWindow, fullscreenWindow, hideWindow, informWindowFullscreen, informWindowNotFullscreen, placeNodeTop, proposeWindowDimensions, setDefaultLayerShellOutput, setNodePosition, setWindowBorders, setWindowCapabilities, setWindowTiled, showWindow, useWindowSsd)
 import Seki.Run.Runtime (RenderOutcome (..), RiverLayerFocus (..), RiverRuntimeSnapshot (..), RiverSeatBindings (..))
 import Seki.Wire.Connection.ObjectTable (Object, objectId)
@@ -297,6 +298,17 @@ proposalSize = \case
   Centered _ -> either (const Nothing) Just (mkSize 0 0)
   Fullscreen _ -> Nothing
   HiddenFullscreen -> Nothing
+
+{- | Clamp each axis to at least the hint's minimum and at most its maximum,
+where a zero bound is no preference.
+-}
+clampToHint :: Maybe RiverDimensionsHint -> Size -> Size
+clampToHint hint size = case hint of
+  Nothing -> size
+  Just (RiverDimensionsHint minWidth minHeight maxWidth maxHeight) ->
+    either (const size) id (mkSize (axis minWidth maxWidth (sizeWidth size)) (axis minHeight maxHeight (sizeHeight size)))
+ where
+  axis lo hi = (if hi > 0 then min hi else id) . max lo
 
 tiledEdges :: Placement -> River.RiverWindowV1EdgesFlags -> River.RiverWindowV1EdgesFlags
 tiledEdges placement current = case placement of
