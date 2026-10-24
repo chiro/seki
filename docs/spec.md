@@ -106,8 +106,9 @@ data Stack a       = Stack { focus :: a, up :: [a], down :: [a] }
 The signatures below sketch the target stages, not the exported M1 API.
 M1's private `DesiredScene` stores placement selections, ordering, and eligible
 focus/output IDs. The reconciler derives visibility, decorations, and borders
-from the scene, style, and inventory. M1 accepts actual client dimensions at the
-desired top-left; per-layout Crop/Tolerate remains an M2 target. See the
+from the scene, style, and inventory. A tile shows the client's actual dimensions
+at the desired top-left, cropped or tolerated by its layout's size policy
+(M2-D04). See the
 [implemented scene contract](m1-plan.md#35-desired-scene).
 
 Split the core into three stages. ① and ② are pure; only ③ does IO.
@@ -125,7 +126,7 @@ reconcile :: DesiredScene -> ActualState -> Protocol ()      -- ③ apply the di
 - Handling of the mismatch between proposed and actual dimensions is **selectable per layout**. [DECIDED: option (c)]
   - `Tolerate`: place the window at its actual size and allow gaps (equivalent to xmonad honouring resize hints). [DECIDED] Proposals are clamped to the min/max hints, the committed size is shown at the tile's top-left, and nothing is clipped, so an oversized client may overlap its neighbours (M2-D04).
   - `Crop`: maintain strict tiling using the protocol's window cropping. [DECIDED] The content clip box equals the tile's content box on every render, including while a proposal is pending (M2-D04).
-  - The default is `Crop` (favouring visual consistency as a tiling WM). Switch with the layout modifier `tolerant :: l -> ModifiedLayout Tolerate l` (an API isomorphic to xmonad's `layoutHints`).
+  - The default is `Crop` (favouring visual consistency as a tiling WM). Switch with the layout modifier `tolerant :: l -> ModifiedLayout Tolerant l` (an API isomorphic to xmonad's `layoutHints`; the modifier type is `Tolerant` because the policy constructor already takes the name `Tolerate`). Floats and fullscreen windows take no policy.
   - [RESOLVED] Crop is implemented with set_content_clip_box (v3). It clips only the content, using a rectangle relative to the window's top-left; compositor-drawn borders are drawn around the intersected region after clipping, so the appearance does not break. It is ignored while fullscreen, but fullscreen is compositor-managed so this does not matter.
 - [RESOLVED, IMPORTANT] The dimensions event is **not guaranteed to come back in the render sequence immediately following** a propose (slow-to-respond clients). In that case the server sends it in some future render sequence. The reconciler therefore keeps a set of "proposed but not yet finalized" windows and calls render_finish with a provisional placement (or hidden) until they settle. Because the protocol guarantees a new window is not displayed until its first dimensions are settled, there is no flicker on initial display.
 
@@ -136,10 +137,11 @@ class Show l => LayoutClass l where
   pureLayout  :: l -> Rect -> Stack WindowId -> [(WindowId, Rect)]  -- default: focused window, whole rect
   pureMessage :: l -> SomeMessage -> Maybe l    -- Shrink / Expand / IncMasterN / NextLayout ...
   description :: l -> String                    -- default: show
+  sizePolicy  :: l -> SizePolicy                -- default: Crop
 ```
 
-- The core is pure, so xmonad's `doLayout`, `emptyLayout`, and `handleMessage` collapse into `pureLayout` and `pureMessage`. `sizePolicy` arrives with `Crop` / `Tolerate` (section 3.3) in M2.
-- The algebra of `Choose` (`|||`) and `Mirror` is ported from xmonad in M1; `ModifiedLayout` follows later.
+- The core is pure, so xmonad's `doLayout`, `emptyLayout`, and `handleMessage` collapse into `pureLayout` and `pureMessage`. `sizePolicy :: l -> SizePolicy` returns `Crop` or `Tolerate` (section 3.3) and defaults to `Crop`. `Mirror` keeps its inner layout's policy and `Choose` the selected layout's.
+- The algebra of `Choose` (`|||`) and `Mirror` is ported from xmonad in M1. M2 adds `ModifiedLayout m l`, which keeps `l`'s placements, description, and messages; its `LayoutModifier` class has one method, `modifySizePolicy`, so far.
 - [DECIDED] `pureLayout` may omit windows of the stack. Omitted windows are hidden (3.1). `Full` returns only the focused window at the whole rectangle, as in xmonad. A returned rectangle with zero width or height counts as omitted (3.3).
 - [DECIDED] A returned rectangle is a tile that includes the border. The WM proposes content inset by the border width on all four sides, because river draws borders outside the content box. A tile no larger than twice the border width in either dimension leaves zero content and counts as omitted. `Full` keeps the border (M1-D07).
 - Layouts bundled in v1: `Tall`, `Mirror Tall`, `Full`. Anything else arrives incrementally as the equivalent of contrib.
@@ -317,15 +319,15 @@ The current public library exposes six modules:
 | `Seki` | Configuration, actions, defaults, and the `seki` entry point |
 | `Seki.Core.Geometry` | Checked geometry |
 | `Seki.Core.StackSet` | The pure data structure and operations from 3.1 |
-| `Seki.Core.Layout` | `LayoutClass`, messages, `\|\|\|`, and `Mirror` |
+| `Seki.Core.Layout` | `LayoutClass`, messages, `\|\|\|`, `Mirror`, `SizePolicy`, `ModifiedLayout`, and `tolerant` |
 | `Seki.Layout.Full` | `Full` |
 | `Seki.Layout.Tall` | `Tall` |
 
 Their public facades live in `src-public`. `Seki.Internal.Core.State`,
 `Action`, `Event`, and `Scene` live in the private `seki-core` component.
 `Seki.Run.*`, `Seki.Wire.*`, and generated `Seki.Protocol.*` live in the
-private `seki-wire` component. `ModifiedLayout`, hooks, and contrib-style
-extensions remain planned.
+private `seki-wire` component. Further layout modifiers, hooks, and
+contrib-style extensions remain planned.
 
 The target-v1 configuration record in full:
 
@@ -344,7 +346,6 @@ data Config l = Config
   , borders         :: BorderConfig        -- width, RGBA for focused / unfocused / urgent
   , bindingsUseFixedLayout :: Bool         -- layout_override from 3.8 (default True)
   , inputRules      :: [(DevicePattern, InputConfig)]  -- device settings from 3.9
-  , sizePolicyDefault :: SizePolicy        -- default Crop | Tolerate from 3.3
   }
 
 instance Default (Config StdLayouts)  -- def supplies the standard configuration
