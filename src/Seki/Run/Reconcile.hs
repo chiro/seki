@@ -31,11 +31,13 @@ module Seki.Run.Reconcile (
 ) where
 
 import Control.Monad (unless, when)
+import Data.Either (fromRight)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
 import Seki.Internal.Core.Geometry (Point (..), Rect, Size, mkRect, mkSize, rectHeight, rectOrigin, rectSize, rectWidth, rectX, rectY, sizeHeight, sizeWidth)
+import Seki.Internal.Core.Layout (SizePolicy (..))
 import Seki.Internal.Core.Scene (BorderColor (..), DesiredScene (..), Placement (..), SceneStyle (..), placementShown, stackWindows)
 import Seki.Internal.Core.StackSet (OutputId (..), WindowId (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
@@ -112,7 +114,7 @@ reconcileManage reclaim scene snapshot (ReconcileState old oldSeats stacking) = 
   windows = riverInventoryWindows inventory
   desired w = Map.findWithDefault Omitted (windowIdOf w) (sceneWindows scene)
   needsProposal w a = case (desired w, proposal a) of
-    (placement, NoProposal) | Just size <- proposalSize placement -> settledRequest a /= Just size
+    (placement, NoProposal) | Just size <- proposalSize w placement -> settledRequest a /= Just size
     _ -> False
   proposed = Map.fromList [(windowIdOf w, ()) | w <- windows, needsProposal w (states Map.! windowIdOf w)]
   fullscreenGoal w = case desired w of
@@ -126,7 +128,7 @@ reconcileManage reclaim scene snapshot (ReconcileState old oldSeats stacking) = 
           a
             { initialized = True
             , tiled = tiledEdges (desired w) (tiled a)
-            , proposal = case proposalSize (desired w) of
+            , proposal = case proposalSize w (desired w) of
                 Just size | Map.member (windowIdOf w) proposed -> AwaitingDimensions size (riverWindowDimensionsRevision w)
                 _ -> proposal a
             , fullscreen = fst (transitions Map.! windowIdOf w)
@@ -166,7 +168,7 @@ reconcileManage reclaim scene snapshot (ReconcileState old oldSeats stacking) = 
     let current = tiled (states Map.! windowIdOf w)
         edges = tiledEdges (desired w) current
      in when (edges /= current) (setWindowTiled (riverWindowObject w) edges)
-  propose w = case proposalSize (desired w) of
+  propose w = case proposalSize w (desired w) of
     Just size
       | Map.member (windowIdOf w) proposed ->
           proposeWindowDimensions (riverWindowObject w) (sizeWidth size) (sizeHeight size)
@@ -234,7 +236,7 @@ reconcileRender style scene snapshot (ReconcileState old seats oldStacking) = (R
   superseded =
     any
       ( \w -> case (Map.lookup (windowIdOf w) (sceneWindows scene), proposal (states Map.! windowIdOf w)) of
-          (Just placement, NoProposal) | Just size <- proposalSize placement -> settledRequest (states Map.! windowIdOf w) /= Just size
+          (Just placement, NoProposal) | Just size <- proposalSize w placement -> settledRequest (states Map.! windowIdOf w) /= Just size
           _ -> False
       )
       windows
@@ -289,11 +291,14 @@ fullscreenTransition window applied goal = case (applied, goal) of
 lookupWindow :: RiverInventory -> WindowId -> Maybe RiverWindowState
 lookupWindow inventory (WindowId w) = mkObjectId w >>= (`lookupRiverWindow` inventory)
 
--- | The size to propose: a box's size, or zero by zero so the client picks its own.
-proposalSize :: Placement -> Maybe Size
-proposalSize = \case
+{- | The size to propose: a box's size, a 'Tolerate' tile's size clamped to the
+window's hint, or zero by zero so the client picks its own.
+-}
+proposalSize :: RiverWindowState -> Placement -> Maybe Size
+proposalSize window = \case
   Omitted -> Nothing
-  Placed _ r -> Just (rectSize r)
+  Placed Crop r -> Just (rectSize r)
+  Placed Tolerate r -> Just (clampToHint (riverWindowDimensionsHint window) (rectSize r))
   Floating r -> Just (rectSize r)
   Centered _ -> either (const Nothing) Just (mkSize 0 0)
   Fullscreen _ -> Nothing
@@ -306,7 +311,7 @@ clampToHint :: Maybe RiverDimensionsHint -> Size -> Size
 clampToHint hint size = case hint of
   Nothing -> size
   Just (RiverDimensionsHint minWidth minHeight maxWidth maxHeight) ->
-    either (const size) id (mkSize (axis minWidth maxWidth (sizeWidth size)) (axis minHeight maxHeight (sizeHeight size)))
+    fromRight size (mkSize (axis minWidth maxWidth (sizeWidth size)) (axis minHeight maxHeight (sizeHeight size)))
  where
   axis lo hi = (if hi > 0 then min hi else id) . max lo
 

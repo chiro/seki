@@ -1,16 +1,18 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Seki.Run.ReconcileTraceTest (tests) where
 
+import Control.Applicative ((<|>))
 import Control.Exception (onException)
-import Control.Monad (foldM, forM, forM_, when)
+import Control.Monad (foldM_, forM, forM_, replicateM, unless, when)
 import Data.ByteString (ByteString)
 import Data.Int (Int32)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, isNothing)
 import Data.Set qualified as Set
 import Seki.Internal.Core.Action (float, windows, withFocused)
-import Seki.Internal.Core.Layout (LayoutClass, Mirror (..))
+import Seki.Internal.Core.Layout (LayoutClass (..), Mirror (..), SizePolicy (..), tolerant)
 import Seki.Internal.Core.ManageHook (appId, doFloat, doShift, idHook, isDialog, (-->), (=?))
 import Seki.Internal.Core.Scene (defaultSceneStyle)
 import Seki.Internal.Core.StackSet (FloatGeom (..), StackSet (..), WindowId (..), focusDown, index, peek, view)
@@ -22,7 +24,7 @@ import Seki.Run.MockRiver (FrameReader, callbackDoneFrame, encodedFrame, encoded
 import Seki.Run.Policy (PolicyConfig (..), newPolicy, policyRuntimeHandlers, readPolicyState)
 import Seki.Run.Runtime (openRiverSessionAt, runRiverSession)
 import Seki.Run.Xkb (RiverKeyBinding (..))
-import Seki.Wire.Arguments (ArgumentEncoder, putInt, putNewId, putNullableObject, putNullableString, putObject, putUint)
+import Seki.Wire.Arguments (ArgumentEncoder, DecodeResult (..), getInt, putInt, putNewId, putNullableObject, putNullableString, putObject, putUint, runCompleteArgumentDecoder)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
 import Seki.Wire.Transport (Transport, closeTransport)
 import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..))
@@ -35,11 +37,15 @@ tests =
   testGroup
     "reconciliation traces"
     [ traceProperty "generated area and dimensions traces preserve proposal, visibility, and focus invariants" Full $ \width ->
-        [content width 100]
-    , traceProperty "generated Tall traces never propose or show a degenerate tile" (Tall 1 (1 / 10) (1 / 2)) $ \width ->
-        [content (width - width `div` 2) 100, content (width `div` 2) 100]
-    , traceProperty "generated Mirror Tall traces never propose or show a degenerate tile" (Mirror (Tall 1 (1 / 10) (1 / 2))) $ \width ->
-        [content width 50, content width 50]
+        [content 0 0 width 100]
+    , traceProperty "generated Tall traces never propose or show a degenerate tile" tall $ \width ->
+        [content (width `div` 2) 0 (width - width `div` 2) 100, content 0 0 (width `div` 2) 100]
+    , traceProperty "generated Mirror Tall traces never propose or show a degenerate tile" (Mirror tall) $ \width ->
+        [content 0 50 width 50, content 0 0 width 50]
+    , traceProperty "M2-D04: generated Tolerate traces never clip, keep the committed size, and propose within the hints" (tolerant tall) $ \width ->
+        [content (width `div` 2) 0 (width - width `div` 2) 100, content 0 0 (width `div` 2) 100]
+    , traceProperty "M2-D04: generated Tolerate Full traces never clip, keep the committed size, and propose within the hints" (tolerant Full) $ \width ->
+        [content 0 0 width 100]
     , testCase "focus raises a shown family and new windows retain nonexclusive layer focus" testFamilies
     , testCase "M1-D06 superseded: Full keeps a floating dialog centered above its refocused parent" testChildUnderFull
     , testCase "Full shows only a smaller focused commit and focus cycling hides it" testFullSelection
@@ -52,71 +58,133 @@ tests =
     , testCase "a hidden window that leaves the fullscreen set exits fullscreen at once" testFullscreenLostWhileHidden
     ]
  where
-  content width height = if width > 4 && height > 4 then Just (width - 4, height - 4) else Nothing
+  tall = Tall 1 (1 / 10) (1 / 2)
+  content x y width height = if width > 4 && height > 4 then Just (Tile (x + 2, y + 2) (width - 4, height - 4)) else Nothing
 
-traceProperty :: (LayoutClass l) => TestName -> l -> (Int32 -> [Maybe (Int32, Int32)]) -> TestTree
-traceProperty name layout desiredSizes =
+-- | A tile's content box: its top-left and its size.
+data Tile = Tile (Int32, Int32) (Int32, Int32)
+
+-- | Minimum width and height, then maximum width and height, zero meaning no preference.
+type Hint = (Int32, Int32, Int32, Int32)
+
+data Step = Step
+  { stepWidth :: Int32
+  , stepAcknowledge :: Bool
+  , stepCommitDelta :: (Int32, Int32)
+  , stepHints :: [Maybe Hint]
+  }
+  deriving (Show)
+
+traceProperty :: (LayoutClass l) => TestName -> l -> (Int32 -> [Maybe Tile]) -> TestTree
+traceProperty name layout tiles =
   testProperty name $
     withMaxSuccess 30 $
-      forAll (vectorOf 16 ((,) <$> elements [0, 4, 9, 50, 100, 150] <*> arbitrary)) $ \steps ->
-        ioProperty (testTrace layout desiredSizes steps >> pure True)
+      forAll (vectorOf 16 step) $ \steps ->
+        ioProperty (testTrace layout tiles steps >> pure True)
+ where
+  step =
+    Step
+      <$> elements [0, 4, 9, 50, 100, 150]
+      <*> arbitrary
+      <*> elements [(1, 0), (0, 0), (-3, 0), (40, 30), (0, -5)]
+      <*> vectorOf 2 (elements [Nothing, Just (0, 0, 0, 0), Just (120, 0, 0, 0), Just (0, 0, 60, 40), Just (30, 60, 80, 70)])
 
 data Model = Model
   { pendingSize :: Maybe (Int32, Int32)
   , settledSize :: Maybe (Int32, Int32)
   , shown :: Maybe Bool
+  , hint :: Maybe Hint
+  , committed :: Maybe (Int32, Int32)
+  , position :: Maybe (Int32, Int32)
+  , clip :: Maybe (Int32, Int32)
+  -- ^ The content clip box in effect, 'Nothing' while disabled as river starts.
   }
 
-testTrace :: (LayoutClass l) => l -> (Int32 -> [Maybe (Int32, Int32)]) -> [(Int32, Bool)] -> Assertion
-testTrace layout desiredSizes steps = withRuntimePair $ \target peer -> do
-  windows <- mapM requireObjectId (take (length (desiredSizes 0)) [0xff000090, 0xff000093])
+testTrace :: (LayoutClass l) => l -> (Int32 -> [Maybe Tile]) -> [Step] -> Assertion
+testTrace layout tiles steps = withRuntimePair $ \target peer -> do
+  traced <- mapM requireObjectId (take (length (tiles 0)) [0xff000090, 0xff000093])
   output <- requireObjectId 0xff000091
   seat <- requireObjectId 0xff000092
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader
     (manager, _, layerShell) <- handshake reader peer
-    sendFrames peer (map (\w -> event manager 6 (putNewId w)) windows ++ [event manager 7 (putNewId output), event manager 8 (putNewId seat)])
-    mapM_ (\w -> receiveNewIdRequest reader peer w (Opcode 2)) windows
+    sendFrames peer (map (\w -> event manager 6 (putNewId w)) traced ++ [event manager 7 (putNewId output), event manager 8 (putNewId seat)])
+    nodes <- mapM (\w -> receiveNewIdRequest reader peer w (Opcode 2)) traced
     ls <- receiveLayerShellOutputRequest reader peer layerShell output
     _ <- receiveLayerShellSeatRequest reader peer layerShell seat
     sendFrames peer [event output 2 (putInt 0 >> putInt 0), event output 3 (putInt 200 >> putInt 100)]
-    let step models (width, acknowledge) = do
-          sendFrames peer [event ls 0 (putInt 0 >> putInt 0 >> putInt width >> putInt 100), event manager 2 (pure ())]
+    let crop = sizePolicy layout == Crop
+        run models (Step width acknowledge (dw, dh) hints) = do
+          let hinted = [h <|> hint model | (model, h) <- zip models (hints ++ repeat Nothing)]
+          sendFrames peer ([event window 1 (mapM_ putInt [a, b, c, d]) | (window, Just (a, b, c, d)) <- zip traced (hints ++ repeat Nothing)] ++ [event ls 0 (putInt 0 >> putInt 0 >> putInt width >> putInt 100), event manager 2 (pure ())])
           manage <- readUntil reader peer manager 2
-          let desired = desiredSizes width
-          pending <- forM (zip3 windows desired models) $ \(window, size, model) -> do
-            let propose = pendingSize model == Nothing && isJust size && settledSize model /= size
+          let desired = tiles width
+              wanted = [(\(Tile _ size) -> if crop then size else clamp h size) <$> tile | (tile, h) <- zip desired hinted]
+          pending <- forM (zip3 traced wanted models) $ \(window, size, model) -> do
+            let propose = isNothing (pendingSize model) && isJust size && settledSize model /= size
             expected <- case (propose, size) of
               (True, Just (w, h)) -> (: []) <$> encodedPayload (putInt w >> putInt h)
               _ -> pure []
             assertEqual "one proposal only when no earlier proposal is pending" expected (requests window 3 manage)
             pure (if propose then size else pendingSize model)
-          when (not (null (requests seat 1 manage))) $ do
-            assertBool "focus requires an already shown settled selection" (shown (last models) == Just True && last pending == Nothing && isJust (last desired))
-            focusPayload <- encodedPayload (putObject (last windows))
+          unless (null (requests seat 1 manage)) $ do
+            assertBool "focus requires an already shown settled selection" (shown (last models) == Just True && isNothing (last pending) && isJust (last desired))
+            focusPayload <- encodedPayload (putObject (last traced))
             requests seat 1 manage @?= [focusPayload]
           let settles = map (\p -> acknowledge && isJust p) pending
+              commits = [if s then (\(w, h) -> (max 1 (w + dw), max 1 (h + dh))) <$> p else Nothing | (s, p) <- zip settles pending]
               settled = [if s then p else settledSize model | (s, p, model) <- zip3 settles pending models]
               pending' = [if s then Nothing else p | (s, p) <- zip settles pending]
-              visible = [isJust size && isJust s | (size, s) <- zip desired settled]
-          forM_ (zip3 windows settles pending) $ \(window, s, p) ->
-            when s $ forM_ p $ \(w, h) ->
-              sendFrames peer [event window 2 (putInt (w + 1) >> putInt h)]
+              visible = [isJust tile && isJust s | (tile, s) <- zip desired settled]
+          forM_ (zip traced commits) $ \(window, c) ->
+            forM_ c $ \(w, h) -> sendFrames peer [event window 2 (putInt w >> putInt h)]
           sendFrames peer [event manager 3 (pure ())]
           render <- readUntil reader peer manager 4
-          forM_ (zip3 windows models visible) $ \(window, model, v) -> do
+          forM (zip3 (zip traced nodes) (zip3 models visible desired) (zip3 pending' settled (zip hinted commits))) $ \((window, node), (model, v, tile), (p, s, (h, c))) -> do
             let visibility = [rawFrameOpcode frame | frame <- render, rawFrameSender frame == window, rawFrameOpcode frame `elem` [Opcode 4, Opcode 5]]
                 expectedVisibility = if shown model == Just v then [] else [Opcode (if v then 5 else 4)]
             assertEqual "visibility follows selection and settlement" expectedVisibility visibility
-          requests seat 1 render @?= []
-          pure (zipWith3 (\p s v -> Model p s (Just v)) pending' settled visible)
-    _ <- foldM step (map (const (Model Nothing Nothing Nothing)) windows) (steps ++ replicate 3 (100, True))
+            moves <- mapM (decodeInts 2) (requests node 1 render)
+            clips <- mapM (decodeInts 4) (requests window 22 render)
+            assertBool "a content clip box starts at the window's top-left" (all (\b -> take 2 b == [0, 0]) clips)
+            unless crop $ assertEqual "M2-D04: Tolerate sends no content clip box" [] clips
+            let model' =
+                  model
+                    { pendingSize = p
+                    , settledSize = s
+                    , shown = Just v
+                    , hint = h
+                    , committed = c <|> committed model
+                    , position = if null moves then position model else movedTo (last moves)
+                    , clip = if null clips then clip model else clipped (last clips)
+                    }
+            forM_ tile $ \(Tile origin _) -> when v $ do
+              assertEqual "a shown tile sits at its tile's top-left, even while a proposal is pending" (Just origin) (position model')
+              unless crop $ assertEqual "M2-D04: under Tolerate no content clip box is in effect" Nothing (clip model')
+            pure model'
+    foldM_ run (map (const (Model Nothing Nothing Nothing Nothing Nothing Nothing Nothing)) traced) (steps ++ replicate 3 (Step 100 True (0, 0) []))
     closeTransport peer
   policy <- expectRight =<< newPolicy (PolicyConfig layout [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
   result @?= Right ()
+ where
+  clamp current (w, h) = case current of
+    Nothing -> (w, h)
+    Just (minW, minH, maxW, maxH) -> (bound minW maxW w, bound minH maxH h)
+  bound lo hi v = let raised = max lo v in if hi > 0 then min hi raised else raised
+  movedTo = \case
+    [x, y] -> Just (x, y)
+    _ -> Nothing
+  clipped = \case
+    [_, _, w, h] | w > 0 && h > 0 -> Just (w, h)
+    _ -> Nothing
+
+decodeInts :: Int -> ByteString -> IO [Int32]
+decodeInts n payload = case runCompleteArgumentDecoder (replicateM n getInt) payload ([] :: [()]) of
+  Done values _ _ -> pure values
+  other -> assertFailure ("undecodable request payload: " <> show other)
 
 testFamilies :: Assertion
 testFamilies = withRuntimePair $ \target peer -> do
