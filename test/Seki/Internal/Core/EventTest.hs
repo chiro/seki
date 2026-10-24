@@ -355,7 +355,7 @@ propPointerOp :: EventHistory -> Property
 propPointerOp h =
   checkCoverage
     . cover 5 (any (any opMoved . corePointerOp) prefixes) "a moved op"
-    . cover 10 (any (any (not . opMoved) . corePointerOp) prefixes) "an op not yet moved"
+    . cover 10 (any ((== Just False) . fmap opMoved . corePointerOp) prefixes) "an op not yet moved"
     $ conjoin
       [ counterexample ("after " ++ show n ++ " events") $
         conjoin
