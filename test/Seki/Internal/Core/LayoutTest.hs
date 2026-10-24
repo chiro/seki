@@ -42,6 +42,13 @@ tests =
         , testCase "an unhandled message changes nothing" testUnhandled
         ]
     , testGroup
+        "sizePolicy"
+        [ testCase "a layout crops by default" testCropDefault
+        , testCase "Mirror keeps the inner layout's policy" testMirrorPolicy
+        , testCase "Choose takes the selected layout's policy" testChoosePolicy
+        , testCase "tolerant tolerates and otherwise behaves as its layout" testTolerant
+        ]
+    , testGroup
         "messageCurrentLayout"
         [ testProperty "changes only the current workspace's layout" propMessageCurrent
         , testProperty "leaves the StackSet unchanged for an unhandled message" propMessageUnhandled
@@ -203,3 +210,30 @@ testUnhandled :: Assertion
 testUnhandled = do
   assertEqual "probes" Nothing (send (IncMasterN 1) (probe "a" ||| probe "b"))
   assertEqual "full" Nothing (send Shrink (Full ||| Full))
+
+testCropDefault :: Assertion
+testCropDefault = do
+  assertEqual "Full" Crop (sizePolicy Full)
+  assertEqual "Tall" Crop (sizePolicy tall)
+
+testMirrorPolicy :: Assertion
+testMirrorPolicy = do
+  assertEqual "Mirror Tall" Crop (sizePolicy (Mirror tall))
+  assertEqual "Mirror of tolerant Tall" Tolerate (sizePolicy (Mirror (tolerant tall)))
+
+testChoosePolicy :: Assertion
+testChoosePolicy = do
+  let layouts = Full ||| tolerant tall
+  assertEqual "left selected" Crop (sizePolicy layouts)
+  assertEqual "right selected" (Just Tolerate) (sizePolicy <$> send NextLayout layouts)
+  assertEqual "back to the left" (Just Crop) (sizePolicy <$> (send NextLayout layouts >>= send NextLayout))
+
+testTolerant :: Assertion
+testTolerant = do
+  rect <- rectOf 0 0 100 100
+  let s = Stack (WindowId 2) [WindowId 1] [WindowId 3]
+  assertEqual "policy" Tolerate (sizePolicy (tolerant tall))
+  assertEqual "placements" (pureLayout tall rect s) (pureLayout (tolerant tall) rect s)
+  assertEqual "description" "Tall" (description (tolerant tall))
+  assertEqual "message" (Just (tolerant (Tall 1 (3 / 100) (47 / 100)))) (send Shrink (tolerant tall))
+  assertEqual "unhandled message" Nothing (send Shrink (tolerant Full))
