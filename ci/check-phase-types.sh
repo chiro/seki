@@ -16,20 +16,25 @@ manage_requests=(
   "exitWindowFullscreen w"
   "informWindowFullscreen w"
   "informWindowNotFullscreen w"
+  "informResizeStart w"
+  "informResizeEnd w"
+  "startPointerOp s"
+  "endPointerOp s"
+  "enablePointerBinding b"
 )
 
 {
   cat <<'HASKELL'
 module Valid where
-import Seki.Run.Phase (ManageM, RenderM, exitWindowFullscreen, fullscreenWindow, hideWindow, informWindowFullscreen, informWindowNotFullscreen, proposeWindowDimensions)
-import Seki.Protocol.RiverWindowManagementV1 (RiverOutputV1, RiverWindowV1)
+import Seki.Run.Phase (ManageM, RenderM, enablePointerBinding, endPointerOp, exitWindowFullscreen, fullscreenWindow, hideWindow, informResizeEnd, informResizeStart, informWindowFullscreen, informWindowNotFullscreen, proposeWindowDimensions, startPointerOp)
+import Seki.Protocol.RiverWindowManagementV1 (RiverOutputV1, RiverPointerBindingV1, RiverSeatV1, RiverWindowV1)
 import Seki.Wire.Connection.ObjectTable (Object)
 render :: Object RiverWindowV1 -> RenderM ()
 render = hideWindow
 HASKELL
   for index in "${!manage_requests[@]}"; do
-    echo "manage$index :: Object RiverWindowV1 -> Object RiverOutputV1 -> ManageM ()"
-    echo "manage$index w o = const (${manage_requests[$index]}) o"
+    echo "manage$index :: Object RiverWindowV1 -> Object RiverOutputV1 -> Object RiverSeatV1 -> Object RiverPointerBindingV1 -> ManageM ()"
+    echo "manage$index w o s b = const (const (const (${manage_requests[$index]}) o) s) b"
   done
 } >"$scratch/Valid.hs"
 

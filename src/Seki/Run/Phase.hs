@@ -18,9 +18,14 @@ module Seki.Run.Phase (
   exitWindowFullscreen,
   informWindowFullscreen,
   informWindowNotFullscreen,
+  informResizeStart,
+  informResizeEnd,
   setKeyBindingLayoutOverride,
   enableKeyBinding,
   disableKeyBinding,
+  enablePointerBinding,
+  startPointerOp,
+  endPointerOp,
   focusWindow,
   clearFocus,
   setDefaultLayerShellOutput,
@@ -176,6 +181,14 @@ informWindowNotFullscreen :: Object River.RiverWindowV1 -> ManageM ()
 informWindowNotFullscreen window =
   phaseRequest River.riverWindowV1Interface window River.encodeRiverWindowV1InformNotFullscreen
 
+informResizeStart :: Object River.RiverWindowV1 -> ManageM ()
+informResizeStart window =
+  phaseRequest River.riverWindowV1Interface window River.encodeRiverWindowV1InformResizeStart
+
+informResizeEnd :: Object River.RiverWindowV1 -> ManageM ()
+informResizeEnd window =
+  phaseRequest River.riverWindowV1Interface window River.encodeRiverWindowV1InformResizeEnd
+
 -- | Pin a binding to an XKB layout index.
 setKeyBindingLayoutOverride :: Object Xkb.RiverXkbBindingV1 -> Word32 -> ManageM ()
 setKeyBindingLayoutOverride binding layout =
@@ -199,6 +212,20 @@ disableKeyBinding binding =
     Xkb.riverXkbBindingV1Interface
     binding
     Xkb.encodeRiverXkbBindingV1Disable
+
+enablePointerBinding :: Object River.RiverPointerBindingV1 -> ManageM ()
+enablePointerBinding binding =
+  phaseRequest River.riverPointerBindingV1Interface binding River.encodeRiverPointerBindingV1Enable
+
+-- | Start a pointer op on the seat. River ignores it while an op is in progress.
+startPointerOp :: Object River.RiverSeatV1 -> ManageM ()
+startPointerOp seat =
+  phaseRequest River.riverSeatV1Interface seat River.encodeRiverSeatV1OpStartPointer
+
+-- | End the seat's pointer op once this manage sequence finishes.
+endPointerOp :: Object River.RiverSeatV1 -> ManageM ()
+endPointerOp seat =
+  phaseRequest River.riverSeatV1Interface seat River.encodeRiverSeatV1OpEnd
 
 focusWindow :: Object River.RiverSeatV1 -> Object River.RiverWindowV1 -> ManageM ()
 focusWindow seat window =
