@@ -1,6 +1,6 @@
 module Main (main) where
 
-import ConfigMain (customConfig, fullConfig, mediaConfig, raiseVolume)
+import ConfigMain (customConfig, fullConfig, mediaConfig, raiseVolume, tolerantConfig)
 import Control.Monad (unless)
 import Seki
 import Seki.Core.StackSet (differentiate, integrate, integrate')
@@ -24,6 +24,9 @@ main = do
   check "a modifier-less media key is bound" (raiseVolume `elem` bound mediaConfig)
   check "the media key joins the default bindings" (length (bound mediaConfig) == length (bound def) + 1)
   check "removeKeys removes the media key" (raiseVolume `notElem` bound (removeKeys mediaConfig [raiseVolume]))
+  check "the default layouts crop" (sizePolicy (layoutHook def) == Crop)
+  check "tolerant layouts tolerate" (sizePolicy (layoutHook tolerantConfig) == Tolerate)
+  check "tolerant keeps the layout description" (description (layoutHook tolerantConfig) == "Tall")
  where
   check label ok = unless ok (failWith label)
   failWith message = putStrLn ("public API check failed: " <> message) >> exitFailure
