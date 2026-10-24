@@ -322,6 +322,7 @@ proposalSize window = \case
   Placed Crop r -> Just (rectSize r)
   Placed Tolerate r -> Just (clampToHint (riverWindowDimensionsHint window) (rectSize r))
   Floating r -> Just (rectSize r)
+  Resizing _ r -> Just (rectSize r)
   Centered _ -> either (const Nothing) Just (mkSize 0 0)
   Fullscreen _ -> Nothing
   HiddenFullscreen -> Nothing
@@ -342,6 +343,7 @@ tiledEdges placement current = case placement of
   Omitted -> current
   Placed _ _ -> River.RiverWindowV1EdgesFlags 15
   Floating _ -> River.RiverWindowV1EdgesFlagsNone
+  Resizing _ _ -> River.RiverWindowV1EdgesFlagsNone
   Centered _ -> River.RiverWindowV1EdgesFlagsNone
   Fullscreen _ -> current
   HiddenFullscreen -> current
@@ -351,6 +353,7 @@ topLeft placement size = case placement of
   Omitted -> Nothing
   Placed _ r -> Just (rectOrigin r)
   Floating r -> Just (rectOrigin r)
+  Resizing _ r -> Just (rectOrigin r)
   Fullscreen _ -> Nothing
   HiddenFullscreen -> Nothing
   Centered r -> Just (Point (centre (rectX r) (rectWidth r) (sizeWidth size)) (centre (rectY r) (rectHeight r) (sizeHeight size)))
