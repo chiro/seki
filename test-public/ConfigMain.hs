@@ -16,10 +16,11 @@ customConfig =
     , keys = \config -> (KeyBinding (modMask config .|. Shift) (Keysym 0xffbe), windows focusDown >> kill >> spawn "true") : (KeyBinding (modMask config) (Keysym 0x66), withFocused float) : (KeyBinding (modMask config .|. Shift) (Keysym 0x74), withFocused sink) : (KeyBinding (modMask config .|. Shift) (Keysym 0x66), withFocused toggleFullscreen) : defaultKeys config
     , manageHook = idHook
     , startupHook = spawnOnce "true"
+    , pointerBindings = \config -> (PointerBinding (modMask config .|. Shift) Button1, ResizeWindow) : defaultPointerBindings config
     }
 
 fullConfig :: Config Full
-fullConfig = def{layoutHook = Full, keys = defaultKeys, manageHook = composeAll [appId =? "mpv" --> doShift "2", defaultManageHook], startupHook = pure ()}
+fullConfig = def{layoutHook = Full, keys = defaultKeys, manageHook = composeAll [appId =? "mpv" --> doShift "2", defaultManageHook], startupHook = pure (), pointerBindings = defaultPointerBindings}
 
 hookedConfig :: Config StdLayouts
 hookedConfig =
@@ -43,7 +44,7 @@ mediaConfig =
     [(raiseVolume, spawn "pactl set-sink-volume @DEFAULT_SINK@ +5%")]
 
 tolerantConfig :: Config (ModifiedLayout Tolerant StdLayouts)
-tolerantConfig = def{layoutHook = tolerant (layoutHook def), keys = defaultKeys, manageHook = defaultManageHook, startupHook = pure ()}
+tolerantConfig = def{layoutHook = tolerant (layoutHook def), keys = defaultKeys, manageHook = defaultManageHook, startupHook = pure (), pointerBindings = defaultPointerBindings}
 
 configuredMain :: IO ()
 configuredMain = seki customConfig

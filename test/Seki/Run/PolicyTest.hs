@@ -14,6 +14,7 @@ import Data.Text qualified as Text
 import Data.Word (Word32)
 import Seki.Internal.Core.Action (Action, kill, spawn, windows)
 import Seki.Internal.Core.ManageHook (ManageHook, appId, doShift, idHook, (-->), (=?))
+import Seki.Internal.Core.PointerOp (HEdge (..), OpKind (..), ResizeEdges (..), VEdge (..))
 import Seki.Internal.Core.Scene (BorderColor (..), SceneStyle (..), defaultSceneStyle)
 import Seki.Internal.Core.StackSet (
   OutputId (..),
@@ -53,12 +54,14 @@ import Seki.Run.MockRiver (
   sendFrames,
   withRuntimePair,
  )
+import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Policy (
   Policy,
   PolicyConfig (..),
   PolicyError (..),
   launchDetached,
   newPolicy,
+  parseResizeEdges,
   policyRuntimeHandlers,
   readPolicyState,
  )
@@ -94,6 +97,9 @@ tests =
     , testCase "sets no layer-shell default while headless" testSetDefaultHeadless
     , testCase "runs the startup hook once, after the first output attaches" testStartupHookOnce
     , testCase "launches a command without waiting for it" testLaunchDetached
+    , testCase "parses resize edges to one edge or a corner and drops none or opposite edges" $
+        map (parseResizeEdges . River.RiverWindowV1EdgesFlags) [1, 2, 4, 8, 5, 6, 9, 10, 0, 3, 12, 16]
+          @?= map Just [Vertical TopEdge, Vertical BottomEdge, Horizontal LeftEdge, Horizontal RightEdge, Corner LeftEdge TopEdge, Corner LeftEdge BottomEdge, Corner RightEdge TopEdge, Corner RightEdge BottomEdge] ++ replicate 4 Nothing
     ]
 
 type TestPolicy = Policy Int Full
@@ -118,6 +124,10 @@ testConfigErrors = do
   assertError (PolicyTagError (DuplicateWorkspaceTag 2)) =<< newPolicy (config [1, 2, 2] [])
   assertError (PolicyBindingConflict binding)
     =<< newPolicy (config [1] [(binding, spawn "a"), (keyBinding 0x62, kill), (binding, kill)])
+  let pointer = RiverPointerBinding 0x110 (River.RiverSeatV1ModifiersFlags 64)
+      locked = RiverPointerBinding 0x110 (River.RiverSeatV1ModifiersFlags 16)
+  assertError (PolicyPointerBindingConflict pointer) =<< newPolicy (config [1] []){policyPointerBindings = [(pointer, Move), (pointer, Move)]}
+  assertError (PolicyInvalidPointerModifiers locked) =<< newPolicy (config [1] []){policyPointerBindings = [(locked, Move)]}
  where
   assertError :: PolicyError Int -> Either (PolicyError Int) TestPolicy -> Assertion
   assertError expected = either (@?= expected) (const (assertFailure "expected a configuration error"))
