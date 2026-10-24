@@ -9,7 +9,7 @@ import Control.Monad (foldM_, forM, forM_, replicateM, unless, when)
 import Data.ByteString (ByteString)
 import Data.Int (Int32)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (isJust, isNothing)
+import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.Set qualified as Set
 import Seki.Internal.Core.Action (float, windows, withFocused)
 import Seki.Internal.Core.Layout (LayoutClass (..), Mirror (..), SizePolicy (..), tolerant)
@@ -50,6 +50,7 @@ tests =
     , testCase "M1-D06 superseded: Full keeps a floating dialog centered above its refocused parent" testChildUnderFull
     , testCase "Full shows only a smaller focused commit and focus cycling hides it" testFullSelection
     , testCase "floating a tile clears its tiled edges, lets the client pick its size, and keeps it centered" testTileFloats
+    , testCase "M2-D04: a Crop tile's clip box is untouched while fullscreen and fits its new tile after exit" testCropAcrossFullscreen
     , testCase "M2-D03: exiting fullscreen with a proposal pending proposes the tile again and settles to it" testFullscreenExit
     , testCase "removing a fullscreen window's output makes it fullscreen where its workspace went" testFullscreenOutputMoved
     , testCase "removing a fullscreen window's output hides it with its workspace and sends no fullscreen request" testFullscreenOutputHidden
@@ -158,9 +159,15 @@ testTrace layout tiles steps = withRuntimePair $ \target peer -> do
                     , position = if null moves then position model else movedTo (last moves)
                     , clip = if null clips then clip model else clipped (last clips)
                     }
-            forM_ tile $ \(Tile origin _) -> when v $ do
+            forM_ tile $ \(Tile origin (tw, th)) -> when v $ do
               assertEqual "a shown tile sits at its tile's top-left, even while a proposal is pending" (Just origin) (position model')
-              unless crop $ assertEqual "M2-D04: under Tolerate no content clip box is in effect" Nothing (clip model')
+              if crop
+                then do
+                  assertEqual "M2-D04: under Crop the content clip box equals the tile's content box" (Just (tw, th)) (clip model')
+                  forM_ (committed model') $ \(cw, ch) -> do
+                    let (bw, bh) = fromMaybe (cw, ch) (clip model')
+                    assertBool "M2-D04: under Crop no committed content pixel leaves its tile" (min cw bw <= tw && min ch bh <= th)
+                else assertEqual "M2-D04: under Tolerate no content clip box is in effect" Nothing (clip model')
             pure model'
     foldM_ run (map (const (Model Nothing Nothing Nothing Nothing Nothing Nothing Nothing)) traced) (steps ++ replicate 3 (Step 100 True (0, 0) []))
     closeTransport peer
@@ -401,7 +408,9 @@ testTileFloats = withRuntimePair $ \target peer -> do
     allEdges <- encodedPayload (putUint 15)
     requests window 9 first @?= [allEdges]
     sendFrames peer [event window 2 (putInt 196 >> putInt 96)]
-    _ <- render
+    tiledRender <- render
+    cropped <- encodedPayload (mapM_ putInt [0, 0, 196, 96])
+    requests window 22 tiledRender @?= [cropped]
     _ <- manage
     _ <- render
     sendFrames peer [event floatBinding 0 (pure ())]
@@ -414,6 +423,8 @@ testTileFloats = withRuntimePair $ \target peer -> do
     centered <- render
     position <- encodedPayload (putInt 40 >> putInt 25)
     requests node 1 centered @?= [position]
+    unclipped <- encodedPayload (mapM_ putInt [0, 0, 0, 0])
+    assertEqual "floating a tile disables its content clip box" [unclipped] (requests window 22 centered)
     again <- manage
     requests window 3 again @?= []
     requests window 9 again @?= []
@@ -421,6 +432,7 @@ testTileFloats = withRuntimePair $ \target peer -> do
     resized <- render
     recentered <- encodedPayload (putInt 25 >> putInt 20)
     requests node 1 resized @?= [recentered]
+    assertEqual "a float stays unclipped" [] (requests window 22 resized)
     closeTransport peer
   policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [(floatKey, withFocused float)] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
@@ -475,6 +487,51 @@ testFullscreenExit = withRuntimePair $ \target peer -> do
     position <- encodedPayload (putInt 2 >> putInt 2)
     requests node 1 settled @?= [position]
     requests window 4 settled @?= []
+    closeTransport peer
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
+  result <- runRiverSession session
+  expectMockSuccess done
+  result @?= Right ()
+
+testCropAcrossFullscreen :: Assertion
+testCropAcrossFullscreen = withRuntimePair $ \target peer -> do
+  window <- requireObjectId 0xff000130
+  output <- requireObjectId 0xff000131
+  seat <- requireObjectId 0xff000132
+  done <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (manager, _, layerShell) <- handshake reader peer
+    sendFrames peer [event manager 6 (putNewId window), event manager 7 (putNewId output), event manager 8 (putNewId seat)]
+    _ <- receiveNewIdRequest reader peer window (Opcode 2)
+    ls <- receiveLayerShellOutputRequest reader peer layerShell output
+    _ <- receiveLayerShellSeatRequest reader peer layerShell seat
+    let manage = sendFrames peer [event manager 2 (pure ())] >> readUntil reader peer manager 2
+        render = sendFrames peer [event manager 3 (pure ())] >> readUntil reader peer manager 4
+        clipBox w h = encodedPayload (mapM_ putInt [0, 0, w, h])
+    sendFrames peer [event output 2 (putInt 0 >> putInt 0), event output 3 (putInt 200 >> putInt 100), event ls 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100)]
+    _ <- manage
+    sendFrames peer [event window 2 (putInt 196 >> putInt 96)]
+    tiled <- render
+    wholeTile <- clipBox 196 96
+    assertEqual "the tile is clipped to its content box" [wholeTile] (requests window 22 tiled)
+    sendFrames peer [event window 12 (putNullableObject Nothing)]
+    _ <- manage
+    sendFrames peer [event window 2 (putInt 200 >> putInt 100)]
+    covering <- render
+    assertEqual "a covering window's clip box is left alone" [] (requests window 22 covering)
+    sendFrames peer [event ls 0 (putInt 0 >> putInt 0 >> putInt 150 >> putInt 100)]
+    _ <- manage
+    narrowed <- render
+    assertEqual "a narrower tile while fullscreen sends no clip box" [] (requests window 22 narrowed)
+    sendFrames peer [event window 13 (pure ())]
+    exited <- manage
+    narrowTile <- encodedPayload (putInt 146 >> putInt 96)
+    requests window 3 exited @?= [narrowTile]
+    sendFrames peer [event window 2 (putInt 200 >> putInt 100)]
+    settled <- render
+    narrowClip <- clipBox 146 96
+    assertEqual "after exit an oversized commit is clipped to the narrower tile" [narrowClip] (requests window 22 settled)
     closeTransport peer
   policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)

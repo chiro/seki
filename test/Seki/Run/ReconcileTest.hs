@@ -32,7 +32,7 @@ tests =
   testGroup
     "scene protocol reconciliation"
     [ testCase "serializes proposals, restores focus, accepts client size mismatch, and honors fullscreen but not maximize or minimize requests" testSettlement
-    , testCase "retains omitted dimensions across layouts and prunes a pending close" testLayouts
+    , testCase "retains omitted dimensions across layouts, clips an oversized commit while its proposal is pending, and prunes a pending close" testLayouts
     , testCase "respects layer focus and recovers on every focus_none report" testLayerFocus
     , testCase "flags a single Tall window tiled on every edge" testSingleTall
     , testGroup
@@ -68,6 +68,7 @@ testSettlement = withRuntimePair $ \target peer -> do
         render = sendFrames peer [event manager 3 (pure ())]
         area ls width = event ls 0 (putInt (-100) >> putInt 20 >> putInt width >> putInt 80)
         dimensions width = event window 2 (putInt width >> putInt 76)
+        clip width = request window 22 (putInt 0 >> putInt 0 >> putInt width >> putInt 76)
         manageEnd ls = request ls 1 (pure ()) >> request manager 2 (pure ())
         dirty = request manager 3 (pure ())
         border = request window 8 (putUint 15 >> putInt 2 >> putUint 0 >> putUint 0x80000000 >> putUint 0xffffffff >> putUint 0xffffffff)
@@ -100,6 +101,7 @@ testSettlement = withRuntimePair $ \target peer -> do
     sendFrames peer [dimensions 96]
     render
     position
+    clip 116
 
     border
     request window 5 (pure ())
@@ -131,6 +133,7 @@ testSettlement = withRuntimePair $ \target peer -> do
     request seat 3 (pure ())
     request manager 2 (pure ())
     render
+    clip 136
 
     request manager 4 (pure ())
     sendFrames peer [dimensions 130]
@@ -158,16 +161,19 @@ testSettlement = withRuntimePair $ \target peer -> do
     request seat 3 (pure ())
     request manager 2 (pure ())
     render
+    clip 196
     request manager 4 (pure ())
     sendFrames peer [area ls 220]
     start
     manageEnd ls
     render
+    clip 216
     request manager 4 (pure ())
     sendFrames peer [area ls 200]
     start
     manageEnd ls
     render
+    clip 196
     request manager 4 (pure ())
     sendFrames peer [area ls 0]
     start
@@ -297,6 +303,7 @@ testLayerFocus = withRuntimePair $ \target peer -> do
     sendFrames peer [event window 2 (putInt 96 >> putInt 76)]
     render
     request node 1 (putInt 2 >> putInt 2)
+    request window 22 (putInt 0 >> putInt 0 >> putInt 96 >> putInt 76)
     stack
     border True
     request window 5 (pure ())
@@ -398,6 +405,7 @@ testLayouts = withRuntimePair $ \target peer -> do
         focusedManage w = request ls 1 (pure ()) >> request seat 1 (putObject w) >> request manager 2 (pure ())
         clearedManage = request ls 1 (pure ()) >> request seat 3 (pure ()) >> request manager 2 (pure ())
         position n x = request n 1 (putInt x >> putInt 2)
+        clip w width = request w 22 (putInt 0 >> putInt 0 >> putInt width >> putInt 96)
         top n = request n 2 (pure ())
         press binding = sendFrames peer [event binding 0 (pure ())]
     sendFrames peer [event ls 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100)]
@@ -416,6 +424,8 @@ testLayouts = withRuntimePair $ \target peer -> do
     render
     position n1 102
     position n2 2
+    clip w1 96
+    clip w2 96
     top n1
     top n2
     border w1 False
@@ -432,6 +442,7 @@ testLayouts = withRuntimePair $ \target peer -> do
     proposal w2 196
     clearedManage
     render
+    clip w2 196
     request w1 4 (pure ())
     end
     sendFrames peer [dimensions w2 196]
@@ -449,6 +460,7 @@ testLayouts = withRuntimePair $ \target peer -> do
     clearedManage
     render
     position n1 102
+    clip w2 96
     request w1 5 (pure ())
     end
     sendFrames peer [event w2 0 (pure ())]
@@ -459,6 +471,7 @@ testLayouts = withRuntimePair $ \target peer -> do
     manageEnd
     render
     position n1 2
+    clip w1 196
     top n1
     border w1 True
     end
