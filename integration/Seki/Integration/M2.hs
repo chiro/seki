@@ -16,6 +16,7 @@ import Seki.Integration.Fixture qualified as Shared
 import Seki.Integration.Harness
 import Seki.Internal.Config (Config (..), KeyBinding (..), Keysym (..), Mods (..), additionalKeys, def, defaultManageHook)
 import Seki.Internal.Core.Action (Action, spawn, spawnOnce, windows)
+import Seki.Internal.Core.Layout (tolerant)
 import Seki.Internal.Core.ManageHook (appId, doShift, idHook, (-->), (=?))
 import Seki.Internal.Core.Scene (BorderColor (..), SceneStyle (..))
 import Seki.Internal.Core.StackSet qualified as SS
@@ -42,6 +43,7 @@ m2Scenarios =
   , ("m2-startup-keys", startupKeys)
   , ("m2-float-dialog", withFixture m2Config{policyManageHook = defaultManageHook} "m2-float-dialog" 1 floatDialog)
   , ("m2-fullscreen", withFixture m2Config{policyBindings = viewBindings} "m2-fullscreen" 1 fullscreen)
+  , ("m2-size-policy", sizePolicies)
   ]
 
 selfTest :: Fixture -> Probe -> IO ()
@@ -212,7 +214,34 @@ fullscreen fixture probe = do
   covering = [Paint Green (Box 0 0 800 600) True]
   otherWorkspace = [Paint Blue (Box 2 2 796 596) True]
 
-riverWindow :: Fixture -> String -> (RiverWindowState -> Bool) -> IO RiverWindowState
+{- | A probe window that commits 600 by 500 whatever it is proposed, wider than
+its 396 by 596 master tile. Under the default Crop policy it is clipped to the
+tile and its neighbour stays whole. Under 'tolerant' it shows its committed
+size at the tile's top-left over its neighbour, and a window with size hints
+is proposed its tile clamped to them.
+-}
+sizePolicies :: IO ()
+sizePolicies = do
+  withFixture m2Config "m2-size-policy-crop" 1 $ \fixture probe -> do
+    let onFirst phase paints = picture fixture phase [(head (mOutputs fixture), paints)]
+    _ <- openWindow probe Red
+    onFirst "the first window tiles alone" [Paint Red (Box 2 2 796 596) True]
+    _ <- openWindowWith probe oversized
+    onFirst "Crop clips the oversized commit to its tile and leaves its neighbour whole" [Paint Red neighbour False, Paint Green (Box 2 2 396 500) True]
+  withFixture m2Config{policyLayout = tolerant (policyLayout m2Config), policyBindings = [], policyManageHook = idHook, policyStartupHook = pure ()} "m2-size-policy-tolerate" 1 $ \fixture probe -> do
+    let onFirst phase paints = picture fixture phase [(head (mOutputs fixture), paints)]
+    _ <- openWindow probe Red
+    onFirst "the first window tiles alone" [Paint Red (Box 2 2 796 596) True]
+    _ <- openWindowWith probe oversized
+    onFirst "Tolerate shows the oversized commit at its tile's top-left over its neighbour" [Paint Red neighbour False, Paint Green (Box 2 2 600 500) True]
+    _ <- openWindowWith probe (windowSpec Blue){specMinSize = Just (500, 100), specMaxSize = Just (700, 400)}
+    _ <- riverWindow fixture "Tolerate proposes the 396 by 596 master tile clamped to the 500 by 100 minimum and 700 by 400 maximum" (\w -> riverWindowAppId w == Just "seki-color-probe-3" && riverWindowDimensions w == Just (RiverSize 500 400))
+    pure ()
+ where
+  oversized = (windowSpec Green){specCommit = CommitFixed 600 500}
+  neighbour = Box 402 2 396 596
+
+riverWindow :: Shared.Fixture l -> String -> (RiverWindowState -> Bool) -> IO RiverWindowState
 riverWindow fixture phase predicate =
   waitUntil phase assertionTimeoutMicroseconds (filter predicate . riverInventoryWindows <$> readRiverInventory (mSession fixture)) ((== 1) . length) >>= \case
     [window] -> pure window
