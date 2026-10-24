@@ -59,6 +59,31 @@ Each layer-focus report has a revision, so repeated `focus_none` reports
 invalidate the last focus request. Layer ownership also controls border
 colors.
 
+## Pointer operations
+
+The scene names the pointer op river should run and its seat. Each seat
+remembers the op seki last started there. A manage sequence sends
+`op_start_pointer` when the seat has none, and `op_end` when the seat runs an
+op the scene no longer wants. A seat whose op is replaced only ends it,
+since river keeps an op until the sequence that carries `op_end` finishes and
+ignores a start in that sequence (M2-D07). The render then requests another
+manage sequence, which starts the new op. A closed window has no
+reconciliation state, so nothing is sent to it, and a removed seat has none
+either.
+
+A float under a resize op is placed as `Resizing`. The first manage sequence
+that places it sends `inform_resize_start` before its proposal, so the
+client's first resize configure carries the resizing state, and the sequence
+that places it otherwise sends `inform_resize_end`. Its proposals follow the
+one-proposal rule, so fast deltas coalesce into the newest box. Every render
+shows the committed size with the edges opposite the dragged ones where the
+box puts them, so a client that commits a smaller size than the proposal
+keeps those edges in place.
+
+The policy reads two facts from the reconciler when a drain begins: each
+window's content box as last rendered, less its content clip box, which an op
+starts from, and the op river runs on each seat, which tags op input.
+
 ## Historical real-river selection experiment
 
 The 2026-10-17 experiment used river 0.5.0 with its headless backend and pixman
@@ -100,6 +125,11 @@ hiding and restoration, and resizing after a focused window closes. A new
 keyboard event in the surviving client verified focus recovery. Its local runner
 was `artifacts/wp6/prototype/live.py`; captures are in the adjacent
 `policy-live` directory.
+
+Pointer op traces in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs)
+check a binding drag, a left-edge resize under a smaller commit, and an op
+swap across two sequences; a generated trace checks that `op_start_pointer`
+and `op_end`, and `inform_resize_start` and `inform_resize_end`, alternate.
 
 `bash ci/check-phase-types.sh` compiles valid plans and checks that the
 compiler rejects manage requests in render plans and render requests in

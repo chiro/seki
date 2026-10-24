@@ -160,6 +160,8 @@ class Show l => LayoutClass l where
   - Client-initiated (e.g. dragging a CSD titlebar): pointer_move_requested / pointer_resize_requested events → the WM responds at its discretion.
   - WM-initiated (mod+drag): river_seat_v1.get_pointer_binding (button + modifiers) → pressed event → op_start_pointer.
   - During the drag, op_delta events carry the **cumulative offset from the starting point** (not per-event deltas, which keeps float geometry math simple); op_release on button release; the WM finishes with op_end. During a resize, send inform_resize_start / inform_resize_end to the window.
+  - [DECIDED] (WP5, M2-D07) `CoreState` holds at most one numbered `PointerOp`, since seki drives a single seat (3.6). A binding press targets the window of the seat's last `pointer_enter`, focuses it, and starts an op from the content box the last render showed. A tiled window floats there at the first nonzero `op_delta`, so a press with no motion leaves it tiled. Each delta recomputes the stored `FloatAt` box from the op's start: a move shifts it, and a resize drags the given edges, keeps the opposite edges fixed, and never makes a dragged length smaller than `max 1` the window's current minimum hint or larger than a positive maximum. `op_delta`, `op_release`, and a binding release apply only to the op river runs on that seat when the drain begins, so stale input never reaches a newer op. The op ends on release, or when its window closes, goes fullscreen, or sinks after it moved.
+  - [DECIDED] The reconciler derives `op_start_pointer`, `op_end`, and `inform_resize_start` / `inform_resize_end` from the desired op and what river was told, as it does for fullscreen. Replacing an op sends `op_end` in one manage sequence and `op_start_pointer` in the next, because river keeps an op until the sequence carrying `op_end` finishes. A float under a resize op is placed as `Resizing`: every render anchors its committed size at the far edges of the dragged ones.
   - Initial floating size: propose_dimensions(0, 0) lets the window decide for itself. [DECIDED] This places every `ClientSized` float, including the dialogs that `defaultManageHook` floats.
 
 ### 3.6 Focus Model
@@ -241,10 +243,11 @@ Required functionality: river_window_manager_v1 **version 3** (depends on set_co
 | closed | WindowClosed → StackSet.delete |
 | dimensions | Update ActualState (reconciler only; does not affect the StackSet) |
 | dimensions_hint | A hint to the layout (honoured under Tolerate) |
-| pointer_enter / pointer_leave | Change focus only when FFM is enabled |
+| pointer_enter / pointer_leave | [DECIDED] Tracked per seat by the runtime as the target of a pointer binding press (M2-D07). Change focus only when FFM is enabled |
 | window_interaction / shell_surface_interaction | click-to-focus, raise, handling clicks on the prompt |
 | maximize/minimize/fullscreen/menu _requested family | Policy hooks (equivalent to xmonad's ClientMessage handling). Default: honour only fullscreen_requested and exit_fullscreen_requested, ignore the rest. [DECIDED] Fullscreen uses river's native request and a fullscreen set beside the StackSet that keeps a window only while it is its own workspace's focus. Focusing another window on that workspace exits fullscreen. A workspace switch does not and sends no fullscreen request: the hidden window stays fullscreen and covers no output, and showing its workspace on another output sends fullscreen alone. A request from a window that is not its workspace's focus is dropped. The output hint is ignored; the window goes fullscreen on its workspace's output (M2-D03) |
-| pointer_move/resize_requested | [DECIDED] Start a move or resize op for a floating window; ignore the request for a tiled window (M2-D05) |
+| pointer_move/resize_requested | [DECIDED] Start a move or resize op for a floating window, without a focus change; ignore the request for a tiled window and never float it (M2-D05). Edges are parsed at the boundary, and a malformed value is dropped. River forwards a request only while a button is held, and it sends `op_release` with the first delta of such an op (M2-D07) |
+| op_delta / op_release | [DECIDED] `OpInput` tagged with the op river runs on the seat; input for any other op is dropped |
 | output / removed / position / dimensions | Equivalent to rescreen (apply the rules in 3.2) |
 | session_locked / unlocked | Switch binding restrictions (minimize WM bindings while locked) |
 | unavailable | Duplicate instance → report an error and exit |

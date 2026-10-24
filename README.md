@@ -85,6 +85,22 @@ tile, so its content and border never cover a neighbour. Wrap a layout in
 size from the tile's top-left instead, and to propose tiles within the
 client's minimum and maximum size, like xmonad's `layoutHints`.
 
+`pointerBindings` maps a `PointerBinding` of modifiers and a button to
+`MoveWindow` or `ResizeWindow`. `def` uses `defaultPointerBindings`: Mod with
+button 1 drags the window under the pointer, and Mod with button 3 resizes it
+from its bottom-right corner. Either one focuses the window. A tiled window
+floats where it was shown once the pointer moves, so a Mod-click without
+motion leaves it tiled. A resize never goes below the window's minimum size.
+`Button1`, `Button2`, and `Button3` are the left, middle, and right buttons,
+and `Button` takes any Linux input event code. Client-drawn title bars and
+resize handles work on floating windows and are ignored on tiled ones.
+
+```haskell
+main = seki def
+  { pointerBindings = \c -> (PointerBinding (modMask c .|. Shift) Button1, ResizeWindow) : defaultPointerBindings c
+  }
+```
+
 `keys` receives the final configuration, so changing `modMask`, `terminal`,
 or `workspaces` also changes `defaultKeys`. Bindings use XKB keysym numbers,
 with `Keysym 0xff0d` representing Return. Combine `Mods` with `(.|.)`, which
@@ -102,12 +118,12 @@ process when the first output arrives. Use `spawnOnce` in it for programs
 that must start only once.
 
 When changing the layout's type, replace the layout-dependent key function,
-manage hook, and startup hook in the same record update, as in
-`def{layoutHook = Full, keys = defaultKeys, manageHook = defaultManageHook, startupHook = pure ()}`.
+pointer bindings, manage hook, and startup hook in the same record update, as in
+`def{layoutHook = Full, keys = defaultKeys, pointerBindings = defaultPointerBindings, manageHook = defaultManageHook, startupHook = pure ()}`.
 `defaultManageHook` names no layout, so it composes with a hook of your own,
 as in `composeAll [appId =? "mpv" --> doShift "2", defaultManageHook]`.
 Custom bindings are an association list of `(KeyBinding, Action l ())` pairs.
-Duplicate identities, empty workspace lists or duplicate tags, negative borders,
+Duplicate key or pointer bindings, empty workspace lists or duplicate tags, negative borders,
 and colors whose RGB channels exceed alpha fail before Wayland startup.
 `BorderColor` channels are unsigned 32-bit premultiplied RGBA values.
 
