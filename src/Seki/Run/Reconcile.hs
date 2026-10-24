@@ -11,6 +11,12 @@ is proposed zero by zero, so its client picks its size, and every render
 centers whatever size the client last committed. That size never becomes
 stored geometry, so the window stays centered when its client resizes it.
 
+A shown tile sits at its tile's top-left at the size its client last
+committed, even while a newer proposal is pending. Under 'Crop' every such
+render also sets a content clip box equal to the tile's content box, so
+neither content nor border leaves the tile. 'Tolerate' never clips, and
+proposes the tile clamped to the window's dimensions hint (M2-D04).
+
 A fullscreen placement is river's native fullscreen. Each window remembers
 what river and its client were last told, so entering, moving to another
 output, and exiting each send only the requests that differ, in one manage
@@ -42,7 +48,7 @@ import Seki.Internal.Core.Scene (BorderColor (..), DesiredScene (..), Placement 
 import Seki.Internal.Core.StackSet (OutputId (..), WindowId (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Inventory (RiverDimensionsHint (..), RiverInventory, RiverOutputState (..), RiverSize (..), RiverWindowState (..), lookupRiverOutput, lookupRiverWindow, riverInventoryWindows)
-import Seki.Run.Phase (ManageM, RenderM, clearFocus, exitWindowFullscreen, focusWindow, fullscreenWindow, hideWindow, informWindowFullscreen, informWindowNotFullscreen, placeNodeTop, proposeWindowDimensions, setDefaultLayerShellOutput, setNodePosition, setWindowBorders, setWindowCapabilities, setWindowTiled, showWindow, useWindowSsd)
+import Seki.Run.Phase (ManageM, RenderM, clearFocus, exitWindowFullscreen, focusWindow, fullscreenWindow, hideWindow, informWindowFullscreen, informWindowNotFullscreen, placeNodeTop, proposeWindowDimensions, setDefaultLayerShellOutput, setNodePosition, setWindowBorders, setWindowCapabilities, setWindowContentClipBox, setWindowTiled, showWindow, useWindowSsd)
 import Seki.Run.Runtime (RenderOutcome (..), RiverLayerFocus (..), RiverRuntimeSnapshot (..), RiverSeatBindings (..))
 import Seki.Wire.Connection.ObjectTable (Object, objectId)
 import Seki.Wire.Types (ObjectId, mkObjectId, objectIdValue)
@@ -60,8 +66,10 @@ data FullscreenApplied
 -- | What a placement asks of fullscreen: none, whatever river and the client already have, or covering this output.
 data FullscreenGoal = NotFullscreen | KeepFullscreen | CoverOutput (Object River.RiverOutputV1)
 
--- | What a render shows: nothing, a settled box, or river's fullscreen cover.
-data RenderTarget = Hidden | ShownAt Rect | Covering deriving (Eq, Show)
+{- | What a render shows: nothing, a settled box with the content clip box it
+needs ('Nothing' disables clipping), or river's fullscreen cover.
+-}
+data RenderTarget = Hidden | ShownAt Rect (Maybe Size) | Covering deriving (Eq, Show)
 
 data Applied = Applied
   { appliedWindow :: Object River.RiverWindowV1
@@ -72,6 +80,8 @@ data Applied = Applied
   , settledRequest :: Maybe Size
   , actual :: Maybe Size
   , appliedRect :: Maybe Rect
+  , appliedClip :: Maybe Size
+  -- ^ The content clip box river has, 'Nothing' while disabled as river starts.
   , appliedColor :: Maybe BorderColor
   , appliedBorderWidth :: Maybe Int32
   , appliedShown :: Maybe Bool
@@ -85,7 +95,7 @@ emptyReconcileState :: ReconcileState
 emptyReconcileState = ReconcileState Map.empty Map.empty []
 
 fresh :: RiverWindowState -> Applied
-fresh window = Applied (riverWindowObject window) False River.RiverWindowV1EdgesFlagsNone NoProposal Windowed Nothing Nothing Nothing Nothing Nothing Nothing
+fresh window = Applied (riverWindowObject window) False River.RiverWindowV1EdgesFlagsNone NoProposal Windowed Nothing Nothing Nothing Nothing Nothing Nothing Nothing
 
 windowIdOf :: RiverWindowState -> WindowId
 windowIdOf = WindowId . objectIdValue . objectId . riverWindowObject
@@ -204,13 +214,13 @@ reconcileRender style scene snapshot (ReconcileState old seats oldStacking) = (R
     either (const Nothing) Just (mkRect origin size)
   target w a = case (Map.lookup (windowIdOf w) (sceneWindows scene), fullscreen a, riverWindowNode w) of
     (Just Fullscreen{}, FullscreenOn _, Just _) -> Covering
-    _ -> maybe Hidden ShownAt (settledTargetRect w a)
+    (placement, _, _) -> maybe Hidden (`ShownAt` (placement >>= contentClip)) (settledTargetRect w a)
   targets = Map.fromList [(windowIdOf w, target w (states Map.! windowIdOf w)) | w <- windows]
   update w =
     let wid = windowIdOf w
         a = states Map.! wid
      in case targets Map.! wid of
-          ShownAt rect -> a{appliedRect = Just rect, appliedShown = Just True, appliedColor = Just (color wid), appliedBorderWidth = Just borderWidth}
+          ShownAt rect clip -> a{appliedRect = Just rect, appliedClip = clip, appliedShown = Just True, appliedColor = Just (color wid), appliedBorderWidth = Just borderWidth}
           t -> a{appliedRect = Nothing, appliedShown = Just (t == Covering)}
   stableOrder = sceneWindowOrder scene ++ [windowIdOf w | w <- windows, windowIdOf w `notElem` sceneWindowOrder scene]
   liveOrder = [w | w <- stableOrder, Just window <- [lookupWindow inventory w], Just _ <- [riverWindowNode window]]
@@ -242,9 +252,14 @@ reconcileRender style scene snapshot (ReconcileState old seats oldStacking) = (R
       windows
   borderWidth = max 0 (sceneBorderWidth style)
   position w = case targets Map.! windowIdOf w of
-    ShownAt rect
+    ShownAt rect _
       | appliedRect (states Map.! windowIdOf w) /= Just rect ->
           mapM_ (\node -> setNodePosition node (rectX rect) (rectY rect)) (riverWindowNode w)
+    _ -> pure ()
+  clipping w = case targets Map.! windowIdOf w of
+    ShownAt _ clip
+      | appliedClip (states Map.! windowIdOf w) /= clip ->
+          setWindowContentClipBox (riverWindowObject w) 0 0 (maybe 0 sizeWidth clip) (maybe 0 sizeHeight clip)
     _ -> pure ()
   borders w = when changed $ do
     let BorderColor r g b alpha = color wid
@@ -262,6 +277,7 @@ reconcileRender style scene snapshot (ReconcileState old seats oldStacking) = (R
     shown = targets Map.! windowIdOf w /= Hidden
   plan = do
     mapM_ position windows
+    mapM_ clipping windows
     unless (stacking == oldStacking) $
       mapM_ placeNodeTop stacking
     mapM_ borders windows
@@ -270,8 +286,14 @@ reconcileRender style scene snapshot (ReconcileState old seats oldStacking) = (R
 
 isShownAt :: RenderTarget -> Bool
 isShownAt = \case
-  ShownAt _ -> True
+  ShownAt _ _ -> True
   _ -> False
+
+-- | A 'Crop' tile clips its content to the tile's content box; nothing else clips.
+contentClip :: Placement -> Maybe Size
+contentClip = \case
+  Placed Crop r -> Just (rectSize r)
+  _ -> Nothing
 
 {- | Move what river and the client believe toward the goal: enter with both
 requests, follow a moved workspace with @fullscreen@ alone, and exit with
