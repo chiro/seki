@@ -39,6 +39,7 @@ import Seki.Internal.Core.Event (CoreEvent (..))
 import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), mkRect, mkSize)
 import Seki.Internal.Core.Layout (CLR (..), ChangeLayout (..), Choose (..), IncMasterN (..), Mirror (..), Resize (..))
 import Seki.Internal.Core.ManageHook (noWindowProps)
+import Seki.Internal.Core.PointerOp (HEdge (..), OpId, OpInput (..), OpKind (..), OpOrigin (..), OpRequest (..), ResizeEdges (..), SeatId (..), SizeBounds (..), VEdge (..), firstOpId, nextOpId)
 import Seki.Internal.Core.StackSet
 import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..), addOutput, newCoreState, removeOutput)
 import Seki.Internal.Layout.Full (Full (..))
@@ -273,10 +274,41 @@ instance Arbitrary EventHistory where
           , (1, labelled "WindowInteraction" WindowInteraction <$> window)
           , (1, labelled "FullscreenRequested" FullscreenRequested <$> window)
           , (1, labelled "ExitFullscreenRequested" ExitFullscreenRequested <$> window)
+          , (3, labelled "StartOp" StartOp <$> opRequest window)
+          , (6, labelled "OpInput" (\(t, i) -> OpInput seat t i) <$> ((,) <$> opTag <*> opInput))
+          , (1, labelled "SeatRemoved" SeatRemoved <$> elements [seat, SeatId 2])
           , (4, (\(d, a) -> EventStep ("RunAction (" ++ d ++ ")") (RunAction a)) <$> (tag' >>= elements . defaultActions))
           ]
     pure (EventHistory [1 .. numWs] steps)
   shrink (EventHistory ts steps) = EventHistory ts <$> shrinkList (const []) steps
+
+seat :: SeatId
+seat = SeatId 1
+
+opRequest :: Gen WindowId -> Gen OpRequest
+opRequest window =
+  OpRequest seat
+    <$> window
+    <*> elements [Move, Resize (Corner RightEdge BottomEdge), Resize (Corner LeftEdge TopEdge), Resize (Horizontal LeftEdge), Resize (Vertical BottomEdge)]
+    <*> elements [FromBinding, FromClient]
+    <*> frequency [(1, pure Nothing), (4, Just <$> box)]
+    <*> elements [SizeBounds 0 0 0 0, SizeBounds 50 40 0 0, SizeBounds 0 0 120 90]
+ where
+  box = do
+    x <- chooseInt (-50, 500)
+    y <- chooseInt (-50, 500)
+    w <- chooseInt (0, 300)
+    h <- chooseInt (0, 300)
+    either (error . show) (pure . OutputRect) (mkSize (fromIntegral w) (fromIntegral h) >>= mkRect (Point (fromIntegral x) (fromIntegral y)))
+
+-- | Mostly the first few ops, which the generated starts reach.
+opTag :: Gen (Maybe OpId)
+opTag = frequency [(1, pure Nothing), (6, Just . (iterate nextOpId firstOpId !!) <$> chooseInt (0, 1))]
+
+opInput :: Gen OpInput
+opInput = frequency [(3, OpMoved <$> delta <*> delta), (1, pure OpReleased)]
+ where
+  delta = fromIntegral <$> chooseInt (-200, 200)
 
 historyStart :: EventHistory -> CoreState Int DefaultLayout
 historyStart h = either (error . show) id (newCoreState (Choose CL tall (Choose CL (Mirror tall) Full)) (historyTags h))
