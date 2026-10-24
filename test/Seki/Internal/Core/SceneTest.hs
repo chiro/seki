@@ -11,6 +11,7 @@ import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), Rect, mkRect, m
 import Seki.Internal.Core.GeometryGen (genRatio, genRect)
 import Seki.Internal.Core.Layout (CLR (..), Choose (..), LayoutClass (..), Mirror (..), SizePolicy (..), runLayout, tolerant, (|||))
 import Seki.Internal.Core.ManageHook (idHook)
+import Seki.Internal.Core.PointerOp (HEdge (..), OpKind (..), PointerOp (..), ResizeEdges (..), SeatId (..), VEdge (..), firstOpId, noSizeBounds)
 import Seki.Internal.Core.Scene (DesiredScene (..), OutputArea (..), Placement (..), SceneStyle (..), defaultSceneStyle, planScene, stackWindows)
 import Seki.Internal.Core.StackSet (FloatGeom (..), OutputId (..), Screen (..), Stack (..), StackSet (..), WindowId (..), Workspace (..), integrate)
 import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..), fromWorkspaces)
@@ -208,6 +209,17 @@ floatTests =
     , testCase "floating families follow their most recently raised member, the focused family last" $
         stackWindows [w1, w2, w3, w4] [w1, w4, w3] [] [w1, w2, w3, w4] (Just w2) (Map.singleton w3 (Just w1))
           @?= [w2, w4, w1, w3]
+    , testCase "a resize op places its float as Resizing with the clamped box and names its seat and op" $ do
+        let resizing stored = (floatState Full (Stack w2 [w1] []) [(w2, FloatAt (OutputRect stored))] [w2]){corePointerOp = Just (op w2 (Resize (Corner LeftEdge TopEdge)))}
+            result stored = planScene defaultSceneStyle (resizing stored) (Map.singleton (OutputId 1) secondOutput) Map.empty
+        Map.lookup w2 (sceneWindows (result (rectAt 30 40 200 100))) @?= Just (Resizing (Corner LeftEdge TopEdge) (rectAt 830 40 200 100))
+        Map.lookup w2 (sceneWindows (result (rectAt 700 550 200 100))) @?= Just (Resizing (Corner LeftEdge TopEdge) (rectAt 1398 498 200 100))
+        scenePointerOp (result (rectAt 30 40 200 100)) @?= Just (SeatId 7, firstOpId)
+    , testCase "a move op keeps its float Floating, and a tile under a resize op not yet moved stays Placed" $ do
+        let moving = (floatState Full (Stack w2 [w1] []) [(w2, FloatAt (OutputRect (rectAt 30 40 200 100)))] [w2]){corePointerOp = Just (op w2 Move)}
+            tiled = (floatState Full (Stack w1 [] []) [] []){corePointerOp = Just (op w1 (Resize (Corner RightEdge BottomEdge))){opMoved = False}}
+        Map.lookup w2 (sceneWindows (planScene defaultSceneStyle moving (Map.singleton (OutputId 1) secondOutput) Map.empty)) @?= Just (Floating (rectAt 830 40 200 100))
+        Map.lookup w1 (sceneWindows (planScene defaultSceneStyle tiled (Map.singleton (OutputId 1) secondOutput) Map.empty)) @?= Just (Placed Crop (rectAt 802 32 796 566))
     , testProperty "every float lies inside its output with its border, and no float reaches a layout" $
         forAll ((,,) <$> genRect <*> vectorOf 4 genRect <*> sublistOf [w1, w2, w3, w4]) $ \(bounds, stored, floated) ->
           forAll (chooseInt (0, 20)) $ \border ->
@@ -220,11 +232,15 @@ floatTests =
                   Placed _ r -> counterexample (show w ++ " floats, or the layout saw a float") (property (w `notElem` floated && toInteger (rectHeight r) + 2 * b == 100 * toInteger (4 - length floated)))
                   Floating r -> property (w `elem` floated && outer r)
                   Centered r -> property (w `elem` floated && outer r)
+                  Resizing _ _ -> counterexample (show w ++ " is resizing with no op") (property False)
                   Fullscreen _ -> counterexample (show w ++ " is fullscreen") (property False)
                   HiddenFullscreen -> counterexample (show w ++ " is fullscreen") (property False)
                   Omitted -> property True
              in conjoin (map check (Map.toList (sceneWindows result)))
     ]
+
+op :: WindowId -> OpKind -> PointerOp
+op w kind = PointerOp firstOpId (SeatId 7) w kind (OutputRect (rectAt 0 0 1 1)) noSizeBounds True
 
 fullscreenTests :: TestTree
 fullscreenTests =

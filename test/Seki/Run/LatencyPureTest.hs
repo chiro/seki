@@ -28,7 +28,7 @@ tests =
     ]
  where
   initial = initialState 8
-  emptyScene = DesiredScene Map.empty [] [] [] Nothing Nothing
+  emptyScene = DesiredScene Map.empty [] [] [] Nothing Nothing Nothing
   throws value = do
     result <- try @ErrorCall (evaluate value)
     case result of Left _ -> pure (); Right _ -> assertFailure "deep value was not forced"

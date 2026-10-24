@@ -104,7 +104,7 @@ intent (Spawn cmd) = mix 1 (command cmd)
 intent (CloseWindow w) = mix 2 (window w)
 intent ReclaimFocus = 3
 scene :: DesiredScene -> Word64
-scene (DesiredScene ws order raised stacking focus out) =
+scene (DesiredScene ws order raised stacking focus out _) =
   many
     id
     [ Map.foldlWithKey' (\a w p -> mix a (mix (window w) (placement p))) 0 ws
@@ -115,7 +115,7 @@ scene (DesiredScene ws order raised stacking focus out) =
     , optional output out
     ]
  where
-  placement Omitted = 0; placement (Placed _ r) = mix 1 (rect r); placement (Floating r) = mix 2 (rect r); placement (Centered r) = mix 3 (rect r); placement (Fullscreen o) = mix 4 (output o); placement HiddenFullscreen = 5
+  placement Omitted = 0; placement (Placed _ r) = mix 1 (rect r); placement (Floating r) = mix 2 (rect r); placement (Centered r) = mix 3 (rect r); placement (Resizing _ r) = mix 6 (rect r); placement (Fullscreen o) = mix 4 (output o); placement HiddenFullscreen = 5
 
 forceResult :: CoreState String BenchLayout -> [Intent] -> DesiredScene -> Word64
 forceResult st intents desired = many id [state st, many intent intents, scene desired]
@@ -138,6 +138,7 @@ validateResult count st desired = case coreWorkspaces st of
   validPlacement (Placed _ r) = inScreen r
   validPlacement (Floating r) = inScreen r
   validPlacement (Centered r) = inScreen r
+  validPlacement (Resizing _ r) = inScreen r
   validPlacement (Fullscreen _) = True
   validPlacement HiddenFullscreen = True
   inScreen r = rectWidth r > 0 && rectHeight r > 0 && rectX r >= 0 && rectY r >= 0 && rectX r + rectWidth r <= 1920 && rectY r + rectHeight r <= 1080

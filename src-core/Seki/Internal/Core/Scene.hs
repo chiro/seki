@@ -32,6 +32,7 @@ import Data.Set qualified as Set
 import Data.Word (Word32)
 import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), Rect, mkRect, mkSize, rectHeight, rectWidth, rectX, rectY)
 import Seki.Internal.Core.Layout (LayoutClass (..), SizePolicy, runLayout)
+import Seki.Internal.Core.PointerOp (OpId, OpKind (..), PointerOp (..), ResizeEdges, SeatId)
 import Seki.Internal.Core.StackSet (FloatGeom (..), OutputId, Screen (..), StackSet (..), WindowId, Workspace (..), integrate', peek, screens)
 import Seki.Internal.Core.StackSet qualified as StackSet
 import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..))
@@ -43,6 +44,9 @@ data Placement
     Placed SizePolicy Rect
   | -- | A float's stored content box moved onto its output and clamped inside it.
     Floating Rect
+  | -- | A float under a resize op, placed like 'Floating'. Its far edges stay
+    -- where the box puts them, whatever size the client commits.
+    Resizing ResizeEdges Rect
   | -- | A float with no stored box: center whatever size the client commits
     -- in this box, the output less its border, keeping the top-left inside it.
     Centered Rect
@@ -59,6 +63,7 @@ placementShown placement = case placement of
   HiddenFullscreen -> False
   Placed _ _ -> True
   Floating _ -> True
+  Resizing _ _ -> True
   Centered _ -> True
   Fullscreen _ -> True
 
@@ -89,6 +94,8 @@ data DesiredScene = DesiredScene
   , sceneStacking :: [WindowId]
   , sceneFocus :: Maybe WindowId
   , sceneOutput :: Maybe OutputId
+  , scenePointerOp :: Maybe (SeatId, OpId)
+  -- ^ The op river should run, on its seat.
   }
   deriving (Eq, Show)
 
@@ -98,7 +105,7 @@ output, less the border, is smaller, and moves only as far as it takes to keep
 the content and border on the output.
 -}
 planScene :: (LayoutClass l) => SceneStyle -> CoreState i l -> Map OutputId OutputArea -> Map WindowId (Maybe WindowId) -> DesiredScene
-planScene style st areas parents = DesiredScene placements stable raiseOrder ordering (preferred >>= \w -> if shown w then Just w else Nothing) activeOutput
+planScene style st areas parents = DesiredScene placements stable raiseOrder ordering (preferred >>= \w -> if shown w then Just w else Nothing) activeOutput ((\op -> (opSeat op, opId op)) <$> corePointerOp st)
  where
   (allWorkspaces, assigned, floats, preferred, activeOutput) = case coreWorkspaces st of
     HeadlessState hw -> (headlessCurrent hw : headlessHidden hw, [], headlessFloating hw, Nothing, Nothing)
@@ -109,7 +116,7 @@ planScene style st areas parents = DesiredScene placements stable raiseOrder ord
   placed =
     concat
       [ [(w, Placed (sizePolicy (layout tiled)) r) | (w, tile) <- runLayout tiled (outputUsable area), Just r <- [inset tile]]
-        ++ [(w, p) | w <- integrate' (stack (workspace s)), Just g <- [Map.lookup w floats], Just p <- [floatPlacement (outputBounds area) g]]
+        ++ [(w, resizing w p) | w <- integrate' (stack (workspace s)), Just g <- [Map.lookup w floats], Just p <- [floatPlacement (outputBounds area) g]]
         ++ [(w, Fullscreen (output s)) | w <- integrate' (stack (workspace s)), w `Set.member` coreFullscreen st]
       | s <- assigned
       , Just area <- [Map.lookup (output s) areas]
@@ -128,6 +135,9 @@ planScene style st areas parents = DesiredScene placements stable raiseOrder ord
             x = clampTo (rectX inner) (rectWidth inner) width (toInteger (rectX bounds) + toInteger (rectX r))
             y = clampTo (rectY inner) (rectHeight inner) height (toInteger (rectY bounds) + toInteger (rectY r))
         mkSize width height >>= mkRect (Point (fromInteger x) (fromInteger y))
+  resizing w p = case (p, corePointerOp st) of
+    (Floating r, Just PointerOp{opWindow = o, opKind = Resize edges}) | o == w -> Resizing edges r
+    _ -> p
   border = max 0 (sceneBorderWidth style)
   b = toInteger border
   shown w = maybe False placementShown (Map.lookup w placements)
