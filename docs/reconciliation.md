@@ -16,7 +16,16 @@ windows omitted by `Full` remain in the scene, with no placement. They receive
 no dimension proposal.
 
 The reconciler retains the requested size separately from the client's
-actual size. M1 accepts a client size mismatch at the desired top-left.
+actual size, and shows the actual size at the desired top-left. The tile's
+size policy (M2-D04), taken from its workspace's layout, handles a mismatch.
+Under `Crop`, the default, every render that shows the tile also sets a
+content clip box equal to the tile's content box, including while a proposal
+is pending, so neither content nor border leaves the tile. Under `Tolerate`,
+selected with `tolerant`, nothing is clipped, so an oversized client may
+overlap its neighbours, and each proposal is the tile clamped to the
+window's minimum and maximum hints. A commit smaller than the tile leaves a
+gap under either policy, because a clip box cannot enlarge content. Floats
+and fullscreen windows take no size policy, and a float is never clipped.
 Comparing future targets with the accepted requested size prevents repeated
 proposals to a client that cannot use the exact tile size.
 

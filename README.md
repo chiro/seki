@@ -79,6 +79,12 @@ focused window can be fullscreen: focusing another window on that workspace
 ends it, and switching workspaces does not. `withFocused toggleFullscreen`
 does the same from a key binding.
 
+A tiled client that commits a size other than its tile is cropped to the
+tile, so its content and border never cover a neighbour. Wrap a layout in
+`tolerant`, as in `tolerant (tall ||| Full)`, to show such a client at its own
+size from the tile's top-left instead, and to propose tiles within the
+client's minimum and maximum size, like xmonad's `layoutHints`.
+
 `keys` receives the final configuration, so changing `modMask`, `terminal`,
 or `workspaces` also changes `defaultKeys`. Bindings use XKB keysym numbers,
 with `Keysym 0xff0d` representing Return. Combine `Mods` with `(.|.)`, which

@@ -1,6 +1,6 @@
 # M2 Practical Implementation Plan
 
-Status: **Draft** / Last updated: 2026-10-20
+Status: **Draft** / Last updated: 2026-10-24
 
 This document turns the M2 row in the specification into an ordered, testable
 implementation plan. It builds on the completed [M1 plan](m1-plan.md) and
@@ -9,7 +9,7 @@ configuration needs, plus the floating, restart, and size-mismatch behavior
 that daily use hits first.
 
 Design questions are tracked in [Open design issues](#9-open-design-issues).
-All six issues are **Decided**, and M2-D01, M2-D02, and M2-D03 are
+All six issues are **Decided**, and M2-D01, M2-D02, M2-D03, and M2-D04 are
 **Verified**. Each other issue becomes **Verified** when its required
 regression lands.
 
@@ -435,7 +435,7 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
 | M2-D01 | Float geometry and the border | P1 | Verified | WP4, WP5 |
 | M2-D02 | Float stacking against families | P2 | Verified | WP4 |
 | M2-D03 | Fullscreen representation and exit | P1 | Verified | WP6, WP8 |
-| M2-D04 | Crop while a proposal is pending | P1 | Decided | WP7 |
+| M2-D04 | Crop while a proposal is pending | P1 | Verified | WP7 |
 | M2-D05 | Client move and resize requests | P3 | Decided | WP5 |
 | M2-D06 | Restore state contents and output mapping | P1 | Decided | WP8 |
 
@@ -604,11 +604,31 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
     every layout change; centering under `Tolerate`; and clipping oversized
     commits under `Tolerate`, which would leave it different from `Crop` only
     in its proposals.
-- **Affected text:** spec 3.3 mismatch policy; `reconciliation.md` once WP7
-  lands.
+- **Affected text:** spec 3.3 mismatch policy; `reconciliation.md`.
 - **Required regression:** a generated trace asserting that the clip box is
   inside the tile at every render under `Crop`, and that `Tolerate` sends no
   clip box and keeps the committed size.
+- **Verified (WP7):** the generated Full, Tall, and Mirror Tall traces in
+  [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs) generate commit
+  sizes above and below each proposal and delayed `dimensions` events. They
+  assert that every render showing a `Crop` tile has a clip box equal to the
+  tile's content box in effect at the tile's top-left, so no committed
+  content pixel leaves its tile, including while a proposal is pending.
+  Dropping the clip request while a proposal is pending fails all three.
+  "M2-D04: generated Tolerate traces never clip, keep the committed size, and
+  propose within the hints" and its Full variant check `Tolerate` with
+  generated `dimensions_hint` events. "M2-D04: a Crop tile's clip box is
+  untouched while fullscreen and fits its new tile after exit" and the
+  tile-to-float trace cover the windows that take no policy, and the
+  real-river scenario `m2-size-policy` checks both policies in pixels. The
+  policy is `sizePolicy :: l -> SizePolicy` on `LayoutClass`; the scene
+  places a tile as `Placed SizePolicy Rect` from its workspace's layout, and
+  `tolerant` wraps a layout in `ModifiedLayout Tolerant`, named apart from
+  the `Tolerate` constructor. The reconciler records the clip box river has
+  and sends `set_content_clip_box` only when it changes, leaving it untouched
+  for a hidden or covering window. The spec's planned `sizePolicyDefault`
+  configuration field is dropped, since `tolerant` applied to `layoutHook`
+  does the same.
 
 ### M2-D05. Client move and resize requests
 
