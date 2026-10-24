@@ -27,6 +27,7 @@ policyConfigOf config =
     , policyLaunch = launchDetached
     , policyManageHook = manageHook config
     , policyStartupHook = startupHook config
+    , policyPointerBindings = []
     }
  where
   style = borders config

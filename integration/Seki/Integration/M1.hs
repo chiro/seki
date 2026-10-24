@@ -303,6 +303,7 @@ m1Config =
     , policySceneStyle = SceneStyle 2 (BorderColor maxBound 0 maxBound maxBound) (BorderColor 0x40404040 0x40404040 0x40404040 maxBound)
     , policyManageHook = idHook
     , policyStartupHook = pure ()
+    , policyPointerBindings = []
     , policyLaunch = \_ -> failIntegration "unexpected spawn in M1 policy"
     }
  where
