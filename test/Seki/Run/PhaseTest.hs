@@ -15,8 +15,12 @@ import Seki.Run.Phase (
   closeWindow,
   disableKeyBinding,
   enableKeyBinding,
+  enablePointerBinding,
+  endPointerOp,
   exitWindowFullscreen,
   hideWindow,
+  informResizeEnd,
+  informResizeStart,
   informWindowFullscreen,
   informWindowNotFullscreen,
   placeNodeAbove,
@@ -34,6 +38,7 @@ import Seki.Run.Phase (
   setWindowContentClipBox,
   setWindowTiled,
   showWindow,
+  startPointerOp,
   useWindowSsd,
  )
 import Seki.Wire.Arguments (ArgumentEncoder, putInt, putObject, putUint, runArgumentEncoder)
@@ -62,6 +67,7 @@ tests =
     [ testCase "submits manage requests in plan order" testManagePlan
     , testCase "submits XKB binding configuration in plan order" testKeyBindingManagePlan
     , testCase "submits the default layer-shell output in a manage plan" testLayerShellManagePlan
+    , testCase "submits pointer op and binding requests in a manage plan" testPointerOpManagePlan
     , testCase "submits window render requests in plan order" testWindowRenderPlan
     , testCase "submits node render requests in plan order" testNodeRenderPlan
     , testCase "stops a plan at the first request failure" testPlanFailure
@@ -105,6 +111,23 @@ testKeyBindingManagePlan =
     expectRequest reader peer binding (Opcode 1) (putUint 0)
     expectRequest reader peer binding (Opcode 2) (pure ())
     expectRequest reader peer binding (Opcode 3) (pure ())
+
+testPointerOpManagePlan :: Assertion
+testPointerOpManagePlan = do
+  withInterfaceConnection River.riverSeatV1Interface $ \connection seat peer -> do
+    assertEqual "seat op plan" (Right ()) =<< runManageM connection (startPointerOp seat >> endPointerOp seat)
+    reader <- newFrameReader
+    expectRequest reader peer seat (Opcode 4) (pure ())
+    expectRequest reader peer seat (Opcode 5) (pure ())
+  withInterfaceConnection River.riverWindowV1Interface $ \connection window peer -> do
+    assertEqual "window resize plan" (Right ()) =<< runManageM connection (informResizeStart window >> informResizeEnd window)
+    reader <- newFrameReader
+    expectRequest reader peer window (Opcode 12) (pure ())
+    expectRequest reader peer window (Opcode 13) (pure ())
+  withInterfaceConnection River.riverPointerBindingV1Interface $ \connection binding peer -> do
+    assertEqual "pointer binding plan" (Right ()) =<< runManageM connection (enablePointerBinding binding)
+    reader <- newFrameReader
+    expectRequest reader peer binding (Opcode 1) (pure ())
 
 testLayerShellManagePlan :: Assertion
 testLayerShellManagePlan =
