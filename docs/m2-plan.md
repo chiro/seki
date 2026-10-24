@@ -233,9 +233,11 @@ Depends on WP4 and M2-D05.
 
 Deliverables:
 
-- phase-safe wrappers for `get_pointer_binding`, `op_start_pointer`,
+- phase-safe wrappers for the pointer binding's `enable`, `op_start_pointer`,
   `op_end`, and `inform_resize_start` and `inform_resize_end`, each covered
-  by `ci/check-phase-types.sh`;
+  by `ci/check-phase-types.sh`. `get_pointer_binding` is not manage-only, so
+  the runtime creates bindings per seat outside the manage phase, as it
+  does key bindings, and enables them in the next manage sequence;
 - a `pointerBindings` field with mod plus button 1 to move and mod plus
   button 3 to resize, which floats a tiled window first;
 - core events for `op_delta` and `op_release`, using the cumulative offset;
@@ -436,7 +438,7 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
 | M2-D02 | Float stacking against families | P2 | Verified | WP4 |
 | M2-D03 | Fullscreen representation and exit | P1 | Verified | WP6, WP8 |
 | M2-D04 | Crop while a proposal is pending | P1 | Verified | WP7 |
-| M2-D05 | Client move and resize requests | P3 | Decided | WP5 |
+| M2-D05 | Client move and resize requests | P3 | Verified | WP5 |
 | M2-D06 | Restore state contents and output mapping | P1 | Decided | WP8 |
 | M2-D07 | Pointer operation lifecycle on river | P1 | Verified | WP5 |
 
@@ -644,6 +646,15 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
   and ignoring every request, which leaves client title bars on floats inert.
 - **Affected text:** spec 3.5 and the 4.2 `pointer_move/resize_requested` row.
 - **Required regression:** a reducer test for both cases.
+- **Verified (WP5):** "M2-D05: a client request on a tiled window is ignored
+  and the window stays tiled" and "M2-D05: a client request on a float starts
+  the op without changing focus" in
+  [EventTest](../test/Seki/Internal/Core/EventTest.hs). The left-edge resize
+  and op swap traces in
+  [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs) drive the same
+  op from `pointer_resize_requested` and `pointer_move_requested` through the
+  policy. Spec 3.5 and the 4.2 rows describe the op. River's handling of a
+  client op is recorded in M2-D07.
 
 ### M2-D06. Restore state contents and output mapping
 
@@ -698,7 +709,9 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
     held it does, and after `op_start_pointer` river sends `op_release` with
     the first `op_delta`, while the button is still held.
   - Releasing the button of a binding op delivers `op_delta`, `op_release`,
-    and then the binding's `released`, all before one `manage_start`.
+    and then the binding's `released`, all before one `manage_start`. The
+    `op_delta` repeats the last cumulative offset, so a press with no motion
+    delivers `op_delta(0, 0)`. The `m2-pointer-drag` scenario found this.
   - `op_end` and `op_start_pointer` in one manage sequence leave the old op
     running: later `op_delta` events stay cumulative from the old start and
     no new `op_release` follows.
@@ -717,11 +730,19 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
     motion only on river 0.5.0.
   - The binding's `released` also ends a binding op. It arrives after
     `op_release`, so it is normally a no-op.
+  - A tiled window floats at the first nonzero delta, so the repeated
+    `op_delta(0, 0)` of a click leaves it tiled.
   - Replacing an op sends `op_end` in one manage sequence and
     `op_start_pointer` in the next.
   - A window that closes mid-op ends the op in the core, so seki sends
     `op_end` in the manage sequence that reports the close.
   - Hover needs no re-resolution after `op_end`.
 - **Affected text:** spec 3.5; `reconciliation.md`.
-- **Verified:** the spike outcomes above. The spike code was deleted after the
-  run.
+- **Verified (WP5):** the spike outcomes above; the spike code was deleted
+  after the run. "a binding press with no motion, whose release repeats a zero
+  delta, leaves a tile tiled" and "a release after the window closed changes
+  nothing" in [EventTest](../test/Seki/Internal/Core/EventTest.hs), "an op
+  that replaces another starts in the sequence after the one that ends it" in
+  [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs), the hover
+  test in [RuntimeTest](../test/Seki/Run/RuntimeTest.hs), and the real-river
+  scenario `m2-pointer-drag`.
