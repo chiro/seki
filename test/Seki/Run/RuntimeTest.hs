@@ -32,6 +32,7 @@ import Seki.Run.MockRiver (
   receiveLayerShellOutputRequest,
   receiveLayerShellSeatRequest,
   receiveNewIdRequest,
+  receivePointerBindingRequest,
   receiveRuntimeBinds,
   receiveRuntimeBindsAtManagerVersion,
   receiveSequenceCompletion,
@@ -43,8 +44,10 @@ import Seki.Run.MockRiver (
   withRuntimePair,
  )
 import Seki.Run.Phase (disableKeyBinding, setWindowDimensionBounds)
+import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.River (RiverBootstrapError (..), RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (
+  PointerBindingEvent (..),
   RenderOutcome (..),
   RiverLayerFocus (..),
   RiverRuntimeError (..),
@@ -89,6 +92,7 @@ tests =
     , testCase "promotes inventory failures before user event delivery" testInventoryFailure
     , testCase "promotes window-node acquisition failures" testNodeAcquisitionFailure
     , testCase "owns per-seat XKB binding objects" testSeatBindingLifecycle
+    , testCase "owns per-seat pointer bindings and passes the hovered window with a press" testPointerBindingLifecycle
     , testCase "owns one layer-shell output per output and plans with its usable area" testOutputLayerShellLifecycle
     , testCase "promotes invalid usable areas to inventory errors" testInvalidUsableArea
     , testCase "owns one layer-shell seat per seat and tracks its keyboard owner" testSeatLayerShellLifecycle
@@ -252,6 +256,8 @@ testInventoryRemoval =
                         _ -> pure ()
                   }
             , riverKeyBindings = []
+            , riverPointerBindings = []
+            , handleRiverPointerBindingEvent = \_ _ _ -> pure ()
             , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , riverSequenceRecorder = Nothing
             , prepareRiverManagePlan = \_ -> pure (pure ())
@@ -296,6 +302,8 @@ testPhasePlanFailure =
           RiverRuntimeHandlers
             { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
             , riverKeyBindings = []
+            , riverPointerBindings = []
+            , handleRiverPointerBindingEvent = \_ _ _ -> pure ()
             , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , riverSequenceRecorder = Just recorder
             , prepareRiverManagePlan = \snapshot ->
@@ -344,6 +352,8 @@ testInventoryFailure =
                       \_ _ -> modifyIORef' deliveredWindowEvents (+ 1)
                   }
             , riverKeyBindings = []
+            , riverPointerBindings = []
+            , handleRiverPointerBindingEvent = \_ _ _ -> pure ()
             , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , riverSequenceRecorder = Nothing
             , prepareRiverManagePlan = \_ -> pure (pure ())
@@ -427,6 +437,8 @@ testNodeAcquisitionFailure =
                       \_ -> modifyIORef' deliveredCreations (+ 1)
                   }
             , riverKeyBindings = []
+            , riverPointerBindings = []
+            , handleRiverPointerBindingEvent = \_ _ _ -> pure ()
             , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , riverSequenceRecorder = Nothing
             , prepareRiverManagePlan = \_ -> pure (pure ())
@@ -515,6 +527,8 @@ testSeatBindingLifecycle =
                         _ -> pure ()
                   }
             , riverKeyBindings = [terminalBinding, closeBinding]
+            , riverPointerBindings = []
+            , handleRiverPointerBindingEvent = \_ _ _ -> pure ()
             , handleRiverKeyBindingEvent =
                 \definition binding event -> case event of
                   Xkb.RiverXkbBindingV1Pressed -> do
@@ -534,6 +548,78 @@ testSeatBindingLifecycle =
     assertEqual "seat creation and removal callbacks" 2 =<< readIORef seatCallbacks
     assertEqual "routed binding press" [terminalBinding] =<< readIORef bindingPresses
     assertEqual "removed seat bindings" [] =<< readRiverSeatBindings session
+
+testPointerBindingLifecycle :: Assertion
+testPointerBindingLifecycle =
+  withRuntimePair $ \target peer -> do
+    events <- newIORef []
+    hovers <- newIORef []
+    let moveBinding = RiverPointerBinding 0x110 (River.RiverSeatV1ModifiersFlags 64)
+    windowId <- requireObjectId 0xff000005
+    seatId <- requireObjectId 0xff000007
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
+        , callbackDoneFrame callbackId 98
+        ]
+      (managerId, _, layerShellId) <- receiveRuntimeBinds reader peer
+      sendFrames peer [encodedFrame managerId (Opcode 8) (putNewId seatId)]
+      layerShellSeatId <- receiveLayerShellSeatRequest reader peer layerShellId seatId
+      bindingId <- receivePointerBindingRequest reader peer seatId moveBinding
+      sendFrames peer [encodedFrame managerId (Opcode 6) (putNewId windowId)]
+      nodeId <- receiveNewIdRequest reader peer windowId (Opcode 2)
+      let render = do
+            sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+            receiveSequenceCompletion reader peer managerId (Opcode 4)
+          manage frames = do
+            sendFrames peer (frames ++ [encodedFrame managerId (Opcode 2) (pure ())])
+            receiveSequenceCompletion reader peer managerId (Opcode 2)
+            render
+      sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
+      receiveExpectedRequest reader peer bindingId (Opcode 1) (pure ())
+      receiveSequenceCompletion reader peer managerId (Opcode 2)
+      render
+      manage [encodedFrame seatId (Opcode 2) (putObject windowId), encodedFrame bindingId (Opcode 0) (pure ())]
+      manage [encodedFrame seatId (Opcode 3) (pure ()), encodedFrame bindingId (Opcode 0) (pure ())]
+      manage [encodedFrame bindingId (Opcode 1) (pure ())]
+      sendFrames peer [encodedFrame seatId (Opcode 2) (putObject windowId), encodedFrame windowId (Opcode 0) (pure ())]
+      receiveExpectedRequest reader peer nodeId (Opcode 0) (pure ())
+      receiveExpectedRequest reader peer windowId (Opcode 0) (pure ())
+      manage [encodedFrame bindingId (Opcode 0) (pure ())]
+      sendFrames peer [encodedFrame seatId (Opcode 0) (pure ()), encodedFrame managerId (Opcode 2) (pure ())]
+      receiveExpectedRequest reader peer bindingId (Opcode 0) (pure ())
+      receiveExpectedRequest reader peer layerShellSeatId (Opcode 0) (pure ())
+      receiveExpectedRequest reader peer seatId (Opcode 0) (pure ())
+      receiveSequenceCompletion reader peer managerId (Opcode 2)
+      closeTransport peer
+    let handlers =
+          (runtimeHandlers (\_ -> pure ()))
+            { riverPointerBindings = [moveBinding]
+            , handleRiverPointerBindingEvent = \definition seat event -> do
+                assertEqual "pressed binding definition" moveBinding definition
+                assertEqual "pressed binding seat" seatId (objectId seat)
+                modifyIORef' events (<> [pressedOn event])
+            , prepareRiverManagePlan = \snapshot -> do
+                modifyIORef' hovers (<> [map (fmap objectId . riverSeatPointerWindow) (riverRuntimeSeatBindings snapshot)])
+                pure (pure ())
+            }
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
+    assertEqual "pointer binding lifecycle" (Right ()) =<< runRiverSession session
+    expectMockSuccess mockDone
+    assertEqual
+      "a press carries the hovered window, a leave or close clears it, and a release carries none"
+      [Just (Just windowId), Just Nothing, Nothing, Just Nothing]
+      =<< readIORef events
+    assertEqual "the seat's hovered window at each manage" [[Nothing], [Just windowId], [Nothing], [Nothing], [Nothing], []] =<< readIORef hovers
+ where
+  pressedOn = \case
+    PointerPressed window -> Just (objectId <$> window)
+    PointerReleased -> Nothing
 
 testOutputLayerShellLifecycle :: Assertion
 testOutputLayerShellLifecycle =
@@ -859,6 +945,8 @@ runtimeHandlers managerHandler =
   RiverRuntimeHandlers
     { riverProtocolHandlers = protocolHandlers managerHandler
     , riverKeyBindings = []
+    , riverPointerBindings = []
+    , handleRiverPointerBindingEvent = \_ _ _ -> pure ()
     , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
     , riverSequenceRecorder = Nothing
     , prepareRiverManagePlan = \_ -> pure (pure ())

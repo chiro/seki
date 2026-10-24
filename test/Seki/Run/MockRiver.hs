@@ -12,6 +12,7 @@ module Seki.Run.MockRiver (
   receiveRuntimeBindsAtManagerVersion,
   receiveGlobalBind,
   receiveKeyBindingRequest,
+  receivePointerBindingRequest,
   expectNoBootstrapBind,
   receiveSequenceCompletion,
   receiveExpectedRequest,
@@ -44,6 +45,7 @@ import Data.Text (Text)
 import Data.Word (Word32)
 import Network.Socket (Family (AF_UNIX), Socket, SocketType (Stream), close, defaultProtocol, socketPair, withFdSocket)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Arguments (
   ArgumentEncoder,
@@ -190,6 +192,20 @@ receiveKeyBindingRequest reader peer xkbBindingsId seatId definition = do
             modifiers
           pure bindingId
     result -> assertFailure ("unexpected key binding request: " <> show result)
+
+-- | Receive @get_pointer_binding@ on the seat and return the new binding's ID.
+receivePointerBindingRequest :: FrameReader -> Transport -> ObjectId -> RiverPointerBinding -> IO ObjectId
+receivePointerBindingRequest reader peer seatId definition = do
+  frame <- receiveFrame reader peer
+  assertEqual "pointer binding request sender" seatId (rawFrameSender frame)
+  assertEqual "get_pointer_binding opcode" (Opcode 6) (rawFrameOpcode frame)
+  case runCompleteArgumentDecoder ((,,) <$> getNewId <*> getUint <*> getUint) (rawFramePayload frame) ([] :: [()]) of
+    Done (bindingId, button, modifiers) remaining []
+      | ByteString.null remaining -> do
+          assertEqual "pointer binding button" (riverPointerButton definition) button
+          assertEqual "pointer binding modifiers" (River.riverSeatV1ModifiersFlagsValue (riverPointerModifiers definition)) modifiers
+          pure bindingId
+    result -> assertFailure ("unexpected pointer binding request: " <> show result)
 
 expectNoBootstrapBind :: Transport -> Assertion
 expectNoBootstrapBind peer =

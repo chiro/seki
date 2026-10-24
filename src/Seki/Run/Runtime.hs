@@ -10,6 +10,8 @@ module Seki.Run.Runtime (
   readRiverInventory,
   readRiverSequencePhase,
   RiverKeyBindingState (..),
+  RiverPointerBindingState (..),
+  PointerBindingEvent (..),
   RiverSeatBindings (..),
   RiverLayerFocus (..),
   RiverRuntimeSnapshot (..),
@@ -62,10 +64,12 @@ import Seki.Run.Phase (
   ManageM,
   RenderM,
   enableKeyBinding,
+  enablePointerBinding,
   runManageM,
   runRenderM,
   setKeyBindingLayoutOverride,
  )
+import Seki.Run.Pointer (RiverPointerBinding, createRiverPointerBinding)
 import Seki.Run.River (
   RiverBootstrapError,
   RiverWindowManagerHandlers (..),
@@ -132,13 +136,27 @@ data RiverKeyBindingState = RiverKeyBindingState
   }
   deriving (Eq, Show)
 
+data RiverPointerBindingState = RiverPointerBindingState
+  { riverPointerBindingDefinition :: RiverPointerBinding
+  , riverPointerBindingObject :: Object River.RiverPointerBindingV1
+  , riverPointerBindingInitialized :: Bool
+  }
+  deriving (Eq, Show)
+
 data RiverSeatBindings = RiverSeatBindings
   { riverBindingsSeat :: Object River.RiverSeatV1
   , riverSeatLayerShell :: Object LayerShell.RiverLayerShellSeatV1
   , riverSeatLayerFocusRevision :: Integer
   , riverSeatLayerFocus :: RiverLayerFocus
   , riverSeatKeyBindings :: [RiverKeyBindingState]
+  , riverSeatPointerBindings :: [RiverPointerBindingState]
+  , riverSeatPointerWindow :: Maybe (Object River.RiverWindowV1)
+  -- ^ The window river last said the seat's pointer entered, until it leaves or closes.
   }
+  deriving (Eq, Show)
+
+-- | A pointer binding event, with the window under the seat's pointer at a press.
+data PointerBindingEvent = PointerPressed (Maybe (Object River.RiverWindowV1)) | PointerReleased
   deriving (Eq, Show)
 
 {- | Which kind of layer surface river last said owns the seat's keyboard.
@@ -167,6 +185,8 @@ data RiverRuntimeHandlers = RiverRuntimeHandlers
   { riverProtocolHandlers :: RiverWindowManagerHandlers
   , riverKeyBindings :: [RiverKeyBinding]
   , handleRiverKeyBindingEvent :: RiverKeyBinding -> Object Xkb.RiverXkbBindingV1 -> Xkb.RiverXkbBindingV1Event OwnedFd -> IO ()
+  , riverPointerBindings :: [RiverPointerBinding]
+  , handleRiverPointerBindingEvent :: RiverPointerBinding -> Object River.RiverSeatV1 -> PointerBindingEvent -> IO ()
   , riverSequenceRecorder :: Maybe Recorder
   , prepareRiverManagePlan :: RiverRuntimeSnapshot -> IO (ManageM ())
   , prepareRiverRenderPlan :: RiverRuntimeSnapshot -> IO (RenderM RenderOutcome)
@@ -398,7 +418,8 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
     when updated $ do
       handleRiverWindowEvent handlers window event
       case event of
-        River.RiverWindowV1Closed ->
+        River.RiverWindowV1Closed -> do
+          atomicModifyIORef' seatBindingsState (\seats -> (fmap (unhover window) seats, ()))
           case previous of
             Nothing -> pure ()
             Just state -> destroyWindow state
@@ -484,7 +505,8 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
                       recordRuntimeError sequenceStatus RiverRuntimeXkbGlobalUnavailable
                     Just xkbBindings -> do
                       created <- createBindings xkbBindings seat (riverKeyBindings runtimeHandlers)
-                      when created (handleRiverSeatCreated handlers seat)
+                      pointerCreated <- if created then createPointerBindings seat (riverPointerBindings runtimeHandlers) else pure False
+                      when pointerCreated (handleRiverSeatCreated handlers seat)
   handleLayerShellSeatEvent seat event = do
     let focus = case event of
           LayerShell.RiverLayerShellSeatV1FocusExclusive -> RiverLayerFocusExclusive
@@ -508,7 +530,12 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
             Nothing -> Left (RiverRuntimeInventoryError (RiverInventoryWindowNotTracked identifier))
             Just _ -> Right ()
         _ -> pure True
-      when validInteraction $
+      when validInteraction $ do
+        case event of
+          River.RiverSeatV1PointerEnter identifier ->
+            hover seat . fmap riverWindowObject . lookupRiverWindow identifier =<< readIORef inventoryState
+          River.RiverSeatV1PointerLeave -> hover seat Nothing
+          _ -> pure ()
         case event of
           River.RiverSeatV1Removed -> do
             removed <- removeSeat seat
@@ -518,6 +545,8 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
                 Nothing -> pure ()
                 Just state -> destroySeat state
           _ -> handleRiverSeatEvent handlers seat event
+  hover seat window =
+    atomicModifyIORef' seatBindingsState (\seats -> (Map.adjust (\state -> state{riverSeatPointerWindow = window}) (objectId seat) seats, ()))
   requireSeatUntracked seat = do
     seats <- readIORef seatBindingsState
     recordStateResult $
@@ -532,7 +561,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
           else
             ( Map.insert
                 (objectId seat)
-                (RiverSeatBindings seat layerShellSeat 0 RiverLayerFocusNone [])
+                (RiverSeatBindings seat layerShellSeat 0 RiverLayerFocusNone [] [] Nothing)
                 seats
             , Right ()
             )
@@ -586,6 +615,26 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
             )
           createBindings xkbBindings seat rest
   handleBindingEvent = handleRiverKeyBindingEvent runtimeHandlers
+  createPointerBindings _ [] = pure True
+  createPointerBindings seat (definition : rest) =
+    createRiverPointerBinding connection seat definition (\_ event -> handlePointerBindingEvent seat definition event) >>= \case
+      Left errorValue -> do
+        recordRuntimeError sequenceStatus (RiverRuntimeConnectionError errorValue)
+        pure False
+      Right binding -> do
+        atomicModifyIORef' seatBindingsState $ \seats ->
+          ( Map.adjust
+              (\state -> state{riverSeatPointerBindings = riverSeatPointerBindings state <> [RiverPointerBindingState definition binding False]})
+              (objectId seat)
+              seats
+          , ()
+          )
+        createPointerBindings seat rest
+  handlePointerBindingEvent seat definition event = do
+    hovered <- (>>= riverSeatPointerWindow) . Map.lookup (objectId seat) <$> readIORef seatBindingsState
+    handleRiverPointerBindingEvent runtimeHandlers definition seat $ case event of
+      River.RiverPointerBindingV1Pressed -> PointerPressed hovered
+      River.RiverPointerBindingV1Released -> PointerReleased
   runManagePlans = do
     snapshot <- readRuntimeSnapshot
     policyPlan <- prepareRiverManagePlan runtimeHandlers snapshot
@@ -595,8 +644,15 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
           , bindingState <- riverSeatKeyBindings seatState
           , not (riverKeyBindingInitialized bindingState)
           ]
+        pendingPointer =
+          [ riverPointerBindingObject bindingState
+          | seatState <- riverRuntimeSeatBindings snapshot
+          , bindingState <- riverSeatPointerBindings seatState
+          , not (riverPointerBindingInitialized bindingState)
+          ]
         plan = do
           mapM_ prepareKeyBinding pending
+          mapM_ enablePointerBinding pendingPointer
           policyPlan
     runManageM connection plan >>= \case
       Left errorValue -> pure (Left errorValue)
@@ -623,6 +679,10 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
                     map
                       (\bindingState -> bindingState{riverKeyBindingInitialized = True})
                       (riverSeatKeyBindings seatState)
+                , riverSeatPointerBindings =
+                    map
+                      (\bindingState -> bindingState{riverPointerBindingInitialized = True})
+                      (riverSeatPointerBindings seatState)
                 }
           )
           seats
@@ -632,21 +692,36 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
     destroyBindings (riverSeatKeyBindings state) >>= \case
       False -> pure ()
       True ->
-        submitRequest
-          connection
-          LayerShell.riverLayerShellSeatV1Interface
-          (riverSeatLayerShell state)
-          LayerShell.encodeRiverLayerShellSeatV1Destroy
-          >>= \case
-            Left errorValue ->
-              recordRuntimeError sequenceStatus (RiverRuntimeConnectionError errorValue)
-            Right () ->
-              submitRequest
-                connection
-                River.riverSeatV1Interface
-                (riverBindingsSeat state)
-                River.encodeRiverSeatV1Destroy
-                >>= recordConnectionResult
+        destroyPointerBindings (riverSeatPointerBindings state) >>= \case
+          False -> pure ()
+          True ->
+            submitRequest
+              connection
+              LayerShell.riverLayerShellSeatV1Interface
+              (riverSeatLayerShell state)
+              LayerShell.encodeRiverLayerShellSeatV1Destroy
+              >>= \case
+                Left errorValue ->
+                  recordRuntimeError sequenceStatus (RiverRuntimeConnectionError errorValue)
+                Right () ->
+                  submitRequest
+                    connection
+                    River.riverSeatV1Interface
+                    (riverBindingsSeat state)
+                    River.encodeRiverSeatV1Destroy
+                    >>= recordConnectionResult
+  destroyPointerBindings [] = pure True
+  destroyPointerBindings (bindingState : rest) =
+    submitRequest
+      connection
+      River.riverPointerBindingV1Interface
+      (riverPointerBindingObject bindingState)
+      River.encodeRiverPointerBindingV1Destroy
+      >>= \case
+        Left errorValue -> do
+          recordRuntimeError sequenceStatus (RiverRuntimeConnectionError errorValue)
+          pure False
+        Right () -> destroyPointerBindings rest
   destroyBindings [] = pure True
   destroyBindings (bindingState : rest) =
     submitRequest
@@ -689,6 +764,11 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
     Right () -> pure ()
   handlers = riverProtocolHandlers runtimeHandlers
   connection = waylandConnection wayland
+
+unhover :: Object River.RiverWindowV1 -> RiverSeatBindings -> RiverSeatBindings
+unhover window state
+  | riverSeatPointerWindow state == Just window = state{riverSeatPointerWindow = Nothing}
+  | otherwise = state
 
 updateInventory ::
   IORef (Either RiverRuntimeError RiverSequenceState) ->

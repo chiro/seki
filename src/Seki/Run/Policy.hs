@@ -136,6 +136,8 @@ policyRuntimeHandlers policy =
         case (event, lookup definition bindings) of
           (Xkb.RiverXkbBindingV1Pressed, Just action) -> enqueue (RunAction action)
           _ -> pure ()
+    , riverPointerBindings = []
+    , handleRiverPointerBindingEvent = \_ _ _ -> pure ()
     , riverSequenceRecorder = Nothing
     , prepareRiverManagePlan = prepareManagePlan policy
     , prepareRiverRenderPlan = prepareRenderPlan policy

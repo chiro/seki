@@ -116,6 +116,7 @@ library seki-wire
     Seki.Run.Latency
     Seki.Run.Config
     Seki.Run.Phase
+    Seki.Run.Pointer
     Seki.Run.Policy
     Seki.Run.Reconcile
     Seki.Run.River
