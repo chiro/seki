@@ -46,14 +46,19 @@ module Seki.Internal.Core.State (
   focusWindowIn,
   syncRaiseOrder,
   syncFullscreen,
+  startPointerOp,
+  applyOpInput,
+  syncPointerOp,
 ) where
 
+import Control.Monad (mfilter)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Set (Set)
 import Data.Set qualified as Set
+import Seki.Internal.Core.PointerOp (OpId, OpInput (..), OpOrigin (..), OpRequest (..), PointerOp (..), SeatId, firstOpId, nextOpId, opBox)
 import Seki.Internal.Core.StackSet (
-  FloatGeom,
+  FloatGeom (..),
   OutputId (..),
   Screen (..),
   StackSet (..),
@@ -77,6 +82,9 @@ data CoreState i l = CoreState
   -- ^ Every floating window once, bottom to top. See 'syncRaiseOrder'.
   , coreFullscreen :: Set WindowId
   -- ^ The fullscreen windows. See 'syncFullscreen'.
+  , corePointerOp :: Maybe PointerOp
+  -- ^ At most one op, since seki drives a single seat (spec 3.6). See 'syncPointerOp'.
+  , coreNextOpId :: OpId
   }
   deriving (Eq, Show)
 
@@ -116,7 +124,7 @@ newCoreState l tags@(t : ts) = case firstRepeat [] tags of
 
 -- | A core state over these workspaces with nothing else recorded yet.
 fromWorkspaces :: Workspaces i l -> CoreState i l
-fromWorkspaces ws = CoreState ws Set.empty [] Set.empty
+fromWorkspaces ws = CoreState ws Set.empty [] Set.empty Nothing firstOpId
 
 -- | Change the workspaces and keep the rest of the core state.
 overWorkspaces :: (Workspaces i l -> Workspaces i l) -> CoreState i l -> CoreState i l
@@ -209,3 +217,50 @@ syncFullscreen st = st{coreFullscreen = Set.intersection (coreFullscreen st) foc
   allWorkspaces = case coreWorkspaces st of
     AttachedState ss _ -> map workspace (screens ss) ++ hidden ss
     HeadlessState hw -> headlessCurrent hw : headlessHidden hw
+
+{- | Start an op unless one is running, the window is unmanaged, not shown,
+or fullscreen, or a client asks to move or resize a tiled window (M2-D05). A
+binding focuses the window. Nothing floats until the first delta, so a
+binding press with no motion leaves a tile tiled.
+-}
+startPointerOp :: (Eq i) => OpRequest -> CoreState i l -> CoreState i l
+startPointerOp request st = case (corePointerOp st, reqShownBox request, coreWorkspaces st) of
+  (Nothing, Just shown, AttachedState ss _)
+    | member w ss
+    , w `Set.notMember` coreFullscreen st
+    , reqOrigin request == FromBinding || Map.member w (floating ss) ->
+        focused
+          { corePointerOp = Just (PointerOp (coreNextOpId st) (reqSeat request) w (reqKind request) shown (reqBounds request) False)
+          , coreNextOpId = nextOpId (coreNextOpId st)
+          }
+  _ -> st
+ where
+  w = reqWindow request
+  focused = if reqOrigin request == FromBinding then overWorkspaces (focusWindowIn w) st else st
+
+{- | Apply input for the op river was running on the seat when the drain
+began. Input for any other op, or with no river op, changes nothing.
+-}
+applyOpInput :: SeatId -> Maybe OpId -> OpInput -> CoreState i l -> CoreState i l
+applyOpInput seat running input st = case corePointerOp st of
+  Just op | opSeat op == seat && running == Just (opId op) -> case input of
+    OpMoved dx dy ->
+      (overWorkspaces (onStackSet (StackSet.float (opWindow op) (FloatAt (opBox op dx dy)))) st)
+        { corePointerOp = Just op{opMoved = True}
+        }
+    OpReleased -> st{corePointerOp = Nothing}
+  _ -> st
+
+{- | Keep the op only while its window is managed on an attached StackSet, not
+fullscreen, and floating or not yet moved. So a close, a sink after a move, or
+a fullscreen entry ends it. Syncing twice changes nothing more.
+-}
+syncPointerOp :: CoreState i l -> CoreState i l
+syncPointerOp st = st{corePointerOp = mfilter allowed (corePointerOp st)}
+ where
+  allowed op = case coreWorkspaces st of
+    AttachedState ss _ ->
+      member (opWindow op) ss
+        && opWindow op `Set.notMember` coreFullscreen st
+        && (Map.member (opWindow op) (floating ss) || not (opMoved op))
+    HeadlessState _ -> False
