@@ -19,3 +19,4 @@ m2-startup-keys=passed
 m2-float-dialog=passed
 m2-fullscreen=passed
 m2-size-policy=passed
+m2-pointer-drag=passed

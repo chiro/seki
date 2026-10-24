@@ -16,6 +16,7 @@ import Seki.Integration.Fixture qualified as Shared
 import Seki.Integration.Harness
 import Seki.Internal.Config (Config (..), KeyBinding (..), Keysym (..), Mods (..), additionalKeys, def, defaultManageHook)
 import Seki.Internal.Core.Action (Action, spawn, spawnOnce, windows)
+import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), mkRect, mkSize)
 import Seki.Internal.Core.Layout (tolerant)
 import Seki.Internal.Core.ManageHook (appId, doShift, idHook, (-->), (=?))
 import Seki.Internal.Core.Scene (BorderColor (..), SceneStyle (..))
@@ -44,6 +45,7 @@ m2Scenarios =
   , ("m2-float-dialog", withFixture m2Config{policyManageHook = defaultManageHook} "m2-float-dialog" 1 floatDialog)
   , ("m2-fullscreen", withFixture m2Config{policyBindings = viewBindings} "m2-fullscreen" 1 fullscreen)
   , ("m2-size-policy", sizePolicies)
+  , ("m2-pointer-drag", withFixture m2Config{policyPointerBindings = policyPointerBindings (policyConfigOf def)} "m2-pointer-drag" 1 pointerDrag)
   ]
 
 selfTest :: Fixture -> Probe -> IO ()
@@ -240,6 +242,49 @@ sizePolicies = do
  where
   oversized = (windowSpec Green){specCommit = CommitFixed 600 500}
   neighbour = Box 402 2 396 596
+
+{- | Logo and button 1 drags a window and logo and button 3 resizes it from
+its bottom-right corner. Three tiles start as a master and two stacked
+windows; the bottom one has a 300 by 200 minimum size. A press with no
+motion focuses it and leaves it tiled. Dragging it floats it where it was
+shown, moved by the pointer offset, and the other two retile. Further drags
+move and resize the float by exact offsets, and a resize toward a size
+below the minimum stops at the minimum.
+-}
+pointerDrag :: Fixture -> Probe -> IO ()
+pointerDrag fixture probe = do
+  red <- openWindowWith probe (windowSpec Red){specMinSize = Just (300, 200)}
+  _ <- openWindow probe Green
+  _ <- openWindow probe Blue
+  onFirst "three windows tile with the newest as master" [Paint Blue (Box 2 2 396 596) True, Paint Green (Box 402 2 396 296) False, Paint Red (Box 402 302 396 296) False]
+  redCore <- SS.WindowId . objectIdValue . riverId <$> riverWindow fixture "the first window reaches river" ((== Just "seki-color-probe-1") . riverWindowAppId)
+  let floats =
+        readPolicyState (mPolicy fixture) >>= \st -> case coreWorkspaces st of
+          AttachedState ss _ -> pure (SS.floating ss)
+          HeadlessState _ -> failIntegration "core unexpectedly headless"
+      floatedAt x y w h = Map.singleton redCore (SS.FloatAt (OutputRect (either (error . show) id (mkSize w h >>= mkRect (Point x y)))))
+  withHeldLogo fixture probe . withVirtualPointer (mSocket fixture) (800, 600) $ \pointer -> do
+    let hover point = do
+          pointerMoveTo pointer point
+          void (waitUntil ("the pointer is over the dragged window at " <> show point) assertionTimeoutMicroseconds (pointerSnapshot probe) ((== Just red) . pointerOwner))
+        drag button from to = hover from >> pointerPress pointer button >> pointerMoveTo pointer to >> pointerRelease pointer button
+    hover (600, 450)
+    pointerPress pointer LeftButton
+    pointerRelease pointer LeftButton
+    onFirst "a logo click with no motion focuses the window and leaves it tiled" [Paint Blue (Box 2 2 396 596) False, Paint Green (Box 402 2 396 296) False, Paint Red (Box 402 302 396 296) True]
+    floats >>= assertEqual "the clicked window is still tiled" Map.empty
+    drag LeftButton (600, 450) (400, 300)
+    onFirst "a logo drag floats the tile at its shown box moved by the offset" [Paint Blue (Box 2 2 396 596) False, Paint Green (Box 402 2 396 596) False, Paint Red (Box 202 152 396 296) True]
+    floats >>= assertEqual "the float is stored at the dragged content box" (floatedAt 202 152 396 296)
+    drag LeftButton (400, 300) (500, 350)
+    onFirst "a logo drag moves the float by the exact offset" [Paint Blue (Box 2 2 396 596) False, Paint Green (Box 402 2 396 596) False, Paint Red (Box 302 202 396 296) True]
+    drag RightButton (500, 350) (560, 390)
+    onFirst "a logo right drag grows the float from its bottom-right corner by the offset" [Paint Blue (Box 2 2 396 596) False, Paint Green (Box 402 2 396 596) False, Paint Red (Box 302 202 456 336) True]
+    drag RightButton (700, 500) (300, 200)
+    onFirst "a resize toward a smaller size stops at the 300 by 200 minimum" [Paint Blue (Box 2 2 396 596) False, Paint Green (Box 402 2 396 596) False, Paint Red (Box 302 202 300 200) True]
+    floats >>= assertEqual "the stored box keeps its top-left and the minimum size" (floatedAt 302 202 300 200)
+ where
+  onFirst phase paints = picture fixture phase [(head (mOutputs fixture), paints)]
 
 riverWindow :: Shared.Fixture l -> String -> (RiverWindowState -> Bool) -> IO RiverWindowState
 riverWindow fixture phase predicate =

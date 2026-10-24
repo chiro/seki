@@ -100,6 +100,7 @@ nix develop --no-write-lock-file .#unit --command cabal test all
 | `m2-float-dialog` | Under the default manage hook, a probe window with a parent and a fixed 300 by 200 commit floats over its tiled parent, centered on the output at its own size, with no stored geometry in the core. A click on the parent takes keyboard focus and the focused border, and the dialog stays shown above it | `wlr-randr` |
 | `m2-fullscreen` | The focused probe window of two tiles requests fullscreen and covers the whole output, hiding the other tile. Viewing workspace 2 shows its window uncovered, and viewing workspace 1 again shows the fullscreen window covering the output with keyboard focus. It then requests exit and returns to its master tile with its focused border and keyboard focus | `wlr-randr` |
 | `m2-size-policy` | A probe window commits 600 by 500 whatever it is proposed, wider than its 396 by 596 master tile. Under the default Crop policy it is clipped to the tile, with its focused border around the clipped content, and the neighbouring tile stays whole. Under `tolerant` it shows at its committed size at the tile's top-left over its neighbour, and a window with a 500 by 100 minimum and a 700 by 400 maximum commits the master tile clamped to 500 by 400 | `wlr-randr` |
+| `m2-pointer-drag` | With the logo modifier held, a button 1 press with no motion on the bottom stack tile of three focuses it and leaves it tiled. A button 1 drag of 200 by 150 floats it at its tile's content box moved by that offset while the other two retile, and a second drag moves the float by exactly 100 by 50. A button 3 drag of 60 by 40 grows it from its bottom-right corner by that amount, and a button 3 drag toward a smaller size stops at the window's 300 by 200 minimum with its top-left fixed | `wlr-randr` |
 
 All scenarios also use the core river, foot, and synthetic-input fixture as
 needed. The CI shell in `flake.nix` provides the integration dependency set,
@@ -334,6 +335,7 @@ m2-startup-keys=passed
 m2-float-dialog=passed
 m2-fullscreen=passed
 m2-size-policy=passed
+m2-pointer-drag=passed
 ```
 
 `ci/run-integration.sh` byte-compares the generated file with
