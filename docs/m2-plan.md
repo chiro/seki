@@ -438,6 +438,7 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
 | M2-D04 | Crop while a proposal is pending | P1 | Verified | WP7 |
 | M2-D05 | Client move and resize requests | P3 | Decided | WP5 |
 | M2-D06 | Restore state contents and output mapping | P1 | Decided | WP8 |
+| M2-D07 | Pointer operation lifecycle on river | P1 | Verified | WP5 |
 
 ### M2-D01. Float geometry and the border
 
@@ -678,3 +679,49 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
   lands.
 - **Required regression:** the `m2-restart` scenario and a round-trip
   property.
+
+### M2-D07. Pointer operation lifecycle on river
+
+- **Problem:** the protocol does not say which window a pointer binding's
+  press targets, whether a client op can start with no button held, how
+  `op_release` and the binding's `released` are ordered, whether
+  `op_start_pointer` works in the sequence that carries `op_end`, whether an
+  op survives its window closing, or whether `pointer_enter` follows
+  `op_end`. The WP5 design depends on each answer.
+- **Evidence (river 0.5.0, 2026-10-24):** a throwaway real-river scenario
+  logged every seat, window, and pointer binding event in order:
+  - `pointer_enter(W)` arrives when the pointer first lies over W, long
+    before a press. A press that a binding consumes sends no
+    `window_interaction`; an unbound press does.
+  - A client `xdg_toplevel.move` with no button held never reaches the
+    window manager: river sends no `pointer_move_requested`. With the button
+    held it does, and after `op_start_pointer` river sends `op_release` with
+    the first `op_delta`, while the button is still held.
+  - Releasing the button of a binding op delivers `op_delta`, `op_release`,
+    and then the binding's `released`, all before one `manage_start`.
+  - `op_end` and `op_start_pointer` in one manage sequence leave the old op
+    running: later `op_delta` events stay cumulative from the old start and
+    no new `op_release` follows.
+  - A window closing mid-op does not end the op. `op_delta` keeps coming,
+    and `op_release` follows the button release.
+  - River sends no `pointer_leave` at op start. After `op_end` it sends
+    `pointer_leave` and `pointer_enter` only when the window under the
+    pointer changed, so the last `pointer_enter` still names it.
+- **Decision (2026-10-24):**
+  - A binding targets the window of the seat's last `pointer_enter`, which
+    the runtime tracks per seat and clears on `pointer_leave` or close. A
+    press with no such window starts nothing.
+  - A client op ends on `op_release` like any other. No fallback ends it on a
+    later interaction, since river never forwards a request without a held
+    button. A client-drawn title bar therefore moves a float by the first
+    motion only on river 0.5.0.
+  - The binding's `released` also ends a binding op. It arrives after
+    `op_release`, so it is normally a no-op.
+  - Replacing an op sends `op_end` in one manage sequence and
+    `op_start_pointer` in the next.
+  - A window that closes mid-op ends the op in the core, so seki sends
+    `op_end` in the manage sequence that reports the close.
+  - Hover needs no re-resolution after `op_end`.
+- **Affected text:** spec 3.5; `reconciliation.md`.
+- **Verified:** the spike outcomes above. The spike code was deleted after the
+  run.
