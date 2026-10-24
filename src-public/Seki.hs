@@ -19,8 +19,16 @@ module Seki (
   pattern Mod5,
   Keysym (..),
   KeyBinding (..),
+  Button (..),
+  pattern Button1,
+  pattern Button2,
+  pattern Button3,
+  PointerBinding (..),
+  PointerAction (..),
+  PointerBindings,
   def,
   defaultKeys,
+  defaultPointerBindings,
   additionalKeys,
   removeKeys,
   windows,
@@ -71,7 +79,7 @@ import Data.Bits ((.|.))
 import Seki.Core.Geometry
 import Seki.Core.Layout
 import Seki.Core.StackSet (OutputId, Stack (..), StackSet, WindowId, focusDown, focusMaster, focusUp, greedyView, peek, shift, shiftMaster, shiftWin, swapDown, swapMaster, swapUp, view)
-import Seki.Internal.Config (Action, Bindings, BorderColor (..), BorderConfig (..), Config (..), KeyBinding (..), Keysym (..), ManageHook, Mods (..), StdLayouts, additionalKeys, def, defaultKeys, defaultManageHook, removeKeys, pattern Control, pattern Mod1, pattern Mod3, pattern Mod4, pattern Mod5, pattern Shift)
+import Seki.Internal.Config (Action, Bindings, BorderColor (..), BorderConfig (..), Button (..), Config (..), KeyBinding (..), Keysym (..), ManageHook, Mods (..), PointerAction (..), PointerBinding (..), PointerBindings, StdLayouts, additionalKeys, def, defaultKeys, defaultManageHook, defaultPointerBindings, removeKeys, pattern Button1, pattern Button2, pattern Button3, pattern Control, pattern Mod1, pattern Mod3, pattern Mod4, pattern Mod5, pattern Shift)
 import Seki.Internal.Core.Action qualified as Core
 import Seki.Internal.Core.ManageHook (Query, appId, composeAll, idHook, isDialog, title, (-->), (=?))
 import Seki.Internal.Core.ManageHook qualified as Core

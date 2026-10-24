@@ -11,13 +11,15 @@ import Seki.Internal.Config
 import Seki.Internal.Core.Action qualified as Action
 import Seki.Internal.Core.Layout (CLR (..), Choose (..), Mirror (..), description)
 import Seki.Internal.Core.ManageHook (WindowProps (..), appId, composeAll, doShift, noWindowProps, runQuery, (-->), (=?))
+import Seki.Internal.Core.PointerOp (HEdge (..), OpKind (..), ResizeEdges (..), VEdge (..))
 import Seki.Internal.Core.StackSet qualified as StackSet
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..), fromWorkspaces)
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Config (ConfigRunError (..), policyConfigOf, prepareConfig, runConfig)
-import Seki.Run.Policy (PolicyConfig (..), policyRuntimeHandlers)
+import Seki.Run.Pointer (RiverPointerBinding (..))
+import Seki.Run.Policy (PolicyConfig (..), PolicyError (..), policyRuntimeHandlers)
 import Seki.Run.Runtime (RiverRuntimeHandlers (..))
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import System.Environment (lookupEnv, setEnv, unsetEnv)
@@ -68,7 +70,7 @@ tests =
         assertEqual "other window tiled" Map.empty (floatingState (manage def mpv initial))
         assertEqual "dialog floats with no stored box" (Map.singleton (StackSet.WindowId 2) StackSet.ClientSized) (floatingState (manage def noWindowProps{propParent = Just (StackSet.WindowId 1)} initial))
     , testCase "defaultManageHook composes with a hook of another layout type" $ do
-        let config = def{layoutHook = Full, keys = defaultKeys, manageHook = composeAll [appId =? "mpv" --> doShift "2", defaultManageHook], startupHook = pure ()}
+        let config = def{layoutHook = Full, keys = defaultKeys, manageHook = composeAll [appId =? "mpv" --> doShift "2", defaultManageHook], startupHook = pure (), pointerBindings = defaultPointerBindings}
             fullInitial = fromWorkspaces (AttachedState (StackSet.StackSet (StackSet.Screen (StackSet.Workspace "1" Full (Just (StackSet.Stack (StackSet.WindowId 2) [] []))) (StackSet.OutputId 1)) [] [StackSet.Workspace "2" Full Nothing] Map.empty) [])
         assertEqual "dialog floats" (Map.singleton (StackSet.WindowId 2) StackSet.ClientSized) (floatingState (manage config noWindowProps{propParent = Just (StackSet.WindowId 1)} fullInitial))
     , testCase "mod-t tiles the focused floating window again" $ do
@@ -86,6 +88,19 @@ tests =
     , testCase "the startup hook reaches the policy" $ do
         assertEqual "the default hook does nothing" [] (intents (Action.runAction (policyStartupHook (policyConfigOf def)) initial))
         assertEqual "a configured hook" [Action.Spawn "bar"] (intents (Action.runAction (policyStartupHook (policyConfigOf def{startupHook = Action.spawnOnce "bar"})) initial))
+    , testCase "def moves with mod and button 1 and resizes from the bottom-right with mod and button 3" $ do
+        assertEqual "default pointer bindings" [(PointerBinding Mod4 Button1, MoveWindow), (PointerBinding Mod4 Button3, ResizeWindow)] (pointerBindings def def)
+        let lowered = [(RiverPointerBinding 0x110 (River.RiverSeatV1ModifiersFlags 64), Move), (RiverPointerBinding 0x111 (River.RiverSeatV1ModifiersFlags 64), Resize (Corner RightEdge BottomEdge))]
+        assertEqual "lowered to button codes and ops" lowered (policyPointerBindings (policyConfigOf def))
+        policy <- prepareConfig def >>= either (assertFailure . show) pure
+        assertEqual "bound on every seat" (map fst lowered) (riverPointerBindings (policyRuntimeHandlers policy))
+    , testCase "pointer bindings follow the final modifier, and a repeated or invalid binding fails before connecting" $ do
+        let alt = def{modMask = Mod1}
+        assertEqual "final modifier" [PointerBinding Mod1 Button1, PointerBinding Mod1 Button3] (map fst (pointerBindings alt alt))
+        let repeated = def{pointerBindings = \c -> [(PointerBinding (modMask c) Button2, MoveWindow), (PointerBinding (modMask c) Button2, ResizeWindow)]}
+        prepareConfig repeated >>= either (assertEqual "repeated binding" (PolicyPointerBindingConflict (RiverPointerBinding 0x112 (River.RiverSeatV1ModifiersFlags 64)))) (const (assertFailure "expected a repeated pointer binding to fail"))
+        let locked = def{pointerBindings = const [(PointerBinding (Mods 2) Button1, MoveWindow)]}
+        prepareConfig locked >>= either (assertEqual "locked modifier" (PolicyInvalidPointerModifiers (RiverPointerBinding 0x110 (River.RiverSeatV1ModifiersFlags 2)))) (const (assertFailure "expected a locked modifier to fail"))
     , testCase "additionalKeys replaces a binding with the same identity" $ do
         let config = additionalKeys def [(KeyBinding (Mod4 .|. Shift) (Keysym 0xff0d), Action.spawn "alacritty")]
         assertEqual "the new action wins" [Action.Spawn "alacritty"] (intents (press config Shift 0xff0d initial))

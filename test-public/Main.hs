@@ -27,6 +27,8 @@ main = do
   check "the default layouts crop" (sizePolicy (layoutHook def) == Crop)
   check "tolerant layouts tolerate" (sizePolicy (layoutHook tolerantConfig) == Tolerate)
   check "tolerant keeps the layout description" (description (layoutHook tolerantConfig) == "Tall")
+  check "def moves with mod and button 1 and resizes with mod and button 3" (pointerBindings def def == [(PointerBinding Mod4 Button1, MoveWindow), (PointerBinding Mod4 Button3, ResizeWindow)])
+  check "a pointer binding joins the defaults" (map fst (pointerBindings customConfig customConfig) == [PointerBinding (Mod4 .|. Shift) Button1, PointerBinding Mod4 Button1, PointerBinding Mod4 Button3])
  where
   check label ok = unless ok (failWith label)
   failWith message = putStrLn ("public API check failed: " <> message) >> exitFailure

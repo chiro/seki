@@ -20,8 +20,16 @@ module Seki.Internal.Config (
   pattern Mod5,
   Keysym (..),
   KeyBinding (..),
+  Button (..),
+  pattern Button1,
+  pattern Button2,
+  pattern Button3,
+  PointerBinding (..),
+  PointerAction (..),
+  PointerBindings,
   def,
   defaultKeys,
+  defaultPointerBindings,
   defaultManageHook,
   additionalKeys,
   removeKeys,
@@ -68,6 +76,29 @@ data KeyBinding = KeyBinding
   }
   deriving (Eq, Show)
 
+-- | A Linux input event code for a pointer button.
+newtype Button = Button Word32 deriving (Eq, Show)
+
+-- | The left, middle, and right buttons: @BTN_LEFT@, @BTN_MIDDLE@, and @BTN_RIGHT@.
+pattern Button1, Button2, Button3 :: Button
+pattern Button1 = Button 0x110
+pattern Button2 = Button 0x112
+pattern Button3 = Button 0x111
+
+data PointerBinding = PointerBinding
+  { pointerModifiers :: Mods
+  , pointerButton :: Button
+  }
+  deriving (Eq, Show)
+
+{- | Drag the window under the pointer: move it, or resize it from its
+bottom-right corner. Either focuses the window and floats a tiled one where
+it is shown, once the pointer moves.
+-}
+data PointerAction = MoveWindow | ResizeWindow deriving (Eq, Show)
+
+type PointerBindings = [(PointerBinding, PointerAction)]
+
 data BorderConfig = BorderConfig
   { borderWidth :: Int32
   , focusedBorderColor :: BorderColor
@@ -90,9 +121,10 @@ data Config l = Config
   -- 'Core.spawnOnce' for launches that must not repeat after a restart. Its
   -- type names the layout, so an update that changes the layout type sets it
   -- again, as it does 'keys' and 'manageHook'.
+  , pointerBindings :: Config l -> PointerBindings
   }
 
--- | Nine workspaces, Tall, Mirror Tall, Full, xmonad-style bindings, floating dialogs, and no startup hook.
+-- | Nine workspaces, Tall, Mirror Tall, Full, xmonad-style key and pointer bindings, floating dialogs, and no startup hook.
 def :: Config StdLayouts
 def =
   Config
@@ -105,6 +137,7 @@ def =
     , bindingsUseFixedLayout = True
     , manageHook = defaultManageHook
     , startupHook = pure ()
+    , pointerBindings = defaultPointerBindings
     }
  where
   tall = Tall 1 (3 / 100) (1 / 2)
@@ -143,6 +176,10 @@ defaultKeys config =
       ]
  where
   key modifiers symbol action = (KeyBinding (modMask config .|. modifiers) (Keysym symbol), action)
+
+-- | Mod and button 1 moves the window under the pointer, and mod and button 3 resizes it.
+defaultPointerBindings :: Config l -> PointerBindings
+defaultPointerBindings config = [(PointerBinding (modMask config) Button1, MoveWindow), (PointerBinding (modMask config) Button3, ResizeWindow)]
 
 {- | Float dialogs, the windows with a parent, as 'def' does.
 
