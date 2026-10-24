@@ -9,7 +9,6 @@ Closely derived from @XMonad.Core@ and @XMonad.Layout@ in xmonad 0.18.1
   stateful layout can add a defaulted method without breaking instances.
 * Layouts place 'WindowId's in 'Rect's rather than taking a window type
   parameter.
-* There is no @sizePolicy@ method yet; @Crop@ and @Tolerate@ arrive in M2.
 * @ReleaseResources@, @JumpToLayout@, and X11 event messages are not ported,
   since seki has no restart or name-based layout selection in M1.
 -}
@@ -24,12 +23,19 @@ module Seki.Internal.Core.Layout (
   LayoutMessages (..),
 
   -- * Layouts
+  SizePolicy (..),
   LayoutClass (..),
   runLayout,
   Mirror (..),
   CLR (..),
   Choose (..),
   (|||),
+
+  -- * Layout modifiers
+  LayoutModifier (..),
+  ModifiedLayout (..),
+  Tolerant (..),
+  tolerant,
 
   -- * Workspace layout state
   messageCurrentLayout,
@@ -75,6 +81,13 @@ data LayoutMessages
 
 instance Message LayoutMessages
 
+{- | What a tile shows when its client commits a size other than the tile:
+'Crop' clips the content to the tile, and 'Tolerate' shows the committed size
+at the tile's top-left and proposes the tile clamped to the client's size hints.
+-}
+data SizePolicy = Crop | Tolerate
+  deriving (Eq, Show)
+
 class (Show l) => LayoutClass l where
   -- | Place windows of a non-empty stack. Windows left out are hidden.
   pureLayout :: l -> Rect -> Stack WindowId -> [(WindowId, Rect)]
@@ -88,6 +101,9 @@ class (Show l) => LayoutClass l where
   description :: l -> String
   description = show
 
+  sizePolicy :: l -> SizePolicy
+  sizePolicy _ = Crop
+
 -- | Lay out a workspace's windows; a workspace without windows places none.
 runLayout :: (LayoutClass l) => Workspace i l -> Rect -> [(WindowId, Rect)]
 runLayout (Workspace _ l ms) r = maybe [] (pureLayout l r) ms
@@ -100,6 +116,7 @@ instance (LayoutClass l) => LayoutClass (Mirror l) where
   pureLayout (Mirror l) r s = map (second mirror) (pureLayout l (mirror r) s)
   pureMessage (Mirror l) m = Mirror <$> pureMessage l m
   description (Mirror l) = "Mirror " ++ description l
+  sizePolicy (Mirror l) = sizePolicy l
 
 -- | Which layout of a 'Choose' is selected.
 data CLR = CL | CR
@@ -127,6 +144,9 @@ instance (LayoutClass l, LayoutClass r) => LayoutClass (Choose l r) where
 
   description (Choose CL l _) = description l
   description (Choose CR _ r) = description r
+
+  sizePolicy (Choose CL l _) = sizePolicy l
+  sizePolicy (Choose CR _ r) = sizePolicy r
 
   pureMessage lr m
     | Just NextLayout <- fromMessage m = handle lr NextNoWrap <|> handle lr FirstLayout
@@ -160,6 +180,32 @@ choose (Choose d l r) d' ml mr =
   l' = fromMaybe l ml
   r' = fromMaybe r mr
   hide x = fromMaybe x (handle x Hide)
+
+-- | A layout changed by a modifier @m@.
+class (Show m) => LayoutModifier m where
+  modifySizePolicy :: m -> SizePolicy -> SizePolicy
+  modifySizePolicy _ = id
+
+-- | A layout with a modifier, which keeps the layout's placements and messages.
+data ModifiedLayout m l = ModifiedLayout m l
+  deriving (Eq, Show)
+
+instance (LayoutModifier m, LayoutClass l) => LayoutClass (ModifiedLayout m l) where
+  pureLayout (ModifiedLayout _ l) = pureLayout l
+  pureMessage (ModifiedLayout m l) msg = ModifiedLayout m <$> pureMessage l msg
+  description (ModifiedLayout _ l) = description l
+  sizePolicy (ModifiedLayout m l) = modifySizePolicy m (sizePolicy l)
+
+-- | The modifier behind 'tolerant', named apart from the 'Tolerate' policy.
+data Tolerant = Tolerant
+  deriving (Eq, Show)
+
+instance LayoutModifier Tolerant where
+  modifySizePolicy _ _ = Tolerate
+
+-- | Tolerate client sizes in a layout, like xmonad's @layoutHints@.
+tolerant :: l -> ModifiedLayout Tolerant l
+tolerant = ModifiedLayout Tolerant
 
 {- | Send a message to the current workspace's layout and keep the result.
 Other workspaces keep their own layout state, and a message the layout
