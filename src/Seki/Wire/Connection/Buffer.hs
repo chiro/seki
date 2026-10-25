@@ -204,19 +204,27 @@ Missing descriptors wait while receiving and become fatal at EOF. Successful
 decoding consumes exactly the descriptors used by the decoder.
 -}
 decodePendingArguments :: ReceiveBuffer -> ArgumentDecoder OwnedFd value -> IO (Either ReceiveBufferError (ArgumentPoll value))
-decodePendingArguments (ReceiveBuffer _ stateVariable) decoder =
+decodePendingArguments buffer = consumePendingArguments buffer (const (pure ()))
+
+consumePendingArguments ::
+  ReceiveBuffer ->
+  ([OwnedFd] -> IO ()) ->
+  ArgumentDecoder OwnedFd value ->
+  IO (Either ReceiveBufferError (ArgumentPoll value))
+consumePendingArguments (ReceiveBuffer _ stateVariable) consumed decoder =
   modifyMVar stateVariable $ \state ->
     case bufferPhase state of
       BufferFailed errorValue -> pure (state, Left errorValue)
       BufferClosed -> pure (state, Left ReceiveBufferClosed)
-      _ -> decodePending state decoder
+      _ -> decodePending state consumed decoder
 
-decodePending :: BufferState -> ArgumentDecoder OwnedFd value -> IO (BufferState, Either ReceiveBufferError (ArgumentPoll value))
-decodePending state decoder = case pendingFrame state of
+decodePending :: BufferState -> ([OwnedFd] -> IO ()) -> ArgumentDecoder OwnedFd value -> IO (BufferState, Either ReceiveBufferError (ArgumentPoll value))
+decodePending state consumed decoder = case pendingFrame state of
   Nothing -> pure (state, Left NoPendingFrame)
   Just frame ->
     case runCompleteArgumentDecoder decoder (rawFramePayload frame) (bufferFds state) of
-      Done value _ remainingDescriptors ->
+      Done value _ remainingDescriptors -> do
+        consumed (take (length (bufferFds state) - length remainingDescriptors) (bufferFds state))
         pure
           ( state
               { bufferFds = remainingDescriptors

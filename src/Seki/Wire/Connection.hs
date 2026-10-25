@@ -43,6 +43,7 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Word (Word32)
 import Seki.Protocol.Wayland qualified as Wayland
+import Seki.Wire.Arguments (ArgumentDecoder)
 import Seki.Wire.Binding (EventDecoder, Interface (..), NewObject, RequestEncoder, newObjectId)
 import Seki.Wire.Connection.Buffer (
   ArgumentPoll (..),
@@ -522,13 +523,21 @@ decodePreparedEvent ::
   PreparedEvent interface OwnedFd event ->
   IO (Either ConnectionError event)
 decodePreparedEvent connection prepared =
-  decodePendingArguments (connectionReceiveBuffer connection) (preparedEventArguments prepared) >>= \case
+  receivePendingArguments connection decodePendingArguments (preparedEventArguments prepared)
+
+receivePendingArguments ::
+  Connection ->
+  (ReceiveBuffer -> ArgumentDecoder OwnedFd value -> IO (Either ReceiveBufferError (ArgumentPoll value))) ->
+  ArgumentDecoder OwnedFd value ->
+  IO (Either ConnectionError value)
+receivePendingArguments connection consume decoder =
+  consume (connectionReceiveBuffer connection) decoder >>= \case
     Left errorValue -> pure (Left (ConnectionReceiveBufferError errorValue))
-    Right (ArgumentsReady event) -> pure (Right event)
+    Right (ArgumentsReady value) -> pure (Right value)
     Right (AwaitingArgumentFds _) ->
       receiveIntoBuffer connection >>= \case
         Left errorValue -> pure (Left errorValue)
-        Right () -> decodePreparedEvent connection prepared
+        Right () -> receivePendingArguments connection consume decoder
 
 dispatchFrame :: Connection -> RawFrame -> IO (Either ConnectionError DispatchResult)
 dispatchFrame connection frame =

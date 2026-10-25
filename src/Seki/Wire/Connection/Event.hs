@@ -71,11 +71,21 @@ prepareEvent ::
   RawFrame ->
   ObjectTable ->
   Either EventPreparationError (PreparedEvent interface fd event)
-prepareEvent interface sender decodeEvent frame table = do
+prepareEvent = prepareEventWith validateObject
+
+prepareEventWith ::
+  (Interface interface -> Object interface -> ObjectTable -> Either ObjectTableError ObjectInfo) ->
+  Interface interface ->
+  Object interface ->
+  (Opcode -> Maybe (EventDecoder fd event)) ->
+  RawFrame ->
+  ObjectTable ->
+  Either EventPreparationError (PreparedEvent interface fd event)
+prepareEventWith validateSender interface sender decodeEvent frame table = do
   if rawFrameSender frame == objectId sender
     then pure ()
     else Left (EventSenderMismatch (objectId sender) (rawFrameSender frame))
-  senderInfo <- first EventObjectError (validateObject interface sender table)
+  senderInfo <- first EventObjectError (validateSender interface sender table)
   decoder <-
     maybe
       (Left (UnexpectedEventOpcode (interfaceName interface) (rawFrameOpcode frame)))
