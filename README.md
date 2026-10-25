@@ -137,12 +137,13 @@ execs that executable with `--restore <file>`. The path is the one seki was
 started by, without following symlinks, so a binary rebuilt in place or a
 profile symlink that now points at a new build is what runs. Windows opened
 during the handover go through `manageHook`, and windows closed during it are
-forgotten. If the exec fails, the same process reconnects and restores. A
-`--restore` file that cannot be read or decoded is logged, and seki starts
-fresh. A
-layout must derive `Read` as well as `Show`, since each workspace's layout is
-saved with `show`; a layout that no longer reads after a configuration change
-falls back to `layoutHook` for that workspace alone.
+forgotten. A restored dialog stays floating but no longer stacks with its
+parent, because river does not resend parent links after the handover. If the
+exec fails, the same process reconnects and restores. A `--restore` file that
+cannot be read or decoded is logged, and seki starts fresh. A layout must
+derive `Read` as well as `Show`, since each workspace's layout is saved with
+`show`; a layout that no longer reads after a configuration change falls back
+to `layoutHook` for that workspace alone.
 
 ```haskell
 data Spiral = Spiral Rational deriving (Show, Read)
