@@ -121,7 +121,7 @@ runWM socket directory = do
             ]
         )
     )
-  unless (result == Right ()) (fail (show result))
+  unless (result == Right RiverEnded) (fail (show result))
  where
   kind ManageSequence = "manage" :: String
   kind RenderSequence = "render"
