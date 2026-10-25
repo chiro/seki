@@ -32,6 +32,7 @@ import Seki.Wire.Transport (
   adoptFd,
   closeOwnedFd,
   closeTransport,
+  discoverConnectionTarget,
   maxUnixSocketPathBytes,
   openTransport,
   receiveChunk,
@@ -40,11 +41,12 @@ import Seki.Wire.Transport (
   sendMessage,
   withOwnedFd,
  )
+import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.IO (closeFd, createPipe, dup)
 import System.Posix.IO.ByteString (fdRead, fdWrite)
 import System.Posix.Types (Fd (..))
-import System.Process (spawnProcess, terminateProcess, waitForProcess)
+import System.Process (readProcess, spawnProcess, terminateProcess, waitForProcess)
 import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertEqual, testCase)
@@ -55,6 +57,7 @@ tests =
     "Wayland Unix transport"
     [ testCase "inherited socket takes precedence" testInheritedSocket
     , testCase "rejects malformed inherited sockets" testMalformedInheritedSocket
+    , testCase "a child spawned after discovery does not inherit WAYLAND_SOCKET" testInheritedSocketConsumed
     , testCase "uses the default display name" testDefaultDisplay
     , testCase "resolves a named display beneath the runtime directory" testNamedDisplay
     , testCase "uses an absolute display without a runtime directory" testAbsoluteDisplay
@@ -76,6 +79,15 @@ testInheritedSocket =
     "WAYLAND_SOCKET wins"
     (Right (InheritedSocket (Fd 12)))
     (resolveConnectionTarget (Just "12") (Just "ignored") Nothing)
+
+testInheritedSocketConsumed :: IO ()
+testInheritedSocketConsumed =
+  bracket (lookupEnv "WAYLAND_SOCKET") (maybe (unsetEnv "WAYLAND_SOCKET") (setEnv "WAYLAND_SOCKET")) $ \_ -> do
+    setEnv "WAYLAND_SOCKET" "12"
+    target <- discoverConnectionTarget
+    assertEqual "discovery takes the inherited socket" (Right (InheritedSocket (Fd 12))) target
+    childValue <- readProcess "/bin/sh" ["-c", "printf %s \"${WAYLAND_SOCKET-unset}\""] ""
+    assertEqual "child environment" "unset" childValue
 
 testMalformedInheritedSocket :: IO ()
 testMalformedInheritedSocket = do
