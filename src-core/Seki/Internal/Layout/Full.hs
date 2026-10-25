@@ -10,6 +10,6 @@ module Seki.Internal.Layout.Full (
 import Seki.Internal.Core.Layout (LayoutClass)
 
 data Full = Full
-  deriving (Eq, Show)
+  deriving (Eq, Show, Read)
 
 instance LayoutClass Full

@@ -135,7 +135,7 @@ data Stack a = Stack
   , up :: [a]
   , down :: [a]
   }
-  deriving (Eq, Show, Functor)
+  deriving (Eq, Show, Read, Functor)
 
 -- | Folds in 'integrate' order.
 instance Foldable Stack where

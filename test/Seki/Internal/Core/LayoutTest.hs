@@ -57,7 +57,7 @@ tests =
 
 -- | A layout that counts the 'Shrink' messages it receives.
 newtype Counter = Counter Int
-  deriving (Eq, Show)
+  deriving (Eq, Show, Read)
 
 instance LayoutClass Counter where
   pureMessage (Counter n) m
@@ -84,7 +84,7 @@ propMessageUnhandled x =
 and ignores every other message.
 -}
 data Probe = Probe String [String]
-  deriving (Eq, Show)
+  deriving (Eq, Show, Read)
 
 instance LayoutClass Probe where
   pureMessage (Probe name seen) m
