@@ -103,6 +103,7 @@ intent :: Intent -> Word64
 intent (Spawn cmd) = mix 1 (command cmd)
 intent (CloseWindow w) = mix 2 (window w)
 intent ReclaimFocus = 3
+intent Restart = 4
 scene :: DesiredScene -> Word64
 scene (DesiredScene ws order raised stacking focus out _) =
   many
