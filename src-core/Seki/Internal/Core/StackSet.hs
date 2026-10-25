@@ -56,6 +56,7 @@ module Seki.Internal.Core.StackSet (
   insertUp,
   delete,
   filter,
+  mapMaybeStack,
   shift,
   shiftWin,
 
@@ -80,7 +81,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.List.NonEmpty qualified as NE
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (isJust, listToMaybe)
+import Data.Maybe (isJust, listToMaybe, mapMaybe)
 import Data.Word (Word32)
 import Seki.Internal.Core.Geometry (OutputRect)
 
@@ -327,9 +328,13 @@ delete' w s =
 survives, else moves to the next element below, else the nearest above.
 -}
 filter :: (a -> Bool) -> Stack a -> Maybe (Stack a)
-filter p (Stack f ls rs) = case L.filter p (f : rs) of
-  f' : rs' -> Just (Stack f' (L.filter p ls) rs')
-  [] -> case L.filter p ls of
+filter p = mapMaybeStack (\x -> if p x then Just x else Nothing)
+
+-- | Keep and map the elements that give 'Just', in order, moving focus as 'filter' does.
+mapMaybeStack :: (a -> Maybe b) -> Stack a -> Maybe (Stack b)
+mapMaybeStack g (Stack f ls rs) = case mapMaybe g (f : rs) of
+  f' : rs' -> Just (Stack f' (mapMaybe g ls) rs')
+  [] -> case mapMaybe g ls of
     f' : ls' -> Just (Stack f' ls' [])
     [] -> Nothing
 
