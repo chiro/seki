@@ -1,6 +1,6 @@
 # M2 Practical Implementation Plan
 
-Status: **Draft** / Last updated: 2026-10-25
+Status: **Complete** / Last updated: 2026-10-25
 
 This document turns the M2 row in the specification into an ordered, testable
 implementation plan. It builds on the completed [M1 plan](m1-plan.md) and
@@ -9,9 +9,11 @@ configuration needs, plus the floating, restart, and size-mismatch behavior
 that daily use hits first.
 
 Design questions are tracked in [Open design issues](#9-open-design-issues).
-All six issues are **Decided**, and M2-D01, M2-D02, M2-D03, and M2-D04 are
-**Verified**. Each other issue becomes **Verified** when its required
-regression lands.
+All eight are **Verified** against their required regressions, and the
+[coverage ledger](#91-regression-coverage-and-closeout) links the evidence.
+The [closeout checks](#91-regression-coverage-and-closeout) record which
+[exit criteria](#6-exit-criteria) were checked, when, and with which
+toolchain.
 
 ## 1. Outcome
 
@@ -381,6 +383,24 @@ Tests:
 
 - the M1 budgets still hold;
 - all M1 and M2 scenarios pass in the pinned release command.
+
+Status (2026-10-25): implemented. `seki-latency` takes a required workload.
+`m2` opens six tiles and two parent-hinted dialogs, which the default dialog
+hook floats over each other, and each group changes focus, sends Shrink or
+Expand so every `Crop` tile gets a new clip box, may request client
+fullscreen, views the empty workspace and back, and may request the exit. The
+pure model `Seki.Latency.Workload` states what the probe must observe after
+each action and what the output must show, and every action waits for the
+keyboard owner and committed sizes it predicts. Pictures are checked only
+outside the measured interval. Five alternating trial pairs met every budget,
+with medians of 0.06 ms pure p99, 0.17 ms manage p99, 0.24 ms render p99, and
+a 2.2 ms largest stop-the-world pause; see the [M2 report](latency-m2/report.md).
+The probe now counts only live buffers against its limit of 128, since the
+m2 workload resizes every tile 225 times per run, which exhausted the old
+lifetime limit within 120 actions. The pure workload
+adds fullscreen, a dialog click, and a client-sized float, and its checksum
+now forces the fullscreen set, the pointer op, and each tile's size policy.
+The ManageHook and floating properties run at 1000 QuickCheck cases.
 
 ## 5. Dependency and Merge Order
 
@@ -849,3 +869,56 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
   river sends; and `m2-restart`, whose fullscreen window covers workspace 2
   again after the restart. The spike code was deleted after the run.
 
+### 9.1 Regression coverage and closeout
+
+Each entry below names the tests and scenarios that assert its required and
+additional regressions. WP10 added the latency workload, which drives
+M2-D02, M2-D03, and M2-D04 on real river.
+
+| Decision | Regression evidence |
+|---|---|
+| M2-D01 | "M2-D01: a float's content rectangle is its stored geometry plus the output origin" and the generated property "every float lies inside its output with its border, and no float reaches a layout" in [SceneTest](../test/Seki/Internal/Core/SceneTest.hs). The `m2-float-dialog` scenario in [M2.hs](../integration/Seki/Integration/M2.hs) checks a client-sized dialog centered at its own size, and `m2-pointer-drag` checks that a drag moves the stored content box by exact pixels. |
+| M2-D02 | "M2-D02: a floating dialog stacks over its tiled parent, focused or not" and "M2-D02: focus moving to a tile leaves two overlapping floats in their order" in [SceneTest](../test/Seki/Internal/Core/SceneTest.hs). The raise-order reducer tests and the generated property "the raise order holds each float once, with a focused float on top" in [EventTest](../test/Seki/Internal/Core/EventTest.hs). The M1-D06 trace "Full focuses a new child and hides it when its parent is refocused" in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs) now keeps the dialog shown. `m2-float-dialog` checks it in pixels, and the M2 [latency workload](latency.md) checks the final order of two overlapping dialogs after it raised them 24 times. |
+| M2-D03 | "M2-D03: exiting fullscreen with a proposal pending proposes the tile again and settles to it" and the output-removal and hidden-workspace traces in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs). "M2-D03: a focus change on the same output exits fullscreen while a workspace switch does not" and the generated property "the fullscreen set holds only managed windows that focus their own workspace" in [EventTest](../test/Seki/Internal/Core/EventTest.hs). "M2-D03: a fullscreen tile keeps its slot and covers its workspace's output above both tiers" in [SceneTest](../test/Seki/Internal/Core/SceneTest.hs). The `m2-fullscreen` and `m2-restart` scenarios, and the latency workload's 90 client fullscreen entries per trial, each confirmed by the committed size, with exits by focus, by request, and across a workspace switch. |
+| M2-D04 | The generated Full, Tall, and Mirror Tall traces, "M2-D04: generated Tolerate traces never clip, keep the committed size, and propose within the hints", and "M2-D04: a Crop tile's clip box is untouched while fullscreen and fits its new tile after exit" in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs). "M2-D04: each workspace's tiles take its layout's size policy, and floats and fullscreen windows take none" in [SceneTest](../test/Seki/Internal/Core/SceneTest.hs). `m2-size-policy` checks both policies in pixels, and the latency workload resizes all six `Crop` tiles 225 times per trial. |
+| M2-D05 | "M2-D05: a client request on a tiled window is ignored and the window stays tiled" and "M2-D05: a client request on a float starts the op without changing focus" in [EventTest](../test/Seki/Internal/Core/EventTest.hs). The left-edge resize and op swap traces in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs) drive the op from client requests through the policy. |
+| M2-D06 | "a saved state decodes from its encoding", "a saved generated core decodes from its encoding", "survivors keep their place, gone windows are dropped, and new windows place normally", and "any saved state restores over any inventory to a valid core" in [RestoreTest](../test/Seki/Internal/Core/RestoreTest.hs). The restart check and state-file cases in [RestartTest](../test/Seki/Run/RestartTest.hs). "a refused restart logs why and sends no stop" and "a restore keeps saved windows in their tile and places the rest by the manage hook" in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs). "a failed exec reconnects on the socket path and restores in the same process" and the unknown-version run in [SessionsTest](../test/Seki/Run/SessionsTest.hs). The scenarios `m2-restart`, `m2-restart-fallback`, and `m2-reference-config` in [Restart.hs](../integration/Seki/Integration/Restart.hs) and [Reference.hs](../integration/Seki/Integration/Reference.hs). |
+| M2-D07 | "a binding press with no motion, whose release repeats a zero delta, leaves a tile tiled" and "a release after the window closed changes nothing" in [EventTest](../test/Seki/Internal/Core/EventTest.hs). "an op that replaces another starts in the sequence after the one that ends it" and the generated property "generated pointer traces never repeat an op start or a resize start without the end between" in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs). The hover test in [RuntimeTest](../test/Seki/Run/RuntimeTest.hs) and the `m2-pointer-drag` scenario. |
+| M2-D08 | "M2-D08: answers a render sequence that comes before the first manage sequence" and "a manage plan that asks to stop sends stop once after manage_finish, then destroy on finished" in [RuntimeTest](../test/Seki/Run/RuntimeTest.hs). The fallback trace in [SessionsTest](../test/Seki/Run/SessionsTest.hs), which sends the closes river sends. `m2-restart`, whose fullscreen window covers workspace 2 again after the restart. |
+
+The ManageHook properties, the StackSet floating properties, the float scene
+property, and the hotplug float property run at 1000 QuickCheck cases in
+`cabal test all`, beside the StackSet invariant, hotplug history, and
+generated event-sequence properties.
+
+Maintainer decisions recorded at closeout:
+
+- a refused restart is reported on stderr only, and seki keeps running;
+- an unreadable or undecodable `--restore` file is not fatal: seki logs why
+  and starts fresh;
+- `launchDetached` double-forks, so a launched program is never seki's child
+  after an exec, and this is accepted; and
+- `test-public/PortedConfig.hs` is a reference port, to be tuned in daily use.
+
+Known limitation: a restored dialog loses its family stacking. Parent links
+are not saved across a restart, and river does not send `parent` again to the
+new manager (M2-D08), so a restored dialog keeps its float state but stacks as
+a window without a parent.
+
+WP10 ran these closeout checks on 2026-10-25 with GHC 9.6.7, Cabal 3.10, and
+system river 0.5.0, through `-w ghc-9.6.7 --offline`:
+
+- `cabal build all` and `cabal test all` pass;
+- `python3 tools/latency/test_report.py` passes;
+- `fourmolu --mode check` reports no changes in the changed Haskell files;
+- `ci/check-package.sh` validates the source distribution and Haddock;
+- `bash ci/check-phase-types.sh` rejects every wrong-phase request;
+- `WLR_RENDERER=pixman ci/run-integration.sh` passes all 14 M1 and 10 M2
+  scenarios and verifies the complete manifest; and
+- five alternating trial pairs of the m2 latency workload meet every budget,
+  as the [M2 report](latency-m2/report.md) records.
+
+These local runs did not use the pinned GHC 9.6.6 Nix environment. CI's
+`integration` job runs the pinned command
+`nix develop --no-write-lock-file .#ci --command ci/run-integration.sh` on
+the WP10 change.
