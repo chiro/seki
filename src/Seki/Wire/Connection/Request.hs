@@ -4,7 +4,6 @@ module Seki.Wire.Connection.Request (
   RequestPreparationError (..),
   prepareRequest,
   prepareNewObjectRequest,
-  prepareInheritedObjectRequest,
 )
 where
 
@@ -23,7 +22,6 @@ import Seki.Wire.Connection.ObjectTable (
   allocateClientObject,
   destroyObjectByRequest,
   objectId,
-  objectVersion,
   validateObject,
  )
 import Seki.Wire.Types (FrameError, ObjectId, Opcode, RawFrame (..))
@@ -109,21 +107,6 @@ prepareNewObjectRequest parentInterface parent childInterface childVersion makeR
     first RequestObjectError (allocateClientObject childInterface childVersion table)
   (nextTable, prepared) <- prepareRequest parentInterface parent (makeRequest child) tableWithChild
   pure (nextTable, child, prepared)
-
--- | Create a child at the lower of its generated maximum and parent version.
-prepareInheritedObjectRequest ::
-  Interface parent ->
-  Object parent ->
-  Interface child ->
-  (Object child -> RequestEncoder fd) ->
-  ObjectTable ->
-  Either RequestPreparationError (ObjectTable, Object child, PreparedRequest fd)
-prepareInheritedObjectRequest parentInterface parent childInterface =
-  prepareNewObjectRequest
-    parentInterface
-    parent
-    childInterface
-    (min (objectVersion parent) (interfaceMaximumVersion childInterface))
 
 validateRequestVersion ::
   Interface interface ->

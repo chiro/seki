@@ -7,7 +7,7 @@ import Data.ByteString qualified as ByteString
 import Data.Text (Text)
 import Data.Word (Word32)
 import Seki.Protocol.Wayland qualified as Wayland
-import Seki.Wire.Arguments (ArgumentError (..), putArray, putFd, putNewId, putString, runArgumentEncoder)
+import Seki.Wire.Arguments (ArgumentError (..), putArray, putFd, putString, runArgumentEncoder)
 import Seki.Wire.Binding (Interface (..), RequestEncoder (..))
 import Seki.Wire.Codec (encodeFrame)
 import Seki.Wire.Connection.ObjectTable (
@@ -25,7 +25,6 @@ import Seki.Wire.Connection.ObjectTable (
 import Seki.Wire.Connection.Request (
   PreparedRequest (..),
   RequestPreparationError (..),
-  prepareInheritedObjectRequest,
   prepareNewObjectRequest,
   prepareRequest,
  )
@@ -35,14 +34,11 @@ import Test.Tasty.HUnit (Assertion, assertEqual, assertFailure, testCase)
 
 data Parent
 
-data Child
-
 tests :: TestTree
 tests =
   testGroup
     "Wayland request preparation"
     [ testCase "allocates and encodes wl_display.sync atomically" testDisplaySync
-    , testCase "inherits the lower parent and child version" testInheritedVersion
     , testCase "rejects requests newer than the sender" testUnsupportedVersion
     , testCase "rejects invalid generated since metadata" testInvalidSince
     , testCase "applies destructor state only after encoding" testDestructor
@@ -76,22 +72,6 @@ testDisplaySync = do
   expectedPayload <- expectPayload (Wayland.encodeWlDisplaySync (objectId callback))
   expectedFrame <- expectRight (encodeFrame (RawFrame (objectId display) (Opcode 0) expectedPayload))
   assertEqual "complete frame" expectedFrame (preparedRequestBytes prepared)
-
-testInheritedVersion :: Assertion
-testInheritedVersion = do
-  (table0, _) <- expectRight (newObjectTable defaultObjectLimit Wayland.wlDisplayInterface)
-  (table1, parent) <- expectRight (allocateClientObject parentInterface 2 table0)
-  (table2, child, _) <-
-    expectRight
-      ( prepareInheritedObjectRequest
-          parentInterface
-          parent
-          childInterface
-          (RequestEncoder "create" (Opcode 0) 1 False . putNewId . objectId)
-          table1
-      )
-  childInfo <- maybe (assertFailure "missing child info") pure (lookupObjectInfo (objectId child) table2)
-  assertEqual "inherited version" 2 (objectInfoVersion childInfo)
 
 testUnsupportedVersion :: Assertion
 testUnsupportedVersion = do
@@ -201,6 +181,3 @@ parentInterface = Interface "parent" 3
 
 otherParentInterface :: Interface Parent
 otherParentInterface = Interface "other_parent" 3
-
-childInterface :: Interface Child
-childInterface = Interface "child" 3
