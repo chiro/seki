@@ -81,7 +81,7 @@ The river release contains these interface versions:
 
 M0 vendored `wayland.xml`, `river-window-management-v1.xml`, and
 `river-xkb-bindings-v1.xml`. M1 added `river-layer-shell-v1.xml` to the runtime.
-Input-configuration protocols remain deferred to M2. Integration-only sources
+Input-configuration protocols remain deferred to M3. Integration-only sources
 include wlr-layer-shell, xdg-shell, and the image-capture protocols. See
 [`protocol/SOURCES.md`](../protocol/SOURCES.md) for the current pins.
 Cross-protocol interface and enum references are resolved across all XML
@@ -456,9 +456,11 @@ errors. Completion submission failures remain structured connection errors.
 
 ### 7.7 Phase-safe request plans
 
-`Seki.Run.Phase` provides distinct `ManageM` and `RenderM` plan types. The M0
+`Seki.Run.Phase` provides distinct `ManageM` and `RenderM` plan types. The
 management surface includes closing, dimension proposals, decoration and tiled
-state, capabilities, keyboard focus, and XKB binding configuration. The
+state, size bounds, capabilities, fullscreen and its client notices, keyboard
+focus, XKB and pointer binding configuration, and pointer operations with their
+resize notices. The
 rendering surface includes visibility, borders and clipping, node position, and
 stacking. Each operation is available only in the phase type allowed by the
 pinned river XML; finish
@@ -525,9 +527,12 @@ the river output.
 `Seki.Internal.Core.Scene` plans layout selections using pure window IDs,
 workspace stacks, output usable areas, and parent relationships. Layout-omitted
 windows remain explicitly hidden. Content rectangles are inset by the border
-width so that proposed content plus borders fit their tiles. Actual oversized
-client commits may overflow under M1's accepted mismatch policy. Degenerate
-tiles produce no size proposal.
+width so that proposed content plus borders fit their tiles. A tile carries
+its layout's size policy: under `Crop` an oversized commit is clipped to the
+tile, and under `Tolerate` it may overlap its neighbours (M2-D04). Floats are
+placed on the whole output above the tiles, and a fullscreen window covers its
+workspace's output above both (M2-D02, M2-D03). Degenerate tiles produce no
+size proposal.
 
 `Seki.Run.Reconcile` joins those IDs to live inventory handles and compiles
 phase-safe plans. Each window has at most one outstanding dimension proposal.
@@ -537,9 +542,10 @@ next target when a proposal is superseded. Closed or replaced object handles
 invalidate the cached state.
 
 Render reconciliation applies settled positions, complete family stacking,
-borders, and explicit visibility. A first-time selection remains hidden until
-its dimensions settle. An existing selection retains its last settled size
-while a resize is pending. Focus requests follow the shown state and respect
+borders, content clip boxes, and explicit visibility. A first-time selection
+remains hidden until its dimensions settle. An existing selection retains its
+last settled size while a resize is pending, clipped to its tile under
+`Crop`. Focus requests follow the shown state and respect
 layer-shell keyboard ownership. The runtime sends a requested `manage_dirty`
 only after `render_finish` succeeds. See
 [Scene reconciliation](reconciliation.md) for the state transitions and live
