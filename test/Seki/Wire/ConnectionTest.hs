@@ -1,3 +1,4 @@
+{-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Seki.Wire.ConnectionTest (tests) where
@@ -11,18 +12,21 @@ import Data.ByteString qualified as ByteString
 import Data.List (sort)
 import Network.Socket (Family (AF_UNIX), Socket, SocketType (Stream), close, defaultProtocol, socketPair, withFdSocket)
 import Seki.Protocol.Wayland qualified as Wayland
-import Seki.Wire.Arguments (DecodeResult (..), getNewId, putFd, runCompleteArgumentDecoder)
-import Seki.Wire.Binding (RequestEncoder (..))
+import Seki.Wire.Arguments (DecodeResult (..), getNewId, putFd, putNewId, runCompleteArgumentDecoder)
+import Seki.Wire.Binding (Interface (..), RequestEncoder (..))
 import Seki.Wire.Codec (decodeFrame)
 import Seki.Wire.Connection (
   Connection,
   ConnectionError (..),
   closeConnection,
+  eventRoute,
   newConnection,
+  submitInheritedObjectRequest,
+  submitInheritedObjectRequestWithRoute,
   submitNewObjectRequest,
   submitRequest,
  )
-import Seki.Wire.Connection.ObjectTable (Object, ObjectTableError (..), defaultObjectLimit, objectId)
+import Seki.Wire.Connection.ObjectTable (Object, ObjectTableError (..), defaultObjectLimit, objectId, objectVersion)
 import Seki.Wire.Connection.Request (RequestPreparationError (..))
 import Seki.Wire.Transport (
   ConnectionTarget (InheritedSocket),
@@ -48,6 +52,7 @@ tests =
   testGroup
     "Wayland connection submission"
     [ testCase "submits and publishes a new object" testNewObject
+    , testCase "creates an inherited child at the lower of the parent and child versions" testInheritedVersion
     , testCase "transfers request descriptors" testDescriptorTransfer
     , testCase "publishes destructor state after sending" testDestructor
     , testCase "keeps preparation failures non-fatal" testPreparationFailure
@@ -64,6 +69,30 @@ testNewObject =
     assertEqual "sender" (objectId display) (rawFrameSender frame)
     assertEqual "opcode" (Opcode 0) (rawFrameOpcode frame)
     assertEqual "callback payload" (Right (objectId callback)) (decodeNewId frame)
+
+testInheritedVersion :: Assertion
+testInheritedVersion =
+  withConnectionPair $ \connection display receiver -> do
+    parent <-
+      expectRight
+        =<< submitNewObjectRequest
+          connection
+          Wayland.wlDisplayInterface
+          display
+          parentInterface
+          2
+          (RequestEncoder "create_parent" (Opcode 1) 1 False . putNewId . objectId)
+    void (receiveOneFrame receiver 12)
+    child <- expectRight =<< submitInheritedObjectRequest connection parentInterface parent wideChildInterface createChild
+    void (receiveOneFrame receiver 12)
+    assertEqual "parent version bounds the child" 2 (objectVersion child)
+    routed <-
+      expectRight
+        =<< submitInheritedObjectRequestWithRoute connection parentInterface parent narrowChildInterface createChild (eventRoute (const Nothing) (\_ () -> pure ()))
+    void (receiveOneFrame receiver 12)
+    assertEqual "child maximum bounds the child" 1 (objectVersion routed)
+ where
+  createChild = RequestEncoder "create_child" (Opcode 0) 1 False . putNewId . objectId
 
 testDescriptorTransfer :: Assertion
 testDescriptorTransfer =
@@ -166,6 +195,19 @@ testExplicitClose =
     closeConnection connection
     closeConnection connection
     assertEqual "closed" (Left ConnectionClosed) =<< submitSync connection display
+
+data Parent
+
+data Child
+
+parentInterface :: Interface Parent
+parentInterface = Interface "parent" 3
+
+wideChildInterface :: Interface Child
+wideChildInterface = Interface "wide_child" 3
+
+narrowChildInterface :: Interface Child
+narrowChildInterface = Interface "narrow_child" 1
 
 submitSync :: Connection -> Object Wayland.WlDisplay -> IO (Either ConnectionError (Object Wayland.WlCallback))
 submitSync connection display =
