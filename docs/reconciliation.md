@@ -84,6 +84,20 @@ The policy reads two facts from the reconciler when a drain begins: each
 window's content box as last rendered, less its content clip box, which an op
 starts from, and the op river runs on each seat, which tags op input.
 
+## Fullscreen windows
+
+A fullscreen window on a shown workspace is placed as `Fullscreen` on that
+workspace's output, above both the tiles and the floats (M2-D03). The
+reconciler records per window whether river has it fullscreen on an output.
+Entering fullscreen drops the window's proposal state, and `dimensions`
+events while it is fullscreen settle nothing. An exit sends a new proposal for
+the window's tile or float in the same manage sequence, whatever proposal was
+pending, and the render sequence positions it once the client commits that
+size. A fullscreen window on a hidden workspace is placed as
+`HiddenFullscreen`: it is hidden and stays fullscreen in river, so a
+workspace switch sends no fullscreen request. Its tile's clip box is left
+untouched while it covers the output.
+
 ## Historical real-river selection experiment
 
 The 2026-10-17 experiment used river 0.5.0 with its headless backend and pixman
@@ -130,6 +144,11 @@ Pointer op traces in [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs
 check a binding drag, a left-edge resize under a smaller commit, and an op
 swap across two sequences; a generated trace checks that `op_start_pointer`
 and `op_end`, and `inform_resize_start` and `inform_resize_end`, alternate.
+
+The M2 [latency workload](latency.md) drives these paths on real river: it
+resizes six `Crop` tiles, enters and exits client fullscreen by focus, by
+request, and across a workspace switch, and checks the pictures before and
+after the measured interval.
 
 `bash ci/check-phase-types.sh` compiles valid plans and checks that the
 compiler rejects manage requests in render plans and render requests in
