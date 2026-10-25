@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+
 {- | The state a restart carries to the next seki process (M2-D06).
 
 The saved form names windows by their river identifier and outputs by their
@@ -19,6 +21,7 @@ module Seki.Internal.Core.Restore (
   LiveInventory (..),
   saveCore,
   RestoreNote (..),
+  describeRestoreNote,
   restoreCore,
 ) where
 
@@ -149,6 +152,15 @@ data RestoreNote i
   | -- | The saved box was not a valid rectangle, so the float lets its client pick its size.
     FloatBoxInvalid WindowKey
   deriving (Eq, Show)
+
+describeRestoreNote :: (Show i) => RestoreNote i -> String
+describeRestoreNote = \case
+  TagDropped t -> "workspace " <> show t <> " is no longer configured; its windows are placed as new windows"
+  TagAdded t -> "workspace " <> show t <> " was not saved and starts empty"
+  LayoutFallback t -> "the saved layout of workspace " <> show t <> " does not read as the configured layout type; using the configured layout"
+  OutputUnknown (OutputKey n) -> "no output has wl_output name " <> show n <> "; its workspace stays hidden"
+  WindowsGone n -> show n <> " saved windows are gone"
+  FloatBoxInvalid (WindowKey k) -> "the saved float box of window " <> show k <> " is invalid; its client picks its size"
 
 {- | Rebuild the core over a fresh one, whose workspaces supply the configured
 tags and layout. Total: any saved state, including a hand-edited one with
