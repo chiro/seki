@@ -37,20 +37,21 @@ tests =
         assertEqual "layout" (Choose CL tall (Choose CL (Mirror tall) Full)) (layoutHook def)
         assertEqual "border width" 2 (borderWidth (borders def))
         assertEqual "fixed group" True (bindingsUseFixedLayout def)
-        assertEqual "binding count" 29 (length (keys def def))
+        assertEqual "binding count" 30 (length (keys def def))
         policy <- prepareConfig def >>= either (assertFailure . show) pure
-        assertEqual "lowered fixed group" (replicate 29 (Just 0)) (map riverKeyBindingLayoutOverride (riverKeyBindings (policyRuntimeHandlers policy)))
+        assertEqual "lowered fixed group" (replicate 30 (Just 0)) (map riverKeyBindingLayoutOverride (riverKeyBindings (policyRuntimeHandlers policy)))
     , testCase "final overrides reach keys and wire binding identity" $ do
         let config = def{modMask = Mod1, terminal = "custom-terminal", workspaces = ["a", "b"], bindingsUseFixedLayout = False}
         assertEqual "terminal action" [Action.Spawn "custom-terminal"] (intents (press config Shift 0xff0d initial))
         policy <- prepareConfig config >>= either (assertFailure . show) pure
         let bindings = riverKeyBindings (policyRuntimeHandlers policy)
         assertEqual "all modifiers" [River.RiverSeatV1ModifiersFlags 9, River.RiverSeatV1ModifiersFlags 9] (map riverKeyBindingModifiers (take 2 bindings))
-        assertEqual "no fixed layout" (replicate 15 Nothing) (map riverKeyBindingLayoutOverride bindings)
+        assertEqual "no fixed layout" (replicate 16 Nothing) (map riverKeyBindingLayoutOverride bindings)
         assertEqual "overridden tags" "b" (currentTag (press config (Mods 0) 0x32 (stateWithTags ["a", "b"])))
     , testCase "every default action changes the intended core state" $ do
         assertEqual "spawn" [Action.Spawn "foot"] (intents (press def Shift 0xff0d initial))
         assertEqual "kill" [Action.CloseWindow (StackSet.WindowId 2)] (intents (press def Shift 0x63 initial))
+        assertEqual "restart" [Action.Restart] (intents (press def (Mods 0) 0x71 initial))
         assertEqual "focus down" (Just (StackSet.WindowId 3)) (focused (press def (Mods 0) 0x6a initial))
         assertEqual "focus up" (Just (StackSet.WindowId 1)) (focused (press def (Mods 0) 0x6b initial))
         assertEqual "swap master" [2, 1, 3] (windowNumbers (press def (Mods 0) 0xff0d initial))
@@ -104,13 +105,13 @@ tests =
     , testCase "additionalKeys replaces a binding with the same identity" $ do
         let config = additionalKeys def [(KeyBinding (Mod4 .|. Shift) (Keysym 0xff0d), Action.spawn "alacritty")]
         assertEqual "the new action wins" [Action.Spawn "alacritty"] (intents (press config Shift 0xff0d initial))
-        assertEqual "the binding count is unchanged" 29 (length (keys config config))
+        assertEqual "the binding count is unchanged" (length (keys def def)) (length (keys config config))
         prepareConfig config >>= either (assertFailure . ("validation rejected the replacement: " <>) . show) (const (pure ()))
     , testCase "additionalKeys keeps the last of repeated new identities and adds new ones" $ do
         let volume = KeyBinding (Mods 0) (Keysym 0x1008ff13)
             config = additionalKeys def [(volume, Action.spawn "first"), (volume, Action.spawn "louder")]
         assertEqual "the last repeat wins" [Action.Spawn "louder"] (intents (pressExactly config volume initial))
-        assertEqual "one binding added" 30 (length (keys config config))
+        assertEqual "one binding added" (length (keys def def) + 1) (length (keys config config))
         prepareConfig config >>= either (assertFailure . ("validation rejected the addition: " <>) . show) (const (pure ()))
     , testCase "additionalKeys keeps later record overrides" $ do
         let config = (additionalKeys def [(KeyBinding Mod4 (Keysym 0x70), Action.spawn "menu")]){modMask = Mod1, terminal = "custom-terminal"}
@@ -119,7 +120,7 @@ tests =
     , testCase "removeKeys removes a binding" $ do
         let config = removeKeys def [KeyBinding (Mod4 .|. Shift) (Keysym 0x63)]
         assertBool "kill is gone" (KeyBinding (Mod4 .|. Shift) (Keysym 0x63) `notElem` map fst (keys config config))
-        assertEqual "the rest remain" 28 (length (keys config config))
+        assertEqual "the rest remain" (length (keys def def) - 1) (length (keys config config))
         assertEqual "removed and re-added" [Action.Spawn "x"] (intents (pressExactly (additionalKeys config [(KeyBinding (Mod4 .|. Shift) (Keysym 0x63), Action.spawn "x")]) (KeyBinding (Mod4 .|. Shift) (Keysym 0x63)) initial))
     , testCase "a binding with no modifier passes validation and lowers with no modifier" $
         bracket (lookupEnv "WAYLAND_DISPLAY") restore $ \_ -> do
