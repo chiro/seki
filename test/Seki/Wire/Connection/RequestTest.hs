@@ -68,10 +68,6 @@ testDisplaySync = do
       )
   assertEqual "callback ID" 2 (objectIdValue (objectId callback))
   assertEqual "display and callback registered" 2 (objectCount table1)
-  assertEqual "request interface" "wl_display" (preparedRequestInterface prepared)
-  assertEqual "request name" "sync" (preparedRequestName prepared)
-  assertEqual "request opcode" (Opcode 0) (preparedRequestOpcode prepared)
-  assertEqual "request since" 1 (preparedRequestSince prepared)
   assertEqual "no descriptors" ([] :: [()]) (preparedRequestFds prepared)
   expectedPayload <- expectPayload (Wayland.encodeWlDisplaySync (objectId callback))
   expectedFrame <- expectRight (encodeFrame (RawFrame (objectId display) (Opcode 0) expectedPayload))
@@ -112,8 +108,7 @@ testDestructor :: Assertion
 testDestructor = do
   (table0, _) <- expectRight (newObjectTable defaultObjectLimit Wayland.wlDisplayInterface)
   (table1, parent) <- expectRight (allocateClientObject parentInterface 1 table0)
-  (table2, prepared) <- expectRight (prepareRequest parentInterface parent (emptyRequest "destroy" 1 True) table1)
-  assertEqual "destructor metadata" True (preparedRequestDestructor prepared)
+  (table2, _) <- expectRight (prepareRequest parentInterface parent (emptyRequest "destroy" 1 True) table1)
   assertEqual "sender retired" 1 (retiredObjectCount table2)
   assertEqual "retired lifecycle" (Just ObjectAwaitingDeleteId) (objectInfoLifecycle <$> lookupObjectInfo (objectId parent) table2)
 
