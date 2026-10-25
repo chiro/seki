@@ -183,9 +183,9 @@ class Show l => LayoutClass l where
 - [RESOLVED] river-window-management-v1 version 4 sends each window a non-empty identifier that is unique and never reused. Use it to match surviving windows during a WM hot-swap instead of app_id/title/PID heuristics.
   - Windows created during the handover have no serialized entry and follow the normal initial-placement rules. Serialized entries whose windows closed during the handover are ignored.
   - A protocol-compatible compositor exposing only version 3 can run the core WM, but state restoration degrades to placing re-enumerated windows on the configurable default workspace. Do not guess identity from unreliable_pid, which is explicitly unsuitable for identity and security decisions.
-  - Validate identifier continuity across a real river WM reconnect during M2.
+  - [VERIFIED] Identifiers and `wl_output` names stay the same across a real river WM reconnect (river 0.5.0). River does not send a window's `parent` again to the new manager and clears fullscreen when the old one goes, so restored dialogs keep their float state from the file and restored fullscreen windows are sent `fullscreen` again when shown (M2-D08).
 - Layout internal state (master ratio, etc.) is also serialized via Read/Show (the same approach as xmonad).
-- [DECIDED] The state file is versioned Read/Show text holding every workspace's stack by identifier, focus, layouts, the output assignment, floats, the float raise order, the fullscreen set, and the spawned-once set. Restart execs the executable path recorded at startup, refuses when it is not executable, and reconnects in-process if exec fails (M2-D06).
+- [DECIDED] The state file is versioned Read/Show text holding every workspace's stack by identifier, focus, layouts, the output assignment, floats, the float raise order, the fullscreen set, and the spawned-once set. Restart execs the executable path recorded at startup, refuses when it is not executable, and reconnects in-process if exec fails (M2-D06). [IMPLEMENTED M2] Saved windows absent at restore are dropped, a tag that is no longer configured sends its windows through the manage hook, and a layout that no longer reads falls back to `layoutHook` for that workspace.
 
 ### 3.8 Keybinding Model and Submaps [RESOLVED: river-xkb-bindings-v1 (v3) read]
 
@@ -364,8 +364,15 @@ instance Default (Config StdLayouts)  -- def supplies the standard configuration
 
 ### 5.2 Build, Startup, and Hot-Swap
 
-M1 runs a prebuilt configuration program from river's init script. The automated
-build, restart, and restoration workflow below belongs to later milestones.
+M1 runs a prebuilt configuration program from river's init script. M2 restarts
+into a prebuilt binary: Mod-q checks the executable path recorded at startup
+(argv[0], without following symlinks), sends `stop` after the manage sequence
+that carried the action, answers `finished` with `destroy`, writes the state
+from 3.7 under `$XDG_RUNTIME_DIR/seki/`, and execs that path with
+`--restore <file>`. If the exec fails, the same process reconnects on the
+socket path and restores. `seki --restore <file>` reads the file, deletes it,
+and applies it at the first manage sequence. The automated build below
+belongs to M3.
 
 - Location: `~/.config/seki/` is a cabal project (Main.hs + seki.cabal). A skeleton is generated automatically on first run.
 - Startup: launch the WM binary from river's `~/.config/river/init` (a shell script). If the user configuration is unbuilt or fails to build, attempt to start the **default WM binary** shipped with the library as a fallback.
