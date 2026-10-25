@@ -101,6 +101,8 @@ nix develop --no-write-lock-file .#unit --command cabal test all
 | `m2-fullscreen` | The focused probe window of two tiles requests fullscreen and covers the whole output, hiding the other tile. Viewing workspace 2 shows its window uncovered, and viewing workspace 1 again shows the fullscreen window covering the output with keyboard focus. It then requests exit and returns to its master tile with its focused border and keyboard focus | `wlr-randr` |
 | `m2-size-policy` | A probe window commits 600 by 500 whatever it is proposed, wider than its 396 by 596 master tile. Under the default Crop policy it is clipped to the tile, with its focused border around the clipped content, and the neighbouring tile stays whole. Under `tolerant` it shows at its committed size at the tile's top-left over its neighbour, and a window with a 500 by 100 minimum and a 700 by 400 maximum commits the master tile clamped to 500 by 400 | `wlr-randr` |
 | `m2-pointer-drag` | With the logo modifier held, a button 1 press with no motion on the bottom stack tile of three focuses it and leaves it tiled. A button 1 drag of 200 by 150 floats it at its tile's content box moved by that offset while the other two retile, and a second drag moves the float by exactly 100 by 50. A button 3 drag of 60 by 40 grows it from its bottom-right corner by that amount, and a button 3 drag toward a smaller size stops at the window's 300 by 200 minimum with its top-left fixed | `wlr-randr` |
+| `m2-restart` | The real `seki` executable, started by a bare name found on `PATH` through a symlink, restarts with Mod-q. Workspace 1 holds two tiles under Mirror Tall and a dialog float moved by a logo drag, and workspace 2 holds a fullscreen window. Both workspaces show the same pixels, byte for byte, before and after; the pid stays, argv[0] keeps the symlink, keyboard focus returns to the dialog, and the workspace bindings work after the exec. `ci/run-integration.sh` passes the executable in `SEKI_EXECUTABLE` | `wlr-randr` |
+| `m2-restart-fallback` | The restart supervisor runs in the test process with a target that passes the restart check but cannot exec. F3 stops the session, the exec fails, and the next session reconnects and restores: workspace 1's tile and floating dialog and workspace 2's window show the same pictures after the restart | `wlr-randr` |
 
 All scenarios also use the core river, foot, and synthetic-input fixture as
 needed. The CI shell in `flake.nix` provides the integration dependency set,
@@ -336,6 +338,8 @@ m2-float-dialog=passed
 m2-fullscreen=passed
 m2-size-policy=passed
 m2-pointer-drag=passed
+m2-restart=passed
+m2-restart-fallback=passed
 ```
 
 `ci/run-integration.sh` byte-compares the generated file with
