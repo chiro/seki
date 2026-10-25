@@ -3,7 +3,7 @@
 
 module Seki.Run.RuntimeTest (tests) where
 
-import Control.Exception (ErrorCall (..), throwIO, try)
+import Control.Exception (ErrorCall (..), onException, throwIO, try)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Internal.Core.Geometry (GeometryError (..), Point (..), mkRect, mkSize)
@@ -820,7 +820,7 @@ binds while its predecessor's render is pending gets render_start first.
 testRenderBeforeFirstManage :: Assertion
 testRenderBeforeFirstManage =
   withRuntimePair $ \target peer -> do
-    mockDone <- runMock $ do
+    mockDone <- runMock $ flip onException (closeTransport peer) $ do
       reader <- newFrameReader
       (registryId, callbackId) <- receiveStartupRequests reader peer
       sendFrames
@@ -1051,7 +1051,7 @@ as usual, and a second stop request from the plan is not sent.
 testStopLifecycle :: Assertion
 testStopLifecycle =
   withRuntimePair $ \target peer -> do
-    mockDone <- runMock $ do
+    mockDone <- runMock $ flip onException (closeTransport peer) $ do
       reader <- newFrameReader
       managerId <- bootManager reader peer
       sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
@@ -1074,7 +1074,7 @@ testStopLifecycle =
 testUnrequestedFinished :: Assertion
 testUnrequestedFinished =
   withRuntimePair $ \target peer -> do
-    mockDone <- runMock $ do
+    mockDone <- runMock $ flip onException (closeTransport peer) $ do
       reader <- newFrameReader
       managerId <- bootManager reader peer
       sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
