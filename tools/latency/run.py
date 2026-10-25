@@ -14,6 +14,17 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 
+WORKLOADS = {
+    "m1": {"text": "eight native tiled windows; focus and view actions", "exercised": []},
+    "m2": {"text": "six native tiled windows and two parent-hinted dialog floats under Tall with Crop; "
+                   "focus, view, Shrink/Expand, and client fullscreen actions",
+           "exercised": ["clip_resizes", "fullscreen_enters", "fullscreen_exits_by_focus",
+                         "fullscreen_exits_by_request", "hidden_fullscreen_views", "float_raises"]},
+}
+
+BUDGETS = {"pure_p99": ("pure", "p99_ms", 2), "manage_p99": ("manage", "p99_ms", 10),
+           "render_p99": ("render", "p99_ms", 10), "wm_gc_max": ("wm_rts", "max_stw_pause_ms", 10)}
+
 
 def read(path):
     return json.loads(Path(path).read_text())
@@ -59,10 +70,18 @@ def rts_summary(path):
             "collections": generations, "scope": "process lifetime including shutdown; no forced GC"}
 
 
-def summarize_trial(directory):
+def manifest_workload(manifest):
+    return manifest["workload"] if manifest["schema"] >= 2 else "m1"
+
+
+def summarize_trial(directory, workload):
     directory = Path(directory)
     wm, driver, pure = (read(directory / f"{name}.json") for name in ["wm", "driver", "pure"])
     require(wm["clean_exit"] and driver["valid"] and driver["native_checks"] and pure["valid"], "failed workload")
+    require(driver.get("workload", "m1") == workload and pure.get("workload", "m1") == workload, "trial ran a different workload")
+    exercised = driver.get("exercised", {})
+    for name in WORKLOADS[workload]["exercised"]:
+        require(exercised.get(name, 0) > 0, f"workload did not exercise {name}")
     require(wm["failed"] == wm["dropped"] == 0, "failed or dropped sequences")
     require(wm["successful"] == len(wm["samples"]), "missing raw WM samples")
     require(driver["observed_actions"] == driver["steps"] == len(driver["action_codes"]), "missing observed actions")
@@ -79,7 +98,10 @@ def summarize_trial(directory):
     before, after = (read(directory / f"wm-checkpoint-{i}.json") for i in [0, 1])
     delta = {key: after[key] - before[key] for key in before}
     require(all(v >= 0 for v in delta.values()), "RTS checkpoint counters moved backwards")
-    return result | {"wm_workload_rts_delta": delta, "pure": quantiles(pure["samples_ns"]), "pure_checksum": pure["checksum"],
+    return result | {"exercised": exercised,
+                     "manage_per_action": result["manage"]["count"] / driver["steps"],
+                     "render_per_action": result["render"]["count"] / driver["steps"],
+                     "wm_workload_rts_delta": delta, "pure": quantiles(pure["samples_ns"]), "pure_checksum": pure["checksum"],
                      "wm_rts": rts_summary(directory / "wm.rts"), "pure_rts": rts_summary(directory / "pure.rts"),
                      "wm_stats_before_shutdown": {k: v for k,v in wm.items() if k != "samples"},
                      "selected_samples": len(selected), "outside_samples": len(samples)-len(selected),
@@ -87,21 +109,39 @@ def summarize_trial(directory):
                      "major_gc_observed_before_shutdown": wm["major_gcs"] > 0, "major_gc_during_workload": delta["major_gcs"] > 0}
 
 
+def budget_outcomes(trial):
+    return {name: trial[group][metric] < limit for name, (group, metric, limit) in BUDGETS.items()}
+
+
+def budget_section(trials):
+    misses = [f"{t['directory']} {name} = {t[group][metric]:.4f} ms (budget < {limit} ms)"
+              for t in trials for name, (group, metric, limit) in BUDGETS.items() if not t["budgets"][name]]
+    lines = ["", "## Budgets", "",
+             "Budgets are pure p99 < 2 ms, manage and render sequence p99 < 10 ms, and maximum observed WM stop-the-world pause < 10 ms."]
+    if misses:
+        lines += ["", "Missed:", ""] + [f"- {miss}" for miss in misses]
+    else:
+        lines += ["", f"All {len(trials)} trials met every budget."]
+    return lines
+
+
 def report(directory):
     directory = Path(directory)
     manifest = read(directory / "manifest.json")
+    workload = manifest_workload(manifest)
     trials = []
     for item in manifest["trials"]:
-        trials.append(item | summarize_trial(directory / item["directory"]))
+        trial = item | summarize_trial(directory / item["directory"], workload)
+        trial["budgets"] = budget_outcomes(trial)
+        trials.append(trial)
     checksums = {t["pure_checksum"] for t in trials}
     require(len(checksums) == 1, "deterministic checksum differs across trials")
-    summary = {"manifest": manifest, "trials": trials, "verdict": "inconclusive; production defaults unchanged"}
-    write(directory / "summary.json", summary)
+    summary = {"manifest": manifest, "workload": workload, "trials": trials, "verdict": "inconclusive; production defaults unchanged"}
     lines = ["# Latency and collector evidence", "", "Collector selection is inconclusive. Production defaults remain unchanged.", "",
              "The diagnostic uses the same optimized threaded build at `-N1`; only `--nonmoving-gc` differs. WM sequence latency is request submission time, not compositor acknowledgment or display latency.", "",
              f"Trials per collector: {len(trials)//2}. Fewer than five is exploratory evidence only.",
              f"Machine: {manifest['machine']}. Compiler: {manifest['compiler']}. Binary SHA-256: `{manifest['binary_sha256']}`.",
-             f"Seed {manifest['seed']}; eight native windows; {manifest['live_steps']} acknowledged focus/view actions after 24 warmup actions. Pure mode uses {manifest['pure_windows']} windows, {manifest['pure_steps']} events, and 128 warmup events.", "",
+             f"Seed {manifest['seed']}; workload {workload}: {WORKLOADS[workload]['text']}; {manifest['live_steps']} acknowledged actions after 24 warmup actions. Pure mode uses {manifest['pure_windows']} windows, {manifest['pure_steps']} events, and 128 warmup events.", "",
              "| Collector | Metric | Trials | Median | Min | Max |", "|---|---|---:|---:|---:|---:|"]
     for collector in ["normal", "nonmoving"]:
         group = [t for t in trials if t["collector"] == collector]
@@ -111,21 +151,26 @@ def report(directory):
         metrics += [(f"WM {metric}", [t["wm_rts"][metric] for t in group]) for metric in ["allocated_bytes","max_residency_bytes","max_stw_pause_ms","nonmoving_sync_max_pause_ms"]]
         for name, values in metrics:
             lines.append(f"| {collector} | {name} | {len(values)} | {statistics.median(values):.4f} | {min(values):.4f} | {max(values):.4f} |")
-    lines += ["", "## Work and validity", "", "| Trial | Manage | Render | Pure | Major GC in workload | Load before / after |", "|---|---:|---:|---:|---|---|"]
+    lines += budget_section(trials)
+    lines += ["", "## Work and validity", "",
+              "Sequences per action count the manage and render sequences inside the interval for each measured action. A rise against the same workload points at repeated proposals.", "",
+              "| Trial | Manage | Render | Manage per action | Render per action | Pure | Major GC in workload | Load before / after |", "|---|---:|---:|---:|---:|---:|---|---|"]
     for t in trials:
-        lines.append(f"| {t['directory']} | {t['manage']['count']} | {t['render']['count']} | {t['pure']['count']} | {t['major_gc_during_workload']} | {t['load_before']} / {t['load_after']} |")
+        lines.append(f"| {t['directory']} | {t['manage']['count']} | {t['render']['count']} | {t['manage_per_action']:.2f} | {t['render_per_action']:.2f} | {t['pure']['count']} | {t['major_gc_during_workload']} | {t['load_before']} / {t['load_after']} |")
+    names = WORKLOADS[workload]["exercised"]
+    if names:
+        lines += ["", "## Exercised M2 features", "",
+                  "Counts come from the model's transitions over the measured actions. Every count except float raises changed what the probe observed, so a barrier confirmed it.", "",
+                  "| Trial | " + " | ".join(names) + " |", "|---|" + "---:|" * len(names)]
+        for t in trials:
+            lines.append(f"| {t['directory']} | " + " | ".join(str(t["exercised"][name]) for name in names) + " |")
     lines += ["", "## Interpretation", "",
-              "Budgets are pure p99 < 2 ms, complete sequence p99 < 10 ms, and maximum observed stop-the-world pause < 10 ms. They are engineering budgets, not river guarantees. Per-trial results and budget outcomes are retained in summary.json; no ordinary unit test enforces wall-clock budgets.", "",
+              "Per-trial results and budget outcomes are retained in summary.json. Budgets are engineering budgets, not river guarantees, and no ordinary unit test enforces wall-clock budgets.", "",
               "RTS allocation and residency describe the WM process lifetime, including startup and shutdown. The `-s` per-generation collection maxima have 0.1 ms printed resolution. Nonmoving synchronization maxima are reported separately and included in the observed stop-the-world maximum; concurrent cycle duration is excluded. There is no forced final GC. The earlier RTSStats snapshot reports whether major GC occurred before shutdown. A trial without major GC gives limited collector evidence.", "",
-              "The pure interval includes concrete structural checksum folding over every state, layout, tag, stack, floating rectangle, intent, and desired-scene field. Inputs are pre-generated and previous state fully evaluated. Independent invariants and deterministic replay occur outside the interval. Replay, serialization, and validation still contribute to pure-process lifetime RTS totals.", "",
-              "Native actions wait for exact keyboard-owner changes. Initial and restored captures verify client colors and Tall geometry; final input delivery checks the target window. Captures verify pixels and may add render sequences. An idle-phase WM acknowledgment after the final capture ensures the last render completion precedes interval end. Signal/checkpoint overhead lies in the broad driver interval, outside sequence timers. Startup, warmup, cleanup, and samples crossing the interval boundary remain in raw wm.json but are excluded from quantiles. Driver/native-client and river costs are excluded from WM RTS statistics.", "",
+              "The pure interval includes concrete structural checksum folding over every state, layout, tag, stack, floating rectangle, fullscreen window, pointer op, intent, and desired-scene field. Inputs are pre-generated and previous state fully evaluated. Independent invariants and deterministic replay occur outside the interval. Replay, serialization, and validation still contribute to pure-process lifetime RTS totals.", "",
+              "Each native action waits until the probe observes the expected keyboard owner and the size every window last committed. Pictures are polled and checked pixel by pixel only outside the measured interval: before it, after it, and after the restoring actions. Final input delivery checks the target window. An idle-phase WM acknowledgment after the last action ensures the last completed render precedes interval end. Signal/checkpoint overhead lies in the broad driver interval, outside sequence timers. Startup, warmup, cleanup, and samples crossing the interval boundary remain in raw wm.json but are excluded from quantiles. Driver/native-client and river costs are excluded from WM RTS statistics.", "",
               "Scheduling, GC, and waiting remain possible limiters. Separate profile mode records a WM eventlog and Linux process CPU snapshots for WM, river, and driver; it is excluded from these trials. These observations do not identify source-level hotspots. No collector winner is inferred from noisy distributions or an unproven limiter.", "",
               "The local compiler may differ from the repository's pinned GHC 9.6.6. Consult manifest.json for the exact compiler, build flags, platform, tools, trial order, and workload. Reproduction commands and limitations are in docs/latency.md."]
-    for t in trials:
-        t["budgets"] = {"pure_p99": t["pure"]["p99_ms"] < 2,
-                        "manage_p99": t["manage"]["p99_ms"] < 10,
-                        "render_p99": t["render"]["p99_ms"] < 10,
-                        "wm_gc_max": t["wm_rts"]["max_stw_pause_ms"] < 10}
     write(directory / "summary.json", summary)
     (directory / "report.md").write_text("\n".join(lines) + "\n")
     return summary
@@ -173,6 +218,7 @@ def main():
     parser = argparse.ArgumentParser(description="Collect opt-in latency and collector evidence")
     parser.add_argument("directory", type=Path)
     parser.add_argument("--trials", type=int, default=5)
+    parser.add_argument("--workload", choices=sorted(WORKLOADS))
     parser.add_argument("--seed", type=int, default=1909)
     parser.add_argument("--live-steps", type=int, default=1023)
     parser.add_argument("--pure-steps", type=int, default=20000)
@@ -186,6 +232,7 @@ def main():
     if args.report_only:
         report(directory)
         return
+    require(args.workload is not None, "--workload is required to collect trials")
     require(args.trials > 0 and 0 <= args.seed < 2**64, "invalid trials or seed")
     require(not directory.exists(), "use a fresh artifact directory; previous runs are retained")
     directory.mkdir(parents=True)
@@ -195,7 +242,7 @@ def main():
     else:
         subprocess.run(["cabal", "build", "seki-latency", *build_flags], cwd=ROOT, check=True)
         binary = Path(subprocess.check_output(["cabal", "list-bin", "seki-latency", *build_flags], cwd=ROOT, text=True).strip())
-    manifest = {"schema": 1, "machine": platform.platform(), "cpu_count": os.cpu_count(),
+    manifest = {"schema": 2, "workload": args.workload, "machine": platform.platform(), "cpu_count": os.cpu_count(),
                 "cpu_model": next((l.split(":",1)[1].strip() for l in Path("/proc/cpuinfo").read_text().splitlines() if l.startswith("model name")), "unknown"),
                 "compiler": (subprocess.check_output([str(binary),"info"], text=True).strip() + " (patch version unverified)" if args.binary else subprocess.check_output([args.compiler,"--numeric-version"], text=True).strip()),
                 "binary_reported_compiler": subprocess.check_output([str(binary),"info"], text=True).strip(),
@@ -214,7 +261,7 @@ def main():
         manifest["trials"].append(item)
         write(directory / "manifest.json", manifest)
         with (trial / "driver.log").open("w") as output:
-            command = [str(binary),"live",str(trial),str(args.seed),str(args.live_steps),collector,"m1","+RTS","-N1","-RTS"]
+            command = [str(binary),"live",str(trial),str(args.seed),str(args.live_steps),collector,args.workload,"+RTS","-N1","-RTS"]
             process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
             cpu = []
             deadline = time.monotonic() + max(120, args.live_steps)
@@ -244,9 +291,9 @@ def main():
             return
         with (trial / "pure.rts").open("w") as output:
             flags = ["-N1","-T","-s"] + (["--nonmoving-gc"] if collector == "nonmoving" else [])
-            subprocess.run([str(binary),"pure",str(trial/"pure.json"),str(args.seed),str(args.pure_windows),str(args.pure_steps),"m1","+RTS",*flags,"-RTS"], stdout=output, stderr=subprocess.STDOUT, check=True, timeout=120)
+            subprocess.run([str(binary),"pure",str(trial/"pure.json"),str(args.seed),str(args.pure_windows),str(args.pure_steps),args.workload,"+RTS",*flags,"-RTS"], stdout=output, stderr=subprocess.STDOUT, check=True, timeout=120)
         item["load_after"] = os.getloadavg()
-        summarize_trial(trial)
+        summarize_trial(trial, args.workload)
         write(directory / "manifest.json", manifest)
         print(f"validated {trial.name}", flush=True)
     report(directory)
