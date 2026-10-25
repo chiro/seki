@@ -270,6 +270,11 @@ tests =
         , testProperty "filter_order" $ \(x :: T) -> case stack (workspace (current x)) of
             Nothing -> property True
             Just st -> integrate' (filter (/= focus st) st) === L.filter (/= focus st) (integrate st)
+        , testProperty "mapMaybeStack keeps and maps what filter keeps, with the same focus" $ \(x :: T) (p :: Fun Word32 Bool) -> case stack (workspace (current x)) of
+            Nothing -> property True
+            Just st ->
+              let keep (WindowId w) = applyFun p w
+               in mapMaybeStack (\w -> if keep w then Just (show w) else Nothing) st === (fmap show <$> filter keep st)
         , testProperty "differentiate" propDifferentiate
         , testProperty "Foldable toList is integrate" propToListIntegrate
         , testProperty "Foldable methods agree with toList" propFoldableConsistent
