@@ -207,6 +207,7 @@ data RiverRuntimeError
   | RiverRuntimeLayerShellGlobalUnavailable
   | RiverRuntimeSequenceError RiverSequenceError
   | RiverRuntimeEventLoopAlreadyOwned
+  | RiverRuntimeWindowManagerUnavailable
   deriving (Eq, Show)
 
 -- | Discover Wayland, synchronize globals, and bind required river globals.
@@ -388,6 +389,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
         event
         startRenderSequence
         (readRuntimeSnapshot >>= prepareRiverRenderPlan runtimeHandlers >>= runRenderM connection)
+    River.RiverWindowManagerV1Unavailable -> recordRuntimeError sequenceStatus RiverRuntimeWindowManagerUnavailable
     _ -> handleRiverWindowManagerEvent handlers manager event
   handleWindowCreated window = do
     added <- updateInventory sequenceStatus inventoryState (addRiverWindow window)

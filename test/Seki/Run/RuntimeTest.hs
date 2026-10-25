@@ -97,6 +97,7 @@ tests =
     , testCase "promotes invalid usable areas to inventory errors" testInvalidUsableArea
     , testCase "owns one layer-shell seat per seat and tracks its keyboard owner" testSeatLayerShellLifecycle
     , testCase "rejects an out-of-order manager sequence event" testSequenceOrderError
+    , testCase "fails when river reports window management unavailable" testManagerUnavailable
     , testCase "closes startup when the manager global is missing" testMissingManager
     , testCase "closes startup when the XKB bindings global is missing" testMissingXkb
     , testCase "closes startup when the layer-shell global is missing" testMissingLayerShell
@@ -806,6 +807,25 @@ testSequenceOrderError =
     assertEqual "invalid event is not delivered" 0 =<< readIORef managerEvents
     recording <- readRecording recorder
     assertEqual "refused sequence counted as failure" (0, 1) (recordingSuccessful recording, recordingFailed recording)
+
+testManagerUnavailable :: Assertion
+testManagerUnavailable =
+  withRuntimePair $ \target peer -> do
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
+        , callbackDoneFrame callbackId 92
+        ]
+      (managerId, _, _) <- receiveRuntimeBinds reader peer
+      sendFrames peer [encodedFrame managerId (Opcode 0) (pure ())]
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (runtimeHandlers (const (pure ())))
+    expectMockSuccess mockDone
+    assertEqual "unavailable ends the runtime" (Left RiverRuntimeWindowManagerUnavailable) =<< runRiverSession session
 
 testMissingManager :: Assertion
 testMissingManager =
