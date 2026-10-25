@@ -87,12 +87,15 @@ import Seki.Internal.Core.ManageHook qualified as Core
 import Seki.Layout.Full
 import Seki.Layout.Tall
 import Seki.Run.Config (runConfig)
+import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
 
--- | Validate the configuration, then run until river disconnects.
+{- | Validate the configuration, then run until river disconnects. The command
+line is empty, or @--restore FILE@ when a restart started this process.
+-}
 seki :: (LayoutClass l) => Config l -> IO ()
-seki config = runConfig config >>= either failWith pure
+seki config = getArgs >>= (`runConfig` config) >>= either failWith pure
  where
   failWith err = hPutStrLn stderr ("seki: " ++ show err) >> exitFailure
 
