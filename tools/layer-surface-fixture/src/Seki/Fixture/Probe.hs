@@ -16,6 +16,7 @@ module Seki.Fixture.Probe (
   withProbe,
   openWindow,
   openWindowWith,
+  openWindowPending,
   keyboardSnapshot,
   pointerSnapshot,
   requestFullscreen,
@@ -36,7 +37,7 @@ import Control.Concurrent (forkFinally, killThread)
 import Control.Concurrent.Chan
 import Control.Concurrent.MVar
 import Control.Exception
-import Control.Monad (forM, unless, void, when)
+import Control.Monad (forM, join, unless, void, when)
 import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
@@ -180,10 +181,16 @@ openWindow :: Probe -> Color -> IO ProbeWindow
 openWindow probe = openWindowWith probe . windowSpec
 
 openWindowWith :: Probe -> WindowSpec -> IO ProbeWindow
-openWindowWith (Probe inputs _ _ _) spec = do
+openWindowWith probe = join . openWindowPending probe
+
+{- | Queue the window's requests behind every earlier probe request, and
+return an action that waits up to ten seconds for its first configure.
+-}
+openWindowPending :: Probe -> WindowSpec -> IO (IO ProbeWindow)
+openWindowPending (Probe inputs _ _ _) spec = do
   reply <- newEmptyMVar
   writeChan inputs (Open spec reply)
-  bounded "initial xdg configure" (readMVar reply)
+  pure (bounded "initial xdg configure" (readMVar reply))
 
 watchActor :: MVar (Either SomeException ()) -> IO a -> IO a
 watchActor finished action = do
