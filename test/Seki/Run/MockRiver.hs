@@ -32,6 +32,10 @@ module Seki.Run.MockRiver (
   requireObjectId,
   expectTransport,
   expectRight,
+  handshake,
+  event,
+  requests,
+  readUntil,
 ) where
 
 import Control.Concurrent (forkIO)
@@ -330,3 +334,32 @@ expectTransport = either (assertFailure . ("unexpected transport error: " <>) . 
 
 expectRight :: (Show errorValue) => Either errorValue value -> IO value
 expectRight = either (assertFailure . ("unexpected error: " <>) . show) pure
+
+-- | Bind the runtime's globals and return the manager, XKB, and layer-shell IDs.
+handshake :: FrameReader -> Transport -> IO (ObjectId, ObjectId, ObjectId)
+handshake reader peer = do
+  (registry, callback) <- receiveStartupRequests reader peer
+  sendFrames
+    peer
+    [ registryGlobalFrame registry 7 "river_window_manager_v1" 4
+    , registryGlobalFrame registry 8 "river_xkb_bindings_v1" 3
+    , registryGlobalFrame registry 9 "river_layer_shell_v1" 1
+    , callbackDoneFrame callback 1
+    ]
+  receiveRuntimeBinds reader peer
+
+-- | An event frame from a mock object.
+event :: ObjectId -> Int -> ArgumentEncoder () () -> IO ByteString
+event sender opcode = encodedFrame sender (Opcode (fromIntegral opcode))
+
+-- | The payloads of one object's requests with one opcode.
+requests :: ObjectId -> Int -> [RawFrame] -> [ByteString]
+requests sender opcode frames = [rawFramePayload f | f <- frames, rawFrameSender f == sender, rawFrameOpcode f == Opcode (fromIntegral opcode)]
+
+-- | Every request up to the manager's request with this opcode, which is consumed.
+readUntil :: FrameReader -> Transport -> ObjectId -> Int -> IO [RawFrame]
+readUntil reader peer manager opcode = do
+  frame <- receiveFrame reader peer
+  if rawFrameSender frame == manager && rawFrameOpcode frame == Opcode (fromIntegral opcode)
+    then pure []
+    else (frame :) <$> readUntil reader peer manager opcode

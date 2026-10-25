@@ -26,13 +26,13 @@ import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Worksp
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
-import Seki.Run.MockRiver (FrameReader, callbackDoneFrame, encodedFrame, encodedPayload, expectMockSuccess, expectRight, newFrameReader, receiveFrame, receiveKeyBindingRequest, receiveLayerShellOutputRequest, receiveLayerShellSeatRequest, receiveNewIdRequest, receivePointerBindingRequest, receiveRuntimeBinds, receiveStartupRequests, registryGlobalFrame, requireObjectId, runMock, sendFrames, withRuntimePair)
+import Seki.Run.MockRiver (FrameReader, encodedPayload, event, expectMockSuccess, expectRight, handshake, newFrameReader, readUntil, receiveFrame, receiveKeyBindingRequest, receiveLayerShellOutputRequest, receiveLayerShellSeatRequest, receiveNewIdRequest, receivePointerBindingRequest, requests, requireObjectId, runMock, sendFrames, withRuntimePair)
 import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Policy (PolicyConfig (..), newPolicy, policyRuntimeHandlers, readPolicyState, readRestoreState)
 import Seki.Run.Restart (RestartRefusal (..))
 import Seki.Run.Runtime (RiverExit (..), RiverRuntimeError, openRiverSessionAt, readRiverInventory, runRiverSession)
 import Seki.Run.Xkb (RiverKeyBinding (..))
-import Seki.Wire.Arguments (ArgumentEncoder, DecodeResult (..), getInt, putInt, putNewId, putNullableObject, putNullableString, putObject, putString, putUint, runCompleteArgumentDecoder)
+import Seki.Wire.Arguments (DecodeResult (..), getInt, putInt, putNewId, putNullableObject, putNullableString, putObject, putString, putUint, runCompleteArgumentDecoder)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
 import Seki.Wire.Transport (ReceivedChunk (..), Transport, closeTransport, receiveChunk)
 import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..), objectIdValue)
@@ -960,31 +960,6 @@ viewKey tag = RiverKeyBinding (0x30 + fromIntegral tag) (River.RiverSeatV1Modifi
 
 fullscreenRequests :: ObjectId -> [RawFrame] -> [Opcode]
 fullscreenRequests window frames = [rawFrameOpcode f | f <- frames, rawFrameSender f == window, rawFrameOpcode f `elem` map Opcode [17 .. 20]]
-
-requests :: ObjectId -> Int -> [RawFrame] -> [ByteString]
-requests sender opcode frames = [rawFramePayload f | f <- frames, rawFrameSender f == sender, rawFrameOpcode f == Opcode (fromIntegral opcode)]
-
-event :: ObjectId -> Int -> ArgumentEncoder () () -> IO ByteString
-event sender opcode = encodedFrame sender (Opcode (fromIntegral opcode))
-
-readUntil :: FrameReader -> Transport -> ObjectId -> Int -> IO [RawFrame]
-readUntil reader peer manager opcode = do
-  frame <- receiveFrame reader peer
-  if rawFrameSender frame == manager && rawFrameOpcode frame == Opcode (fromIntegral opcode)
-    then pure []
-    else (frame :) <$> readUntil reader peer manager opcode
-
-handshake :: FrameReader -> Transport -> IO (ObjectId, ObjectId, ObjectId)
-handshake reader peer = do
-  (registry, callback) <- receiveStartupRequests reader peer
-  sendFrames
-    peer
-    [ registryGlobalFrame registry 7 "river_window_manager_v1" 4
-    , registryGlobalFrame registry 8 "river_xkb_bindings_v1" 3
-    , registryGlobalFrame registry 9 "river_layer_shell_v1" 1
-    , callbackDoneFrame callback 1
-    ]
-  receiveRuntimeBinds reader peer
 
 -- | A policy whose startup hook restarts, so the first manage sequence carries the restart.
 restartingConfig :: IO (Either RestartRefusal ()) -> (String -> IO ()) -> PolicyConfig Int Full

@@ -15,15 +15,15 @@ import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Inventory (RiverDimensionsHint (..))
-import Seki.Run.MockRiver (FrameReader, callbackDoneFrame, encodedFrame, expectMockSuccess, expectRight, newFrameReader, receiveExpectedRequest, receiveKeyBindingRequest, receiveLayerShellOutputRequest, receiveLayerShellSeatRequest, receiveNewIdRequest, receiveRuntimeBinds, receiveStartupRequests, registryGlobalFrame, requireObjectId, runMock, sendFrames, withRuntimePair)
+import Seki.Run.MockRiver (encodedFrame, expectMockSuccess, expectRight, handshake, newFrameReader, receiveExpectedRequest, receiveKeyBindingRequest, receiveLayerShellOutputRequest, receiveLayerShellSeatRequest, receiveNewIdRequest, requireObjectId, runMock, sendFrames, withRuntimePair)
 import Seki.Run.Policy (PolicyConfig (..), newPolicy, policyRuntimeHandlers, readPolicyState)
 import Seki.Run.Reconcile (clampToHint)
 import Seki.Run.Runtime (RiverExit (..), openRiverSessionAt, runRiverSession)
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Arguments (putInt, putNewId, putNullableObject, putObject, putUint)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
-import Seki.Wire.Transport (Transport, closeTransport)
-import Seki.Wire.Types (ObjectId, Opcode (..))
+import Seki.Wire.Transport (closeTransport)
+import Seki.Wire.Types (Opcode (..))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, testCase, (@?=))
 
@@ -545,15 +545,3 @@ testSingleTall = withRuntimePair $ \target peer -> do
   result <- runRiverSession session
   expectMockSuccess done
   result @?= Right RiverEnded
-
-handshake :: FrameReader -> Transport -> IO (ObjectId, ObjectId, ObjectId)
-handshake reader peer = do
-  (registry, callback) <- receiveStartupRequests reader peer
-  sendFrames
-    peer
-    [ registryGlobalFrame registry 7 "river_window_manager_v1" 4
-    , registryGlobalFrame registry 8 "river_xkb_bindings_v1" 3
-    , registryGlobalFrame registry 9 "river_layer_shell_v1" 1
-    , callbackDoneFrame callback 1
-    ]
-  receiveRuntimeBinds reader peer
