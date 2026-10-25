@@ -80,6 +80,7 @@ import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..), objectIdValue)
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Files (createNamedPipe, fileExist)
 import System.Posix.IO (OpenFileFlags (..), OpenMode (WriteOnly), closeFd, defaultFileFlags, fdWrite, openFd)
+import System.Posix.Process (getProcessID)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertEqual, assertFailure, testCase, (@?=))
 
@@ -98,6 +99,7 @@ tests =
     , testCase "sets no layer-shell default while headless" testSetDefaultHeadless
     , testCase "runs the startup hook once, after the first output attaches" testStartupHookOnce
     , testCase "launches a command without waiting for it" testLaunchDetached
+    , testCase "a launched command is not left as seki's child" testLaunchNotChild
     , testCase "parses resize edges to one edge or a corner and drops none or opposite edges" $
         map (parseResizeEdges . River.RiverWindowV1EdgesFlags) [1, 2, 4, 8, 5, 6, 9, 10, 0, 3, 12, 16]
           @?= map Just [Vertical TopEdge, Vertical BottomEdge, Horizontal LeftEdge, Horizontal RightEdge, Corner LeftEdge TopEdge, Corner LeftEdge BottomEdge, Corner RightEdge TopEdge, Corner RightEdge BottomEdge] ++ replicate 4 Nothing
@@ -418,6 +420,19 @@ testLaunchDetached =
     _ <- fdWrite fd "go\n"
     closeFd fd
     waitFor "the command to finish" done
+
+{- | After an exec the new image never reaps the old one's children, so a
+launched command must belong to init or a subreaper, not to seki.
+-}
+testLaunchNotChild :: Assertion
+testLaunchNotChild =
+  withSystemTempDirectory "seki-launch" $ \dir -> do
+    let parent = dir <> "/parent"
+    launchDetached ("sleep 0.3; cut -d ' ' -f 4 /proc/$$/stat > " <> parent <> ".tmp && mv " <> parent <> ".tmp " <> parent)
+    waitFor "the command to record its parent" parent
+    self <- getProcessID
+    recorded <- readFile parent
+    assertBool ("the command's parent " <> recorded <> " is not seki " <> show self) (read recorded /= toInteger self)
 
 waitFor :: String -> FilePath -> Assertion
 waitFor label path = go (500 :: Int)

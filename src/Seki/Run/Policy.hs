@@ -332,12 +332,16 @@ liveInventoryOf inventory =
     [w] -> Just w
     _ -> Nothing
 
-{- | Run a command through @/bin/sh -c@ without waiting for it. A forked thread
-reaps the shell when it exits and reports a launch failure on stderr.
+{- | Run a command through @/bin/sh -c@ without waiting for it. An outer
+shell starts the command in the background and exits at once, so the command
+belongs to init or a subreaper rather than to seki: a restart's exec would
+otherwise leave it a zombie, since the new image never reaps it. A forked
+thread reaps the outer shell and reports on stderr when it cannot start; the
+command's own exit status is not observed.
 -}
 launchDetached :: String -> IO ()
 launchDetached cmd = void . forkIO $ do
-  started <- try (createProcess (proc "/bin/sh" ["-c", cmd]))
+  started <- try (createProcess (proc "/bin/sh" ["-c", "sh -c \"$0\" &", cmd]))
   case started of
     Left e -> hPutStrLn stderr ("seki: launch failed: " <> show (e :: IOException))
     Right (_, _, _, handle) -> reap (getProcessExitCode handle) 1000
