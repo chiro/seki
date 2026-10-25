@@ -48,7 +48,7 @@ data RiverSequenceError
   = InvalidRiverSequenceTransition RiverSequencePhase RiverSequenceOperation
   deriving (Eq, Show)
 
--- | State before river has delivered the first @manage_start@ event.
+-- | State before river has delivered the first @manage_start@ or @render_start@ event.
 initialRiverSequenceState :: RiverSequenceState
 initialRiverSequenceState = RiverSequenceState AwaitingInitialManage
 
@@ -62,9 +62,14 @@ startManageSequence state = case riverSequencePhase state of
   AwaitingManageOrRender -> Right (RiverSequenceState Managing)
   phase -> invalidTransition phase StartManageSequence
 
--- | Enter a render sequence after receiving @render_start@.
+{- | Enter a render sequence after receiving @render_start@. One can come
+before the first manage sequence: river keeps a single sequence state across
+window managers, so a manager that binds while its predecessor's render is
+pending starts with a render (M2-D08).
+-}
 startRenderSequence :: RiverSequenceState -> Either RiverSequenceError RiverSequenceState
 startRenderSequence state = case riverSequencePhase state of
+  AwaitingInitialManage -> Right (RiverSequenceState Rendering)
   AwaitingRequiredRender -> Right (RiverSequenceState Rendering)
   AwaitingManageOrRender -> Right (RiverSequenceState Rendering)
   phase -> invalidTransition phase StartRenderSequence

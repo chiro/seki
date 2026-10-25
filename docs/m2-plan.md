@@ -441,6 +441,7 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
 | M2-D05 | Client move and resize requests | P3 | Verified | WP5 |
 | M2-D06 | Restore state contents and output mapping | P1 | Decided | WP8 |
 | M2-D07 | Pointer operation lifecycle on river | P1 | Verified | WP5 |
+| M2-D08 | Window-manager handover on river | P1 | Decided | WP8 |
 
 ### M2-D01. Float geometry and the border
 
@@ -746,3 +747,46 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
   [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs), the hover
   test in [RuntimeTest](../test/Seki/Run/RuntimeTest.hs), and the real-river
   scenario `m2-pointer-drag`.
+
+### M2-D08. Window-manager handover on river
+
+- **Problem:** a restart hands river from one seki connection to the next.
+  The protocol does not say whether river sends more sequences between
+  `stop` and `finished`, how soon a new manager can bind, what a new manager
+  sees first, or which window state river keeps across managers. The WP8
+  design depends on each answer.
+- **Evidence (river 0.5.0, 2026-10-25):** a throwaway real-river scenario
+  opened a tile, a dialog with a parent, and a fullscreen window, stopped
+  the manager, and connected a second one in the same process, logging
+  every manager event with its time. River's source explains each result.
+  - `stop` sent inside an open manage sequence drew `finished` 0.3 ms later
+    and no other manager event. River ends an open sequence itself, makes
+    every object inert, and sends `finished` in the same dispatch, so a
+    request after `stop` changes nothing.
+  - A second manager that bound 17 ms after the first sent `destroy` got
+    `output`, `window`, `seat`, and `manage_start` in that order, and no
+    `unavailable`.
+  - A second manager that bound 0.02 ms after `stop` got no `unavailable`
+    either, but its first sequence was a `render_start`, and the runtime
+    failed with an out-of-order sequence error. River's manage and render
+    state belongs to the compositor, not to the manager, so a render that
+    was pending when the old manager left goes to the new one.
+  - Window identifiers and `wl_output` names were equal across the two
+    managers. The dialog's `parent` event was not sent again, and its
+    parent was still unset 1.5 s later: river compares `parent` with what
+    it last sent, and keeps that across managers.
+  - River clears each window's fullscreen state when its manager goes. The
+    window that covered the output before showed as a tile under the
+    second manager.
+- **Decision (2026-10-25):**
+  - The runtime answers a `render_start` that comes before the first
+    `manage_start`.
+  - seki sends `stop` after `manage_finish` and answers any sequence that
+    arrives before `finished` as usual.
+  - A restored window keeps its float state from the saved file. An
+    unmatched dialog after a restart has no parent in river and is placed
+    as a window without one.
+  - A restored fullscreen window starts from a fresh reconcile state, so
+    seki sends `fullscreen` again when its workspace is shown.
+- **Affected text:** spec 3.7; plan WP8; `wire-protocol.md` 7.6.
+

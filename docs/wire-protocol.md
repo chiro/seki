@@ -432,9 +432,11 @@ but resource cleanup still runs before they are rethrown.
 ### 7.6 River sequence ordering
 
 `Seki.Run.Sequence` models the protocol ordering independently from IO. Its
-opaque state begins by requiring `manage_start`; completing that manage
-sequence produces a `manage_finish` decision and requires at least one
-`render_start`. Completing a render sequence produces `render_finish`, after
+opaque state begins by accepting either start: river keeps one sequence
+state across window managers, so a manager that binds while its
+predecessor's render is pending gets `render_start` first (M2-D08).
+Completing a manage sequence produces a `manage_finish` decision and
+requires at least one `render_start`. Completing a render sequence produces `render_finish`, after
 which river may start another render sequence or a new manage sequence.
 
 The transition layer rejects overlapping, repeated, and out-of-order starts or
