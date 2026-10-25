@@ -14,6 +14,7 @@ module Seki.Wire.Connection.Event (
   preparedEventVersion,
   EventPreparationError (..),
   prepareEvent,
+  prepareDroppedEvent,
   finalizeDecodedEvent,
   finalizeDeleteIdEvent,
 )
@@ -33,6 +34,7 @@ import Seki.Wire.Connection.ObjectTable (
   destroyObjectByEvent,
   objectId,
   validateObject,
+  validateObjectHandle,
  )
 import Seki.Wire.Types (ObjectId, Opcode, RawFrame (..))
 
@@ -72,6 +74,19 @@ prepareEvent ::
   ObjectTable ->
   Either EventPreparationError (PreparedEvent interface fd event)
 prepareEvent = prepareEventWith validateObject
+
+{- | Like 'prepareEvent', but accept a sender awaiting @delete_id@. The caller
+decodes the arguments to keep the descriptor queue aligned and then drops
+the event without finalizing it.
+-}
+prepareDroppedEvent ::
+  Interface interface ->
+  Object interface ->
+  (Opcode -> Maybe (EventDecoder fd event)) ->
+  RawFrame ->
+  ObjectTable ->
+  Either EventPreparationError (PreparedEvent interface fd event)
+prepareDroppedEvent = prepareEventWith validateObjectHandle
 
 prepareEventWith ::
   (Interface interface -> Object interface -> ObjectTable -> Either ObjectTableError ObjectInfo) ->

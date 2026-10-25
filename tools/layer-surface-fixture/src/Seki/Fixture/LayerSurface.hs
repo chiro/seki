@@ -393,13 +393,7 @@ runPhase fixture phase = do
  where
   FixtureControl inputs = fixtureControl fixture
 
-{- | Destroy every object the fixture created.
-
-seki's connection treats an event for a destroyed object as fatal, where
-libwayland would drop it. Teardown therefore first drains every event already
-in flight with a sync, then destroys the buffer before the surface so that
-destroying the surface gives the compositor no buffer to release.
--}
+-- | Destroy every object the fixture created.
 tearDown :: Fixture -> Maybe MappedBuffer -> FixtureStop -> ExceptIO Phase
 tearDown fixture mapped stop = do
   for_ mapped $ \buffers -> do

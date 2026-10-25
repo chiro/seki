@@ -54,6 +54,7 @@ import Seki.Wire.Connection.Buffer (
   closeReceiveBuffer,
   decodePendingArguments,
   defaultBufferLimits,
+  discardPendingArguments,
   markReceiveEof,
   newReceiveBuffer,
   pollFrame,
@@ -63,6 +64,7 @@ import Seki.Wire.Connection.Event (
   PreparedEvent,
   finalizeDecodedEvent,
   finalizeDeleteIdEvent,
+  prepareDroppedEvent,
   prepareEvent,
   preparedEventArguments,
   preparedEventInterface,
@@ -74,15 +76,17 @@ import Seki.Wire.Connection.Event (
  )
 import Seki.Wire.Connection.ObjectTable (
   Object,
+  ObjectInfo (..),
+  ObjectLifecycle (..),
   ObjectLimit,
   ObjectTable,
   ObjectTableError,
   lookupObjectInfo,
   newObjectTable,
   objectId,
-  objectInfoInterfaceName,
   registerServerObject,
   validateObject,
+  validateObjectHandle,
  )
 import Seki.Wire.Connection.Request (
   PreparedRequest (..),
@@ -337,7 +341,12 @@ registerServerObjectRoute parentVersion (table, routes, callbacks) (ServerObject
     , callback object : callbacks
     )
 
--- | Receive, decode, finalize, and handle the next event in stream order.
+{- | Receive, decode, finalize, and handle the next event in stream order.
+
+Events addressed to an object destroyed by request but still awaiting
+@delete_id@ are decoded, their descriptors closed, and skipped: the
+compositor may have sent them before it read the destructor.
+-}
 dispatchNextEvent :: Connection -> IO (Either ConnectionError DispatchResult)
 dispatchNextEvent connection =
   withMVar (connectionReceiveLock connection) $ \() -> do
@@ -345,11 +354,13 @@ dispatchNextEvent connection =
       ConnectionClosedState -> pure (Left ConnectionClosed)
       ConnectionFinished -> pure (Right DispatchFinished)
       ConnectionFailed errorValue -> pure (Left errorValue)
-      ConnectionOpen _ -> do
-        receiveNextFrame connection >>= \case
-          Left errorValue -> failConnection connection errorValue
-          Right Nothing -> finishConnection connection
-          Right (Just frame) -> dispatchFrame connection frame
+      ConnectionOpen _ -> dispatchNextFrame
+ where
+  dispatchNextFrame =
+    receiveNextFrame connection >>= \case
+      Left errorValue -> failConnection connection errorValue
+      Right Nothing -> finishConnection connection
+      Right (Just frame) -> dispatchFrame connection frame >>= maybe dispatchNextFrame pure
 
 -- | Prepare and submit one request while holding the connection ordering lock.
 submitRequest ::
@@ -525,6 +536,14 @@ decodePreparedEvent ::
 decodePreparedEvent connection prepared =
   receivePendingArguments connection decodePendingArguments (preparedEventArguments prepared)
 
+-- | Decode a dropped event, close its descriptors, and return its @new_id@s.
+discardPreparedEvent ::
+  Connection ->
+  PreparedEvent interface OwnedFd event ->
+  IO (Either ConnectionError [ObjectId])
+discardPreparedEvent connection prepared =
+  receivePendingArguments connection discardPendingArguments (preparedEventNewIds prepared <$> preparedEventArguments prepared)
+
 receivePendingArguments ::
   Connection ->
   (ReceiveBuffer -> ArgumentDecoder OwnedFd value -> IO (Either ReceiveBufferError (ArgumentPoll value))) ->
@@ -539,7 +558,8 @@ receivePendingArguments connection consume decoder =
         Left errorValue -> pure (Left errorValue)
         Right () -> receivePendingArguments connection consume decoder
 
-dispatchFrame :: Connection -> RawFrame -> IO (Either ConnectionError DispatchResult)
+-- | 'Nothing' means the frame was dropped.
+dispatchFrame :: Connection -> RawFrame -> IO (Maybe (Either ConnectionError DispatchResult))
 dispatchFrame connection frame =
   mask $ \restore -> do
     outcome <-
@@ -552,53 +572,74 @@ dispatchFrame connection frame =
             Nothing ->
               let errorValue = ConnectionEventRouteMissing (rawFrameSender frame)
                in pure (ConnectionFailed errorValue, DispatchFailed errorValue)
-            Just (RegisteredEventRoute interface object decoder finalize handler) ->
-              case prepareEvent interface object decoder frame (connectionObjects connectionData) of
-                Left eventError ->
-                  let errorValue = ConnectionEventError eventError
-                   in pure (ConnectionFailed errorValue, DispatchFailed errorValue)
-                Right prepared -> do
-                  decoded <- try @SomeException (restore (decodePreparedEvent connection prepared))
-                  case decoded of
-                    Left exception -> do
-                      let errorValue = ConnectionUnexpectedError (displayException exception)
-                      pure (ConnectionFailed errorValue, DispatchRaised exception)
-                    Right (Left errorValue) ->
-                      pure (ConnectionFailed errorValue, DispatchFailed errorValue)
-                    Right (Right event) ->
-                      case finalize interface prepared event (connectionObjects connectionData) of
-                        Left errorValue ->
+            Just (RegisteredEventRoute interface object decoder finalize handler)
+              | Right info <- validateObjectHandle interface object (connectionObjects connectionData)
+              , objectInfoLifecycle info == ObjectAwaitingDeleteId ->
+                  case prepareDroppedEvent interface object decoder frame (connectionObjects connectionData) of
+                    Left eventError ->
+                      let errorValue = ConnectionEventError eventError
+                       in pure (ConnectionFailed errorValue, DispatchFailed errorValue)
+                    Right prepared -> do
+                      discarded <- try @SomeException (restore (discardPreparedEvent connection prepared))
+                      case discarded of
+                        Left exception -> do
+                          let errorValue = ConnectionUnexpectedError (displayException exception)
+                          pure (ConnectionFailed errorValue, DispatchRaised exception)
+                        Right (Left errorValue) ->
                           pure (ConnectionFailed errorValue, DispatchFailed errorValue)
-                        Right transition ->
-                          let result =
-                                EventDispatched
-                                  DispatchedEvent
-                                    { dispatchedEventSender = preparedEventSender prepared
-                                    , dispatchedEventInterface = preparedEventInterface prepared
-                                    , dispatchedEventName = preparedEventName prepared
-                                    , dispatchedEventOpcode = preparedEventOpcode prepared
-                                    }
-                              nextData =
-                                connectionData
-                                  { connectionObjects = transitionObjects transition
-                                  , connectionEventRoutes =
-                                      foldl
-                                        installRoute
-                                        (pruneRoutes (transitionObjects transition) (connectionEventRoutes connectionData))
-                                        (transitionRoutes transition)
-                                  }
-                              invocation =
-                                EventInvocation
-                                  result
-                                  (sequence_ (transitionCallbacks transition) >> handler object event)
-                           in pure (ConnectionOpen nextData, DispatchInvoke invocation)
+                        Right (Right []) ->
+                          pure (ConnectionOpen connectionData, DispatchDropped)
+                        Right (Right newIds) ->
+                          let errorValue = ConnectionServerObjectRoutesMismatch (normalizeObjectIds newIds) []
+                           in pure (ConnectionFailed errorValue, DispatchFailed errorValue)
+              | otherwise ->
+                  case prepareEvent interface object decoder frame (connectionObjects connectionData) of
+                    Left eventError ->
+                      let errorValue = ConnectionEventError eventError
+                       in pure (ConnectionFailed errorValue, DispatchFailed errorValue)
+                    Right prepared -> do
+                      decoded <- try @SomeException (restore (decodePreparedEvent connection prepared))
+                      case decoded of
+                        Left exception -> do
+                          let errorValue = ConnectionUnexpectedError (displayException exception)
+                          pure (ConnectionFailed errorValue, DispatchRaised exception)
+                        Right (Left errorValue) ->
+                          pure (ConnectionFailed errorValue, DispatchFailed errorValue)
+                        Right (Right event) ->
+                          case finalize interface prepared event (connectionObjects connectionData) of
+                            Left errorValue ->
+                              pure (ConnectionFailed errorValue, DispatchFailed errorValue)
+                            Right transition ->
+                              let result =
+                                    EventDispatched
+                                      DispatchedEvent
+                                        { dispatchedEventSender = preparedEventSender prepared
+                                        , dispatchedEventInterface = preparedEventInterface prepared
+                                        , dispatchedEventName = preparedEventName prepared
+                                        , dispatchedEventOpcode = preparedEventOpcode prepared
+                                        }
+                                  nextData =
+                                    connectionData
+                                      { connectionObjects = transitionObjects transition
+                                      , connectionEventRoutes =
+                                          foldl
+                                            installRoute
+                                            (pruneRoutes (transitionObjects transition) (connectionEventRoutes connectionData))
+                                            (transitionRoutes transition)
+                                      }
+                                  invocation =
+                                    EventInvocation
+                                      result
+                                      (sequence_ (transitionCallbacks transition) >> handler object event)
+                               in pure (ConnectionOpen nextData, DispatchInvoke invocation)
     case outcome of
-      DispatchReturned result -> pure result
-      DispatchFailed errorValue -> closeConnectionResources connection >> pure (Left errorValue)
+      DispatchReturned result -> pure (Just result)
+      DispatchFailed errorValue -> closeConnectionResources connection >> pure (Just (Left errorValue))
       DispatchRaised exception -> do
         closeConnectionResources connection
-        rethrowOrReturn exception
-      DispatchInvoke invocation -> runEventInvocation connection invocation
+        Just <$> rethrowOrReturn exception
+      DispatchInvoke invocation -> Just <$> runEventInvocation connection invocation
+      DispatchDropped -> pure Nothing
 
 data EventInvocation = EventInvocation DispatchResult (IO ())
 
@@ -622,6 +663,7 @@ data DispatchOutcome
   | DispatchFailed ConnectionError
   | DispatchRaised SomeException
   | DispatchInvoke EventInvocation
+  | DispatchDropped
 
 finishConnection :: Connection -> IO (Either ConnectionError DispatchResult)
 finishConnection connection = do
@@ -646,11 +688,12 @@ markConnectionFailed connection errorValue =
     ConnectionOpen _ -> pure (ConnectionFailed errorValue, ())
     state -> pure (state, ())
 
+-- | Keep a destroyed object's route until @delete_id@, so that its late events can be dropped.
 pruneRoutes :: ObjectTable -> Map Word32 RegisteredEventRoute -> Map Word32 RegisteredEventRoute
-pruneRoutes table = Map.filter routeIsActive
+pruneRoutes table = Map.filter routeIsCurrent
  where
-  routeIsActive (RegisteredEventRoute interface object _ _ _) =
-    case validateObject interface object table of
+  routeIsCurrent (RegisteredEventRoute interface object _ _ _) =
+    case validateObjectHandle interface object table of
       Left _ -> False
       Right _ -> True
 
