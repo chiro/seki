@@ -88,7 +88,7 @@ at the tile's top-left and proposes the tile clamped to the client's size hints.
 data SizePolicy = Crop | Tolerate
   deriving (Eq, Show)
 
-class (Show l) => LayoutClass l where
+class (Show l, Read l) => LayoutClass l where
   -- | Place windows of a non-empty stack. Windows left out are hidden.
   pureLayout :: l -> Rect -> Stack WindowId -> [(WindowId, Rect)]
   pureLayout _ r s = [(focus s, r)]
@@ -110,7 +110,7 @@ runLayout (Workspace _ l ms) r = maybe [] (pureLayout l r) ms
 
 -- | A layout with its x and y axes exchanged.
 newtype Mirror l = Mirror l
-  deriving (Eq, Show)
+  deriving (Eq, Show, Read)
 
 instance (LayoutClass l) => LayoutClass (Mirror l) where
   pureLayout (Mirror l) r s = map (second mirror) (pureLayout l (mirror r) s)
@@ -120,11 +120,11 @@ instance (LayoutClass l) => LayoutClass (Mirror l) where
 
 -- | Which layout of a 'Choose' is selected.
 data CLR = CL | CR
-  deriving (Eq, Show)
+  deriving (Eq, Show, Read)
 
 -- | Two layouts with one selected; 'NextLayout' and 'FirstLayout' switch.
 data Choose l r = Choose CLR l r
-  deriving (Eq, Show)
+  deriving (Eq, Show, Read)
 
 -- | Choose between two layouts, starting with the left one.
 (|||) :: l -> r -> Choose l r
@@ -182,13 +182,13 @@ choose (Choose d l r) d' ml mr =
   hide x = fromMaybe x (handle x Hide)
 
 -- | A layout changed by a modifier @m@.
-class (Show m) => LayoutModifier m where
+class (Show m, Read m) => LayoutModifier m where
   modifySizePolicy :: m -> SizePolicy -> SizePolicy
   modifySizePolicy _ = id
 
 -- | A layout with a modifier, which keeps the layout's placements and messages.
 data ModifiedLayout m l = ModifiedLayout m l
-  deriving (Eq, Show)
+  deriving (Eq, Show, Read)
 
 instance (LayoutModifier m, LayoutClass l) => LayoutClass (ModifiedLayout m l) where
   pureLayout (ModifiedLayout _ l) = pureLayout l
@@ -198,7 +198,7 @@ instance (LayoutModifier m, LayoutClass l) => LayoutClass (ModifiedLayout m l) w
 
 -- | The modifier behind 'tolerant', named apart from the 'Tolerate' policy.
 data Tolerant = Tolerant
-  deriving (Eq, Show)
+  deriving (Eq, Show, Read)
 
 instance LayoutModifier Tolerant where
   modifySizePolicy _ _ = Tolerate

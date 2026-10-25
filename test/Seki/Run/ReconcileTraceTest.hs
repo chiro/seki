@@ -848,7 +848,7 @@ testPointerMove = pointerTrace (pointerConfig SmallTile idHook) (96, 46) script 
     requests (ptNode t) 1 lateRender @?= []
 
 -- | Tiles its first window in a 100 by 50 box at the area's top-left, leaving room to drag it.
-data SmallTile = SmallTile deriving (Show)
+data SmallTile = SmallTile deriving (Show, Read)
 
 instance LayoutClass SmallTile where
   pureLayout _ r s = [(w, tile) | Right tile <- [mkSize 100 50 >>= mkRect (Point (rectX r) (rectY r))], w <- take 1 (integrate s)]

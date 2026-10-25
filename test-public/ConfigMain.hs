@@ -3,7 +3,7 @@ module ConfigMain (configuredMain, customConfig, fullConfig, hookedConfig, media
 import Seki
 
 newtype CustomLayout = CustomLayout Full
-  deriving (Show)
+  deriving (Show, Read)
 
 instance LayoutClass CustomLayout where
   pureLayout (CustomLayout layout) = pureLayout layout
