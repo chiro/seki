@@ -1,6 +1,6 @@
 # M2 Practical Implementation Plan
 
-Status: **Draft** / Last updated: 2026-10-24
+Status: **Draft** / Last updated: 2026-10-25
 
 This document turns the M2 row in the specification into an ordered, testable
 implementation plan. It builds on the completed [M1 plan](m1-plan.md) and
@@ -333,6 +333,18 @@ Tests:
 - real-river scenario `m2-restart` restarts with floats, a non-default layout,
   and windows on two workspaces, then compares pixels before and after.
 
+Status (2026-10-25): implemented. `Seki.Internal.Core.Restore` holds the saved
+form, keyed only by window identifier and `wl_output` name, and
+`restoreCore` owns every saved-versus-live rule. The runtime sends `stop`
+after the `manage_finish` of a sequence whose restart check passed, and
+`finished` ends the session after `destroy`. `Seki.Run.Restart` and
+`runSessions` write the state, exec, and fall back in-process. Beyond the
+list above, the handover spike (M2-D08) added three changes: the runtime
+accepts a `render_start` before the first `manage_start`, the state is keyed
+by the inventory of the last drain, and `launchDetached` double-forks so a
+launched program is never seki's child after an exec. A custom layout must
+now derive `Read`.
+
 ### WP9. Reference configuration port
 
 Deliverables:
@@ -439,9 +451,9 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
 | M2-D03 | Fullscreen representation and exit | P1 | Verified | WP6, WP8 |
 | M2-D04 | Crop while a proposal is pending | P1 | Verified | WP7 |
 | M2-D05 | Client move and resize requests | P3 | Verified | WP5 |
-| M2-D06 | Restore state contents and output mapping | P1 | Decided | WP8 |
+| M2-D06 | Restore state contents and output mapping | P1 | Verified | WP8 |
 | M2-D07 | Pointer operation lifecycle on river | P1 | Verified | WP5 |
-| M2-D08 | Window-manager handover on river | P1 | Decided | WP8 |
+| M2-D08 | Window-manager handover on river | P1 | Verified | WP8 |
 
 ### M2-D01. Float geometry and the border
 
@@ -691,6 +703,20 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
   lands.
 - **Required regression:** the `m2-restart` scenario and a round-trip
   property.
+- **Verified (WP8):** "a saved state decodes from its encoding", "a saved
+  generated core decodes from its encoding", "survivors keep their place,
+  gone windows are dropped, and new windows place normally", "any saved state
+  restores over any inventory to a valid core", and the unknown-output,
+  headless, dropped-tag, layout-fallback, and no-identifier cases in
+  [RestoreTest](../test/Seki/Internal/Core/RestoreTest.hs); the restart
+  check and state-file cases in
+  [RestartTest](../test/Seki/Run/RestartTest.hs); "a refused restart logs
+  why and sends no stop" and "a restore keeps saved windows in their tile and
+  places the rest by the manage hook" in
+  [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs); "a failed
+  exec reconnects on the socket path and restores in the same process" and
+  the unknown-version run in [SessionsTest](../test/Seki/Run/SessionsTest.hs);
+  and the real-river scenarios `m2-restart` and `m2-restart-fallback`.
 
 ### M2-D07. Pointer operation lifecycle on river
 
@@ -778,6 +804,20 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
   - River clears each window's fullscreen state when its manager goes. The
     window that covered the output before showed as a tile under the
     second manager.
+  - River sends `closed` for every window when it processes `stop`, before
+    `finished`. The first in-process fallback run saved a state that named
+    no window, since the inventory had none left when the session ended.
+  - After an exec from the non-threaded runtime, the new image held fds 0
+    to 2, its own timerfd, its new Wayland socket, and one socket the test
+    harness passed when it spawned seki. No descriptor of the old image
+    survived. A bare `seki` found on PATH through a symlink was recorded
+    and execed as that symlink's path, and the bindings worked after the
+    exec.
+  - Five crash restarts, each a `SIGKILL` followed at once by a new seki,
+    and every exec restart in the scenarios bound without `unavailable`.
+  - `ci/run-integration.sh` runs the integration binary directly, not
+    through `cabal test`, so the `build-tool-depends` `seki` is not on
+    PATH; the script passes its path in `SEKI_EXECUTABLE`.
 - **Decision (2026-10-25):**
   - The runtime answers a `render_start` that comes before the first
     `manage_start`.
@@ -788,5 +828,16 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
     as a window without one.
   - A restored fullscreen window starts from a fresh reconcile state, so
     seki sends `fullscreen` again when its workspace is shown.
+  - The saved state is keyed by the inventory of the last drain, which
+    names exactly the windows the core holds.
+  - The bounded `unavailable` retry stays, for a crash restart that races
+    river's teardown, although it never fired here.
 - **Affected text:** spec 3.7; plan WP8; `wire-protocol.md` 7.6.
+- **Verified (WP8):** "M2-D08: answers a render sequence that comes before
+  the first manage sequence" and "a manage plan that asks to stop sends stop
+  once after manage_finish, then destroy on finished" in
+  [RuntimeTest](../test/Seki/Run/RuntimeTest.hs); the fallback trace in
+  [SessionsTest](../test/Seki/Run/SessionsTest.hs), which sends the closes
+  river sends; and `m2-restart`, whose fullscreen window covers workspace 2
+  again after the restart. The spike code was deleted after the run.
 

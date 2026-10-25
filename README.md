@@ -23,7 +23,8 @@ implementation provides:
   swapping, and master resize and count messages;
 - compositor-drawn focus borders and click-to-focus;
 - layer-shell support, with tiling confined to each output's non-exclusive
-  area; and
+  area;
+- in-place restart that keeps the window state; and
 - default key bindings, described [below](#project-direction).
 
 The release integration suite exercises the native Wayland path, two outputs,
@@ -63,9 +64,9 @@ The default modifier is Mod4. Mod-Shift-Return launches `terminal`, and
 Mod-Shift-c closes the focused window. Mod-Space cycles layouts. Mod-j and
 Mod-k move focus, and Mod-Return swaps the focused window with the master.
 Mod-h and Mod-l resize the master area. Mod-comma and Mod-period change the
-master count. Mod-t tiles a floating window again. Mod-1 through Mod-9
-select workspaces with `greedyView`; adding Shift moves the focused window
-there.
+master count. Mod-t tiles a floating window again. Mod-q restarts seki in
+place. Mod-1 through Mod-9 select workspaces with `greedyView`; adding Shift
+moves the focused window there.
 
 `def`'s `manageHook` is `defaultManageHook`, which floats dialogs: the windows
 whose client set a parent. A floating window sits above every tiled window
@@ -117,6 +118,32 @@ the final-configuration behavior of `keys`. `startupHook` runs once per seki
 process when the first output arrives. Use `spawnOnce` in it for programs
 that must start only once.
 
+`restart`, bound to Mod-q by default, restarts seki in place. seki first
+checks that the executable it started from is still an executable file, that
+it can reconnect to river, and that `$XDG_RUNTIME_DIR` is set. If a check
+fails, seki logs why on stderr and keeps running. Otherwise it saves the
+workspaces, stacks, focus, layouts, floats, fullscreen windows, and the
+`spawnOnce` history to a private file under `$XDG_RUNTIME_DIR/seki/`, then
+execs that executable with `--restore <file>`. The path is the one seki was
+started by, without following symlinks, so a binary rebuilt in place or a
+profile symlink that now points at a new build is what runs. Windows opened
+during the handover go through `manageHook`, and windows closed during it are
+forgotten. If the exec fails, the same process reconnects and restores. A
+layout must derive `Read` as well as `Show`, since each workspace's layout is
+saved with `show`; a layout that no longer reads after a configuration change
+falls back to `layoutHook` for that workspace alone.
+
+```haskell
+data Spiral = Spiral Rational deriving (Show, Read)
+```
+
+A new binary that crashes at startup leaves river with no window manager.
+Start seki from river's init script in a loop, so river gets one again:
+
+```sh
+while true; do seki; sleep 1; done &
+```
+
 When changing the layout's type, replace the layout-dependent key function,
 pointer bindings, manage hook, and startup hook in the same record update, as in
 `def{layoutHook = Full, keys = defaultKeys, pointerBindings = defaultPointerBindings, manageHook = defaultManageHook, startupHook = pure ()}`.
@@ -128,7 +155,7 @@ and colors whose RGB channels exceed alpha fail before Wayland startup.
 `BorderColor` channels are unsigned 32-bit premultiplied RGBA values.
 
 `Action` is pure. Use `windows`, `sendMessage`, `spawn`, `spawnOnce`, `kill`,
-`float`, `sink`, `toggleFullscreen`, and `withFocused` to change state or record effects. Arbitrary IO is not part of the configuration API.
+`float`, `sink`, `toggleFullscreen`, `restart`, and `withFocused` to change state or record effects. Arbitrary IO is not part of the configuration API.
 Import `Seki.Core.StackSet` qualified for its full operation set; `Seki`
 exports selected operations without conflicting with `Config.workspaces`.
 

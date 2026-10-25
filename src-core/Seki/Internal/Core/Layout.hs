@@ -9,8 +9,11 @@ Closely derived from @XMonad.Core@ and @XMonad.Layout@ in xmonad 0.18.1
   stateful layout can add a defaulted method without breaking instances.
 * Layouts place 'WindowId's in 'Rect's rather than taking a window type
   parameter.
-* @ReleaseResources@, @JumpToLayout@, and X11 event messages are not ported,
-  since seki has no restart or name-based layout selection in M1.
+* @ReleaseResources@, @JumpToLayout@, and X11 event messages are not ported:
+  no layout holds resources across a restart, and seki has no name-based
+  layout selection.
+* Every layout has 'Read', since a restart saves each workspace's layout
+  with 'show' and reads it back.
 -}
 module Seki.Internal.Core.Layout (
   -- * Messages
