@@ -21,6 +21,7 @@ import Network.Socket (
   socketPair,
   withFdSocket,
  )
+import Network.Socket.ByteString (recv)
 import Seki.Wire.Transport (
   ConnectionDiscoveryError (..),
   ConnectionTarget (..),
@@ -43,6 +44,8 @@ import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.IO (closeFd, createPipe, dup)
 import System.Posix.IO.ByteString (fdRead, fdWrite)
 import System.Posix.Types (Fd (..))
+import System.Process (spawnProcess, terminateProcess, waitForProcess)
+import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertEqual, testCase)
 
@@ -61,6 +64,7 @@ tests =
     , testCase "closes descriptor ownership idempotently" testCloseOwnedFd
     , testCase "opens inherited Unix stream sockets" testOpenInheritedSocket
     , testCase "connects to Unix socket paths" testOpenSocketPath
+    , testCase "a child spawned after connecting does not keep the connection open" testSocketPathNotInherited
     , testCase "sends and receives stream bytes" testByteTransfer
     , testCase "transfers multiple descriptors in order" testDescriptorTransfer
     , testCase "consumes descriptors rejected before sending" testRejectedDescriptorSend
@@ -180,6 +184,20 @@ testOpenSocketPath =
         (expectTransport =<< openTransport (UnixSocketPath socketPath))
         closeTransport
         (\_ -> bracket (accept listener) (close . fst) (const (pure ())))
+
+testSocketPathNotInherited :: IO ()
+testSocketPathNotInherited =
+  withSystemTempDirectory "seki-transport" $ \temporaryDirectory ->
+    bracket (socket AF_UNIX Stream defaultProtocol) close $ \listener -> do
+      let socketPath = temporaryDirectory <> "/wayland-test"
+      bind listener (SockAddrUnix socketPath)
+      listen listener 1
+      transport <- expectTransport =<< openTransport (UnixSocketPath socketPath)
+      bracket (accept listener) (close . fst) $ \(server, _) ->
+        bracket (spawnProcess "sleep" ["30"]) (\child -> terminateProcess child >> void (waitForProcess child)) $ \_ -> do
+          closeTransport transport
+          received <- timeout 2000000 (recv server 1)
+          assertEqual "server reads end of stream" (Just ByteString.empty) received
 
 testByteTransfer :: IO ()
 testByteTransfer =

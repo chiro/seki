@@ -275,7 +275,7 @@ openTarget restore target = case target of
     pure connection
   UnixSocketPath path -> do
     connection <- socket AF_UNIX Stream defaultProtocol
-    restore (connect connection (SockAddrUnix path)) `onException` close connection
+    restore (withFdSocket connection setCloseOnExecIfNeeded >> connect connection (SockAddrUnix path)) `onException` close connection
     pure connection
 
 validateTransport :: (forall value. IO value -> IO value) -> Socket -> IO (Either TransportError Transport)
