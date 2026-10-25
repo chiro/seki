@@ -191,7 +191,7 @@ runLive directory seed steps collector = do
                   keeperPid <- managedProcessPid keeper
                   writeProcesses directory (("keyboard", keeperPid) : wmProcesses)
                   withProbe socket $ \probe -> do
-                    clients <- mapM (\(TileRole color) -> openWindow probe color) (windowRoles M1)
+                    clients <- foldM (\opened role -> (\w -> opened <> [w]) <$> openRole probe opened role) [] (windowRoles M1)
                     let byIndex = Map.fromList (zip [0 ..] (reverse clients))
                         owner = keyboardOwner <$> keyboardSnapshot probe
                         await model = void (waitUntil "native focus acknowledgment" assertionTimeoutMicroseconds owner (== fmap (byIndex Map.!) (observedOwner (expectedObservation model))))
@@ -256,6 +256,10 @@ runLive directory seed steps collector = do
     maybe (fail "WM PID unavailable") (signalProcess sigUSR2) pid
     let path = directory </> ("wm-checkpoint-" <> show (index :: Int) <> ".json")
     void (waitUntil "WM RTS checkpoint" assertionTimeoutMicroseconds (doesFileExist path) id)
+
+openRole :: Probe -> [ProbeWindow] -> WindowRole -> IO ProbeWindow
+openRole probe _ (TileRole color) = openWindow probe color
+openRole probe opened (DialogRole color (width, height) parent) = openWindowWith probe (windowSpec color){specParent = Just (opened !! parent), specCommit = CommitFixed width height}
 
 writeProcesses :: FilePath -> [(String, Maybe Int)] -> IO ()
 writeProcesses directory processes = do
