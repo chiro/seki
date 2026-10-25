@@ -1,0 +1,187 @@
+{
+  "schema": 2,
+  "workload": "m2",
+  "machine": "Linux-7.2.9-arch1-1-x86_64-with-glibc2.44",
+  "cpu_count": 12,
+  "cpu_model": "AMD Ryzen 5 7535HS with Radeon Graphics",
+  "compiler": "9.6.7",
+  "binary_reported_compiler": "ghc 9.6",
+  "river": "0.5.0 +xwayland",
+  "build_command": [
+    "cabal",
+    "build",
+    "seki-latency",
+    "-w",
+    "ghc-9.6.7",
+    "--offline",
+    "--enable-optimization=2",
+    "--builddir=dist-newstyle/latency"
+  ],
+  "build_provenance": "built by runner",
+  "binary": "/home/chir/src/github.com/chiro/seki/.claude/worktrees/agent-a1315c95ddac68adc/dist-newstyle/latency/build/x86_64-linux/ghc-9.6.7/seki-0.1.0.0/x/seki-latency/opt/build/seki-latency/seki-latency",
+  "binary_sha256": "4b4d08e65ff5add2b2001087586562fcc5b7e4a4fefef95f0ba3cdc47a681be7",
+  "seed": 1909,
+  "live_steps": 1023,
+  "pure_steps": 20000,
+  "pure_windows": 32,
+  "rts_common": [
+    "-N1",
+    "-T",
+    "-s"
+  ],
+  "rts_difference": "--nonmoving-gc",
+  "profile": false,
+  "clock_ticks_per_second": 100,
+  "trials": [
+    {
+      "directory": "00-normal",
+      "collector": "normal",
+      "load_before": [
+        1.68798828125,
+        1.322265625,
+        0.958984375
+      ],
+      "started_utc": "2026-10-25T10:28:12Z",
+      "load_after": [
+        1.35302734375,
+        1.28466796875,
+        0.96142578125
+      ]
+    },
+    {
+      "directory": "01-nonmoving",
+      "collector": "nonmoving",
+      "load_before": [
+        1.35302734375,
+        1.28466796875,
+        0.96142578125
+      ],
+      "started_utc": "2026-10-25T10:28:45Z",
+      "load_after": [
+        1.2080078125,
+        1.25634765625,
+        0.9638671875
+      ]
+    },
+    {
+      "directory": "02-normal",
+      "collector": "normal",
+      "load_before": [
+        1.2080078125,
+        1.25634765625,
+        0.9638671875
+      ],
+      "started_utc": "2026-10-25T10:29:18Z",
+      "load_after": [
+        0.9453125,
+        1.18017578125,
+        0.94921875
+      ]
+    },
+    {
+      "directory": "03-nonmoving",
+      "collector": "nonmoving",
+      "load_before": [
+        0.9453125,
+        1.18017578125,
+        0.94921875
+      ],
+      "started_utc": "2026-10-25T10:29:50Z",
+      "load_after": [
+        0.72509765625,
+        1.09619140625,
+        0.92919921875
+      ]
+    },
+    {
+      "directory": "04-normal",
+      "collector": "normal",
+      "load_before": [
+        0.72509765625,
+        1.09619140625,
+        0.92919921875
+      ],
+      "started_utc": "2026-10-25T10:30:27Z",
+      "load_after": [
+        0.8193359375,
+        1.0703125,
+        0.92578125
+      ]
+    },
+    {
+      "directory": "05-nonmoving",
+      "collector": "nonmoving",
+      "load_before": [
+        0.8193359375,
+        1.0703125,
+        0.92578125
+      ],
+      "started_utc": "2026-10-25T10:31:00Z",
+      "load_after": [
+        0.8974609375,
+        1.0625,
+        0.92822265625
+      ]
+    },
+    {
+      "directory": "06-normal",
+      "collector": "normal",
+      "load_before": [
+        0.8974609375,
+        1.0625,
+        0.92822265625
+      ],
+      "started_utc": "2026-10-25T10:31:33Z",
+      "load_after": [
+        1.11181640625,
+        1.10107421875,
+        0.947265625
+      ]
+    },
+    {
+      "directory": "07-nonmoving",
+      "collector": "nonmoving",
+      "load_before": [
+        1.11181640625,
+        1.10107421875,
+        0.947265625
+      ],
+      "started_utc": "2026-10-25T10:32:06Z",
+      "load_after": [
+        0.92919921875,
+        1.05810546875,
+        0.9375
+      ]
+    },
+    {
+      "directory": "08-normal",
+      "collector": "normal",
+      "load_before": [
+        0.92919921875,
+        1.05810546875,
+        0.9375
+      ],
+      "started_utc": "2026-10-25T10:32:38Z",
+      "load_after": [
+        1.06494140625,
+        1.08251953125,
+        0.951171875
+      ]
+    },
+    {
+      "directory": "09-nonmoving",
+      "collector": "nonmoving",
+      "load_before": [
+        1.06494140625,
+        1.08251953125,
+        0.951171875
+      ],
+      "started_utc": "2026-10-25T10:33:11Z",
+      "load_after": [
+        0.91943359375,
+        1.04150390625,
+        0.9423828125
+      ]
+    }
+  ]
+}

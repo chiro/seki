@@ -1,0 +1,1253 @@
+{
+  "manifest": {
+    "schema": 2,
+    "workload": "m2",
+    "machine": "Linux-7.2.9-arch1-1-x86_64-with-glibc2.44",
+    "cpu_count": 12,
+    "cpu_model": "AMD Ryzen 5 7535HS with Radeon Graphics",
+    "compiler": "9.6.7",
+    "binary_reported_compiler": "ghc 9.6",
+    "river": "0.5.0 +xwayland",
+    "build_command": [
+      "cabal",
+      "build",
+      "seki-latency",
+      "-w",
+      "ghc-9.6.7",
+      "--offline",
+      "--enable-optimization=2",
+      "--builddir=dist-newstyle/latency"
+    ],
+    "build_provenance": "built by runner",
+    "binary": "/home/chir/src/github.com/chiro/seki/.claude/worktrees/agent-a1315c95ddac68adc/dist-newstyle/latency/build/x86_64-linux/ghc-9.6.7/seki-0.1.0.0/x/seki-latency/opt/build/seki-latency/seki-latency",
+    "binary_sha256": "4b4d08e65ff5add2b2001087586562fcc5b7e4a4fefef95f0ba3cdc47a681be7",
+    "seed": 1909,
+    "live_steps": 1023,
+    "pure_steps": 20000,
+    "pure_windows": 32,
+    "rts_common": [
+      "-N1",
+      "-T",
+      "-s"
+    ],
+    "rts_difference": "--nonmoving-gc",
+    "profile": false,
+    "clock_ticks_per_second": 100,
+    "trials": [
+      {
+        "directory": "00-normal",
+        "collector": "normal",
+        "load_before": [
+          1.68798828125,
+          1.322265625,
+          0.958984375
+        ],
+        "started_utc": "2026-10-25T10:28:12Z",
+        "load_after": [
+          1.35302734375,
+          1.28466796875,
+          0.96142578125
+        ]
+      },
+      {
+        "directory": "01-nonmoving",
+        "collector": "nonmoving",
+        "load_before": [
+          1.35302734375,
+          1.28466796875,
+          0.96142578125
+        ],
+        "started_utc": "2026-10-25T10:28:45Z",
+        "load_after": [
+          1.2080078125,
+          1.25634765625,
+          0.9638671875
+        ]
+      },
+      {
+        "directory": "02-normal",
+        "collector": "normal",
+        "load_before": [
+          1.2080078125,
+          1.25634765625,
+          0.9638671875
+        ],
+        "started_utc": "2026-10-25T10:29:18Z",
+        "load_after": [
+          0.9453125,
+          1.18017578125,
+          0.94921875
+        ]
+      },
+      {
+        "directory": "03-nonmoving",
+        "collector": "nonmoving",
+        "load_before": [
+          0.9453125,
+          1.18017578125,
+          0.94921875
+        ],
+        "started_utc": "2026-10-25T10:29:50Z",
+        "load_after": [
+          0.72509765625,
+          1.09619140625,
+          0.92919921875
+        ]
+      },
+      {
+        "directory": "04-normal",
+        "collector": "normal",
+        "load_before": [
+          0.72509765625,
+          1.09619140625,
+          0.92919921875
+        ],
+        "started_utc": "2026-10-25T10:30:27Z",
+        "load_after": [
+          0.8193359375,
+          1.0703125,
+          0.92578125
+        ]
+      },
+      {
+        "directory": "05-nonmoving",
+        "collector": "nonmoving",
+        "load_before": [
+          0.8193359375,
+          1.0703125,
+          0.92578125
+        ],
+        "started_utc": "2026-10-25T10:31:00Z",
+        "load_after": [
+          0.8974609375,
+          1.0625,
+          0.92822265625
+        ]
+      },
+      {
+        "directory": "06-normal",
+        "collector": "normal",
+        "load_before": [
+          0.8974609375,
+          1.0625,
+          0.92822265625
+        ],
+        "started_utc": "2026-10-25T10:31:33Z",
+        "load_after": [
+          1.11181640625,
+          1.10107421875,
+          0.947265625
+        ]
+      },
+      {
+        "directory": "07-nonmoving",
+        "collector": "nonmoving",
+        "load_before": [
+          1.11181640625,
+          1.10107421875,
+          0.947265625
+        ],
+        "started_utc": "2026-10-25T10:32:06Z",
+        "load_after": [
+          0.92919921875,
+          1.05810546875,
+          0.9375
+        ]
+      },
+      {
+        "directory": "08-normal",
+        "collector": "normal",
+        "load_before": [
+          0.92919921875,
+          1.05810546875,
+          0.9375
+        ],
+        "started_utc": "2026-10-25T10:32:38Z",
+        "load_after": [
+          1.06494140625,
+          1.08251953125,
+          0.951171875
+        ]
+      },
+      {
+        "directory": "09-nonmoving",
+        "collector": "nonmoving",
+        "load_before": [
+          1.06494140625,
+          1.08251953125,
+          0.951171875
+        ],
+        "started_utc": "2026-10-25T10:33:11Z",
+        "load_after": [
+          0.91943359375,
+          1.04150390625,
+          0.9423828125
+        ]
+      }
+    ]
+  },
+  "workload": "m2",
+  "trials": [
+    {
+      "directory": "00-normal",
+      "collector": "normal",
+      "load_before": [
+        1.68798828125,
+        1.322265625,
+        0.958984375
+      ],
+      "started_utc": "2026-10-25T10:28:12Z",
+      "load_after": [
+        1.35302734375,
+        1.28466796875,
+        0.96142578125
+      ],
+      "manage": {
+        "p50_ms": 0.060064,
+        "p95_ms": 0.138426,
+        "p99_ms": 0.177328,
+        "max_ms": 0.312053,
+        "count": 2924
+      },
+      "render": {
+        "p50_ms": 0.044908,
+        "p95_ms": 0.184243,
+        "p99_ms": 0.233621,
+        "max_ms": 0.926173,
+        "count": 2924
+      },
+      "exercised": {
+        "clip_resizes": 225,
+        "float_raises": 24,
+        "fullscreen_enters": 90,
+        "fullscreen_exits_by_focus": 58,
+        "fullscreen_exits_by_request": 32,
+        "hidden_fullscreen_views": 90
+      },
+      "manage_per_action": 2.8582600195503423,
+      "render_per_action": 2.8582600195503423,
+      "wm_workload_rts_delta": {
+        "allocated_bytes": 1311922528,
+        "gc_cpu_ns": 25528920,
+        "gc_elapsed_ns": 26644308,
+        "gcs": 233,
+        "major_gcs": 2
+      },
+      "pure": {
+        "p50_ms": 0.017112,
+        "p95_ms": 0.045467,
+        "p99_ms": 0.056781,
+        "max_ms": 1.548114,
+        "count": 20000
+      },
+      "pure_checksum": 18376811445310300599,
+      "wm_rts": {
+        "allocated_bytes": 1373465040,
+        "max_residency_bytes": 2118928,
+        "colls_max_pause_ms": 1.7,
+        "nonmoving_sync_max_pause_ms": 0,
+        "max_stw_pause_ms": 1.7,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 241,
+          "1": 4
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "pure_rts": {
+        "allocated_bytes": 2795301344,
+        "max_residency_bytes": 1578240,
+        "colls_max_pause_ms": 1.5,
+        "nonmoving_sync_max_pause_ms": 0,
+        "max_stw_pause_ms": 1.5,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 669,
+          "1": 3
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "wm_stats_before_shutdown": {
+        "allocated_bytes": 1352062696,
+        "clean_exit": true,
+        "dropped": 0,
+        "failed": 0,
+        "gc_cpu_ns": 26950219,
+        "gc_elapsed_ns": 28103931,
+        "gcs": 240,
+        "major_gcs": 3,
+        "max_live_bytes": 2118928,
+        "mode": "wm",
+        "nonmoving_sync_max_ns": 0,
+        "pid": 2948872,
+        "successful": 6028
+      },
+      "selected_samples": 5848,
+      "outside_samples": 180,
+      "measurement_wall_s": 29.911388605,
+      "major_gc_observed_before_shutdown": true,
+      "major_gc_during_workload": true,
+      "budgets": {
+        "pure_p99": true,
+        "manage_p99": true,
+        "render_p99": true,
+        "wm_gc_max": true
+      }
+    },
+    {
+      "directory": "01-nonmoving",
+      "collector": "nonmoving",
+      "load_before": [
+        1.35302734375,
+        1.28466796875,
+        0.96142578125
+      ],
+      "started_utc": "2026-10-25T10:28:45Z",
+      "load_after": [
+        1.2080078125,
+        1.25634765625,
+        0.9638671875
+      ],
+      "manage": {
+        "p50_ms": 0.05762,
+        "p95_ms": 0.133677,
+        "p99_ms": 0.175303,
+        "max_ms": 0.373025,
+        "count": 2923
+      },
+      "render": {
+        "p50_ms": 0.041836,
+        "p95_ms": 0.179284,
+        "p99_ms": 0.238021,
+        "max_ms": 0.434625,
+        "count": 2923
+      },
+      "exercised": {
+        "clip_resizes": 225,
+        "float_raises": 24,
+        "fullscreen_enters": 90,
+        "fullscreen_exits_by_focus": 58,
+        "fullscreen_exits_by_request": 32,
+        "hidden_fullscreen_views": 90
+      },
+      "manage_per_action": 2.857282502443793,
+      "render_per_action": 2.857282502443793,
+      "wm_workload_rts_delta": {
+        "allocated_bytes": 1311988720,
+        "gc_cpu_ns": 26312477,
+        "gc_elapsed_ns": 27800605,
+        "gcs": 233,
+        "major_gcs": 2
+      },
+      "pure": {
+        "p50_ms": 0.016133,
+        "p95_ms": 0.04435,
+        "p99_ms": 0.054896,
+        "max_ms": 0.138846,
+        "count": 20000
+      },
+      "pure_checksum": 18376811445310300599,
+      "wm_rts": {
+        "allocated_bytes": 1372539952,
+        "max_residency_bytes": 4869272,
+        "colls_max_pause_ms": 0.7,
+        "nonmoving_sync_max_pause_ms": 0.0,
+        "max_stw_pause_ms": 0.7,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 241,
+          "1": 4
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "pure_rts": {
+        "allocated_bytes": 2795316456,
+        "max_residency_bytes": 3856992,
+        "colls_max_pause_ms": 1.4,
+        "nonmoving_sync_max_pause_ms": 1.7,
+        "max_stw_pause_ms": 1.7,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 669,
+          "1": 3
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "wm_stats_before_shutdown": {
+        "allocated_bytes": 1346650920,
+        "clean_exit": true,
+        "dropped": 0,
+        "failed": 0,
+        "gc_cpu_ns": 27747940,
+        "gc_elapsed_ns": 29258693,
+        "gcs": 239,
+        "major_gcs": 3,
+        "max_live_bytes": 2343752,
+        "mode": "wm",
+        "nonmoving_sync_max_ns": 9918,
+        "pid": 2950379,
+        "successful": 6028
+      },
+      "selected_samples": 5846,
+      "outside_samples": 182,
+      "measurement_wall_s": 29.208669781,
+      "major_gc_observed_before_shutdown": true,
+      "major_gc_during_workload": true,
+      "budgets": {
+        "pure_p99": true,
+        "manage_p99": true,
+        "render_p99": true,
+        "wm_gc_max": true
+      }
+    },
+    {
+      "directory": "02-normal",
+      "collector": "normal",
+      "load_before": [
+        1.2080078125,
+        1.25634765625,
+        0.9638671875
+      ],
+      "started_utc": "2026-10-25T10:29:18Z",
+      "load_after": [
+        0.9453125,
+        1.18017578125,
+        0.94921875
+      ],
+      "manage": {
+        "p50_ms": 0.058248,
+        "p95_ms": 0.13689,
+        "p99_ms": 0.174325,
+        "max_ms": 1.135628,
+        "count": 2910
+      },
+      "render": {
+        "p50_ms": 0.043232,
+        "p95_ms": 0.18117,
+        "p99_ms": 0.244447,
+        "max_ms": 0.434905,
+        "count": 2910
+      },
+      "exercised": {
+        "clip_resizes": 225,
+        "float_raises": 24,
+        "fullscreen_enters": 90,
+        "fullscreen_exits_by_focus": 58,
+        "fullscreen_exits_by_request": 32,
+        "hidden_fullscreen_views": 90
+      },
+      "manage_per_action": 2.844574780058651,
+      "render_per_action": 2.844574780058651,
+      "wm_workload_rts_delta": {
+        "allocated_bytes": 1307028936,
+        "gc_cpu_ns": 25207445,
+        "gc_elapsed_ns": 26590113,
+        "gcs": 232,
+        "major_gcs": 2
+      },
+      "pure": {
+        "p50_ms": 0.016273,
+        "p95_ms": 0.044419,
+        "p99_ms": 0.054826,
+        "max_ms": 1.531351,
+        "count": 20000
+      },
+      "pure_checksum": 18376811445310300599,
+      "wm_rts": {
+        "allocated_bytes": 1367860080,
+        "max_residency_bytes": 4039408,
+        "colls_max_pause_ms": 2.2,
+        "nonmoving_sync_max_pause_ms": 0,
+        "max_stw_pause_ms": 2.2,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 239,
+          "1": 5
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "pure_rts": {
+        "allocated_bytes": 2795317624,
+        "max_residency_bytes": 1578240,
+        "colls_max_pause_ms": 1.5,
+        "nonmoving_sync_max_pause_ms": 0,
+        "max_stw_pause_ms": 1.5,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 669,
+          "1": 3
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "wm_stats_before_shutdown": {
+        "allocated_bytes": 1341445624,
+        "clean_exit": true,
+        "dropped": 0,
+        "failed": 0,
+        "gc_cpu_ns": 26530262,
+        "gc_elapsed_ns": 27945323,
+        "gcs": 238,
+        "major_gcs": 3,
+        "max_live_bytes": 2104088,
+        "mode": "wm",
+        "nonmoving_sync_max_ns": 0,
+        "pid": 2951936,
+        "successful": 6002
+      },
+      "selected_samples": 5820,
+      "outside_samples": 182,
+      "measurement_wall_s": 29.520657802,
+      "major_gc_observed_before_shutdown": true,
+      "major_gc_during_workload": true,
+      "budgets": {
+        "pure_p99": true,
+        "manage_p99": true,
+        "render_p99": true,
+        "wm_gc_max": true
+      }
+    },
+    {
+      "directory": "03-nonmoving",
+      "collector": "nonmoving",
+      "load_before": [
+        0.9453125,
+        1.18017578125,
+        0.94921875
+      ],
+      "started_utc": "2026-10-25T10:29:50Z",
+      "load_after": [
+        0.72509765625,
+        1.09619140625,
+        0.92919921875
+      ],
+      "manage": {
+        "p50_ms": 0.058737,
+        "p95_ms": 0.134864,
+        "p99_ms": 0.168319,
+        "max_ms": 0.371629,
+        "count": 2923
+      },
+      "render": {
+        "p50_ms": 0.043721,
+        "p95_ms": 0.179424,
+        "p99_ms": 0.226078,
+        "max_ms": 0.423032,
+        "count": 2923
+      },
+      "exercised": {
+        "clip_resizes": 225,
+        "float_raises": 24,
+        "fullscreen_enters": 90,
+        "fullscreen_exits_by_focus": 58,
+        "fullscreen_exits_by_request": 32,
+        "hidden_fullscreen_views": 90
+      },
+      "manage_per_action": 2.857282502443793,
+      "render_per_action": 2.857282502443793,
+      "wm_workload_rts_delta": {
+        "allocated_bytes": 1312354328,
+        "gc_cpu_ns": 24536111,
+        "gc_elapsed_ns": 25976129,
+        "gcs": 233,
+        "major_gcs": 2
+      },
+      "pure": {
+        "p50_ms": 0.016832,
+        "p95_ms": 0.046305,
+        "p99_ms": 0.056222,
+        "max_ms": 0.191436,
+        "count": 20000
+      },
+      "pure_checksum": 18376811445310300599,
+      "wm_rts": {
+        "allocated_bytes": 1373198488,
+        "max_residency_bytes": 4828696,
+        "colls_max_pause_ms": 0.7,
+        "nonmoving_sync_max_pause_ms": 0.0,
+        "max_stw_pause_ms": 0.7,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 241,
+          "1": 4
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "pure_rts": {
+        "allocated_bytes": 2795300336,
+        "max_residency_bytes": 3856992,
+        "colls_max_pause_ms": 1.4,
+        "nonmoving_sync_max_pause_ms": 1.4,
+        "max_stw_pause_ms": 1.4,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 669,
+          "1": 3
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "wm_stats_before_shutdown": {
+        "allocated_bytes": 1346943288,
+        "clean_exit": true,
+        "dropped": 0,
+        "failed": 0,
+        "gc_cpu_ns": 25706222,
+        "gc_elapsed_ns": 27184113,
+        "gcs": 239,
+        "major_gcs": 3,
+        "max_live_bytes": 2371328,
+        "mode": "wm",
+        "nonmoving_sync_max_ns": 39181,
+        "pid": 2953302,
+        "successful": 6028
+      },
+      "selected_samples": 5846,
+      "outside_samples": 182,
+      "measurement_wall_s": 33.721684204,
+      "major_gc_observed_before_shutdown": true,
+      "major_gc_during_workload": true,
+      "budgets": {
+        "pure_p99": true,
+        "manage_p99": true,
+        "render_p99": true,
+        "wm_gc_max": true
+      }
+    },
+    {
+      "directory": "04-normal",
+      "collector": "normal",
+      "load_before": [
+        0.72509765625,
+        1.09619140625,
+        0.92919921875
+      ],
+      "started_utc": "2026-10-25T10:30:27Z",
+      "load_after": [
+        0.8193359375,
+        1.0703125,
+        0.92578125
+      ],
+      "manage": {
+        "p50_ms": 0.057689,
+        "p95_ms": 0.134935,
+        "p99_ms": 0.171252,
+        "max_ms": 0.308631,
+        "count": 2922
+      },
+      "render": {
+        "p50_ms": 0.041765,
+        "p95_ms": 0.188084,
+        "p99_ms": 0.253875,
+        "max_ms": 0.393139,
+        "count": 2922
+      },
+      "exercised": {
+        "clip_resizes": 225,
+        "float_raises": 24,
+        "fullscreen_enters": 90,
+        "fullscreen_exits_by_focus": 58,
+        "fullscreen_exits_by_request": 32,
+        "hidden_fullscreen_views": 90
+      },
+      "manage_per_action": 2.8563049853372435,
+      "render_per_action": 2.8563049853372435,
+      "wm_workload_rts_delta": {
+        "allocated_bytes": 1312333952,
+        "gc_cpu_ns": 25494925,
+        "gc_elapsed_ns": 26940439,
+        "gcs": 233,
+        "major_gcs": 2
+      },
+      "pure": {
+        "p50_ms": 0.017181,
+        "p95_ms": 0.046375,
+        "p99_ms": 0.068375,
+        "max_ms": 1.735989,
+        "count": 20000
+      },
+      "pure_checksum": 18376811445310300599,
+      "wm_rts": {
+        "allocated_bytes": 1372285288,
+        "max_residency_bytes": 4067312,
+        "colls_max_pause_ms": 2.2,
+        "nonmoving_sync_max_pause_ms": 0,
+        "max_stw_pause_ms": 2.2,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 240,
+          "1": 5
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "pure_rts": {
+        "allocated_bytes": 2795301344,
+        "max_residency_bytes": 1578240,
+        "colls_max_pause_ms": 1.7,
+        "nonmoving_sync_max_pause_ms": 0,
+        "max_stw_pause_ms": 1.7,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 669,
+          "1": 3
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "wm_stats_before_shutdown": {
+        "allocated_bytes": 1346684472,
+        "clean_exit": true,
+        "dropped": 0,
+        "failed": 0,
+        "gc_cpu_ns": 26611282,
+        "gc_elapsed_ns": 28082352,
+        "gcs": 239,
+        "major_gcs": 3,
+        "max_live_bytes": 2173984,
+        "mode": "wm",
+        "nonmoving_sync_max_ns": 0,
+        "pid": 2954713,
+        "successful": 6026
+      },
+      "selected_samples": 5844,
+      "outside_samples": 182,
+      "measurement_wall_s": 29.485364367,
+      "major_gc_observed_before_shutdown": true,
+      "major_gc_during_workload": true,
+      "budgets": {
+        "pure_p99": true,
+        "manage_p99": true,
+        "render_p99": true,
+        "wm_gc_max": true
+      }
+    },
+    {
+      "directory": "05-nonmoving",
+      "collector": "nonmoving",
+      "load_before": [
+        0.8193359375,
+        1.0703125,
+        0.92578125
+      ],
+      "started_utc": "2026-10-25T10:31:00Z",
+      "load_after": [
+        0.8974609375,
+        1.0625,
+        0.92822265625
+      ],
+      "manage": {
+        "p50_ms": 0.058667,
+        "p95_ms": 0.135773,
+        "p99_ms": 0.177678,
+        "max_ms": 0.318199,
+        "count": 2915
+      },
+      "render": {
+        "p50_ms": 0.042743,
+        "p95_ms": 0.184103,
+        "p99_ms": 0.244865,
+        "max_ms": 0.371558,
+        "count": 2915
+      },
+      "exercised": {
+        "clip_resizes": 225,
+        "float_raises": 24,
+        "fullscreen_enters": 90,
+        "fullscreen_exits_by_focus": 58,
+        "fullscreen_exits_by_request": 32,
+        "hidden_fullscreen_views": 90
+      },
+      "manage_per_action": 2.849462365591398,
+      "render_per_action": 2.849462365591398,
+      "wm_workload_rts_delta": {
+        "allocated_bytes": 1306270928,
+        "gc_cpu_ns": 25192108,
+        "gc_elapsed_ns": 26652967,
+        "gcs": 232,
+        "major_gcs": 2
+      },
+      "pure": {
+        "p50_ms": 0.016763,
+        "p95_ms": 0.045746,
+        "p99_ms": 0.056222,
+        "max_ms": 0.147576,
+        "count": 20000
+      },
+      "pure_checksum": 18376811445310300599,
+      "wm_rts": {
+        "allocated_bytes": 1369222752,
+        "max_residency_bytes": 4930016,
+        "colls_max_pause_ms": 0.7,
+        "nonmoving_sync_max_pause_ms": 0.0,
+        "max_stw_pause_ms": 0.7,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 241,
+          "1": 4
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "pure_rts": {
+        "allocated_bytes": 2795316752,
+        "max_residency_bytes": 3856992,
+        "colls_max_pause_ms": 1.4,
+        "nonmoving_sync_max_pause_ms": 0.7,
+        "max_stw_pause_ms": 1.4,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 669,
+          "1": 3
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "wm_stats_before_shutdown": {
+        "allocated_bytes": 1346554704,
+        "clean_exit": true,
+        "dropped": 0,
+        "failed": 0,
+        "gc_cpu_ns": 26819704,
+        "gc_elapsed_ns": 28344605,
+        "gcs": 239,
+        "major_gcs": 3,
+        "max_live_bytes": 2388680,
+        "mode": "wm",
+        "nonmoving_sync_max_ns": 7543,
+        "pid": 2956456,
+        "successful": 6012
+      },
+      "selected_samples": 5830,
+      "outside_samples": 182,
+      "measurement_wall_s": 29.286159245,
+      "major_gc_observed_before_shutdown": true,
+      "major_gc_during_workload": true,
+      "budgets": {
+        "pure_p99": true,
+        "manage_p99": true,
+        "render_p99": true,
+        "wm_gc_max": true
+      }
+    },
+    {
+      "directory": "06-normal",
+      "collector": "normal",
+      "load_before": [
+        0.8974609375,
+        1.0625,
+        0.92822265625
+      ],
+      "started_utc": "2026-10-25T10:31:33Z",
+      "load_after": [
+        1.11181640625,
+        1.10107421875,
+        0.947265625
+      ],
+      "manage": {
+        "p50_ms": 0.057689,
+        "p95_ms": 0.13263,
+        "p99_ms": 0.168459,
+        "max_ms": 0.305208,
+        "count": 2928
+      },
+      "render": {
+        "p50_ms": 0.042883,
+        "p95_ms": 0.187805,
+        "p99_ms": 0.237881,
+        "max_ms": 0.385736,
+        "count": 2928
+      },
+      "exercised": {
+        "clip_resizes": 225,
+        "float_raises": 24,
+        "fullscreen_enters": 90,
+        "fullscreen_exits_by_focus": 58,
+        "fullscreen_exits_by_request": 32,
+        "hidden_fullscreen_views": 90
+      },
+      "manage_per_action": 2.8621700879765397,
+      "render_per_action": 2.8621700879765397,
+      "wm_workload_rts_delta": {
+        "allocated_bytes": 1311901952,
+        "gc_cpu_ns": 24919500,
+        "gc_elapsed_ns": 26464820,
+        "gcs": 233,
+        "major_gcs": 2
+      },
+      "pure": {
+        "p50_ms": 0.016692,
+        "p95_ms": 0.045956,
+        "p99_ms": 0.055245,
+        "max_ms": 1.633949,
+        "count": 20000
+      },
+      "pure_checksum": 18376811445310300599,
+      "wm_rts": {
+        "allocated_bytes": 1374529216,
+        "max_residency_bytes": 4126096,
+        "colls_max_pause_ms": 2.4,
+        "nonmoving_sync_max_pause_ms": 0,
+        "max_stw_pause_ms": 2.4,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 241,
+          "1": 5
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "pure_rts": {
+        "allocated_bytes": 2795317776,
+        "max_residency_bytes": 1578240,
+        "colls_max_pause_ms": 1.6,
+        "nonmoving_sync_max_pause_ms": 0,
+        "max_stw_pause_ms": 1.6,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 669,
+          "1": 3
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "wm_stats_before_shutdown": {
+        "allocated_bytes": 1351943368,
+        "clean_exit": true,
+        "dropped": 0,
+        "failed": 0,
+        "gc_cpu_ns": 26266422,
+        "gc_elapsed_ns": 27856768,
+        "gcs": 240,
+        "major_gcs": 3,
+        "max_live_bytes": 2157648,
+        "mode": "wm",
+        "nonmoving_sync_max_ns": 0,
+        "pid": 2957787,
+        "successful": 6040
+      },
+      "selected_samples": 5856,
+      "outside_samples": 184,
+      "measurement_wall_s": 29.463696668,
+      "major_gc_observed_before_shutdown": true,
+      "major_gc_during_workload": true,
+      "budgets": {
+        "pure_p99": true,
+        "manage_p99": true,
+        "render_p99": true,
+        "wm_gc_max": true
+      }
+    },
+    {
+      "directory": "07-nonmoving",
+      "collector": "nonmoving",
+      "load_before": [
+        1.11181640625,
+        1.10107421875,
+        0.947265625
+      ],
+      "started_utc": "2026-10-25T10:32:06Z",
+      "load_after": [
+        0.92919921875,
+        1.05810546875,
+        0.9375
+      ],
+      "manage": {
+        "p50_ms": 0.058598,
+        "p95_ms": 0.13242,
+        "p99_ms": 0.163639,
+        "max_ms": 0.437908,
+        "count": 2919
+      },
+      "render": {
+        "p50_ms": 0.043302,
+        "p95_ms": 0.183125,
+        "p99_ms": 0.227614,
+        "max_ms": 0.424079,
+        "count": 2919
+      },
+      "exercised": {
+        "clip_resizes": 225,
+        "float_raises": 24,
+        "fullscreen_enters": 90,
+        "fullscreen_exits_by_focus": 58,
+        "fullscreen_exits_by_request": 32,
+        "hidden_fullscreen_views": 90
+      },
+      "manage_per_action": 2.8533724340175954,
+      "render_per_action": 2.8533724340175954,
+      "wm_workload_rts_delta": {
+        "allocated_bytes": 1312433160,
+        "gc_cpu_ns": 24715913,
+        "gc_elapsed_ns": 26324564,
+        "gcs": 233,
+        "major_gcs": 2
+      },
+      "pure": {
+        "p50_ms": 0.016762,
+        "p95_ms": 0.045886,
+        "p99_ms": 0.055315,
+        "max_ms": 0.270777,
+        "count": 20000
+      },
+      "pure_checksum": 18376811445310300599,
+      "wm_rts": {
+        "allocated_bytes": 1372005016,
+        "max_residency_bytes": 4790648,
+        "colls_max_pause_ms": 0.8,
+        "nonmoving_sync_max_pause_ms": 0.1,
+        "max_stw_pause_ms": 0.8,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 241,
+          "1": 4
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "pure_rts": {
+        "allocated_bytes": 2795300336,
+        "max_residency_bytes": 3856992,
+        "colls_max_pause_ms": 1.4,
+        "nonmoving_sync_max_pause_ms": 1.3,
+        "max_stw_pause_ms": 1.4,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 669,
+          "1": 3
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "wm_stats_before_shutdown": {
+        "allocated_bytes": 1346836888,
+        "clean_exit": true,
+        "dropped": 0,
+        "failed": 0,
+        "gc_cpu_ns": 26096166,
+        "gc_elapsed_ns": 27751291,
+        "gcs": 239,
+        "major_gcs": 3,
+        "max_live_bytes": 2385408,
+        "mode": "wm",
+        "nonmoving_sync_max_ns": 101690,
+        "pid": 2959156,
+        "successful": 6022
+      },
+      "selected_samples": 5838,
+      "outside_samples": 184,
+      "measurement_wall_s": 29.451721602,
+      "major_gc_observed_before_shutdown": true,
+      "major_gc_during_workload": true,
+      "budgets": {
+        "pure_p99": true,
+        "manage_p99": true,
+        "render_p99": true,
+        "wm_gc_max": true
+      }
+    },
+    {
+      "directory": "08-normal",
+      "collector": "normal",
+      "load_before": [
+        0.92919921875,
+        1.05810546875,
+        0.9375
+      ],
+      "started_utc": "2026-10-25T10:32:38Z",
+      "load_after": [
+        1.06494140625,
+        1.08251953125,
+        0.951171875
+      ],
+      "manage": {
+        "p50_ms": 0.055804,
+        "p95_ms": 0.125785,
+        "p99_ms": 0.162173,
+        "max_ms": 0.290961,
+        "count": 2904
+      },
+      "render": {
+        "p50_ms": 0.041486,
+        "p95_ms": 0.178306,
+        "p99_ms": 0.227125,
+        "max_ms": 0.35759,
+        "count": 2904
+      },
+      "exercised": {
+        "clip_resizes": 225,
+        "float_raises": 24,
+        "fullscreen_enters": 90,
+        "fullscreen_exits_by_focus": 58,
+        "fullscreen_exits_by_request": 32,
+        "hidden_fullscreen_views": 90
+      },
+      "manage_per_action": 2.838709677419355,
+      "render_per_action": 2.838709677419355,
+      "wm_workload_rts_delta": {
+        "allocated_bytes": 1306581624,
+        "gc_cpu_ns": 23872333,
+        "gc_elapsed_ns": 25254164,
+        "gcs": 232,
+        "major_gcs": 2
+      },
+      "pure": {
+        "p50_ms": 0.016832,
+        "p95_ms": 0.045747,
+        "p99_ms": 0.055385,
+        "max_ms": 1.507605,
+        "count": 20000
+      },
+      "pure_checksum": 18376811445310300599,
+      "wm_rts": {
+        "allocated_bytes": 1365366896,
+        "max_residency_bytes": 4078848,
+        "colls_max_pause_ms": 2.4,
+        "nonmoving_sync_max_pause_ms": 0,
+        "max_stw_pause_ms": 2.4,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 239,
+          "1": 5
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "pure_rts": {
+        "allocated_bytes": 2795301344,
+        "max_residency_bytes": 1578240,
+        "colls_max_pause_ms": 1.5,
+        "nonmoving_sync_max_pause_ms": 0,
+        "max_stw_pause_ms": 1.5,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 669,
+          "1": 3
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "wm_stats_before_shutdown": {
+        "allocated_bytes": 1341074672,
+        "clean_exit": true,
+        "dropped": 0,
+        "failed": 0,
+        "gc_cpu_ns": 25431245,
+        "gc_elapsed_ns": 26841809,
+        "gcs": 238,
+        "major_gcs": 3,
+        "max_live_bytes": 2119944,
+        "mode": "wm",
+        "nonmoving_sync_max_ns": 0,
+        "pid": 2960508,
+        "successful": 5990
+      },
+      "selected_samples": 5808,
+      "outside_samples": 182,
+      "measurement_wall_s": 29.30980864,
+      "major_gc_observed_before_shutdown": true,
+      "major_gc_during_workload": true,
+      "budgets": {
+        "pure_p99": true,
+        "manage_p99": true,
+        "render_p99": true,
+        "wm_gc_max": true
+      }
+    },
+    {
+      "directory": "09-nonmoving",
+      "collector": "nonmoving",
+      "load_before": [
+        1.06494140625,
+        1.08251953125,
+        0.951171875
+      ],
+      "started_utc": "2026-10-25T10:33:11Z",
+      "load_after": [
+        0.91943359375,
+        1.04150390625,
+        0.9423828125
+      ],
+      "manage": {
+        "p50_ms": 0.056712,
+        "p95_ms": 0.129487,
+        "p99_ms": 0.159728,
+        "max_ms": 0.349837,
+        "count": 2905
+      },
+      "render": {
+        "p50_ms": 0.04386,
+        "p95_ms": 0.18117,
+        "p99_ms": 0.227614,
+        "max_ms": 0.383292,
+        "count": 2905
+      },
+      "exercised": {
+        "clip_resizes": 225,
+        "float_raises": 24,
+        "fullscreen_enters": 90,
+        "fullscreen_exits_by_focus": 58,
+        "fullscreen_exits_by_request": 32,
+        "hidden_fullscreen_views": 90
+      },
+      "manage_per_action": 2.8396871945259043,
+      "render_per_action": 2.8396871945259043,
+      "wm_workload_rts_delta": {
+        "allocated_bytes": 1306527192,
+        "gc_cpu_ns": 24949520,
+        "gc_elapsed_ns": 26539052,
+        "gcs": 232,
+        "major_gcs": 2
+      },
+      "pure": {
+        "p50_ms": 0.016622,
+        "p95_ms": 0.045676,
+        "p99_ms": 0.054406,
+        "max_ms": 0.120408,
+        "count": 20000
+      },
+      "pure_checksum": 18376811445310300599,
+      "wm_rts": {
+        "allocated_bytes": 1366298656,
+        "max_residency_bytes": 4770560,
+        "colls_max_pause_ms": 0.8,
+        "nonmoving_sync_max_pause_ms": 0.0,
+        "max_stw_pause_ms": 0.8,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 240,
+          "1": 4
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "pure_rts": {
+        "allocated_bytes": 2795316768,
+        "max_residency_bytes": 3856992,
+        "colls_max_pause_ms": 1.3,
+        "nonmoving_sync_max_pause_ms": 1.5,
+        "max_stw_pause_ms": 1.5,
+        "pause_resolution_ms": 0.1,
+        "collections": {
+          "0": 669,
+          "1": 3
+        },
+        "scope": "process lifetime including shutdown; no forced GC"
+      },
+      "wm_stats_before_shutdown": {
+        "allocated_bytes": 1340949408,
+        "clean_exit": true,
+        "dropped": 0,
+        "failed": 0,
+        "gc_cpu_ns": 26098787,
+        "gc_elapsed_ns": 27729996,
+        "gcs": 238,
+        "major_gcs": 3,
+        "max_live_bytes": 2409064,
+        "mode": "wm",
+        "nonmoving_sync_max_ns": 5727,
+        "pid": 2961842,
+        "successful": 5992
+      },
+      "selected_samples": 5810,
+      "outside_samples": 182,
+      "measurement_wall_s": 29.286182279,
+      "major_gc_observed_before_shutdown": true,
+      "major_gc_during_workload": true,
+      "budgets": {
+        "pure_p99": true,
+        "manage_p99": true,
+        "render_p99": true,
+        "wm_gc_max": true
+      }
+    }
+  ],
+  "verdict": "inconclusive; production defaults unchanged"
+}
