@@ -265,7 +265,9 @@ test-suite seki-test
     Seki.Run.InventoryTest
     Seki.Run.LatencyTest
     Seki.Run.LatencyPureTest
+    Seki.Run.LatencyWorkloadTest
     Seki.Latency.Pure
+    Seki.Latency.Workload
     Seki.Run.MockRiver
     Seki.Run.ConfigTest
     Seki.Run.PhaseTest
@@ -358,6 +360,7 @@ executable seki-latency
   other-modules:
     Seki.Latency.Pure
     Seki.Latency.Live
+    Seki.Latency.Workload
     Seki.Integration.Harness
   build-depends:
     base >=4.18 && <4.19,
