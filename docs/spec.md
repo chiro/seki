@@ -1,6 +1,6 @@
 # seki Specification — A river Window Manager in Haskell
 
-Status: **v1 design accepted, M1 complete** / Last updated: 2026-10-18
+Status: **v1 design accepted, M2 complete** / Last updated: 2026-10-25
 Legend: [DECIDED] = current design decision, [RESOLVED] = checked against the protocol or other available evidence
 
 This is the target design for v1, not a description of the currently exported
@@ -169,8 +169,8 @@ class Show l => LayoutClass l where
 - The StackSet's `focus` = the keyboard focus of the single seat. [DECIDED: single seat]
 - [DECIDED] Keyboard focus goes to the StackSet's focused window only while it is shown (3.1). Otherwise the WM sends clear_focus, so input never reaches a hidden window; the StackSet focus is left unchanged. When the window becomes shown in a render sequence, it is drawn with the focused border and the WM requests manage_dirty; the next manage sequence sends focus_window.
 - Both click-to-focus and focus-follows-mouse are selectable in configuration.
-  M1 implements a fixed click-to-focus policy; the configurable focus model and
-  focus-follows-mouse arrive in M2.
+  M1 and M2 implement a fixed click-to-focus policy; the configurable focus
+  model and focus-follows-mouse move to M4 onwards (see the M2 plan, 1.2).
 - [RESOLVED] The protocol supports both focus models directly:
   - focus-follows-mouse: pointer_enter / pointer_leave events (per-window crossing notifications; the window's region includes the input regions of borders and decorations) → focus_window on enter.
   - click-to-focus / raise: the window_interaction event (a "this window was interacted with" notification abstracting over button presses, touch, and tablet input — policy over mechanism). Raising applies to the focused window's family (3.1).
@@ -296,7 +296,7 @@ layout override also replaces `keys`, as in
 imports only `Seki` and runs `seki def`. See the [README](../README.md) for the
 implemented configuration and default keys.
 
-As in xmonad, there is no configuration file. The user writes a Haskell program importing this library. The [current M1 example](../README.md#project-direction) uses only exported fields. The following target-v1 example includes `manageHook` and floating, which are deferred to M2 and do not compile against the current API:
+As in xmonad, there is no configuration file. The user writes a Haskell program importing this library. The [current example](../README.md#project-direction) uses only exported fields. The following example adds a `manageHook` that floats a mixer and every dialog:
 
 ```haskell
 import Seki
@@ -308,8 +308,8 @@ main = seki def
   , workspaces = map show [1..9 :: Int]
   , layoutHook = tall ||| Mirror tall ||| Full
   , manageHook = composeAll
-      [ appId =? Just "org.pulseaudio.pavucontrol" --> doFloat
-      , isDialog                                   --> doFloat ]
+      [ appId =? "org.pulseaudio.pavucontrol" --> doFloat
+      , isDialog                              --> doFloat ]
   , keys       = defaultKeys
   }
   where tall = Tall 1 (3/100) (1/2)
@@ -420,7 +420,7 @@ belongs to M3.
 |---|---|---|---|
 | M0 Validation | **Complete** | Haskell wire protocol implementation without libwayland; own XML code generator; connection and window/output event handling; Full placement; terminal and close bindings; Japanese input and Xwayland validation | Completed on nested river, including exact fcitx5/Mozc input and the real-river release suite |
 | M1 Core | **Complete** | StackSet port + QuickCheck properties, Tall / Mirror / Full / `\|\|\|`, greedyView, focus movement, swapMaster, borders, non_exclusive_area, the two-phase monads (ManageM/RenderM) | Tiling operations follow the intended xmonad semantics. Sequence latency and GC pauses meet the documented seki budgets; see the [M1 implementation plan](m1-plan.md) |
-| M2 Practical | Planned | Floating (mod+drag), ManageHook, startupHook and `spawnOnce`, fullscreen, restart + state restoration, Crop/Tolerate | The main parts of my own xmonad.hs can be ported; see the [M2 implementation plan](m2-plan.md) |
+| M2 Practical | **Complete** | Floating (mod+drag), ManageHook, startupHook and `spawnOnce`, fullscreen, restart + state restoration, Crop/Tolerate | The main parts of my own xmonad.hs can be ported, and the M1 latency budgets hold with floats, fullscreen, and `Crop` in the workload; see the [M2 implementation plan](m2-plan.md) |
 | M3 Daily use | Planned | Bar IPC + `sekictl`, scratchpad, urgent handling, inputRules, `--recompile` / `--check`, documentation and configuration skeleton | **Full migration from xmonad; used for daily work** |
 | M4 onwards | Planned | Submaps, binding repeat, focus-follows-mouse, prompt (shell surface + shm drawing), the contrib-equivalent extension set, IndependentScreens, further protocol integrations | — |
 
