@@ -15,7 +15,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Fixture.Probe
-import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), pictureError, withHeldLogoIn, withNestedRiver)
+import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputPicture, pictureError, withHeldLogoIn, withKeyboard, withNestedRiver)
 import Seki.Integration.Harness
 import Seki.Internal.Config (Config (..), StdLayouts, def, defaultManageHook)
 import Seki.Internal.Core.Action (restart, windows)
@@ -97,10 +97,6 @@ restartProcess = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-re
     )
       `onException` (renderManagedProcessLogs seki >>= announce)
 
--- | A virtual keyboard that outlives each wtype call, so the seat keeps a keyboard for focus.
-withKeyboard :: [(String, String)] -> IO a -> IO a
-withKeyboard environment action = bracket (startManagedProcess "virtual keyboard lifetime" environment (proc "wtype" ["-s", "60000"])) stopManagedProcess (const action)
-
 -- | Capture until two captures 300 ms apart agree.
 settled :: FilePath -> Text -> IO Image
 settled socket output = go Nothing (40 :: Int)
@@ -163,7 +159,7 @@ restartFallback = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-r
     [(_, output)] <- waitUntil "seki shows the output" assertionTimeoutMicroseconds (outputNames socket) ((== 1) . length)
     void (runProcessCapture environment "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "800x600", "--pos", "0,0", "--scale", "1", "--transform", "normal"])
     withKeyboard environment . withProbe socket $ \probe -> do
-      let onOutput phase = picturePoll phase socket output
+      let onOutput phase = outputPicture "m2-restart-fallback" socket output phase . pictureError
       press "F2"
       _ <- openWindow probe Blue
       onOutput "workspace 2 tiles its window" [Paint Blue (Box 2 2 796 596) True]
@@ -192,15 +188,3 @@ fallbackConfig =
     , policyLaunch = \_ -> failIntegration "unexpected spawn in the fallback scenario"
     , policyLog = announce
     }
-
-picturePoll :: String -> FilePath -> Text -> [Paint] -> IO ()
-picturePoll phase socket output paints = do
-  start <- getMonotonicTimeNSec
-  let loop = do
-        frame <- captureOutput socket output
-        case pictureError paints frame of
-          Nothing -> announce ("m2-restart-fallback: " <> phase <> " pixels verified")
-          Just e -> do
-            now <- getMonotonicTimeNSec
-            if now - start < 10 * 1000 * 1000 * 1000 then threadDelay pollIntervalMicroseconds >> loop else failIntegration (phase <> ": " <> e)
-  loop
