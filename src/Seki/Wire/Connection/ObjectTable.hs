@@ -19,6 +19,7 @@ module Seki.Wire.Connection.ObjectTable (
   lookupObjectInfo,
   requireActiveObject,
   validateObject,
+  validateObjectHandle,
   destroyObjectByRequest,
   destroyObjectByEvent,
   acknowledgeDeleteId,
@@ -204,15 +205,23 @@ requireActiveObject identifier table = do
 
 -- | Validate that a typed handle still names the same active table generation.
 validateObject :: Interface interface -> Object interface -> ObjectTable -> Either ObjectTableError ObjectInfo
-validateObject interface object table = do
-  info <- requireActiveObject (objectId object) table
-  let expectedInterface = interfaceName interface
+validateObject interface object table =
+  requireActiveObject (objectId object) table >> validateObjectHandle interface object table
+
+{- | Validate that a typed handle still names the same table generation,
+which may have been destroyed and still await @delete_id@.
+-}
+validateObjectHandle :: Interface interface -> Object interface -> ObjectTable -> Either ObjectTableError ObjectInfo
+validateObjectHandle interface object table = do
+  requireOpen table
+  entry <- maybe (Left (UnknownObject (objectId object))) Right (Map.lookup (objectIdValue (objectId object)) (tableEntries table))
+  let info = entryInfo entry
+      expectedInterface = interfaceName interface
       handleInterface = objectInterfaceName object
   when (handleInterface /= expectedInterface) $
     Left (ObjectInterfaceMismatch (objectId object) expectedInterface handleInterface)
   when (objectInfoInterfaceName info /= expectedInterface) $
     Left (ObjectInterfaceMismatch (objectId object) expectedInterface (objectInfoInterfaceName info))
-  entry <- maybe (Left (UnknownObject (objectId object))) Right (Map.lookup (objectIdValue (objectId object)) (tableEntries table))
   if entryGeneration entry /= objectGeneration object || objectInfoVersion info /= objectVersion object
     then Left (StaleObjectHandle (objectId object))
     else Right info
