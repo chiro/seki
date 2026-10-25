@@ -383,6 +383,16 @@ server active -> destructor request -> removed
 active -> connection failed -> closed
 ```
 
+A retired client object keeps its event route until `delete_id`. The
+compositor may send it events before it reads the destructor request, as when
+destroying a surface makes it release an already destroyed buffer. Such an
+event is decoded with the retired route's decoder so that its descriptors
+leave the queue, and those descriptors are closed. The event is then dropped
+without finalizing it or calling its handler. A dropped event that carries a
+`new_id` is still fatal, because the connection could not track the child
+object. Events for an ID after its `delete_id`, and events for a removed
+server-created object, remain fatal as unknown objects.
+
 Generated object constructors are not exported, preventing callers from
 inventing IDs or assigning the wrong interface to an ID.
 

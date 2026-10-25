@@ -1,10 +1,11 @@
 {-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Seki.Wire.Connection.DispatchTest (tests) where
 
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
-import Control.Exception (bracket, onException)
+import Control.Exception (IOException, bracket, onException, try)
 import Control.Monad (void, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
@@ -68,6 +69,9 @@ tests =
     , testCase "handles delete_id and reuses the released ID" testDeleteIdDispatch
     , testCase "makes wl_display.error terminal" testDisplayError
     , testCase "rejects an event without a registered route" testMissingRoute
+    , testCase "drops an event for an object awaiting delete_id and closes its descriptor" testRetiredObjectEvent
+    , testCase "rejects an event for an object after its delete_id" testReleasedObjectEvent
+    , testCase "rejects a dropped event that introduces a server-created object" testRetiredObjectNewId
     , testCase "drains coalesced events in stream order" testCoalescedEvents
     , testCase "transfers an incoming descriptor to its handler" testIncomingDescriptor
     , testCase "allows a handler to submit a follow-up request" testHandlerSubmission
@@ -204,6 +208,90 @@ testMissingRoute =
         Wayland.wlDisplayInterface
         display
         (RequestEncoder "after_failure" (Opcode 0) 1 False (pure ()))
+
+testRetiredObjectEvent :: Assertion
+testRetiredObjectEvent =
+  withConnectionPair $ \connection display peer -> do
+    targetHandled <- newIORef False
+    target <- createDescriptorTarget connection display peer (\_ _ -> writeIORef targetHandled True)
+    destroyDescriptorTarget connection target peer
+    callback <- createCallback connection display peer
+    assertEqual
+      "register callback"
+      (Right ())
+      =<< registerEventRoute connection Wayland.wlCallbackInterface callback (eventRoute Wayland.decodeWlCallbackEvent (\_ _ -> pure ()))
+    (readDescriptor, writeDescriptor) <- createPipe
+    outgoing <- dup readDescriptor >>= adoptFd
+    sendEvent peer (objectId target) (Opcode 0) (pure ()) [outgoing]
+    sendEvent peer (objectId callback) (Opcode 0) (putUint 5) []
+    assertEqual
+      "dispatch skips the retired object's event"
+      (Right (EventDispatched (DispatchedEvent (objectId callback) "wl_callback" "done" (Opcode 0))))
+      =<< dispatchNextEvent connection
+    assertEqual "retired handler not invoked" False =<< readIORef targetHandled
+    closeFd readDescriptor
+    written <- try @IOException (fdWrite writeDescriptor (ByteString.singleton 0x5a))
+    closeFd writeDescriptor
+    assertEqual "dropped descriptor closed" True (either (const True) (const False) written)
+
+testReleasedObjectEvent :: Assertion
+testReleasedObjectEvent =
+  withConnectionPair $ \connection display peer -> do
+    assertEqual
+      "register display"
+      (Right ())
+      =<< registerEventRoute connection Wayland.wlDisplayInterface display (wlDisplayEventRoute (\_ _ -> pure ()))
+    target <- createDescriptorTarget connection display peer (\_ _ -> pure ())
+    destroyDescriptorTarget connection target peer
+    sendEvent peer (objectId display) (Opcode 1) (putUint (objectIdValue (objectId target))) []
+    expectDispatched =<< dispatchNextEvent connection
+    sendEvent peer (objectId target) (Opcode 0) (pure ()) []
+    assertEqual "released ID" (Left (ConnectionEventRouteMissing (objectId target))) =<< dispatchNextEvent connection
+
+testRetiredObjectNewId :: Assertion
+testRetiredObjectNewId =
+  withConnectionPair $ \connection display peer -> do
+    manager <-
+      expectRight
+        =<< submitNewObjectRequestWithRoute
+          connection
+          Wayland.wlDisplayInterface
+          display
+          River.riverWindowManagerV1Interface
+          4
+          (RequestEncoder "create_manager" (Opcode 1) 1 False . putNewId . objectId)
+          (eventRoute River.decodeRiverWindowManagerV1Event (\_ _ -> pure ()))
+    drainClientFrame peer 12
+    assertEqual "destroy manager" (Right ()) =<< submitRequest connection River.riverWindowManagerV1Interface manager River.encodeRiverWindowManagerV1Destroy
+    drainClientFrame peer 8
+    serverId <- requireObjectId 0xff000003
+    sendEvent peer (objectId manager) (Opcode 6) (putNewId serverId) []
+    assertEqual "untracked child" (Left (ConnectionServerObjectRoutesMismatch [serverId] [])) =<< dispatchNextEvent connection
+
+createDescriptorTarget ::
+  Connection ->
+  Object Wayland.WlDisplay ->
+  Transport ->
+  (Object DescriptorTarget -> OwnedFd -> IO ()) ->
+  IO (Object DescriptorTarget)
+createDescriptorTarget connection display peer handler = do
+  target <-
+    expectRight
+      =<< submitNewObjectRequestWithRoute
+        connection
+        Wayland.wlDisplayInterface
+        display
+        descriptorTargetInterface
+        1
+        (RequestEncoder "create_target" (Opcode 1) 1 False . putNewId . objectId)
+        (eventRoute decodeDescriptorEvent handler)
+  drainClientFrame peer 12
+  pure target
+
+destroyDescriptorTarget :: Connection -> Object DescriptorTarget -> Transport -> IO ()
+destroyDescriptorTarget connection target peer = do
+  assertEqual "destroy target" (Right ()) =<< submitRequest connection descriptorTargetInterface target (RequestEncoder "destroy" (Opcode 0) 1 True (pure ()))
+  drainClientFrame peer 8
 
 testCoalescedEvents :: Assertion
 testCoalescedEvents =

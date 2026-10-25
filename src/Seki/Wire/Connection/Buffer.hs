@@ -14,6 +14,7 @@ module Seki.Wire.Connection.Buffer (
   markReceiveEof,
   pollFrame,
   decodePendingArguments,
+  discardPendingArguments,
   bufferedByteCount,
   queuedFdCount,
   closeReceiveBuffer,
@@ -205,6 +206,10 @@ decoding consumes exactly the descriptors used by the decoder.
 -}
 decodePendingArguments :: ReceiveBuffer -> ArgumentDecoder OwnedFd value -> IO (Either ReceiveBufferError (ArgumentPoll value))
 decodePendingArguments buffer = consumePendingArguments buffer (const (pure ()))
+
+-- | Like 'decodePendingArguments', but close the descriptors the decoder consumed.
+discardPendingArguments :: ReceiveBuffer -> ArgumentDecoder OwnedFd value -> IO (Either ReceiveBufferError (ArgumentPoll value))
+discardPendingArguments buffer = consumePendingArguments buffer closeDescriptors
 
 consumePendingArguments ::
   ReceiveBuffer ->
