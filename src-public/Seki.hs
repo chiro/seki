@@ -40,6 +40,7 @@ module Seki (
   float,
   sink,
   toggleFullscreen,
+  restart,
   ManageHook,
   Query,
   appId,
@@ -147,3 +148,11 @@ window on that workspace ends it.
 -}
 toggleFullscreen :: WindowId -> Action l ()
 toggleFullscreen = Core.toggleFullscreen
+
+{- | Restart seki in place, as @Mod-q@ does by default. seki first checks that
+the executable it started from is still executable and that it can reconnect;
+if not, it logs why and keeps running. Otherwise it saves the window state,
+replaces itself with that executable, and restores the state there.
+-}
+restart :: Action l ()
+restart = Core.restart
