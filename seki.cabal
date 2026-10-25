@@ -120,6 +120,7 @@ library seki-wire
     Seki.Run.Pointer
     Seki.Run.Policy
     Seki.Run.Reconcile
+    Seki.Run.Restart
     Seki.Run.River
     Seki.Run.Runtime
     Seki.Run.Sequence

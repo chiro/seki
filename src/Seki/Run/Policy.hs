@@ -27,6 +27,8 @@ module Seki.Run.Policy (
   newPolicy,
   policyRuntimeHandlers,
   readPolicyState,
+  readRestoreState,
+  liveInventoryOf,
   launchDetached,
 )
 where
@@ -38,7 +40,7 @@ import Data.Bits (complement, (.&.))
 import Data.Foldable (find)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (mapMaybe)
+import Data.Maybe (isJust, mapMaybe)
 import Data.Word (Word32)
 import Seki.Internal.Core.Action (Action, Intent (..))
 import Seki.Internal.Core.Event (CoreEvent (..), drainCore)
@@ -46,6 +48,7 @@ import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), Rect, mkRect, m
 import Seki.Internal.Core.Layout (LayoutClass)
 import Seki.Internal.Core.ManageHook (DimensionsHint (..), ManageHook, WindowProps (..), noWindowProps)
 import Seki.Internal.Core.PointerOp (HEdge (..), OpId, OpInput (..), OpKind (..), OpOrigin (..), OpRequest (..), ResizeEdges (..), SeatId (..), SizeBounds (..), VEdge (..), noSizeBounds)
+import Seki.Internal.Core.Restore (LiveInventory (..), OutputKey (..), RestoreState, WindowKey (..), describeRestoreNote, restoreCore, saveCore)
 import Seki.Internal.Core.Scene (BorderColor (..), DesiredScene (..), OutputArea (..), SceneStyle (..), planScene)
 import Seki.Internal.Core.StackSet (OutputId (..), Screen (..), StackSet (..), WindowId (..), Workspace (..), integrate')
 import Seki.Internal.Core.State (CoreState (..), WorkspaceTagError, Workspaces (..), newCoreState)
@@ -55,6 +58,7 @@ import Seki.Run.Inventory (RiverDimensionsHint (..), RiverInventory, RiverOutput
 import Seki.Run.Phase (ManageM, RenderM, closeWindow)
 import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Reconcile (ReconcileState, emptyReconcileState, reconcileManage, reconcileRender, reconciledBoxes, reconciledOps)
+import Seki.Run.Restart (RestartRefusal, describeRefusal)
 import Seki.Run.River (RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (ManageOutcome (..), PointerBindingEvent (..), RenderOutcome, RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
 import Seki.Run.Xkb (RiverKeyBinding (..))
@@ -75,6 +79,11 @@ data PolicyConfig i l = PolicyConfig
   , policyStartupHook :: Action i l ()
   -- ^ Queued once per process, right after the first output arrives.
   , policyPointerBindings :: [(RiverPointerBinding, OpKind)]
+  , policyRestore :: Maybe (RestoreState i)
+  -- ^ Applied once, at the first manage sequence, when the inventory first holds every identifier.
+  , policyCheckRestart :: IO (Either RestartRefusal ())
+  -- ^ Runs while a manage sequence that restarts is prepared; 'Right' ends the sequence with @stop@.
+  , policyLog :: String -> IO ()
   }
 
 data PolicyError i
@@ -105,6 +114,8 @@ data Policy i l = Policy
   -- ^ Newest first.
   , policyPendingStartup :: IORef (Maybe (Action i l ()))
   -- ^ The startup hook until an output arrives.
+  , policyPendingRestore :: IORef (Maybe (RestoreState i))
+  -- ^ The saved state until the first manage sequence.
   }
 
 -- | Validate tags, binding identities and modifiers, border width, and premultiplied colors before connecting.
@@ -118,7 +129,7 @@ newPolicy config
       Left e -> pure (Left (PolicyTagError e))
       Right st -> case firstRepeat [] (map fst (policyBindings config)) of
         Just binding -> pure (Left (PolicyBindingConflict binding))
-        Nothing -> Right <$> (Policy config <$> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)))
+        Nothing -> Right <$> (Policy config <$> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)) <*> newIORef (policyRestore config))
  where
   -- River excludes capslock and numlock bits from its modifier enum.
   invalidModifiers = invalidBits . riverKeyBindingModifiers
@@ -133,7 +144,7 @@ firstRepeat seen (x : xs)
   | x `elem` seen = Just x
   | otherwise = firstRepeat (x : seen) xs
 
-policyRuntimeHandlers :: (Eq i, LayoutClass l) => Policy i l -> RiverRuntimeHandlers
+policyRuntimeHandlers :: (Eq i, Show i, LayoutClass l) => Policy i l -> RiverRuntimeHandlers
 policyRuntimeHandlers policy =
   RiverRuntimeHandlers
     { riverProtocolHandlers =
@@ -186,9 +197,22 @@ policyRuntimeHandlers policy =
   enqueue = enqueueWith . const
   enqueueWith event = atomicModifyIORef' (policyQueue policy) (\queue -> (event : queue, ()))
 
-prepareManagePlan :: (Eq i, LayoutClass l) => Policy i l -> RiverRuntimeSnapshot -> IO (ManageM ManageOutcome)
+{- | Drain the queue and plan the sequence. The first sequence restores the
+saved state before its drain, so the queued creation events of restored
+windows change nothing. A sequence that restarts ends with @stop@ only when
+the restart check passes; otherwise the refusal is logged and seki keeps
+running.
+-}
+prepareManagePlan :: (Eq i, Show i, LayoutClass l) => Policy i l -> RiverRuntimeSnapshot -> IO (ManageM ManageOutcome)
 prepareManagePlan policy snapshot = do
-  before <- readIORef (policyState policy)
+  current <- readIORef (policyState policy)
+  pending <- atomicModifyIORef' (policyPendingRestore policy) (Nothing,)
+  before <- case pending of
+    Nothing -> pure current
+    Just saved -> do
+      let (restored, notes) = restoreCore (liveInventoryOf inventory) saved current
+      mapM_ (policyLog (policyConfig policy) . ("restore: " <>) . describeRestoreNote) notes
+      pure restored
   previous <- readIORef (policyReconcile policy)
   let view = DrainView inventory (shownBox before previous) (`Map.lookup` reconciledOps previous)
   events <- map ($ view) . reverse <$> atomicModifyIORef' (policyQueue policy) ([],)
@@ -202,14 +226,21 @@ prepareManagePlan policy snapshot = do
           st
           (Map.fromList [(outputIdOf (riverOutputObject o), OutputArea bounds area) | o <- riverInventoryOutputs inventory, Just bounds <- [outputRect o], Just area <- [riverOutputUsableArea o]])
           (Map.fromList [(windowIdOf (riverWindowObject w), WindowId . objectIdValue <$> riverWindowParent w) | w <- riverInventoryWindows inventory])
-      reclaim = planReclaim effects || any isInteraction events
+      reclaim = planReclaim effects || any isInteraction events || isJust pending
   writeIORef (policyScene policy) scene
   let (next, plan) = reconcileManage reclaim scene snapshot previous
   writeIORef (policyReconcile policy) next
+  outcome <-
+    if planRestart effects
+      then
+        policyCheckRestart (policyConfig policy) >>= \case
+          Left refusal -> policyLog (policyConfig policy) ("restart refused: " <> describeRefusal refusal) >> pure KeepManaging
+          Right () -> pure StopManaging
+      else pure KeepManaging
   pure $ do
     mapM_ closeWindow (mapMaybe liveWindow (planClose effects))
     plan
-    pure KeepManaging
+    pure outcome
  where
   inventory = riverRuntimeInventory snapshot
   liveWindow (WindowId w) =
@@ -228,17 +259,18 @@ data IntentPlan = IntentPlan
   { planLaunch :: [String]
   , planClose :: [WindowId]
   , planReclaim :: Bool
+  , planRestart :: Bool
   }
 
 -- | A case over every 'Intent', so a new one cannot be silently ignored.
 interpretIntents :: [Intent] -> IntentPlan
-interpretIntents = foldr add (IntentPlan [] [] False)
+interpretIntents = foldr add (IntentPlan [] [] False False)
  where
   add intent plan = case intent of
     Spawn cmd -> plan{planLaunch = cmd : planLaunch plan}
     CloseWindow w -> plan{planClose = w : planClose plan}
     ReclaimFocus -> plan{planReclaim = True}
-    Restart -> plan
+    Restart -> plan{planRestart = True}
 
 -- | The output that shows the window's workspace.
 workspaceOutput :: CoreState i l -> WindowId -> Maybe OutputId
@@ -281,6 +313,24 @@ prepareRenderPlan policy snapshot = do
 
 readPolicyState :: Policy i l -> IO (CoreState i l)
 readPolicyState = readIORef . policyState
+
+-- | The state to carry over, keyed by the inventory the session ended with.
+readRestoreState :: (Show l) => Policy i l -> RiverInventory -> IO (RestoreState i)
+readRestoreState policy inventory = saveCore (liveInventoryOf inventory) <$> readPolicyState policy
+
+{- | The windows that have an identifier and the outputs that have a
+@wl_output@ name. An identifier two windows share names neither, so both
+are placed as new windows.
+-}
+liveInventoryOf :: RiverInventory -> LiveInventory
+liveInventoryOf inventory =
+  LiveInventory
+    (Map.mapMaybe unique (Map.fromListWith (<>) [(WindowKey t, [windowIdOf (riverWindowObject w)]) | w <- riverInventoryWindows inventory, Just t <- [riverWindowIdentifier w]]))
+    (Map.fromList [(OutputKey n, outputIdOf (riverOutputObject o)) | o <- riverInventoryOutputs inventory, Just n <- [riverOutputWlOutputName o]])
+ where
+  unique = \case
+    [w] -> Just w
+    _ -> Nothing
 
 {- | Run a command through @/bin/sh -c@ without waiting for it. A forked thread
 reaps the shell when it exits and reports a launch failure on stderr.

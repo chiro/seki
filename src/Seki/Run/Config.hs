@@ -10,8 +10,10 @@ import Seki.Internal.Core.Scene (SceneStyle (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Policy (Policy, PolicyConfig (..), PolicyError, launchDetached, newPolicy, policyRuntimeHandlers)
+import Seki.Run.Restart (RestartRefusal (..))
 import Seki.Run.Runtime (RiverRuntimeError, openRiverSession, runRiverSession)
 import Seki.Run.Xkb (RiverKeyBinding (..))
+import System.IO (hPutStrLn, stderr)
 
 data ConfigRunError = ConfigPolicyError (PolicyError String) | ConfigRuntimeError RiverRuntimeError
   deriving (Eq, Show)
@@ -30,6 +32,9 @@ policyConfigOf config =
     , policyManageHook = manageHook config
     , policyStartupHook = startupHook config
     , policyPointerBindings = [(lowerPointer binding, opKind action) | (binding, action) <- pointerBindings config config]
+    , policyRestore = Nothing
+    , policyCheckRestart = pure (Left TargetUnrecorded)
+    , policyLog = hPutStrLn stderr . ("seki: " <>)
     }
  where
   style = borders config

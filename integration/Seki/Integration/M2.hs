@@ -308,5 +308,8 @@ m2Config =
     , policyManageHook = idHook
     , policyStartupHook = pure ()
     , policyPointerBindings = []
+    , policyRestore = Nothing
+    , policyCheckRestart = pure (Right ())
+    , policyLog = announce
     , policyLaunch = \_ -> failIntegration "unexpected spawn in M2 policy"
     }
