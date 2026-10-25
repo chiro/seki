@@ -130,7 +130,7 @@ tests =
             "lowered with modifiers 0"
             (RiverKeyBinding 0x1008ff13 (River.RiverSeatV1ModifiersFlags 0) (Just 0) `elem` riverKeyBindings (policyRuntimeHandlers policy))
           setEnv "WAYLAND_DISPLAY" "/this-wayland-display-does-not-exist"
-          runConfig config >>= \case
+          runConfig [] config >>= \case
             Left ConfigRuntimeError{} -> pure ()
             other -> assertFailure ("expected validation to pass and the connection to fail, got " ++ show other)
     , testCase "invalid configuration fails before connecting" $
@@ -150,7 +150,7 @@ tests =
  where
   restore = maybe (unsetEnv "WAYLAND_DISPLAY") (setEnv "WAYLAND_DISPLAY")
   invalid config =
-    runConfig config >>= \result -> case result of
+    runConfig [] config >>= \result -> case result of
       Left ConfigPolicyError{} -> pure ()
       other -> assertFailure ("expected configuration failure before connection, got " ++ show other)
   checkTag (tag, symbol) = do
