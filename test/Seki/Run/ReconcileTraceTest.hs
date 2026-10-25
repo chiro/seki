@@ -26,7 +26,7 @@ import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.MockRiver (FrameReader, callbackDoneFrame, encodedFrame, encodedPayload, expectMockSuccess, expectRight, newFrameReader, receiveFrame, receiveKeyBindingRequest, receiveLayerShellOutputRequest, receiveLayerShellSeatRequest, receiveNewIdRequest, receivePointerBindingRequest, receiveRuntimeBinds, receiveStartupRequests, registryGlobalFrame, requireObjectId, runMock, sendFrames, withRuntimePair)
 import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Policy (PolicyConfig (..), newPolicy, policyRuntimeHandlers, readPolicyState)
-import Seki.Run.Runtime (openRiverSessionAt, runRiverSession)
+import Seki.Run.Runtime (RiverExit (..), openRiverSessionAt, runRiverSession)
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Arguments (ArgumentEncoder, DecodeResult (..), getInt, putInt, putNewId, putNullableObject, putNullableString, putObject, putUint, runCompleteArgumentDecoder)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
@@ -183,7 +183,7 @@ testTrace layout tiles steps = withRuntimePair $ \target peer -> do
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
-  result @?= Right ()
+  result @?= Right RiverEnded
  where
   clamp current (w, h) = case current of
     Nothing -> (w, h)
@@ -283,7 +283,7 @@ testFamilies = withRuntimePair $ \target peer -> do
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
-  result @?= Right ()
+  result @?= Right RiverEnded
 
 testChildUnderFull :: Assertion
 testChildUnderFull = withRuntimePair $ \target peer -> do
@@ -341,7 +341,7 @@ testChildUnderFull = withRuntimePair $ \target peer -> do
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
-  result @?= Right ()
+  result @?= Right RiverEnded
 
 testFullSelection :: Assertion
 testFullSelection = withRuntimePair $ \target peer -> do
@@ -392,7 +392,7 @@ testFullSelection = withRuntimePair $ \target peer -> do
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
-  result @?= Right ()
+  result @?= Right RiverEnded
  where
   focusKey = RiverKeyBinding 0x62 (River.RiverSeatV1ModifiersFlags 0) Nothing
 
@@ -446,7 +446,7 @@ testTileFloats = withRuntimePair $ \target peer -> do
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
-  result @?= Right ()
+  result @?= Right RiverEnded
   final <- readPolicyState policy
   case coreWorkspaces final of
     AttachedState ss _ -> assertEqual "committed sizes never become stored geometry" [ClientSized] (Map.elems (floating ss))
@@ -500,7 +500,7 @@ testFullscreenExit = withRuntimePair $ \target peer -> do
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
-  result @?= Right ()
+  result @?= Right RiverEnded
 
 testCropAcrossFullscreen :: Assertion
 testCropAcrossFullscreen = withRuntimePair $ \target peer -> do
@@ -545,7 +545,7 @@ testCropAcrossFullscreen = withRuntimePair $ \target peer -> do
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
-  result @?= Right ()
+  result @?= Right RiverEnded
 
 -- | One window fullscreen on the first of two outputs, then that output removed.
 fullscreenOnRemovedOutput :: [Int] -> ([RawFrame] -> ObjectId -> ObjectId -> IO ()) -> Assertion
@@ -591,7 +591,7 @@ fullscreenOnRemovedOutput tags afterRemoval = withRuntimePair $ \target peer -> 
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
-  result @?= Right ()
+  result @?= Right RiverEnded
 
 testFullscreenOutputMoved :: Assertion
 testFullscreenOutputMoved = fullscreenOnRemovedOutput [1] $ \removed window second -> do
@@ -645,7 +645,7 @@ testFullscreenHidden = withRuntimePair $ \target peer -> do
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
-  result @?= Right ()
+  result @?= Right RiverEnded
 
 testFullscreenShownElsewhere :: Assertion
 testFullscreenShownElsewhere = withRuntimePair $ \target peer -> do
@@ -705,7 +705,7 @@ testFullscreenShownElsewhere = withRuntimePair $ \target peer -> do
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
-  result @?= Right ()
+  result @?= Right RiverEnded
 
 testFullscreenLostWhileHidden :: Assertion
 testFullscreenLostWhileHidden = withRuntimePair $ \target peer -> do
@@ -745,7 +745,7 @@ testFullscreenLostWhileHidden = withRuntimePair $ \target peer -> do
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
-  result @?= Right ()
+  result @?= Right RiverEnded
   remaining <- coreFullscreen <$> readPolicyState policy
   remaining @?= Set.empty
 
@@ -797,7 +797,7 @@ pointerTrace config (cw, ch) script final = withRuntimePair $ \target peer -> do
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
-  result @?= Right ()
+  result @?= Right RiverEnded
   final =<< readPolicyState policy
 
 floatsIn :: CoreState i l -> [FloatGeom]

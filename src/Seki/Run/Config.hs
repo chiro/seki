@@ -53,4 +53,4 @@ runConfig config =
     Right policy ->
       openRiverSession (policyRuntimeHandlers policy) >>= \case
         Left err -> pure (Left (ConfigRuntimeError err))
-        Right session -> either (Left . ConfigRuntimeError) Right <$> runRiverSession session
+        Right session -> either (Left . ConfigRuntimeError) (const (Right ())) <$> runRiverSession session
