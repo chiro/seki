@@ -269,12 +269,12 @@ fullscreenTests =
     ]
 
 -- | Places every window it is given at the area's top-left, 100 pixels tall per window it is given.
-data Everything = Everything deriving (Show)
+data Everything = Everything deriving (Show, Read)
 
 instance LayoutClass Everything where
   pureLayout _ r s = [(w, tile) | let n = length (integrate s), Right tile <- [mkSize (rectWidth r) (fromIntegral (100 * n)) >>= mkRect (Point (rectX r) (rectY r))], w <- integrate s]
 
-data MasterOnly = MasterOnly deriving (Show)
+data MasterOnly = MasterOnly deriving (Show, Read)
 
 instance LayoutClass MasterOnly where
   pureLayout _ r s = [(w, r) | w <- take 1 (integrate s)]

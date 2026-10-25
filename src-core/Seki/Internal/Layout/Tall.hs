@@ -23,7 +23,7 @@ data Tall = Tall
   , tallRatio :: !Rational
   -- ^ The master column's share of the width.
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Read)
 
 {- | A ratio of exactly 0 omits the masters and a ratio of exactly 1 omits the
 other windows, so neither gets a zero-width column.
