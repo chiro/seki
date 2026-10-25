@@ -18,7 +18,7 @@ import Seki.Run.Inventory (RiverDimensionsHint (..))
 import Seki.Run.MockRiver (FrameReader, callbackDoneFrame, encodedFrame, expectMockSuccess, expectRight, newFrameReader, receiveExpectedRequest, receiveKeyBindingRequest, receiveLayerShellOutputRequest, receiveLayerShellSeatRequest, receiveNewIdRequest, receiveRuntimeBinds, receiveStartupRequests, registryGlobalFrame, requireObjectId, runMock, sendFrames, withRuntimePair)
 import Seki.Run.Policy (PolicyConfig (..), newPolicy, policyRuntimeHandlers, readPolicyState)
 import Seki.Run.Reconcile (clampToHint)
-import Seki.Run.Runtime (openRiverSessionAt, runRiverSession)
+import Seki.Run.Runtime (RiverExit (..), openRiverSessionAt, runRiverSession)
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Arguments (putInt, putNewId, putNullableObject, putObject, putUint)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
@@ -262,7 +262,7 @@ testSettlement = withRuntimePair $ \target peer -> do
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
-  result @?= Right ()
+  result @?= Right RiverEnded
 
 testLayerFocus :: Assertion
 testLayerFocus = withRuntimePair $ \target peer -> do
@@ -371,7 +371,7 @@ testLayerFocus = withRuntimePair $ \target peer -> do
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
-  result @?= Right ()
+  result @?= Right RiverEnded
  where
   layoutKey = RiverKeyBinding 0x61 (River.RiverSeatV1ModifiersFlags 0) Nothing
   focusKey = RiverKeyBinding 0x62 (River.RiverSeatV1ModifiersFlags 0) Nothing
@@ -508,7 +508,7 @@ testLayouts = withRuntimePair $ \target peer -> do
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
-  result @?= Right ()
+  result @?= Right RiverEnded
  where
   keys = [RiverKeyBinding key (River.RiverSeatV1ModifiersFlags 0) Nothing | key <- [0x61, 0x62, 0x63]]
 
@@ -544,7 +544,7 @@ testSingleTall = withRuntimePair $ \target peer -> do
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
-  result @?= Right ()
+  result @?= Right RiverEnded
 
 handshake :: FrameReader -> Transport -> IO (ObjectId, ObjectId, ObjectId)
 handshake reader peer = do

@@ -66,6 +66,7 @@ import Seki.Run.Policy (
   readPolicyState,
  )
 import Seki.Run.Runtime (
+  RiverExit (..),
   RiverRuntimeHandlers (..),
   RiverRuntimeSnapshot (..),
   openRiverSessionAt,
@@ -458,7 +459,7 @@ runPolicyWith hook startup target mockDone bindings = do
               pure plan
           }
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit observed
-  assertEqual "policy session lifecycle" (Right ()) =<< runRiverSession session
+  assertEqual "policy session lifecycle" (Right RiverEnded) =<< runRiverSession session
   expectMockSuccess mockDone
   (,) <$> readIORef launches <*> readIORef drains
  where

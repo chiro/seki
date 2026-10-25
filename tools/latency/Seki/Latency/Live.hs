@@ -106,7 +106,7 @@ runWM socket directory = do
         ( object
             [ "mode" .= ("wm" :: String)
             , "pid" .= (fromIntegral pid :: Int)
-            , "clean_exit" .= (result == Right ())
+            , "clean_exit" .= (result == Right RiverEnded)
             , "successful" .= recordingSuccessful recording
             , "failed" .= recordingFailed recording
             , "dropped" .= recordingDropped recording

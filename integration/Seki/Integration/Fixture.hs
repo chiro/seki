@@ -115,7 +115,7 @@ withFixture policyConfig name outputCount action = do
             _ <- waitUntil "probe windows closed" assertionTimeoutMicroseconds (readRiverInventory session) (null . riverInventoryWindows)
             _ <- waitUntil "policy windows closed" assertionTimeoutMicroseconds (coreWorkspaces <$> readPolicyState policy) (\case AttachedState ss _ -> null (SS.allWindows ss); HeadlessState _ -> False)
             stopManagedProcess river
-            requireRuntimeExit result >>= assertEqual "runtime shutdown" (Right ())
+            requireRuntimeExit result >>= assertEqual "runtime shutdown" (Right RiverEnded)
           )
           `onException` ( do
                             readRiverInventory session >>= announce . ((name <> " inventory: ") <>) . show

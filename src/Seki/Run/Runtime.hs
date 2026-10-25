@@ -18,6 +18,8 @@ module Seki.Run.Runtime (
   readRiverSeatBindings,
   RiverRuntimeHandlers (..),
   RenderOutcome (..),
+  ManageOutcome (..),
+  RiverExit (..),
   RiverRuntimeError (..),
   openRiverSession,
   openRiverSessionAt,
@@ -127,7 +129,27 @@ data RiverSession = RiverSession
   , riverSequenceStatus :: IORef (Either RiverRuntimeError RiverSequenceState)
   , riverInventoryState :: IORef RiverInventory
   , riverSeatBindingsState :: IORef (Map ObjectId RiverSeatBindings)
+  , riverLifecycle :: IORef Lifecycle
   }
+
+{- | Where the manager object is in river's stop handshake: @stop@ is sent at
+most once, and @finished@ ends the session after @destroy@, remembering
+whether seki asked for it.
+-}
+data Lifecycle = Managing | Stopping | Finished Bool
+  deriving (Eq)
+
+-- | What the runtime sends after a manage sequence's @manage_finish@.
+data ManageOutcome = KeepManaging | StopManaging
+  deriving (Eq, Show)
+
+-- | How a session ended without an error.
+data RiverExit
+  = -- | River closed the connection, or sent a @finished@ seki did not ask for.
+    RiverEnded
+  | -- | @finished@ answered seki's @stop@; @destroy@ was sent before the connection closed.
+    RiverStopped
+  deriving (Eq, Show)
 
 data RiverKeyBindingState = RiverKeyBindingState
   { riverKeyBindingDefinition :: RiverKeyBinding
@@ -188,7 +210,7 @@ data RiverRuntimeHandlers = RiverRuntimeHandlers
   , riverPointerBindings :: [RiverPointerBinding]
   , handleRiverPointerBindingEvent :: RiverPointerBinding -> Object River.RiverSeatV1 -> PointerBindingEvent -> IO ()
   , riverSequenceRecorder :: Maybe Recorder
-  , prepareRiverManagePlan :: RiverRuntimeSnapshot -> IO (ManageM ())
+  , prepareRiverManagePlan :: RiverRuntimeSnapshot -> IO (ManageM ManageOutcome)
   , prepareRiverRenderPlan :: RiverRuntimeSnapshot -> IO (RenderM RenderOutcome)
   }
 
@@ -239,6 +261,7 @@ openRiverSessionWith openWayland runtimeHandlers =
         xkbGlobalState <- newIORef Nothing
         layerShellGlobalState <- newIORef Nothing
         seatBindingsState <- newIORef Map.empty
+        lifecycle <- newIORef Managing
         let checkedHandlers =
               sequenceCheckedHandlers
                 wayland
@@ -247,6 +270,7 @@ openRiverSessionWith openWayland runtimeHandlers =
                 xkbGlobalState
                 layerShellGlobalState
                 seatBindingsState
+                lifecycle
                 runtimeHandlers
         result <- restore (bindRuntimeGlobals wayland checkedHandlers) `onException` closeWaylandSession wayland
         case result of
@@ -266,6 +290,7 @@ openRiverSessionWith openWayland runtimeHandlers =
                       sequenceStatus
                       inventoryState
                       seatBindingsState
+                      lifecycle
                   )
               )
 
@@ -303,12 +328,14 @@ bindRuntimeGlobals wayland handlers =
   connection = waylandConnection wayland
   registry = waylandRegistry wayland
 
-{- | Own the event loop until clean EOF or failure, then close the session.
+{- | Own the event loop until clean EOF, @finished@, or failure, then close the
+session. The close happens on the loop's own thread, which the non-threaded
+runtime requires.
 
 Handler exceptions are rethrown after the underlying connection has been
 closed by the connection and runtime layers.
 -}
-runRiverSession :: RiverSession -> IO (Either RiverRuntimeError ())
+runRiverSession :: RiverSession -> IO (Either RiverRuntimeError RiverExit)
 runRiverSession session = do
   claimed <-
     modifyMVar (riverEventLoopClaim session) $ \alreadyClaimed ->
@@ -321,14 +348,17 @@ runRiverSession session = do
   eventLoop =
     dispatchNextEvent (waylandConnection wayland) >>= \case
       Left errorValue -> pure (Left (RiverRuntimeConnectionError errorValue))
-      Right DispatchFinished -> pure (Right ())
+      Right DispatchFinished -> pure (Right RiverEnded)
       Right (EventDispatched _) ->
         readIORef (riverSequenceStatus session) >>= \case
           Left errorValue -> pure (Left errorValue)
           Right _ ->
-            readWaylandGlobalCatalog wayland >>= \case
-              Left errorValue -> pure (Left (RiverRuntimeRegistryError errorValue))
-              Right _ -> eventLoop
+            readIORef (riverLifecycle session) >>= \case
+              Finished requested -> pure (Right (if requested then RiverStopped else RiverEnded))
+              _ ->
+                readWaylandGlobalCatalog wayland >>= \case
+                  Left errorValue -> pure (Left (RiverRuntimeRegistryError errorValue))
+                  Right _ -> eventLoop
 
 -- | Close a runtime without running it. Repeated calls are safe.
 closeRiverSession :: RiverSession -> IO ()
@@ -353,9 +383,10 @@ sequenceCheckedHandlers ::
   IORef (Maybe (Object Xkb.RiverXkbBindingsV1)) ->
   IORef (Maybe (Object LayerShell.RiverLayerShellV1)) ->
   IORef (Map ObjectId RiverSeatBindings) ->
+  IORef Lifecycle ->
   RiverRuntimeHandlers ->
   RiverWindowManagerHandlers
-sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState layerShellGlobalState seatBindingsState runtimeHandlers =
+sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState layerShellGlobalState seatBindingsState lifecycle runtimeHandlers =
   handlers
     { handleRiverWindowManagerEvent = handleManagerEvent
     , handleRiverWindowCreated = handleWindowCreated
@@ -378,7 +409,13 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
         event
         startManageSequence
         runManagePlans
-        (\() -> pure ())
+        ( \case
+            KeepManaging -> pure ()
+            StopManaging ->
+              readIORef lifecycle >>= \case
+                Managing -> submitManagerRequest manager River.encodeRiverWindowManagerV1Stop >> writeIORef lifecycle Stopping
+                _ -> pure ()
+        )
     River.RiverWindowManagerV1RenderStart ->
       runSequence
         (riverSequenceRecorder runtimeHandlers)
@@ -392,6 +429,9 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
         (readRuntimeSnapshot >>= prepareRiverRenderPlan runtimeHandlers >>= runRenderM connection)
         (\outcome -> when (renderNeedsManage outcome) (submitManagerRequest manager River.encodeRiverWindowManagerV1ManageDirty))
     River.RiverWindowManagerV1Unavailable -> recordRuntimeError sequenceStatus RiverRuntimeWindowManagerUnavailable
+    River.RiverWindowManagerV1Finished -> do
+      submitManagerRequest manager River.encodeRiverWindowManagerV1Destroy
+      atomicModifyIORef' lifecycle (\state -> (Finished (state == Stopping), ()))
     _ -> handleRiverWindowManagerEvent handlers manager event
   handleWindowCreated window = do
     added <- updateInventory sequenceStatus inventoryState (addRiverWindow window)
@@ -660,9 +700,9 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
           policyPlan
     runManageM connection plan >>= \case
       Left errorValue -> pure (Left errorValue)
-      Right () -> do
+      Right outcome -> do
         markKeyBindingsInitialized
-        pure (Right ())
+        pure (Right outcome)
   readRuntimeSnapshot = do
     inventory <- readIORef inventoryState
     seats <- Map.elems <$> readIORef seatBindingsState
