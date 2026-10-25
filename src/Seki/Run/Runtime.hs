@@ -377,7 +377,8 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
         manager
         event
         startManageSequence
-        (fmap (fmap (const (RenderOutcome False))) runManagePlans)
+        runManagePlans
+        (\() -> pure ())
     River.RiverWindowManagerV1RenderStart ->
       runSequence
         (riverSequenceRecorder runtimeHandlers)
@@ -389,6 +390,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
         event
         startRenderSequence
         (readRuntimeSnapshot >>= prepareRiverRenderPlan runtimeHandlers >>= runRenderM connection)
+        (\outcome -> when (renderNeedsManage outcome) (submitManagerRequest manager River.encodeRiverWindowManagerV1ManageDirty))
     River.RiverWindowManagerV1Unavailable -> recordRuntimeError sequenceStatus RiverRuntimeWindowManagerUnavailable
     _ -> handleRiverWindowManagerEvent handlers manager event
   handleWindowCreated window = do
@@ -764,6 +766,8 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
     Left errorValue ->
       recordRuntimeError sequenceStatus (RiverRuntimeConnectionError errorValue)
     Right () -> pure ()
+  submitManagerRequest manager request =
+    submitRequest connection River.riverWindowManagerV1Interface manager request >>= recordConnectionResult
   handlers = riverProtocolHandlers runtimeHandlers
   connection = waylandConnection wayland
 
@@ -807,9 +811,10 @@ runSequence ::
   Object River.RiverWindowManagerV1 ->
   River.RiverWindowManagerV1Event OwnedFd ->
   (RiverSequenceState -> Either RiverSequenceError RiverSequenceState) ->
-  IO (Either ConnectionError RenderOutcome) ->
+  IO (Either ConnectionError outcome) ->
+  (outcome -> IO ()) ->
   IO ()
-runSequence recorder kind connection sequenceStatus handlers manager event startSequence runPlan = do
+runSequence recorder kind connection sequenceStatus handlers manager event startSequence runPlan afterFinish = do
   result <- case recorder of
     Nothing -> submit
     Just recording -> do
@@ -825,10 +830,7 @@ runSequence recorder kind connection sequenceStatus handlers manager event start
     Nothing -> pure ()
     Just (next, outcome) -> do
       writeIORef sequenceStatus (Right next)
-      when (renderNeedsManage outcome) $
-        submitRequest connection River.riverWindowManagerV1Interface manager River.encodeRiverWindowManagerV1ManageDirty >>= \case
-          Left errorValue -> writeIORef sequenceStatus (Left (RiverRuntimeConnectionError errorValue))
-          Right () -> pure ()
+      afterFinish outcome
  where
   failed errorValue = writeIORef sequenceStatus (Left errorValue) >> pure Nothing
   submit = do
