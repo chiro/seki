@@ -194,19 +194,20 @@ prepareManagePlan policy snapshot = do
   events <- map ($ view) . reverse <$> atomicModifyIORef' (policyQueue policy) ([],)
   let (st, intents) = drainCore (policyManageHook (policyConfig policy)) events before
   writeIORef (policyState policy) st
-  mapM_ (policyLaunch (policyConfig policy)) [cmd | Spawn cmd <- intents]
+  let effects = interpretIntents intents
+  mapM_ (policyLaunch (policyConfig policy)) (planLaunch effects)
   let scene =
         planScene
           (policySceneStyle (policyConfig policy))
           st
           (Map.fromList [(outputIdOf (riverOutputObject o), OutputArea bounds area) | o <- riverInventoryOutputs inventory, Just bounds <- [outputRect o], Just area <- [riverOutputUsableArea o]])
           (Map.fromList [(windowIdOf (riverWindowObject w), WindowId . objectIdValue <$> riverWindowParent w) | w <- riverInventoryWindows inventory])
-      reclaim = ReclaimFocus `elem` intents || any isInteraction events
+      reclaim = planReclaim effects || any isInteraction events
   writeIORef (policyScene policy) scene
   let (next, plan) = reconcileManage reclaim scene snapshot previous
   writeIORef (policyReconcile policy) next
   pure $ do
-    mapM_ closeWindow (mapMaybe liveWindow [w | CloseWindow w <- intents])
+    mapM_ closeWindow (mapMaybe liveWindow (planClose effects))
     plan
  where
   inventory = riverRuntimeInventory snapshot
@@ -220,6 +221,22 @@ prepareManagePlan policy snapshot = do
     OutputId o <- workspaceOutput st w
     origin <- mkObjectId o >>= (`lookupRiverOutput` inventory) >>= outputRect
     either (const Nothing) (Just . OutputRect) (translate (negate (rectX origin)) (negate (rectY origin)) rect)
+
+-- | Every intent's effect on a manage sequence, in order.
+data IntentPlan = IntentPlan
+  { planLaunch :: [String]
+  , planClose :: [WindowId]
+  , planReclaim :: Bool
+  }
+
+-- | A case over every 'Intent', so a new one cannot be silently ignored.
+interpretIntents :: [Intent] -> IntentPlan
+interpretIntents = foldr add (IntentPlan [] [] False)
+ where
+  add intent plan = case intent of
+    Spawn cmd -> plan{planLaunch = cmd : planLaunch plan}
+    CloseWindow w -> plan{planClose = w : planClose plan}
+    ReclaimFocus -> plan{planReclaim = True}
 
 -- | The output that shows the window's workspace.
 workspaceOutput :: CoreState i l -> WindowId -> Maybe OutputId
