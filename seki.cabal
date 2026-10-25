@@ -316,11 +316,13 @@ test-suite seki-integration
   type:           exitcode-stdio-1.0
   hs-source-dirs: integration
   main-is:        Main.hs
+  build-tool-depends: seki:seki
   other-modules:
     Seki.Integration.Fixture
     Seki.Integration.Harness
     Seki.Integration.M1
     Seki.Integration.M2
+    Seki.Integration.Restart
   build-depends:
     containers >=0.6.7 && <0.8,
     seki:layer-surface-fixture,

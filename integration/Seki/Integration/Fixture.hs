@@ -10,6 +10,7 @@ module Seki.Integration.Fixture (
   WindowRequest (..),
   withFixture,
   withHeldLogo,
+  withHeldLogoIn,
   windowRequests,
   picture,
   pictureError,
@@ -148,9 +149,13 @@ withFixture policyConfig name outputCount action =
       `finally` cleanup
 
 withHeldLogo :: Fixture l -> Probe -> IO a -> IO a
-withHeldLogo fixture probe action = do
+withHeldLogo fixture = withHeldLogoIn (mEnvironment fixture)
+
+-- | Hold the logo modifier from a client of this environment while the action runs.
+withHeldLogoIn :: [(String, String)] -> Probe -> IO a -> IO a
+withHeldLogoIn environment probe action = do
   result <-
-    bracket (startManagedProcess "held logo modifier" (mEnvironment fixture) (proc "wtype" ["-M", "logo", "-s", "60000"])) stopManagedProcess $ \_ -> do
+    bracket (startManagedProcess "held logo modifier" environment (proc "wtype" ["-M", "logo", "-s", "60000"])) stopManagedProcess $ \_ -> do
       _ <- waitUntil "logo modifier held on the focused window" assertionTimeoutMicroseconds (keyboardSnapshot probe) (logoHeld . depressedModifiers)
       action
   _ <- waitUntil "logo modifier released after its keyboard stops" assertionTimeoutMicroseconds (keyboardSnapshot probe) (not . logoHeld . depressedModifiers)

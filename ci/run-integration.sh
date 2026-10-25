@@ -46,9 +46,11 @@ if ((build_status != 0)); then
 fi
 
 integration_executable=$(cabal list-bin seki-integration "$@" 2>>"$raw_log")
+seki_executable=$(cabal list-bin seki "$@" 2>>"$raw_log")
 
 set +e
 SEKI_RUN_INTEGRATION=1 \
+  SEKI_EXECUTABLE="$seki_executable" \
   SEKI_INTEGRATION_ARTIFACT_DIR="$artifact_directory" \
   SEKI_INTEGRATION_MANIFEST="$manifest" \
   timeout 120s "$integration_executable" 2>&1 | tee -a "$raw_log"
