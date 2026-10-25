@@ -244,7 +244,7 @@ def main():
             return
         with (trial / "pure.rts").open("w") as output:
             flags = ["-N1","-T","-s"] + (["--nonmoving-gc"] if collector == "nonmoving" else [])
-            subprocess.run([str(binary),"pure",str(trial/"pure.json"),str(args.seed),str(args.pure_windows),str(args.pure_steps),"+RTS",*flags,"-RTS"], stdout=output, stderr=subprocess.STDOUT, check=True, timeout=120)
+            subprocess.run([str(binary),"pure",str(trial/"pure.json"),str(args.seed),str(args.pure_windows),str(args.pure_steps),"m1","+RTS",*flags,"-RTS"], stdout=output, stderr=subprocess.STDOUT, check=True, timeout=120)
         item["load_after"] = os.getloadavg()
         summarize_trial(trial)
         write(directory / "manifest.json", manifest)
