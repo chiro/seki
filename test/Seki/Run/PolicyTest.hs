@@ -35,10 +35,10 @@ import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Inventory (RiverWindowState (..), riverInventoryWindows)
 import Seki.Run.MockRiver (
   FrameReader,
-  callbackDoneFrame,
   encodedFrame,
   expectMockSuccess,
   expectRight,
+  handshake,
   newFrameReader,
   receiveExpectedRequest,
   receiveFrame,
@@ -46,9 +46,6 @@ import Seki.Run.MockRiver (
   receiveLayerShellOutputRequest,
   receiveLayerShellSeatRequest,
   receiveNewIdRequest,
-  receiveRuntimeBinds,
-  receiveStartupRequests,
-  registryGlobalFrame,
   requireObjectId,
   runMock,
   sendFrames,
@@ -486,18 +483,6 @@ nodeWindows snapshot =
   | w <- riverInventoryWindows (riverRuntimeInventory snapshot)
   , isJust (riverWindowNode w)
   ]
-
-handshake :: FrameReader -> Transport -> IO (ObjectId, ObjectId, ObjectId)
-handshake reader peer = do
-  (registryId, callbackId) <- receiveStartupRequests reader peer
-  sendFrames
-    peer
-    [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
-    , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
-    , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
-    , callbackDoneFrame callbackId 1
-    ]
-  receiveRuntimeBinds reader peer
 
 -- | Complete a manage sequence and the render sequence river requires after it.
 finishManage :: FrameReader -> Transport -> ObjectId -> IO ()
