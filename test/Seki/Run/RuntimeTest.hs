@@ -97,6 +97,7 @@ tests =
     , testCase "promotes invalid usable areas to inventory errors" testInvalidUsableArea
     , testCase "owns one layer-shell seat per seat and tracks its keyboard owner" testSeatLayerShellLifecycle
     , testCase "rejects an out-of-order manager sequence event" testSequenceOrderError
+    , testCase "M2-D08: answers a render sequence that comes before the first manage sequence" testRenderBeforeFirstManage
     , testCase "fails when river reports window management unavailable" testManagerUnavailable
     , testCase "closes startup when the manager global is missing" testMissingManager
     , testCase "closes startup when the XKB bindings global is missing" testMissingXkb
@@ -785,7 +786,7 @@ testSequenceOrderError =
         , callbackDoneFrame callbackId 92
         ]
       (managerId, _, _) <- receiveRuntimeBinds reader peer
-      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+      sendFrames peer [encodedFrame managerId (Opcode 2) (pure ()), encodedFrame managerId (Opcode 2) (pure ())]
     session <-
       expectRight
         =<< openRiverSessionAt
@@ -798,15 +799,42 @@ testSequenceOrderError =
       ( Left
           ( RiverRuntimeSequenceError
               ( InvalidRiverSequenceTransition
-                  AwaitingInitialManage
-                  StartRenderSequence
+                  AwaitingRequiredRender
+                  StartManageSequence
               )
           )
       )
       =<< runRiverSession session
-    assertEqual "invalid event is not delivered" 0 =<< readIORef managerEvents
+    assertEqual "only the valid event is delivered" 1 =<< readIORef managerEvents
     recording <- readRecording recorder
-    assertEqual "refused sequence counted as failure" (0, 1) (recordingSuccessful recording, recordingFailed recording)
+    assertEqual "refused sequence counted as failure" (1, 1) (recordingSuccessful recording, recordingFailed recording)
+
+{- | River keeps one sequence state across window managers, so a manager that
+binds while its predecessor's render is pending gets render_start first.
+-}
+testRenderBeforeFirstManage :: Assertion
+testRenderBeforeFirstManage =
+  withRuntimePair $ \target peer -> do
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (registryId, callbackId) <- receiveStartupRequests reader peer
+      sendFrames
+        peer
+        [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+        , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+        , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
+        , callbackDoneFrame callbackId 92
+        ]
+      (managerId, _, _) <- receiveRuntimeBinds reader peer
+      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 4)
+      sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 2)
+      closeTransport peer
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (runtimeHandlers (const (pure ())))
+    result <- runRiverSession session
+    expectMockSuccess mockDone
+    assertEqual "the early render and the first manage are answered" (Right ()) result
 
 testManagerUnavailable :: Assertion
 testManagerUnavailable =

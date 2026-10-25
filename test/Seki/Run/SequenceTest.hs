@@ -81,7 +81,7 @@ testInvalidRenderStarts :: Assertion
 testInvalidRenderStarts = do
   states <- reachableStates
   forM_ states $ \(phase, state) ->
-    if phase == AwaitingRequiredRender || phase == AwaitingManageOrRender
+    if phase `elem` [AwaitingInitialManage, AwaitingRequiredRender, AwaitingManageOrRender]
       then assertBool (show phase <> " accepts render_start") (isRight (startRenderSequence state))
       else
         expectLeft
