@@ -9,6 +9,7 @@ module Seki.Integration.Harness (
   createPrivateDirectory,
   fixtureEnvironment,
   withUnixListener,
+  ManagedProcess,
   startManagedProcess,
   renderManagedProcessLogs,
   managedProcessPid,
