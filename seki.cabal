@@ -263,6 +263,7 @@ test-suite seki-test
     Seki.Run.ReconcileTest
     Seki.Run.ReconcileTraceTest
     Seki.Run.RestartTest
+    Seki.Run.SessionsTest
     Seki.Run.RiverTest
     Seki.Run.RuntimeTest
     Seki.Run.SequenceTest

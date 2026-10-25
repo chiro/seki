@@ -25,6 +25,7 @@ import Seki.Run.RestartTest qualified as RestartTest
 import Seki.Run.RiverTest qualified as RiverTest
 import Seki.Run.RuntimeTest qualified as RuntimeTest
 import Seki.Run.SequenceTest qualified as SequenceTest
+import Seki.Run.SessionsTest qualified as SessionsTest
 import Seki.Run.StartupTest qualified as StartupTest
 import Seki.Scanner.GenerateTest qualified as GeneratorTest
 import Seki.Scanner.ParseTest qualified as ScannerTest
@@ -42,4 +43,4 @@ import Seki.Wire.TransportTest qualified as TransportTest
 import Test.Tasty (defaultMain, testGroup)
 
 main :: IO ()
-main = defaultMain (testGroup "seki" [LatencyPureTest.tests, LatencyTest.tests, ReconcileTest.tests, ReconcileTraceTest.tests, SceneTest.tests, GeometryTest.tests, StackSetTest.tests, StateTest.tests, LayoutTest.tests, ManageHookTest.tests, PointerOpTest.tests, FullLayoutTest.tests, TallTest.tests, ActionTest.tests, CoreEventTest.tests, RestoreTest.tests, CodecTest.tests, ArgumentsTest.tests, TransportTest.tests, DriverTest.tests, BufferTest.tests, ObjectTableTest.tests, RequestTest.tests, EventTest.tests, ConnectionTest.tests, DispatchTest.tests, RegistryTest.tests, StartupTest.tests, RiverTest.tests, RuntimeTest.tests, SequenceTest.tests, PhaseTest.tests, InventoryTest.tests, ConfigTest.tests, PolicyTest.tests, RestartTest.tests, ScannerTest.tests, GeneratorTest.tests, LayerSurfaceFixtureTest.tests])
+main = defaultMain (testGroup "seki" [LatencyPureTest.tests, LatencyTest.tests, ReconcileTest.tests, ReconcileTraceTest.tests, SceneTest.tests, GeometryTest.tests, StackSetTest.tests, StateTest.tests, LayoutTest.tests, ManageHookTest.tests, PointerOpTest.tests, FullLayoutTest.tests, TallTest.tests, ActionTest.tests, CoreEventTest.tests, RestoreTest.tests, CodecTest.tests, ArgumentsTest.tests, TransportTest.tests, DriverTest.tests, BufferTest.tests, ObjectTableTest.tests, RequestTest.tests, EventTest.tests, ConnectionTest.tests, DispatchTest.tests, RegistryTest.tests, StartupTest.tests, RiverTest.tests, RuntimeTest.tests, SequenceTest.tests, PhaseTest.tests, InventoryTest.tests, ConfigTest.tests, PolicyTest.tests, RestartTest.tests, SessionsTest.tests, ScannerTest.tests, GeneratorTest.tests, LayerSurfaceFixtureTest.tests])
