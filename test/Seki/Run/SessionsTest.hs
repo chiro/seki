@@ -78,9 +78,10 @@ testFallback = withSystemTempDirectory "seki-sessions" $ \dir -> do
     _ <- enumerate reader firstPeer globals 0xff000010 "w1"
     stop <- receiveFrame reader firstPeer
     (rawFrameSender stop, rawFrameOpcode stop) @?= (manager, Opcode 0)
-    sendFrames firstPeer [event manager 1 (pure ())]
-    destroy <- receiveFrame reader firstPeer
-    (rawFrameSender destroy, rawFrameOpcode destroy) @?= (manager, Opcode 1)
+    window <- requireObjectId 0xff000010
+    -- River closes every window when it processes stop, before finished.
+    sendFrames firstPeer [event window 0 (pure ()), event manager 1 (pure ())]
+    _ <- readUntil reader firstPeer manager 1
     expectClosed firstPeer
   secondDone <- runMock $ flip onException (closeTransport secondPeer) $ do
     reader <- newFrameReader

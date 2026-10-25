@@ -26,7 +26,7 @@ import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Policy (Policy, PolicyConfig (..), PolicyError, launchDetached, newPolicy, policyRuntimeHandlers, readRestoreState)
 import Seki.Run.Restart (Launch (..), RestartRefusal (..), checkRestart, describeLoadError, discoverLaunch, execRestart, loadRestoreFile, reapInheritedChildren, writeRestoreFile)
-import Seki.Run.Runtime (RiverExit (..), RiverRuntimeError (..), openRiverSessionAt, readRiverInventory, runRiverSession)
+import Seki.Run.Runtime (RiverExit (..), RiverRuntimeError (..), openRiverSessionAt, runRiverSession)
 import Seki.Run.Startup (WaylandStartupError (..))
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
@@ -131,7 +131,7 @@ runSessions launch configFor = pass (launchFirstTarget launch) unavailableRetrie
                 Left e -> pure (Left (ConfigRuntimeError e))
                 Right RiverEnded -> pure (Right ())
                 Right RiverStopped -> do
-                  saved <- readRestoreState policy =<< readRiverInventory session
+                  saved <- readRestoreState policy
                   handOver saved
                   pass (launchReconnectTarget launch) unavailableRetries (Just saved)
   handOver saved = case launchStateDir launch of
