@@ -20,6 +20,7 @@ import Seki.Run.Inventory (
 import Seki.Run.Latency
 import Seki.Run.LayerShell (RiverLayerShellBootstrapError (..))
 import Seki.Run.MockRiver (
+  FrameReader,
   callbackDoneFrame,
   encodedFrame,
   expectMockSuccess,
@@ -47,8 +48,10 @@ import Seki.Run.Phase (disableKeyBinding, setWindowDimensionBounds)
 import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.River (RiverBootstrapError (..), RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (
+  ManageOutcome (..),
   PointerBindingEvent (..),
   RenderOutcome (..),
+  RiverExit (..),
   RiverLayerFocus (..),
   RiverRuntimeError (..),
   RiverRuntimeHandlers (..),
@@ -75,8 +78,8 @@ import Seki.Wire.Arguments (putInt, putNewId, putObject, putUint)
 import Seki.Wire.Connection (ConnectionError (..), dispatchNextEvent)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit, makeObjectLimit, objectId)
 import Seki.Wire.Connection.Registry (RegistryError (..), globalNameFromWord)
-import Seki.Wire.Transport (OwnedFd, closeTransport, receiveChunk)
-import Seki.Wire.Types (Opcode (..))
+import Seki.Wire.Transport (OwnedFd, ReceivedChunk (..), Transport, closeTransport, receiveChunk)
+import Seki.Wire.Types (ObjectId, Opcode (..))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertEqual, assertFailure, testCase)
 
@@ -98,6 +101,8 @@ tests =
     , testCase "owns one layer-shell seat per seat and tracks its keyboard owner" testSeatLayerShellLifecycle
     , testCase "rejects an out-of-order manager sequence event" testSequenceOrderError
     , testCase "M2-D08: answers a render sequence that comes before the first manage sequence" testRenderBeforeFirstManage
+    , testCase "a manage plan that asks to stop sends stop once after manage_finish, then destroy on finished" testStopLifecycle
+    , testCase "a finished seki did not ask for is destroyed and ends the session" testUnrequestedFinished
     , testCase "fails when river reports window management unavailable" testManagerUnavailable
     , testCase "closes startup when the manager global is missing" testMissingManager
     , testCase "closes startup when the XKB bindings global is missing" testMissingXkb
@@ -151,7 +156,7 @@ testOwnedRuntime =
               { riverSequenceRecorder = Just recorder
               }
           )
-    assertEqual "clean event-loop EOF" (Right ()) =<< runRiverSession session
+    assertEqual "clean event-loop EOF" (Right RiverEnded) =<< runRiverSession session
     (managerId, xkbBindingsId, layerShellId) <- expectMockSuccess mockDone
     assertEqual "bound manager object" managerId (objectId (riverWindowManager session))
     assertEqual "bound XKB object" xkbBindingsId (objectId (riverXkbBindings session))
@@ -262,11 +267,11 @@ testInventoryRemoval =
             , handleRiverPointerBindingEvent = \_ _ _ -> pure ()
             , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , riverSequenceRecorder = Nothing
-            , prepareRiverManagePlan = \_ -> pure (pure ())
+            , prepareRiverManagePlan = \_ -> pure (pure KeepManaging)
             , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome False))
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
-    assertEqual "removal lifecycle" (Right ()) =<< runRiverSession session
+    assertEqual "removal lifecycle" (Right RiverEnded) =<< runRiverSession session
     expectMockSuccess mockDone
     assertEqual "removal callbacks" 2 =<< readIORef deliveredRemovals
     inventory <- readRiverInventory session
@@ -310,8 +315,8 @@ testPhasePlanFailure =
             , riverSequenceRecorder = Just recorder
             , prepareRiverManagePlan = \snapshot ->
                 pure $ case riverInventoryWindows (riverRuntimeInventory snapshot) of
-                  window : _ -> setWindowDimensionBounds (riverWindowObject window) 1920 1080
-                  [] -> pure ()
+                  window : _ -> setWindowDimensionBounds (riverWindowObject window) 1920 1080 >> pure KeepManaging
+                  [] -> pure KeepManaging
             , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome False))
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
@@ -358,7 +363,7 @@ testInventoryFailure =
             , handleRiverPointerBindingEvent = \_ _ _ -> pure ()
             , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , riverSequenceRecorder = Nothing
-            , prepareRiverManagePlan = \_ -> pure (pure ())
+            , prepareRiverManagePlan = \_ -> pure (pure KeepManaging)
             , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome False))
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
@@ -443,7 +448,7 @@ testNodeAcquisitionFailure =
             , handleRiverPointerBindingEvent = \_ _ _ -> pure ()
             , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
             , riverSequenceRecorder = Nothing
-            , prepareRiverManagePlan = \_ -> pure (pure ())
+            , prepareRiverManagePlan = \_ -> pure (pure KeepManaging)
             , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome False))
             }
     session <- expectRight =<< openRiverSessionAt target limit handlers
@@ -541,11 +546,11 @@ testSeatBindingLifecycle =
             , prepareRiverManagePlan = \_ -> do
                 bindings <- readIORef disabledBindings
                 modifyIORef' disabledBindings (const [])
-                pure (mapM_ disableKeyBinding bindings)
+                pure (mapM_ disableKeyBinding bindings >> pure KeepManaging)
             , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome False))
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
-    assertEqual "seat binding lifecycle" (Right ()) =<< runRiverSession session
+    assertEqual "seat binding lifecycle" (Right RiverEnded) =<< runRiverSession session
     expectMockSuccess mockDone
     assertEqual "seat creation and removal callbacks" 2 =<< readIORef seatCallbacks
     assertEqual "routed binding press" [terminalBinding] =<< readIORef bindingPresses
@@ -608,10 +613,10 @@ testPointerBindingLifecycle =
                 modifyIORef' events (<> [pressedOn event])
             , prepareRiverManagePlan = \snapshot -> do
                 modifyIORef' hovers (<> [map (fmap objectId . riverSeatPointerWindow) (riverRuntimeSeatBindings snapshot)])
-                pure (pure ())
+                pure (pure KeepManaging)
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
-    assertEqual "pointer binding lifecycle" (Right ()) =<< runRiverSession session
+    assertEqual "pointer binding lifecycle" (Right RiverEnded) =<< runRiverSession session
     expectMockSuccess mockDone
     assertEqual
       "a press carries the hovered window, a leave or close clears it, and a release carries none"
@@ -677,10 +682,10 @@ testOutputLayerShellLifecycle =
                 modifyIORef'
                   plannedAreas
                   (<> [map riverOutputUsableArea (riverInventoryOutputs (riverRuntimeInventory snapshot))])
-                pure (pure ())
+                pure (pure KeepManaging)
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
-    assertEqual "layer-shell output lifecycle" (Right ()) =<< runRiverSession session
+    assertEqual "layer-shell output lifecycle" (Right RiverEnded) =<< runRiverSession session
     expectMockSuccess mockDone
     firstArea <- expectRight (mkSize 1920 1050 >>= mkRect (Point 0 30))
     secondArea <- expectRight (mkSize 1920 1080 >>= mkRect (Point 0 0))
@@ -755,10 +760,10 @@ testSeatLayerShellLifecycle =
           (runtimeHandlers (\_ -> pure ()))
             { prepareRiverManagePlan = \snapshot -> do
                 modifyIORef' plannedFocus (<> [map riverSeatLayerFocus (riverRuntimeSeatBindings snapshot)])
-                pure (pure ())
+                pure (pure KeepManaging)
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
-    assertEqual "layer-shell seat lifecycle" (Right ()) =<< runRiverSession session
+    assertEqual "layer-shell seat lifecycle" (Right RiverEnded) =<< runRiverSession session
     expectMockSuccess mockDone
     assertEqual
       "keyboard owner seen by each manage plan"
@@ -834,7 +839,7 @@ testRenderBeforeFirstManage =
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (runtimeHandlers (const (pure ())))
     result <- runRiverSession session
     expectMockSuccess mockDone
-    assertEqual "the early render and the first manage are answered" (Right ()) result
+    assertEqual "the early render and the first manage are answered" (Right RiverEnded) result
 
 testManagerUnavailable :: Assertion
 testManagerUnavailable =
@@ -997,7 +1002,7 @@ runtimeHandlers managerHandler =
     , handleRiverPointerBindingEvent = \_ _ _ -> pure ()
     , handleRiverKeyBindingEvent = \_ _ _ -> pure ()
     , riverSequenceRecorder = Nothing
-    , prepareRiverManagePlan = \_ -> pure (pure ())
+    , prepareRiverManagePlan = \_ -> pure (pure KeepManaging)
     , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome False))
     }
 
@@ -1019,3 +1024,65 @@ expectRuntimeLeft :: RiverRuntimeError -> Either RiverRuntimeError session -> As
 expectRuntimeLeft expected result = case result of
   Left actual -> assertEqual "runtime error" expected actual
   Right _ -> assertFailure "expected runtime error"
+
+-- | Bind the runtime's globals and return the manager's object ID.
+bootManager :: FrameReader -> Transport -> IO ObjectId
+bootManager reader peer = do
+  (registryId, callbackId) <- receiveStartupRequests reader peer
+  sendFrames
+    peer
+    [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+    , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+    , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
+    , callbackDoneFrame callbackId 93
+    ]
+  (managerId, _, _) <- receiveRuntimeBinds reader peer
+  pure managerId
+
+expectClosed :: Transport -> Assertion
+expectClosed peer =
+  receiveChunk peer 8 >>= \case
+    Right Nothing -> pure ()
+    other -> assertFailure ("expected the runtime to close the connection, got " <> show (fmap (fmap receivedBytes) other))
+
+{- | River may send more sequences before it processes stop. They are answered
+as usual, and a second stop request from the plan is not sent.
+-}
+testStopLifecycle :: Assertion
+testStopLifecycle =
+  withRuntimePair $ \target peer -> do
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      managerId <- bootManager reader peer
+      sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 2)
+      receiveExpectedRequest reader peer managerId (Opcode 0) (pure ())
+      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 4)
+      sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 2)
+      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 4)
+      sendFrames peer [encodedFrame managerId (Opcode 1) (pure ())]
+      receiveExpectedRequest reader peer managerId (Opcode 1) (pure ())
+      expectClosed peer
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (runtimeHandlers (const (pure ()))){prepareRiverManagePlan = \_ -> pure (pure StopManaging)}
+    result <- runRiverSession session
+    expectMockSuccess mockDone
+    assertEqual "a requested finish ends the session as stopped" (Right RiverStopped) result
+
+testUnrequestedFinished :: Assertion
+testUnrequestedFinished =
+  withRuntimePair $ \target peer -> do
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      managerId <- bootManager reader peer
+      sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 2)
+      sendFrames peer [encodedFrame managerId (Opcode 1) (pure ())]
+      receiveExpectedRequest reader peer managerId (Opcode 1) (pure ())
+      expectClosed peer
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (runtimeHandlers (const (pure ())))
+    result <- runRiverSession session
+    expectMockSuccess mockDone
+    assertEqual "an unrequested finish ends the session" (Right RiverEnded) result

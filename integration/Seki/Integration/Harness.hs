@@ -102,6 +102,7 @@ import Seki.Run.Inventory (
  )
 import Seki.Run.Policy (Policy, PolicyConfig (..), newPolicy, policyRuntimeHandlers, readPolicyState)
 import Seki.Run.Runtime (
+  RiverExit (..),
   RiverKeyBindingState (..),
   RiverRuntimeError,
   RiverSeatBindings (..),
@@ -224,7 +225,7 @@ data RiverFixture = RiverFixture
   , fixtureTerminalProcess :: MVar ManagedProcess
   , fixturePolicy :: Policy String Full
   , fixtureRiverSession :: RiverSession
-  , fixtureSessionResult :: MVar (Either RiverRuntimeError ())
+  , fixtureSessionResult :: MVar (Either RiverRuntimeError RiverExit)
   }
 
 newtype WlrRandrOutput = WlrRandrOutput
@@ -422,7 +423,7 @@ withRiverFixture scenarioName outputCount enableXwayland probeMode prerequisites
                       }
                   stopManagedProcess riverProcess
                   runtimeResult <- requireRuntimeExit sessionResult
-                  assertEqual "river runtime shutdown" (Right ()) runtimeResult
+                  assertEqual "river runtime shutdown" (Right RiverEnded) runtimeResult
                   announce (scenarioName <> ": river shutdown observed as clean EOF")
             scenario
               `onException` printFixtureDiagnostics fixtureDirectory riverProcess terminalProcess session sessionResult
@@ -1067,7 +1068,7 @@ terminalExtentError window size
 waitForObservation ::
   String ->
   RiverSession ->
-  MVar (Either RiverRuntimeError ()) ->
+  MVar (Either RiverRuntimeError RiverExit) ->
   (RuntimeObservation -> Bool) ->
   IO RuntimeObservation
 waitForObservation phase session sessionResult predicate =
@@ -1486,13 +1487,13 @@ waitForExitCode timeoutMicroseconds processHandle = do
               else threadDelay pollIntervalMicroseconds >> loop
   loop
 
-waitForRuntimeExit :: MVar (Either RiverRuntimeError ()) -> IO ()
+waitForRuntimeExit :: MVar (Either RiverRuntimeError RiverExit) -> IO ()
 waitForRuntimeExit sessionResult =
   timeout (2 * 1000 * 1000) (readMVar sessionResult) >>= \case
     Nothing -> pure ()
     Just _ -> pure ()
 
-requireRuntimeExit :: MVar (Either RiverRuntimeError ()) -> IO (Either RiverRuntimeError ())
+requireRuntimeExit :: MVar (Either RiverRuntimeError RiverExit) -> IO (Either RiverRuntimeError RiverExit)
 requireRuntimeExit sessionResult =
   timeout assertionTimeoutMicroseconds (readMVar sessionResult) >>= \case
     Nothing -> failIntegration "timeout waiting for river runtime shutdown"
@@ -1503,7 +1504,7 @@ printFixtureDiagnostics ::
   ManagedProcess ->
   MVar ManagedProcess ->
   RiverSession ->
-  MVar (Either RiverRuntimeError ()) ->
+  MVar (Either RiverRuntimeError RiverExit) ->
   IO ()
 printFixtureDiagnostics fixtureDirectory riverProcess terminalProcess session sessionResult = do
   inventory <- readRiverInventory session

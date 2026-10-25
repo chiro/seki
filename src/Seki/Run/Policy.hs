@@ -56,7 +56,7 @@ import Seki.Run.Phase (ManageM, RenderM, closeWindow)
 import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Reconcile (ReconcileState, emptyReconcileState, reconcileManage, reconcileRender, reconciledBoxes, reconciledOps)
 import Seki.Run.River (RiverWindowManagerHandlers (..))
-import Seki.Run.Runtime (PointerBindingEvent (..), RenderOutcome, RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
+import Seki.Run.Runtime (ManageOutcome (..), PointerBindingEvent (..), RenderOutcome, RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable (Object, objectId)
 import Seki.Wire.Types (mkObjectId, objectIdValue)
@@ -186,7 +186,7 @@ policyRuntimeHandlers policy =
   enqueue = enqueueWith . const
   enqueueWith event = atomicModifyIORef' (policyQueue policy) (\queue -> (event : queue, ()))
 
-prepareManagePlan :: (Eq i, LayoutClass l) => Policy i l -> RiverRuntimeSnapshot -> IO (ManageM ())
+prepareManagePlan :: (Eq i, LayoutClass l) => Policy i l -> RiverRuntimeSnapshot -> IO (ManageM ManageOutcome)
 prepareManagePlan policy snapshot = do
   before <- readIORef (policyState policy)
   previous <- readIORef (policyReconcile policy)
@@ -209,6 +209,7 @@ prepareManagePlan policy snapshot = do
   pure $ do
     mapM_ closeWindow (mapMaybe liveWindow (planClose effects))
     plan
+    pure KeepManaging
  where
   inventory = riverRuntimeInventory snapshot
   liveWindow (WindowId w) =
