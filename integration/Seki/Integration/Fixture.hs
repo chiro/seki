@@ -7,6 +7,7 @@ module Seki.Integration.Fixture (
   Fixture (..),
   Box (..),
   Paint (..),
+  BorderStyle (..),
   WindowRequest (..),
   withFixture,
   withHeldLogo,
@@ -14,6 +15,9 @@ module Seki.Integration.Fixture (
   windowRequests,
   picture,
   pictureError,
+  pictureErrorWith,
+  outputPicture,
+  withKeyboard,
   pixel,
   rgb,
 ) where
@@ -69,6 +73,9 @@ data Box = Box Int Int Int Int deriving (Eq, Show)
 
 -- | A window's content box and whether its border is focused. A picture lists paints bottom to top, so a later paint's content and border hide what lies under them.
 data Paint = Paint Color Box Bool deriving (Eq, Show)
+
+-- | The border width and the focused and unfocused border pixels a picture expects.
+data BorderStyle = BorderStyle Int BS.ByteString BS.ByteString deriving (Eq, Show)
 
 -- | A nested headless river with no window manager yet.
 data NestedRiver = NestedRiver
@@ -202,12 +209,15 @@ picture fixture phase expected = do
   loop
 
 pictureError :: [Paint] -> Image -> Maybe String
-pictureError paints frame
+pictureError = pictureErrorWith (BorderStyle 2 (BS.pack [255, 0, 255]) (BS.pack [64, 64, 64]))
+
+pictureErrorWith :: BorderStyle -> [Paint] -> Image -> Maybe String
+pictureErrorWith (BorderStyle border focusedPixel unfocusedPixel) paints frame
   | (imageWidth frame, imageHeight frame) /= (800, 600) = Just ("capture dimensions " <> show (imageWidth frame, imageHeight frame))
   | BS.length (imageRgb frame) /= 800 * 600 * 3 = Just "capture byte count"
   | otherwise = firstError (map checkColor [Red, Green, Blue] <> zipWith checkBorder [1 ..] paints)
  where
-  covered index (px, py) = any (\(Paint _ (Box x y width height) _) -> px >= x - 2 && px < x + width + 2 && py >= y - 2 && py < y + height + 2) (drop index paints)
+  covered index (px, py) = any (\(Paint _ (Box x y width height) _) -> px >= x - border && px < x + width + border && py >= y - border && py < y + height + border) (drop index paints)
   bounds points = case points of [] -> Nothing; _ -> Just (length points, Box (minimum (map fst points)) (minimum (map snd points)) (maximum (map fst points) - minimum (map fst points) + 1) (maximum (map snd points) - minimum (map snd points) + 1))
   checkColor color =
     let actual = bounds [(x, y) | y <- [0 .. 599], x <- [0 .. 799], pixel frame x y == rgb color]
@@ -216,11 +226,30 @@ pictureError paints frame
           (below, Paint _ (Box x y width height) _ : _) -> bounds [(px, py) | py <- [y .. y + height - 1], px <- [x .. x + width - 1], not (covered (length below + 1) (px, py))]
      in if actual == expected then Nothing else Just (show color <> " coverage expected " <> show expected <> ", got " <> show actual)
   checkBorder index (Paint color (Box x y width height) focused) =
-    let target = if focused then BS.pack [255, 0, 255] else BS.pack [64, 64, 64]
-        strips = [(px, py) | py <- [max 0 (y - 2) .. min 599 (y + height + 1)], px <- [max 0 (x - 2) .. min 799 (x + width + 1)], px < x || px >= x + width || py < y || py >= y + height, not (covered index (px, py))]
+    let target = if focused then focusedPixel else unfocusedPixel
+        strips = [(px, py) | py <- [max 0 (y - border) .. min 599 (y + height + border - 1)], px <- [max 0 (x - border) .. min 799 (x + width + border - 1)], px < x || px >= x + width || py < y || py >= y + height, not (covered index (px, py))]
      in case find (\(px, py) -> pixel frame px py /= target) strips of
           Nothing -> Nothing
           Just point@(px, py) -> Just (show color <> " border mismatch at " <> show point <> ", expected " <> show target <> ", got " <> show (pixel frame px py))
+
+{- | Poll one output until the check passes, for up to ten seconds, and
+announce the phase under the scenario's name.
+-}
+outputPicture :: String -> FilePath -> Text -> String -> (Image -> Maybe String) -> IO ()
+outputPicture scenario socket output phase check = do
+  start <- getMonotonicTimeNSec
+  let loop = do
+        frame <- captureOutput socket output
+        case check frame of
+          Nothing -> announce (scenario <> ": " <> phase <> " pixels verified")
+          Just e -> do
+            now <- getMonotonicTimeNSec
+            if now - start < 10 * 1000 * 1000 * 1000 then threadDelay pollIntervalMicroseconds >> loop else failIntegration (phase <> ": " <> e)
+  loop
+
+-- | A virtual keyboard that outlives each wtype call, so the seat keeps a keyboard for focus.
+withKeyboard :: [(String, String)] -> IO a -> IO a
+withKeyboard environment action = bracket (startManagedProcess "virtual keyboard lifetime" environment (proc "wtype" ["-s", "60000"])) stopManagedProcess (const action)
 
 pixel :: Image -> Int -> Int -> BS.ByteString
 pixel frame x y = BS.take 3 (BS.drop ((y * imageWidth frame + x) * 3) (imageRgb frame))
