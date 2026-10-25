@@ -72,7 +72,7 @@ import Seki.Wire.Transport.Syscall (
   receiveRaw,
   sendRaw,
  )
-import System.Environment (lookupEnv)
+import System.Environment (lookupEnv, unsetEnv)
 import System.FilePath (isAbsolute, (</>))
 import System.Posix.IO (FdOption (CloseOnExec), closeFd, setFdOption)
 import System.Posix.Types (Fd (..))
@@ -100,13 +100,22 @@ data ConnectionDiscoveryError
 maxUnixSocketPathBytes :: Int
 maxUnixSocketPathBytes = 107
 
--- | Read and resolve the standard Wayland connection environment variables.
+{- | Read and resolve the standard Wayland connection environment variables.
+
+Like libwayland, this unsets @WAYLAND_SOCKET@ once it names an inherited
+descriptor. Spawned clients would otherwise prefer it over @WAYLAND_DISPLAY@
+after close-on-exec has closed the descriptor.
+-}
 discoverConnectionTarget :: IO (Either ConnectionDiscoveryError ConnectionTarget)
 discoverConnectionTarget = do
   waylandSocket <- lookupEnv "WAYLAND_SOCKET"
   waylandDisplay <- lookupEnv "WAYLAND_DISPLAY"
   runtimeDirectory <- lookupEnv "XDG_RUNTIME_DIR"
-  pure (resolveConnectionTarget waylandSocket waylandDisplay runtimeDirectory)
+  let target = resolveConnectionTarget waylandSocket waylandDisplay runtimeDirectory
+  case target of
+    Right (InheritedSocket _) -> unsetEnv "WAYLAND_SOCKET"
+    _ -> pure ()
+  pure target
 
 {- | Resolve connection variables using libwayland's precedence rules.
 

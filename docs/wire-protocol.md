@@ -238,7 +238,8 @@ declared arguments is a malformed-frame error, not ignored extension data.
 Connection discovery follows Wayland's standard environment contract:
 
 1. If `WAYLAND_SOCKET` is set, parse it as an already connected file descriptor,
-   take ownership, and set close-on-exec.
+   take ownership, set close-on-exec, and unset `WAYLAND_SOCKET` so that spawned
+   clients use `WAYLAND_DISPLAY`.
 2. Otherwise, if `WAYLAND_DISPLAY` is an absolute path, connect to it directly.
 3. Otherwise, connect to `$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY`, using `wayland-0`
    when `WAYLAND_DISPLAY` is unset.
