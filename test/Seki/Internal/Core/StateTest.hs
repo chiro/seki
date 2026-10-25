@@ -168,13 +168,14 @@ tests =
                     . cover 10 (unassignedCount st > 0) "an unassigned output"
                     . cover 20 (length (knownOutputs st) - unassignedCount st >= 2) "two or more screens"
                     $ coreInvariant (hotplugTags h) st
-        , testProperty "adding and removing keep every workspace and floating window" $ \h ->
-            let st = hotplugState h
-             in forAll anyOutput $ \o ->
-                  conjoin
-                    [ (sortedWorkspaces (f st), coreFloating (f st)) === (sortedWorkspaces st, coreFloating st)
-                    | f <- [addOutput o, removeOutput o]
-                    ]
+        , localOption (QuickCheckTests 1000) $
+            testProperty "adding and removing keep every workspace and floating window" $ \h ->
+              let st = hotplugState h
+               in forAll anyOutput $ \o ->
+                    conjoin
+                      [ (sortedWorkspaces (f st), coreFloating (f st)) === (sortedWorkspaces st, coreFloating st)
+                      | f <- [addOutput o, removeOutput o]
+                      ]
         , testProperty "removing a freshly added output undoes the addition" $ \h ->
             let st = hotplugState h
              in forAll (elements (filter (`notElem` knownOutputs st) (map OutputId [1 .. 12]))) $ \o ->

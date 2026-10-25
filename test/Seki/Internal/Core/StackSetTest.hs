@@ -232,17 +232,18 @@ tests =
         , testProperty "mapLayoutId" $ \(x :: T) -> mapLayout id x === x
         , testProperty "mapLayoutInverse" $ \(x :: T) -> mapLayout pred (mapLayout succ x) === x
         ]
-    , testGroup
-        "Floating"
-        [ testProperty "float_reversible" $ \nex@(NonEmptyWindowsStackSet x) ->
-            forAll (arbitraryWindow nex) $ \w -> sink w (float w geom x) === x
-        , testProperty "float_geometry" $ \nex@(NonEmptyWindowsStackSet x) ->
-            forAll (arbitraryWindow nex) $ \w -> Map.lookup w (floating (float w geom x)) === Just geom
-        , testProperty "float_delete" $ \nex@(NonEmptyWindowsStackSet x) ->
-            forAll (arbitraryWindow nex) $ \w -> not (w `member` delete w (float w geom x))
-        , testProperty "delete forgets the floating rectangle" $ \nex@(NonEmptyWindowsStackSet x) ->
-            forAll (arbitraryWindow nex) $ \w -> Map.member w (floating (delete w (float w geom x))) === False
-        ]
+    , localOption (QuickCheckTests 1000) $
+        testGroup
+          "Floating"
+          [ testProperty "float_reversible" $ \nex@(NonEmptyWindowsStackSet x) ->
+              forAll (arbitraryWindow nex) $ \w -> sink w (float w geom x) === x
+          , testProperty "float_geometry" $ \nex@(NonEmptyWindowsStackSet x) ->
+              forAll (arbitraryWindow nex) $ \w -> Map.lookup w (floating (float w geom x)) === Just geom
+          , testProperty "float_delete" $ \nex@(NonEmptyWindowsStackSet x) ->
+              forAll (arbitraryWindow nex) $ \w -> not (w `member` delete w (float w geom x))
+          , testProperty "delete forgets the floating rectangle" $ \nex@(NonEmptyWindowsStackSet x) ->
+              forAll (arbitraryWindow nex) $ \w -> Map.member w (floating (delete w (float w geom x))) === False
+          ]
     , testGroup
         "Screen"
         [ testProperty "screens" $ \(x :: T) -> current x `elem` screens x

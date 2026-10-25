@@ -26,9 +26,9 @@ import Seki.Internal.Core.ManageHook (
 import Seki.Internal.Core.StackSet (FloatGeom (..), StackSet (..), WindowId (..), float, insertUp, shiftWin, sink)
 import Seki.Internal.Core.StackSetGen (NonEmptyWindowsStackSet (..), T, arbitraryTag, arbitraryWindow, attach)
 import Test.QuickCheck (Gen, Property, arbitrary, elements, forAll, forAllShow, listOf, oneof, (===))
-import Test.Tasty (TestTree, testGroup)
+import Test.Tasty (TestTree, localOption, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
-import Test.Tasty.QuickCheck (testProperty)
+import Test.Tasty.QuickCheck (QuickCheckTests (..), testProperty)
 
 tests :: TestTree
 tests =
@@ -72,16 +72,17 @@ tests =
         , testCase "idHook and an empty composeAll change nothing" $
             (apply idHook w1 foot full, apply (composeAll []) w1 foot full) @?= (full, full)
         ]
-    , testGroup
-        "properties"
-        [ testProperty "q =? x is (== x) over q" propEqQuery
-        , testProperty "p --> h is h when p holds and idHook otherwise" propImplies
-        , testProperty "composeAll is right-to-left composition of the Endos" propComposeAll
-        , testProperty "idHook is the identity of composition" propIdentity
-        , testProperty "doShift i is shiftWin i on the managed window" propDoShift
-        , testProperty "doSink is sink on the managed window" propDoSink
-        , testProperty "doFloat is a client-sized float of the managed window" propDoFloat
-        ]
+    , localOption (QuickCheckTests 1000) $
+        testGroup
+          "properties"
+          [ testProperty "q =? x is (== x) over q" propEqQuery
+          , testProperty "p --> h is h when p holds and idHook otherwise" propImplies
+          , testProperty "composeAll is right-to-left composition of the Endos" propComposeAll
+          , testProperty "idHook is the identity of composition" propIdentity
+          , testProperty "doShift i is shiftWin i on the managed window" propDoShift
+          , testProperty "doSink is sink on the managed window" propDoSink
+          , testProperty "doFloat is a client-sized float of the managed window" propDoFloat
+          ]
     ]
 
 apply :: ManageHook i l -> WindowId -> WindowProps -> StackSet i l -> StackSet i l
