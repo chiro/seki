@@ -84,6 +84,7 @@ import Seki.Wire.Connection.ObjectTable (
   lookupObjectInfo,
   newObjectTable,
   objectId,
+  objectVersion,
   registerServerObject,
   validateObject,
   validateObjectHandle,
@@ -91,7 +92,6 @@ import Seki.Wire.Connection.ObjectTable (
 import Seki.Wire.Connection.Request (
   PreparedRequest (..),
   RequestPreparationError,
-  prepareInheritedObjectRequest,
   prepareNewObjectRequest,
   prepareRequest,
  )
@@ -427,7 +427,7 @@ submitInheritedObjectRequest ::
   (Object child -> RequestEncoder OwnedFd) ->
   IO (Either ConnectionError (Object child))
 submitInheritedObjectRequest connection parentInterface parent childInterface makeRequest =
-  submitInheritedObjectRequestInternal connection parentInterface parent childInterface makeRequest Nothing
+  submitNewObjectRequestInternal connection parentInterface parent childInterface (inheritedVersion parent childInterface) makeRequest Nothing
 
 {- | Submit an inherited-version object-creating request and atomically install
 the child's event route.
@@ -441,21 +441,11 @@ submitInheritedObjectRequestWithRoute ::
   EventRoute child ->
   IO (Either ConnectionError (Object child))
 submitInheritedObjectRequestWithRoute connection parentInterface parent childInterface makeRequest route =
-  submitInheritedObjectRequestInternal connection parentInterface parent childInterface makeRequest (Just route)
+  submitNewObjectRequestInternal connection parentInterface parent childInterface (inheritedVersion parent childInterface) makeRequest (Just route)
 
-submitInheritedObjectRequestInternal ::
-  Connection ->
-  Interface parent ->
-  Object parent ->
-  Interface child ->
-  (Object child -> RequestEncoder OwnedFd) ->
-  Maybe (EventRoute child) ->
-  IO (Either ConnectionError (Object child))
-submitInheritedObjectRequestInternal connection parentInterface parent childInterface makeRequest route =
-  submitPrepared connection $ \table -> do
-    (nextTable, child, prepared) <-
-      prepareInheritedObjectRequest parentInterface parent childInterface makeRequest table
-    pure (nextTable, prepared, maybe [] (pure . registerRoute childInterface child) route, child)
+-- | A child inherits its parent's version, capped at its generated maximum.
+inheritedVersion :: Object parent -> Interface child -> Word32
+inheritedVersion parent childInterface = min (objectVersion parent) (interfaceMaximumVersion childInterface)
 
 submitPrepared ::
   Connection ->
