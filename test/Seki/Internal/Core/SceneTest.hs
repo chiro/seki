@@ -17,9 +17,9 @@ import Seki.Internal.Core.StackSet (FloatGeom (..), OutputId (..), Screen (..), 
 import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..), fromWorkspaces)
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
-import Test.Tasty (TestTree, testGroup)
+import Test.Tasty (TestTree, localOption, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
-import Test.Tasty.QuickCheck (NonNegative (..), chooseInt, conjoin, counterexample, forAll, property, sublistOf, testProperty, vectorOf, (===))
+import Test.Tasty.QuickCheck (NonNegative (..), QuickCheckTests (..), chooseInt, conjoin, counterexample, forAll, property, sublistOf, testProperty, vectorOf, (===))
 
 rectangle :: Int -> Int -> Rect
 rectangle w h = either (error . show) id (mkSize (fromIntegral w) (fromIntegral h) >>= mkRect (Point (-100) 20))
@@ -220,23 +220,24 @@ floatTests =
             tiled = (floatState Full (Stack w1 [] []) [] []){corePointerOp = Just (op w1 (Resize (Corner RightEdge BottomEdge))){opMoved = False}}
         Map.lookup w2 (sceneWindows (planScene defaultSceneStyle moving (Map.singleton (OutputId 1) secondOutput) Map.empty)) @?= Just (Floating (rectAt 830 40 200 100))
         Map.lookup w1 (sceneWindows (planScene defaultSceneStyle tiled (Map.singleton (OutputId 1) secondOutput) Map.empty)) @?= Just (Placed Crop (rectAt 802 32 796 566))
-    , testProperty "every float lies inside its output with its border, and no float reaches a layout" $
-        forAll ((,,) <$> genRect <*> vectorOf 4 genRect <*> sublistOf [w1, w2, w3, w4]) $ \(bounds, stored, floated) ->
-          forAll (chooseInt (0, 20)) $ \border ->
-            let geoms = Map.fromList [(w, g) | (w, r, sized) <- zip3 [w1, w2, w3, w4] stored (cycle [True, False, True]), w `elem` floated, let g = if sized then FloatAt (OutputRect r) else ClientSized]
-                st = (fromWorkspaces (AttachedState (StackSet (Screen (Workspace (1 :: Int) Everything (Just (Stack w1 [] [w2, w3, w4]))) (OutputId 1)) [] [] geoms) [])){coreRaiseOrder = Map.keys geoms}
-                result = planScene defaultSceneStyle{sceneBorderWidth = fromIntegral border} st (Map.singleton (OutputId 1) (OutputArea bounds bounds)) Map.empty
-                b = fromIntegral border
-                outer r = toInteger (rectX r) - b >= toInteger (rectX bounds) && toInteger (rectY r) - b >= toInteger (rectY bounds) && toInteger (rectX r) + toInteger (rectWidth r) + b <= toInteger (rectX bounds) + toInteger (rectWidth bounds) && toInteger (rectY r) + toInteger (rectHeight r) + b <= toInteger (rectY bounds) + toInteger (rectHeight bounds)
-                check (w, p) = case p of
-                  Placed _ r -> counterexample (show w ++ " floats, or the layout saw a float") (property (w `notElem` floated && toInteger (rectHeight r) + 2 * b == 100 * toInteger (4 - length floated)))
-                  Floating r -> property (w `elem` floated && outer r)
-                  Centered r -> property (w `elem` floated && outer r)
-                  Resizing _ _ -> counterexample (show w ++ " is resizing with no op") (property False)
-                  Fullscreen _ -> counterexample (show w ++ " is fullscreen") (property False)
-                  HiddenFullscreen -> counterexample (show w ++ " is fullscreen") (property False)
-                  Omitted -> property True
-             in conjoin (map check (Map.toList (sceneWindows result)))
+    , localOption (QuickCheckTests 1000) $
+        testProperty "every float lies inside its output with its border, and no float reaches a layout" $
+          forAll ((,,) <$> genRect <*> vectorOf 4 genRect <*> sublistOf [w1, w2, w3, w4]) $ \(bounds, stored, floated) ->
+            forAll (chooseInt (0, 20)) $ \border ->
+              let geoms = Map.fromList [(w, g) | (w, r, sized) <- zip3 [w1, w2, w3, w4] stored (cycle [True, False, True]), w `elem` floated, let g = if sized then FloatAt (OutputRect r) else ClientSized]
+                  st = (fromWorkspaces (AttachedState (StackSet (Screen (Workspace (1 :: Int) Everything (Just (Stack w1 [] [w2, w3, w4]))) (OutputId 1)) [] [] geoms) [])){coreRaiseOrder = Map.keys geoms}
+                  result = planScene defaultSceneStyle{sceneBorderWidth = fromIntegral border} st (Map.singleton (OutputId 1) (OutputArea bounds bounds)) Map.empty
+                  b = fromIntegral border
+                  outer r = toInteger (rectX r) - b >= toInteger (rectX bounds) && toInteger (rectY r) - b >= toInteger (rectY bounds) && toInteger (rectX r) + toInteger (rectWidth r) + b <= toInteger (rectX bounds) + toInteger (rectWidth bounds) && toInteger (rectY r) + toInteger (rectHeight r) + b <= toInteger (rectY bounds) + toInteger (rectHeight bounds)
+                  check (w, p) = case p of
+                    Placed _ r -> counterexample (show w ++ " floats, or the layout saw a float") (property (w `notElem` floated && toInteger (rectHeight r) + 2 * b == 100 * toInteger (4 - length floated)))
+                    Floating r -> property (w `elem` floated && outer r)
+                    Centered r -> property (w `elem` floated && outer r)
+                    Resizing _ _ -> counterexample (show w ++ " is resizing with no op") (property False)
+                    Fullscreen _ -> counterexample (show w ++ " is fullscreen") (property False)
+                    HiddenFullscreen -> counterexample (show w ++ " is fullscreen") (property False)
+                    Omitted -> property True
+               in conjoin (map check (Map.toList (sceneWindows result)))
     ]
 
 op :: WindowId -> OpKind -> PointerOp
