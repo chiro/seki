@@ -179,7 +179,9 @@ new one when the capability returns after a removal. `pointerSnapshot`
 reports the window under the pointer, the surface-local position from the
 latest enter or motion, and press and release counts per window.
 `KeyboardSnapshot` also reports `depressedModifiers`, the `mods_depressed`
-value of the latest `wl_keyboard.modifiers`.
+value of the latest `wl_keyboard.modifiers`. `committedSizes` reports the
+size each window last acknowledged and committed, which the latency driver
+waits on after a resize or a fullscreen change.
 
 Pointer input uses a `zwlr_virtual_pointer_v1` on the default seat.
 `withVirtualPointer` opens a native connection and keeps one virtual pointer
@@ -209,8 +211,8 @@ frame readiness. The compositor must advertise
 `ext_image_copy_capture_manager_v1`, with SHM XRGB8888 or ARGB8888 support.
 Clicks require `zwlr_virtual_pointer_manager_v1`.
 The fixture accepts only normal transform and unit scale.
-Each allocation is limited to 16 MiB and each connection to 128 allocations.
-Window buffers survive until release or connection close. Captures keep their
+Each allocation is limited to 16 MiB and each connection to 128 live buffers.
+A window buffer counts until river releases it or the connection closes. Captures keep their
 local descriptor until the frame bytes have been read.
 
 The M1 scenarios use literal content rectangles for 800 by 600 outputs.
@@ -341,6 +343,7 @@ m2-size-policy=passed
 m2-pointer-drag=passed
 m2-restart=passed
 m2-restart-fallback=passed
+m2-reference-config=passed
 ```
 
 `ci/run-integration.sh` byte-compares the generated file with
