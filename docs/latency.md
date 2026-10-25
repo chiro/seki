@@ -3,9 +3,10 @@
 The opt-in `seki-latency` diagnostic and the `tools/latency/run.py` runner
 measure manage/render sequence latency and GC behavior in repeated trials and
 generate a report. They do not change production configuration or the
-executable's RTS defaults. The reviewed [reference report](latency-baseline/report.md) contains five
-alternating trials per collector and the retained compact evidence.
-Ordinary unit CI does not enforce timing budgets.
+executable's RTS defaults. Two reviewed reports keep compact evidence of five
+alternating trials per collector: the M1 [reference report](latency-baseline/report.md)
+of 2026-10-18 and the M2 [workload report](latency-m2/report.md) of
+2026-10-25. Ordinary unit CI does not enforce timing budgets.
 
 ## Run a comparison
 
@@ -15,14 +16,20 @@ shell. Make `python3` available when running these commands:
 
 ```sh
 nix develop --no-write-lock-file .#ci --command python3 tools/latency/test_report.py
-nix develop --no-write-lock-file .#ci --command python3 tools/latency/run.py artifacts/latency/reference --compiler ghc
-nix develop --no-write-lock-file .#ci --command python3 tools/latency/run.py artifacts/latency/reference --report-only
+nix develop --no-write-lock-file .#ci --command python3 tools/latency/run.py artifacts/latency/m2 --workload m2 --compiler ghc
+nix develop --no-write-lock-file .#ci --command python3 tools/latency/run.py artifacts/latency/m2 --report-only
 ```
 
-The 2026-10-18 reference report used local GHC 9.6.7 and Cabal 3.10. To
-reproduce that compiler choice with system-installed runtime dependencies, use
-`python3 tools/latency/run.py artifacts/latency/local-9.6.7 --compiler ghc-9.6.7`.
-This is a historical baseline command, not the pinned release toolchain.
+`--workload` is required to collect trials. `m2` is the M2 gate. `m1` is the
+M1 workload, still runnable on current code for comparison. Report-only mode
+reads the workload from `manifest.json`; a schema 1 manifest, written before
+workloads existed, reads as `m1`. It needs the full trial directories, so it
+cannot regenerate a retained compact report.
+
+Both retained reports used local GHC 9.6.7 and Cabal 3.10. The M2 report ran
+`WLR_RENDERER=pixman python3 tools/latency/run.py artifacts/latency/m2-2026-10-25 --workload m2 --compiler ghc-9.6.7`
+with system-installed runtime dependencies. This is a local command, not the
+pinned release toolchain.
 For collection and profile runs, pass `--compiler` explicitly; the runner
 defaults to `ghc-9.6.7`. Report-only mode does not use a compiler.
 
@@ -34,7 +41,9 @@ threaded and accepts RTS options. GHC 9.6 needs no `-eventlog` link option for
 eventlog output. Do not compile concurrently with trials.
 
 For a short feasibility check, use a new directory and
-`--trials 1 --live-steps 3 --pure-steps 512`. A supplied `--binary PATH` skips
+`--trials 1 --live-steps 3 --pure-steps 512` with `--workload m1`, or
+`--live-steps 120` with `--workload m2`, since an M2 trial is valid only when it
+exercised every M2 feature. A supplied `--binary PATH` skips
 building, records its hash and embedded compiler family, and marks its
 compiler patch version and dependency optimization flags as unverified. A
 short check is exploratory, not the five-trial report gate. Existing artifact directories are never replaced.
@@ -46,22 +55,42 @@ failure. It never attaches to an existing compositor session.
 
 ## Workloads and endpoints
 
-The live reference workload has eight solid-color native clients under Tall,
-seed 1909, 24 warmup actions and 1023 measured actions. Each group selects a
-seeded focus direction, views the empty workspace, then restores the populated
-workspace. Every operation waits for the expected native keyboard-owner change.
-Initial and restored captures check every client-content pixel against exact
-Tall rectangles, including all eight windows and omitted background regions.
-Final keyboard delivery must reach only the focused client. Captures can add
-render sequences, so the report retains the actual sequence counts. An explicit WM checkpoint waits for the completed-render idle phase after the
-last action and capture, before the driver closes the measurement interval.
-Checkpoint signal/file overhead lies inside this broad driver interval, outside
-individual sequence timers. Capture readiness alone is not a fresh-frame barrier.
+Both live workloads run on one 800 by 600 output under Tall with the default
+`Crop` policy, seed 1909, 24 warmup actions, and 1023 measured actions. The
+pure model in `tools/latency/Seki/Latency/Workload.hs` names the windows, the
+seeded plan, what the probe observes after each action, and the expected
+picture; `test/Seki/Run/LatencyWorkloadTest.hs` checks it without river.
+
+- **m1** opens eight solid-color tiles. Each group selects a seeded focus
+  direction, views the empty workspace, then restores the populated workspace.
+- **m2** opens six tiles and then two parent-hinted dialogs of the first tile,
+  which the WM's `isDialog --> doFloat` hook floats at their fixed 300 by 200
+  and 200 by 300 sizes, overlapping each other. Each group changes focus, which
+  raises a focused dialog and exits fullscreen; sends Shrink or Expand, so every
+  tile gets a new size and a new content clip box; may request client
+  fullscreen on a focused tile; views the empty workspace and back, which hides
+  and restores a fullscreen window; and may request the fullscreen exit. Over
+  the measured actions it makes 225 resizes, 90 fullscreen entries, 58 exits by
+  focus, 32 exits by request, 90 hidden-fullscreen views, and 24 dialog raises.
+
+Every action waits until the probe observes the expected keyboard owner and the
+size every window last committed. The plan's tests prove that each action
+changes that observation, so no barrier passes without waiting. The barrier is
+the client's commit, not a fresh frame. Pictures are polled and checked against
+every pixel before the measured interval, after it, and after the restoring
+actions: content shows its window's exact color, and borders and background
+show no probe color. Final keyboard delivery must reach only the focused
+client. No capture runs inside the interval, so captures add no render
+sequences to the quantiles. An explicit WM checkpoint waits for the
+completed-render idle phase after the last action, before the driver closes
+the measurement interval. Checkpoint signal/file overhead lies inside this
+broad driver interval, outside individual sequence timers.
 
 The fixture acknowledges every configure and commits it. Unchanged dimensions
-reuse current surface content. Genuine resizes allocate a new buffer. The
-fixture's 128 lifetime-buffer limit applies. The workload does not measure
-resize throughput or more than eight native windows.
+reuse current surface content. Genuine resizes allocate a new buffer, and a
+buffer river releases is freed, so the fixture's limit of 128 counts live
+buffers. The workloads do not measure more than eight native windows, pointer
+operations, or a restart.
 
 The runtime optionally keeps at most 100,000 strict sequence samples. Disabled
 instrumentation reads no clocks and stores no samples. A sample starts at
@@ -79,11 +108,14 @@ and requires the entire interval to lie inside the WM sample history.
 
 Pure mode uses 32 windows, 20,000 events, and 128 warmup events with the same seed.
 It exercises focus, swaps, workspace changes, shifts, Tall sizing/master counts,
-Tall/Mirror/Full selection, floating bookkeeping and intents. Concrete random
+Tall/Mirror/Full selection, floating bookkeeping and intents. The m2 workload
+starts with the two newest windows as client-sized dialog floats of window 1,
+planned with those parent links, and adds a fullscreen toggle on the focus, a
+client fullscreen request, a click on a dialog, and floating window 3. Concrete random
 operation codes and initial state are forced before measurement. Every timed
 iteration runs production `drainCore` and `planScene`, then a strict structural
-checksum fold over all state, layout, tag, stack, floating, intent and scene
-fields. The next iteration therefore receives an already forced state. Fold
+checksum fold over all state, layout, tag, stack, floating, fullscreen,
+pointer-op, intent and scene fields, including each tile's size policy. The next iteration therefore receives an already forced state. Fold
 overhead is included. Membership, tag, focus, stacking and geometry invariants run after
 each timer; a separate replay must produce the same retained checksum.
 
@@ -93,8 +125,10 @@ Each trial retains `wm.json`, `wm.rts`, `driver.json`, `pure.json`, `pure.rts`,
 process identities, two WM RTS checkpoints, and process logs. `manifest.json`
 records machine/CPU, binary hash, compiler, river version, actual build command,
 RTS flags, seed, workload, trial order and host load. `summary.json` contains
-per-trial quantiles, counts, collector statistics and budget outcomes;
-`report.md` gives medians and ranges across trials. Keep the compact summary
+per-trial quantiles, counts, collector statistics, exercise counts and budget
+outcomes; `report.md` gives medians and ranges across trials, a generated
+budgets section that names each miss with its value, manage and render
+sequences per measured action, and the m2 exercise counts. Keep the compact summary
 with the reviewed report. Bulk raw artifacts may remain under ignored
 `artifacts/latency/`.
 
@@ -118,7 +152,7 @@ select a collector winner without repeatable evidence and an identified limiter.
 ## Separate profile run
 
 ```sh
-nix develop --no-write-lock-file .#ci --command python3 tools/latency/run.py artifacts/latency/profile --compiler ghc --profile
+nix develop --no-write-lock-file .#ci --command python3 tools/latency/run.py artifacts/latency/profile --workload m2 --compiler ghc --profile
 ```
 
 Profile mode runs one normal-collector live workload with eventlog output and
