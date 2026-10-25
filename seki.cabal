@@ -306,7 +306,7 @@ test-suite seki-public
   type:           exitcode-stdio-1.0
   hs-source-dirs: test-public
   main-is:        Main.hs
-  other-modules:  ConfigMain
+  other-modules:  ConfigMain PortedConfig
   build-depends:
     base >=4.18 && <4.19,
     seki
