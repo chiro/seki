@@ -154,6 +154,12 @@ Duplicate key or pointer bindings, empty workspace lists or duplicate tags, nega
 and colors whose RGB channels exceed alpha fail before Wayland startup.
 `BorderColor` channels are unsigned 32-bit premultiplied RGBA values.
 
+[`test-public/PortedConfig.hs`](test-public/PortedConfig.hs) ports a complete
+xmonad.hs and can serve as a starting point for your own. Its module
+documentation lists what changes in a port: `className =?` becomes
+`appId =?`, `avoidStruts` and `ewmhFullscreen` need nothing, and `docks` and
+`ewmh` have no equivalent until M3's bar IPC.
+
 `Action` is pure. Use `windows`, `sendMessage`, `spawn`, `spawnOnce`, `kill`,
 `float`, `sink`, `toggleFullscreen`, `restart`, and `withFocused` to change state or record effects. Arbitrary IO is not part of the configuration API.
 Import `Seki.Core.StackSet` qualified for its full operation set; `Seki`
