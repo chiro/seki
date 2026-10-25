@@ -49,6 +49,7 @@ module Seki.Internal.Core.State (
   startPointerOp,
   applyOpInput,
   syncPointerOp,
+  normalizeCore,
 ) where
 
 import Control.Monad (mfilter)
@@ -252,6 +253,13 @@ applyOpInput seat running input st = case corePointerOp st of
         }
     OpReleased -> st{corePointerOp = Nothing}
   _ -> st
+
+{- | Raise a focused float, drop fullscreen windows that no longer focus their
+workspace, and end an op whose window no longer allows it. Normalizing twice
+changes nothing more.
+-}
+normalizeCore :: CoreState i l -> CoreState i l
+normalizeCore = syncPointerOp . syncFullscreen . syncRaiseOrder
 
 {- | Keep the op only while its window is managed on an attached StackSet, not
 fullscreen, and floating or not yet moved. So a close, a sink after a move, or
