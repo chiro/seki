@@ -21,7 +21,7 @@ import Seki.Internal.Core.ManageHook (ManageHook, WindowProps, runQuery)
 import Seki.Internal.Core.PointerOp (OpId, OpRequest, SeatId)
 import Seki.Internal.Core.PointerOp qualified as PointerOp
 import Seki.Internal.Core.StackSet (OutputId, WindowId)
-import Seki.Internal.Core.State (CoreState (..), addOutput, applyOpInput, focusWindowIn, manageWindow, overWorkspaces, removeOutput, startPointerOp, syncFullscreen, syncPointerOp, syncRaiseOrder, unmanageWindow)
+import Seki.Internal.Core.State (CoreState (..), addOutput, applyOpInput, focusWindowIn, manageWindow, normalizeCore, overWorkspaces, removeOutput, startPointerOp, unmanageWindow)
 
 -- | A change river reported, or a key binding's action.
 data CoreEvent i l
@@ -47,7 +47,7 @@ event ends by raising a focused float, dropping fullscreen windows that no
 longer focus their workspace, and ending an op whose window no longer allows it.
 -}
 stepCore :: (Eq i) => ManageHook i l -> CoreEvent i l -> CoreState i l -> (CoreState i l, [Intent])
-stepCore hook event = first (syncPointerOp . syncFullscreen . syncRaiseOrder) . reduce hook event
+stepCore hook event = first normalizeCore . reduce hook event
 
 reduce :: (Eq i) => ManageHook i l -> CoreEvent i l -> CoreState i l -> (CoreState i l, [Intent])
 reduce hook event st = case event of
