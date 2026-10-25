@@ -1,6 +1,6 @@
 # Real-river Integration Tests
 
-Status: **release gate for M0 and later work** / Last updated: 2026-10-18
+Status: **release gate for M0 and later work** / Last updated: 2026-10-25
 
 The `seki-integration` Cabal component exercises seki against a real river
 compositor and real Wayland, Xwayland, and input-method clients. It runs river
@@ -103,6 +103,7 @@ nix develop --no-write-lock-file .#unit --command cabal test all
 | `m2-pointer-drag` | With the logo modifier held, a button 1 press with no motion on the bottom stack tile of three focuses it and leaves it tiled. A button 1 drag of 200 by 150 floats it at its tile's content box moved by that offset while the other two retile, and a second drag moves the float by exactly 100 by 50. A button 3 drag of 60 by 40 grows it from its bottom-right corner by that amount, and a button 3 drag toward a smaller size stops at the window's 300 by 200 minimum with its top-left fixed | `wlr-randr` |
 | `m2-restart` | The real `seki` executable, started by a bare name found on `PATH` through a symlink, restarts with Mod-q. Workspace 1 holds two tiles under Mirror Tall and a dialog float moved by a logo drag, and workspace 2 holds a fullscreen window. Both workspaces show the same pixels, byte for byte, before and after; the pid stays, argv[0] keeps the symlink, keyboard focus returns to the dialog, and the workspace bindings work after the exec. `ci/run-integration.sh` passes the executable in `SEKI_EXECUTABLE` | `wlr-randr` |
 | `m2-restart-fallback` | The restart supervisor runs in the test process with a target that passes the restart check but cannot exec. F3 stops the session, the exec fails, and the next session reconnects and restores: workspace 1's tile and floating dialog and workspace 2's window show the same pictures after the restart | `wlr-randr` |
+| `m2-reference-config` | The `seki-reference-config` executable, the ported reference configuration in `test-public/PortedConfig.hs`, runs with a private `HOME` and a `PATH` of stubs that log each launch. Each of its four startup commands runs once after the first output. An `Emacs` app_id window goes to workspace `emacs` while `term` keeps its own two tiles with the port's 1-pixel red and `#0000dd` borders. A click focuses a tile and also reaches its client. Mod-Shift-Return, `XF86AudioRaiseVolume`, and Mod-Shift-l launch their commands. After Mod-q the Emacs window is still on `emacs` with keyboard focus, `XF86AudioLowerVolume` works, and no startup command ran again. `ci/run-integration.sh` passes the executable in `SEKI_REFERENCE_CONFIG_EXECUTABLE` | `wlr-randr` |
 
 All scenarios also use the core river, foot, and synthetic-input fixture as
 needed. The CI shell in `flake.nix` provides the integration dependency set,

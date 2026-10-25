@@ -359,6 +359,14 @@ Tests:
 - its `manageHook` shifts an `Emacs` app_id window to `emacs`; and
 - its startup hook spawns each command once across a restart.
 
+Status (2026-10-25): implemented. `seki-public` checks the port's modifier,
+terminal, workspaces, borders, layouts, and added keys, and the
+`seki-reference-config` executable builds it with `-Werror`. The
+`m2-reference-config` scenario runs that executable on real river with
+logging stubs on `PATH` and covers the three tests above, the click, the
+terminal, volume, and lock bindings, and the bindings after a restart. The
+port's module documentation names each deviation from the oracle.
+
 ### WP10. Latency evidence and closeout
 
 Deliverables:
