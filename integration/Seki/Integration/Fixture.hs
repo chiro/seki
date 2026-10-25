@@ -2,6 +2,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Seki.Integration.Fixture (
+  NestedRiver (..),
+  withNestedRiver,
   Fixture (..),
   Box (..),
   Paint (..),
@@ -67,8 +69,17 @@ data Box = Box Int Int Int Int deriving (Eq, Show)
 -- | A window's content box and whether its border is focused. A picture lists paints bottom to top, so a later paint's content and border hide what lies under them.
 data Paint = Paint Color Box Bool deriving (Eq, Show)
 
-withFixture :: (LayoutClass l) => PolicyConfig String l -> String -> Int -> (Fixture l -> Probe -> IO ()) -> IO ()
-withFixture policyConfig name outputCount action = do
+-- | A nested headless river with no window manager yet.
+data NestedRiver = NestedRiver
+  { riverSocket :: FilePath
+  , riverEnvironment :: [(String, String)]
+  -- ^ What a client of the nested river runs with.
+  , riverRuntimeDirectory :: FilePath
+  , riverProcess :: ManagedProcess
+  }
+
+withNestedRiver :: Int -> (NestedRiver -> IO a) -> IO a
+withNestedRiver outputCount action = do
   requireExecutables ["river", "wtype", "wlr-randr"]
   executable <- getExecutablePath
   host <- getEnvironment
@@ -82,50 +93,59 @@ withFixture policyConfig name outputCount action = do
     withUnixListener initSocket $ \listener ->
       bracket (startManagedProcess "river" riverEnv (proc "river" (riverArguments False executable initSocket))) stopManagedProcess $ \river -> do
         names <- waitForRiverInit listener river
-        let environment = fixtureEnvironment host runtime config <> [("WAYLAND_DISPLAY", nestedWaylandDisplay names)]
-            socketPath = runtime </> nestedWaylandDisplay names
-        policy <- newPolicy policyConfig >>= requireRight "production policy"
-        requests <- newIORef Map.empty
-        session <- openRiverSessionAt (UnixSocketPath socketPath) defaultObjectLimit (recordWindowRequests requests (policyRuntimeHandlers policy)) >>= requireRight "runtime"
-        result <- newEmptyMVar
-        void (forkIO (runRiverSession session >>= putMVar result))
-        let cleanup = stopManagedProcess river >> waitForRuntimeExit result
-        ( do
-            _ <- waitUntil "fixture outputs discovered" assertionTimeoutMicroseconds (readRiverInventory session) (\i -> length (riverInventoryOutputs i) == outputCount && all ((/= Nothing) . riverOutputRectangle) (riverInventoryOutputs i))
-            namesByGlobal <- outputNames socketPath
-            initialState <- readPolicyState policy
-            inventory <- readRiverInventory session
-            currentGlobal <- case coreWorkspaces initialState of
-              AttachedState ss _ -> case find ((== SS.output (SS.current ss)) . SS.OutputId . objectIdValue . ObjectTable.objectId . riverOutputObject) (riverInventoryOutputs inventory) of
-                Just output -> maybe (failIntegration "current output lacks wl_output global") pure (riverOutputWlOutputName output)
-                Nothing -> failIntegration "current core output absent from inventory"
-              HeadlessState _ -> failIntegration "initial core unexpectedly headless"
-            firstOutput <- maybe (failIntegration "current wl_output has no native name") pure (lookup currentGlobal namesByGlobal)
-            let outputs = firstOutput : filter (/= firstOutput) (map snd namesByGlobal)
-            forM_ (zip [0 :: Int ..] outputs) $ \(index, output) -> void (runProcessCapture environment "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "800x600", "--pos", show (index * 800) <> ",0", "--scale", "1", "--transform", "normal"])
-            let fixture = Fixture socketPath environment session policy outputs name requests
-            bracket (startManagedProcess "virtual keyboard lifetime" environment (proc "wtype" ["-s", "60000"])) stopManagedProcess $ \keeper ->
-              withProbe
-                socketPath
-                ( \probe ->
-                    action fixture probe
-                      `onException` (try @SomeException (keyboardSnapshot probe) >>= announce . ("native keyboard snapshot: " <>) . show)
-                )
-                `onException` (renderManagedProcessLogs keeper >>= announce)
-            _ <- waitUntil "probe windows closed" assertionTimeoutMicroseconds (readRiverInventory session) (null . riverInventoryWindows)
-            _ <- waitUntil "policy windows closed" assertionTimeoutMicroseconds (coreWorkspaces <$> readPolicyState policy) (\case AttachedState ss _ -> null (SS.allWindows ss); HeadlessState _ -> False)
-            stopManagedProcess river
-            requireRuntimeExit result >>= assertEqual "runtime shutdown" (Right RiverEnded)
-          )
-          `onException` ( do
-                            readRiverInventory session >>= announce . ((name <> " inventory: ") <>) . show
-                            readPolicyState policy >>= announce . ("core state: " <>) . show
-                            readRiverSeatBindings session >>= announce . ("seat bindings: " <>) . show
-                            readWaylandGlobalCatalog (riverWaylandSession session) >>= announce . ("Wayland globals: " <>) . show
-                            tryReadMVar result >>= announce . ("runtime result: " <>) . show
-                            renderManagedProcessLogs river >>= announce
-                        )
-          `finally` cleanup
+        action
+          NestedRiver
+            { riverSocket = runtime </> nestedWaylandDisplay names
+            , riverEnvironment = fixtureEnvironment host runtime config <> [("WAYLAND_DISPLAY", nestedWaylandDisplay names)]
+            , riverRuntimeDirectory = runtime
+            , riverProcess = river
+            }
+
+withFixture :: (LayoutClass l) => PolicyConfig String l -> String -> Int -> (Fixture l -> Probe -> IO ()) -> IO ()
+withFixture policyConfig name outputCount action =
+  withNestedRiver outputCount $ \(NestedRiver socketPath environment _ river) -> do
+    policy <- newPolicy policyConfig >>= requireRight "production policy"
+    requests <- newIORef Map.empty
+    session <- openRiverSessionAt (UnixSocketPath socketPath) defaultObjectLimit (recordWindowRequests requests (policyRuntimeHandlers policy)) >>= requireRight "runtime"
+    result <- newEmptyMVar
+    void (forkIO (runRiverSession session >>= putMVar result))
+    let cleanup = stopManagedProcess river >> waitForRuntimeExit result
+    ( do
+        _ <- waitUntil "fixture outputs discovered" assertionTimeoutMicroseconds (readRiverInventory session) (\i -> length (riverInventoryOutputs i) == outputCount && all ((/= Nothing) . riverOutputRectangle) (riverInventoryOutputs i))
+        namesByGlobal <- outputNames socketPath
+        initialState <- readPolicyState policy
+        inventory <- readRiverInventory session
+        currentGlobal <- case coreWorkspaces initialState of
+          AttachedState ss _ -> case find ((== SS.output (SS.current ss)) . SS.OutputId . objectIdValue . ObjectTable.objectId . riverOutputObject) (riverInventoryOutputs inventory) of
+            Just output -> maybe (failIntegration "current output lacks wl_output global") pure (riverOutputWlOutputName output)
+            Nothing -> failIntegration "current core output absent from inventory"
+          HeadlessState _ -> failIntegration "initial core unexpectedly headless"
+        firstOutput <- maybe (failIntegration "current wl_output has no native name") pure (lookup currentGlobal namesByGlobal)
+        let outputs = firstOutput : filter (/= firstOutput) (map snd namesByGlobal)
+        forM_ (zip [0 :: Int ..] outputs) $ \(index, output) -> void (runProcessCapture environment "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "800x600", "--pos", show (index * 800) <> ",0", "--scale", "1", "--transform", "normal"])
+        let fixture = Fixture socketPath environment session policy outputs name requests
+        bracket (startManagedProcess "virtual keyboard lifetime" environment (proc "wtype" ["-s", "60000"])) stopManagedProcess $ \keeper ->
+          withProbe
+            socketPath
+            ( \probe ->
+                action fixture probe
+                  `onException` (try @SomeException (keyboardSnapshot probe) >>= announce . ("native keyboard snapshot: " <>) . show)
+            )
+            `onException` (renderManagedProcessLogs keeper >>= announce)
+        _ <- waitUntil "probe windows closed" assertionTimeoutMicroseconds (readRiverInventory session) (null . riverInventoryWindows)
+        _ <- waitUntil "policy windows closed" assertionTimeoutMicroseconds (coreWorkspaces <$> readPolicyState policy) (\case AttachedState ss _ -> null (SS.allWindows ss); HeadlessState _ -> False)
+        stopManagedProcess river
+        requireRuntimeExit result >>= assertEqual "runtime shutdown" (Right RiverEnded)
+      )
+      `onException` ( do
+                        readRiverInventory session >>= announce . ((name <> " inventory: ") <>) . show
+                        readPolicyState policy >>= announce . ("core state: " <>) . show
+                        readRiverSeatBindings session >>= announce . ("seat bindings: " <>) . show
+                        readWaylandGlobalCatalog (riverWaylandSession session) >>= announce . ("Wayland globals: " <>) . show
+                        tryReadMVar result >>= announce . ("runtime result: " <>) . show
+                        renderManagedProcessLogs river >>= announce
+                    )
+      `finally` cleanup
 
 withHeldLogo :: Fixture l -> Probe -> IO a -> IO a
 withHeldLogo fixture probe action = do
