@@ -145,6 +145,7 @@ library seki-wire
     binary >=0.8.9 && <0.9,
     bytestring >=0.11.5 && <0.12,
     containers >=0.6.7 && <0.8,
+    directory >=1.3.8 && <1.4,
     filepath >=1.4.3 && <1.6,
     network >=3.1.4 && <3.3,
     process >=1.6.18 && <1.7,
@@ -261,6 +262,7 @@ test-suite seki-test
     Seki.Run.PolicyTest
     Seki.Run.ReconcileTest
     Seki.Run.ReconcileTraceTest
+    Seki.Run.RestartTest
     Seki.Run.RiverTest
     Seki.Run.RuntimeTest
     Seki.Run.SequenceTest
@@ -283,6 +285,8 @@ test-suite seki-test
     binary >=0.8.9 && <0.9,
     bytestring >=0.11.5 && <0.12,
     containers >=0.6.7 && <0.8,
+    directory >=1.3.8 && <1.4,
+    filepath >=1.4.3 && <1.6,
     network >=3.1.4 && <3.3,
     process >=1.6.18 && <1.7,
     seki:layer-surface-fixture,
