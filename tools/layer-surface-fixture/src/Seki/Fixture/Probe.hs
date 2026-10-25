@@ -18,6 +18,7 @@ module Seki.Fixture.Probe (
   openWindowWith,
   openWindowPending,
   keyboardSnapshot,
+  committedSizes,
   pointerSnapshot,
   requestFullscreen,
   requestExitFullscreen,
@@ -102,7 +103,7 @@ data PointerSnapshot = PointerSnapshot
   }
   deriving (Eq, Show)
 
-data Probe = Probe (Chan Input) (MVar (Either SomeException ())) (IORef KeyboardSnapshot) (IORef PointerSnapshot)
+data Probe = Probe (Chan Input) (MVar (Either SomeException ())) (IORef KeyboardSnapshot) (IORef PointerSnapshot) (IORef (Map ProbeWindow (Int32, Int32)))
 data ToplevelRequest = SetFullscreen | UnsetFullscreen | Move
 data Input
   = Open WindowSpec (MVar ProbeWindow)
@@ -138,6 +139,7 @@ data Actor = Actor
   , actorKeyboard :: IORef KeyboardSnapshot
   , actorPointer :: IORef PointerSnapshot
   , actorFiles :: IORef [OwnedFd]
+  , actorCommitted :: IORef (Map ProbeWindow (Int32, Int32))
   }
 
 data Loop = Loop
@@ -153,6 +155,7 @@ withProbe socketPath action = bracket (openSession socketPath) closeWaylandSessi
   snapshot <- newIORef (KeyboardSnapshot Nothing Map.empty 0)
   pointerState <- newIORef (PointerSnapshot Nothing Nothing Map.empty Map.empty)
   files <- newIORef []
+  committed <- newIORef Map.empty
   finished <- newEmptyMVar
   dispatcherFinished <- newEmptyMVar
   let connection = waylandConnection session
@@ -160,7 +163,7 @@ withProbe socketPath action = bracket (openSession socketPath) closeWaylandSessi
   shm <- bindOne session W.wlShmInterface 1 (Just (eventRoute W.decodeWlShmEvent (\_ _ -> pure ())))
   wm <- bindOne session Xdg.xdgWmBaseInterface 1 (Just (eventRoute Xdg.decodeXdgWmBaseEvent (\_ (Xdg.XdgWmBasePing serial) -> writeChan inputs (Ping serial))))
   seat <- bindOne session W.wlSeatInterface 1 (Just (eventRoute W.decodeWlSeatEvent (\_ event -> writeChan inputs (Seat event))))
-  let actor = Actor session inputs compositor shm wm seat snapshot pointerState files
+  let actor = Actor session inputs compositor shm wm seat snapshot pointerState files committed
       cleanupFiles = readIORef files >>= mapM_ (void . closeOwnedFd)
   bracket
     ( do
@@ -175,7 +178,7 @@ withProbe socketPath action = bracket (openSession socketPath) closeWaylandSessi
         pure (dispatcher, worker)
     )
     (\(dispatcher, worker) -> closeWaylandSession session >> killThread dispatcher >> killThread worker >> readMVar dispatcherFinished >> readMVar finished >> cleanupFiles)
-    (\_ -> watchActor finished (action (Probe inputs finished snapshot pointerState)))
+    (\_ -> watchActor finished (action (Probe inputs finished snapshot pointerState committed)))
 
 openWindow :: Probe -> Color -> IO ProbeWindow
 openWindow probe = openWindowWith probe . windowSpec
@@ -187,7 +190,7 @@ openWindowWith probe = join . openWindowPending probe
 return an action that waits up to ten seconds for its first configure.
 -}
 openWindowPending :: Probe -> WindowSpec -> IO (IO ProbeWindow)
-openWindowPending (Probe inputs _ _ _) spec = do
+openWindowPending (Probe inputs _ _ _ _) spec = do
   reply <- newEmptyMVar
   writeChan inputs (Open spec reply)
   pure (bounded "initial xdg configure" (readMVar reply))
@@ -208,13 +211,17 @@ watchActor finished action = do
         Left (Right ()) -> fail "probe actor stopped"
 
 keyboardSnapshot :: Probe -> IO KeyboardSnapshot
-keyboardSnapshot probe@(Probe _ _ snapshot _) = actorAlive probe >> readIORef snapshot
+keyboardSnapshot probe@(Probe _ _ snapshot _ _) = actorAlive probe >> readIORef snapshot
+
+-- | The size each window last acked and committed.
+committedSizes :: Probe -> IO (Map ProbeWindow (Int32, Int32))
+committedSizes probe@(Probe _ _ _ _ committed) = actorAlive probe >> readIORef committed
 
 pointerSnapshot :: Probe -> IO PointerSnapshot
-pointerSnapshot probe@(Probe _ _ _ snapshot) = actorAlive probe >> readIORef snapshot
+pointerSnapshot probe@(Probe _ _ _ snapshot _) = actorAlive probe >> readIORef snapshot
 
 actorAlive :: Probe -> IO ()
-actorAlive (Probe _ finished _ _) =
+actorAlive (Probe _ finished _ _ _) =
   tryReadMVar finished >>= \case
     Just (Left exception) -> throwIO exception
     _ -> pure ()
@@ -229,7 +236,7 @@ requestMove :: Probe -> ProbeWindow -> IO ()
 requestMove probe window = request probe window Move
 
 request :: Probe -> ProbeWindow -> ToplevelRequest -> IO ()
-request probe@(Probe inputs _ _ _) window value = do
+request probe@(Probe inputs _ _ _ _) window value = do
   actorAlive probe
   reply <- newEmptyMVar
   writeChan inputs (Request window value reply)
@@ -325,6 +332,7 @@ actorLoop actor state =
           send W.wlSurfaceInterface (windowSurface w) (W.encodeWlSurfaceAttach (Just (objectId buffer)) 0 0)
           send W.wlSurfaceInterface (windowSurface w) (W.encodeWlSurfaceDamage 0 0 width height)
         send W.wlSurfaceInterface (windowSurface w) W.encodeWlSurfaceCommit
+        modifyIORef' (actorCommitted actor) (Map.insert window (width, height))
         mapM_ (\reply -> sync session (writeChan (actorInputs actor) (Synced reply window))) (windowReply w)
         continue state{loopWindows = Map.insert window w{windowReply = Nothing, windowPaintedSize = Just (width, height)} windows}
     Synced reply window -> putMVar reply window >> continue state
