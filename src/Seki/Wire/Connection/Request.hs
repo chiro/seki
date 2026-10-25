@@ -26,17 +26,11 @@ import Seki.Wire.Connection.ObjectTable (
   objectVersion,
   validateObject,
  )
-import Seki.Wire.Types (FrameError, ObjectId, Opcode, RawFrame (..))
+import Seki.Wire.Types (FrameError, RawFrame (..))
 
 -- | A complete encoded frame and its ordered ancillary descriptors.
 data PreparedRequest fd = PreparedRequest
-  { preparedRequestSender :: ObjectId
-  , preparedRequestInterface :: Text
-  , preparedRequestName :: Text
-  , preparedRequestOpcode :: Opcode
-  , preparedRequestSince :: Word32
-  , preparedRequestDestructor :: Bool
-  , preparedRequestBytes :: ByteString
+  { preparedRequestBytes :: ByteString
   , preparedRequestFds :: [fd]
   }
   deriving (Eq, Show)
@@ -80,13 +74,7 @@ prepareRequest interface sender request table = do
   pure
     ( nextTable
     , PreparedRequest
-        { preparedRequestSender = objectId sender
-        , preparedRequestInterface = interfaceName interface
-        , preparedRequestName = requestName request
-        , preparedRequestOpcode = requestOpcode request
-        , preparedRequestSince = requestSince request
-        , preparedRequestDestructor = requestDestructor request
-        , preparedRequestBytes = bytes
+        { preparedRequestBytes = bytes
         , preparedRequestFds = descriptors
         }
     )
