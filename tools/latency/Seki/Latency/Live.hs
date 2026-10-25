@@ -4,9 +4,8 @@
 module Seki.Latency.Live (runWM, runLive) where
 
 import Control.Exception (bracket)
-import Control.Monad (forM, unless, void)
+import Control.Monad (foldM, forM, unless, void)
 import Data.Aeson (encode, object, (.=))
-import Data.Bits (shiftR)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
 import Data.IORef (atomicModifyIORef', newIORef)
@@ -23,6 +22,7 @@ import Seki.Internal.Core.Scene (defaultSceneStyle)
 import Seki.Internal.Core.StackSet qualified as S
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
 import Seki.Internal.Layout.Tall (Tall (..))
+import Seki.Latency.Workload
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Inventory (riverInventoryWindows)
 import Seki.Run.Latency
@@ -191,43 +191,37 @@ runLive directory seed steps collector = do
                   keeperPid <- managedProcessPid keeper
                   writeProcesses directory (("keyboard", keeperPid) : wmProcesses)
                   withProbe socket $ \probe -> do
-                    clients <- sequence [openWindow probe color | color <- take 8 (cycle [Red, Green, Blue])]
-                    let ordered = reverse clients
-                        lastClient = head ordered
+                    clients <- mapM (\(TileRole color) -> openWindow probe color) (windowRoles M1)
+                    let byIndex = Map.fromList (zip [0 ..] (reverse clients))
                         owner = keyboardOwner <$> keyboardSnapshot probe
-                        await target = void (waitUntil "native focus acknowledgment" assertionTimeoutMicroseconds owner (== target))
+                        await model = void (waitUntil "native focus acknowledgment" assertionTimeoutMicroseconds owner (== fmap (byIndex Map.!) (observedOwner (expectedObservation model))))
                         key number = runInputDriver clientEnv ["-k", "F" <> show (number :: Int)]
-                        advance (index, visible) code = case code of
-                          0 -> ((index + 1) `mod` 8, visible, 1)
-                          1 -> ((index + 7) `mod` 8, visible, 2)
-                          2 -> (index, False, 3)
-                          _ -> (index, True, 4)
-                        perform (index, visible) code = do
-                          let (next, shown, number) = advance (index, visible) code
-                          key number
-                          await (if shown then Just (ordered !! next) else Nothing)
-                          pure (next, shown)
-                        actions :: Word64 -> [Int]
-                        actions n = concatMap (\x -> [fromIntegral ((x `shiftR` 32) `mod` 2), 2, 3]) (tail (iterate (\x -> x * 6364136223846793005 + 1442695040888963407) n))
-                    await (Just lastClient)
+                        perform model step = do
+                          key (stepCode step + 1)
+                          let next = stepModel model step
+                          await next
+                          pure next
+                        verifyPicture model image = mapM_ fail (pictureMismatch (expectedLayers model) image)
+                        start0 = initialModel M1
+                    await start0
                     initial <- captureOutput socket name
-                    verifyPicture initial
-                    warmed <- foldActions perform (0, True) (take 24 (actions seed))
+                    verifyPicture start0 initial
+                    warmed <- foldM perform start0 (take 24 (plan M1 seed start0))
+                    let measured = take steps (plan M1 (seed + 1) warmed)
                     checkpoint wmPid 0
                     start <- getMonotonicTimeNSec
-                    final <- foldActions perform warmed (take steps (actions (seed + 1)))
+                    final <- foldM perform warmed measured
                     finalImage <- captureOutput socket name
                     checkpoint wmPid 1
                     end <- getMonotonicTimeNSec
-                    unless (snd final) (key 4 >> await (Just (ordered !! fst final)))
+                    restored <- foldM perform final (restoreSteps final)
                     keyCount <- keyboardSnapshot probe
                     runInputDriver clientEnv ["q"]
                     _ <- waitUntil "focused client receives q" assertionTimeoutMicroseconds (keyboardSnapshot probe) $ \after ->
-                      all (\client -> Map.findWithDefault 0 client (pressedKeys after) == Map.findWithDefault 0 client (pressedKeys keyCount) + if client == ordered !! fst final then 1 else 0) clients
-                    restored <- captureOutput socket name
-                    verifyPicture restored
-                    let finalVisible = snd final
-                    unless (if finalVisible then containsContent finalImage else BS.all (== 0) (imageRgb finalImage)) (fail "final visibility does not match native outcome")
+                      all (\client -> Map.findWithDefault 0 client (pressedKeys after) == Map.findWithDefault 0 client (pressedKeys keyCount) + if client == byIndex Map.! modelFocus restored then 1 else 0) clients
+                    restoredImage <- captureOutput socket name
+                    verifyPicture restored restoredImage
+                    unless (if modelShown final then containsContent finalImage else BS.all (== 0) (imageRgb finalImage)) (fail "final visibility does not match native outcome")
                     BL.writeFile
                       (directory </> "driver.json")
                       ( encode
@@ -236,14 +230,14 @@ runLive directory seed steps collector = do
                               , "seed" .= seed
                               , "steps" .= steps
                               , "observed_actions" .= steps
-                              , "windows" .= (8 :: Int)
+                              , "windows" .= length clients
                               , "warmup" .= (24 :: Int)
                               , "start_ns" .= start
                               , "end_ns" .= end
-                              , "final_focus_index" .= fst final
-                              , "final_visible" .= finalVisible
+                              , "final_focus_index" .= modelFocus final
+                              , "final_visible" .= modelShown final
                               , "native_checks" .= True
-                              , "action_codes" .= take steps (actions (seed + 1))
+                              , "action_codes" .= map stepCode measured
                               , "valid" .= True
                               ]
                           )
@@ -257,25 +251,11 @@ runLive directory seed steps collector = do
                 unless (exit == Just ExitSuccess) (fail ("WM did not exit cleanly: " <> show exit))
                 renderManagedProcessLogs river >>= writeFile (directory </> "river.log")
  where
-  foldActions _ st [] = pure st
-  foldActions f st (x : xs) = f st x >>= \next -> foldActions f next xs
   containsContent = BS.any (/= 0) . imageRgb
   checkpoint pid index = do
     maybe (fail "WM PID unavailable") (signalProcess sigUSR2) pid
     let path = directory </> ("wm-checkpoint-" <> show (index :: Int) <> ".json")
     void (waitUntil "WM RTS checkpoint" assertionTimeoutMicroseconds (doesFileExist path) id)
-  verifyPicture image = do
-    unless ((imageWidth image, imageHeight image, BS.length (imageRgb image)) == (800, 600, 800 * 600 * 3)) (fail "native output dimensions wrong")
-    let rgb x y = BS.take 3 (BS.drop ((y * 800 + x) * 3) (imageRgb image))
-        colors = map BS.pack [[0, 255, 0], [255, 0, 0], [0, 0, 255], [0, 255, 0], [255, 0, 0], [0, 0, 255], [0, 255, 0], [255, 0, 0]]
-        edges = [0, 85, 170, 256, 342, 428, 514, 600]
-        boxes = (2, 2, 396, 596) : [(402, top + 2, 396, bottom - top - 4) | (top, bottom) <- zip edges (tail edges)]
-        expected x y = [color | (color, (left, top, width, height)) <- zip colors boxes, x >= left, x < left + width, y >= top, y < top + height]
-        matches x y = case expected x y of
-          [color] -> rgb x y == color
-          [] -> rgb x y `notElem` colors
-          _ -> False
-    unless (and [matches x y | y <- [0 .. 599], x <- [0 .. 799]]) (fail "native Tall client pixels/geometry wrong")
 
 writeProcesses :: FilePath -> [(String, Maybe Int)] -> IO ()
 writeProcesses directory processes = do
