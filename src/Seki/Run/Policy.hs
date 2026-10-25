@@ -237,6 +237,7 @@ interpretIntents = foldr add (IntentPlan [] [] False)
     Spawn cmd -> plan{planLaunch = cmd : planLaunch plan}
     CloseWindow w -> plan{planClose = w : planClose plan}
     ReclaimFocus -> plan{planReclaim = True}
+    Restart -> plan
 
 -- | The output that shows the window's workspace.
 workspaceOutput :: CoreState i l -> WindowId -> Maybe OutputId

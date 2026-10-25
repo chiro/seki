@@ -19,6 +19,7 @@ module Seki.Internal.Core.Action (
   float,
   sink,
   toggleFullscreen,
+  restart,
 ) where
 
 import Control.Monad (ap)
@@ -36,6 +37,8 @@ data Intent
   | -- | Ask river to close the window.
     CloseWindow WindowId
   | ReclaimFocus
+  | -- | Replace this seki process with the executable it started from, keeping the window state.
+    Restart
   deriving (Eq, Show)
 
 -- | A state change on 'CoreState' that also records 'Intent's in order.
@@ -129,3 +132,9 @@ this does nothing.
 toggleFullscreen :: WindowId -> Action i l ()
 toggleFullscreen w = modify $ \st ->
   st{coreFullscreen = (if w `Set.member` coreFullscreen st then Set.delete else Set.insert) w (coreFullscreen st)}
+
+{- | Restart seki in place once the action has run, keeping workspaces,
+stacks, focus, layouts, floats, fullscreen windows, and the spawned-once set.
+-}
+restart :: Action i l ()
+restart = record (const [Restart])
