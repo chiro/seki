@@ -3,8 +3,8 @@
 A tiling window manager for [river](https://codeberg.org/river/river), written
 in Haskell and aiming for xmonad's semantics and configuration model.
 
-> **Status: M1 Core is complete.** See the [milestones](docs/spec.md#62-milestones)
-> and the [latency and GC report](docs/latency-baseline/report.md).
+> **Status: M2 Practical is complete.** See the [milestones](docs/spec.md#62-milestones)
+> and the [M2 latency and GC report](docs/latency-m2/report.md).
 
 ## Current status
 
@@ -24,6 +24,13 @@ implementation provides:
 - compositor-drawn focus borders and click-to-focus;
 - layer-shell support, with tiling confined to each output's non-exclusive
   area;
+- a pure `ManageHook`, a `startupHook` with `spawnOnce`, and key bindings
+  with no modifier;
+- floating windows, with dialogs floated by default and mod plus drag to move
+  and resize;
+- client and key-bound fullscreen;
+- a per-layout `Crop` or `Tolerate` policy for clients that commit a size
+  other than their tile;
 - in-place restart that keeps the window state; and
 - default key bindings, described [below](#project-direction).
 
@@ -31,7 +38,9 @@ The release integration suite exercises the native Wayland path, two outputs,
 Xwayland, and an exact Japanese input commit through fcitx5 and Mozc. Ten M1
 scenarios check captured geometry, borders, focus, workspace visibility,
 native input, layer exclusive zones and layer focus, and complete headless
-output recovery. See the
+output recovery. Ten M2 scenarios check the manage and startup hooks, floats,
+pointer drags, fullscreen, both size policies, restarts, and the ported
+reference configuration. See the
 [integration testing manual](docs/integration-testing.md) for reproduction and
 maintenance instructions.
 
@@ -44,7 +53,7 @@ these goals:
 - **The core is pure.** `StackSet`, the layout algebra (`|||`, `Mirror`, layout modifiers), and `ManageHook` are based on xmonad, with its semantics and QuickCheck properties retained where applicable. Layouts and actions are pure. Policy owns mutable state and launches effects; the runtime owns connection IO.
 - **Workspaces use xmonad-style semantics.** They form a shared pool across outputs, with `greedyView` as the default. River itself has no workspace abstraction, so seki implements this policy in the window manager.
 
-A configuration program imports `Seki` and runs `seki def`. The current M1 API supports these overrides.
+A configuration program imports `Seki` and runs `seki def`. The current API supports these overrides.
 
 ```haskell
 import Seki
@@ -129,6 +138,8 @@ started by, without following symlinks, so a binary rebuilt in place or a
 profile symlink that now points at a new build is what runs. Windows opened
 during the handover go through `manageHook`, and windows closed during it are
 forgotten. If the exec fails, the same process reconnects and restores. A
+`--restore` file that cannot be read or decoded is logged, and seki starts
+fresh. A
 layout must derive `Read` as well as `Show`, since each workspace's layout is
 saved with `show`; a layout that no longer reads after a configuration change
 falls back to `layoutHook` for that workspace alone.
@@ -175,8 +186,8 @@ Splitting the WM from the compositor changes the behavior of restarts, failures,
 
 - **The WM can exit or crash without ending the session.** River keeps the
   compositor and windows alive, and starting a window manager again restores
-  active management. M2 will use river's version 4 window identifier to
-  restore WM-owned state across a seki restart.
+  active management. seki matches windows by river's version 4 identifier to
+  restore WM-owned state across a restart.
 - **Ordinary client input remains compositor-side.** Keybinding matching also happens in the compositor, and pointer motion alone does not wake the WM. Actions handled by the WM can still be delayed by a GC pause, so pause duration remains an implementation concern.
 - **Types represent the protocol phases.** River separates window-management state from rendering state and rejects requests made in the wrong phase. `ManageM` and `RenderM` make many invalid phase-specific calls unrepresentable in the higher-level API.
 
@@ -260,7 +271,7 @@ Non-goals for seki itself: animations and window effects, multi-seat (v1 is sing
 - [`docs/m1-plan.md`](docs/m1-plan.md) — the M1 core milestone's scope,
   design decisions, work packages, exit criteria, and regression record.
 - [`docs/m2-plan.md`](docs/m2-plan.md) — the M2 practical milestone's scope,
-  decided design issues, work packages, and exit criteria.
+  design decisions, work packages, exit criteria, and regression record.
 - [`docs/wire-protocol.md`](docs/wire-protocol.md) — the native Wayland transport, XML binding generator, and current runtime.
 - [`docs/reconciliation.md`](docs/reconciliation.md) — how layout selections
   become shown, sized, and focused windows across river's manage and render
@@ -268,8 +279,8 @@ Non-goals for seki itself: animations and window effects, multi-seat (v1 is sing
 - [`docs/integration-testing.md`](docs/integration-testing.md) — how to run,
   diagnose, and maintain the isolated real-river integration suite.
 - [`docs/latency.md`](docs/latency.md) — how to measure sequence latency and
-  GC pauses, and how to read the
-  [reference report](docs/latency-baseline/report.md).
+  GC pauses, and how to read the [M1](docs/latency-baseline/report.md) and
+  [M2](docs/latency-m2/report.md) reports.
 
 ## Related projects
 
