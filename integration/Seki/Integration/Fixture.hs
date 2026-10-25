@@ -74,7 +74,9 @@ data Box = Box Int Int Int Int deriving (Eq, Show)
 -- | A window's content box and whether its border is focused. A picture lists paints bottom to top, so a later paint's content and border hide what lies under them.
 data Paint = Paint Color Box Bool deriving (Eq, Show)
 
--- | The border width and the focused and unfocused border pixels a picture expects.
+{- | The border width and the focused and unfocused border pixels a picture
+expects. A probe color equal to a border pixel is not checked for coverage.
+-}
 data BorderStyle = BorderStyle Int BS.ByteString BS.ByteString deriving (Eq, Show)
 
 -- | A nested headless river with no window manager yet.
@@ -215,8 +217,10 @@ pictureErrorWith :: BorderStyle -> [Paint] -> Image -> Maybe String
 pictureErrorWith (BorderStyle border focusedPixel unfocusedPixel) paints frame
   | (imageWidth frame, imageHeight frame) /= (800, 600) = Just ("capture dimensions " <> show (imageWidth frame, imageHeight frame))
   | BS.length (imageRgb frame) /= 800 * 600 * 3 = Just "capture byte count"
-  | otherwise = firstError (map checkColor [Red, Green, Blue] <> zipWith checkBorder [1 ..] paints)
+  | any (\(Paint color _ _) -> rgb color `elem` borderPixels) paints = Just "a painted window has a border color"
+  | otherwise = firstError (map checkColor (filter ((`notElem` borderPixels) . rgb) [Red, Green, Blue]) <> zipWith checkBorder [1 ..] paints)
  where
+  borderPixels = [focusedPixel, unfocusedPixel]
   covered index (px, py) = any (\(Paint _ (Box x y width height) _) -> px >= x - border && px < x + width + border && py >= y - border && py < y + height + border) (drop index paints)
   bounds points = case points of [] -> Nothing; _ -> Just (length points, Box (minimum (map fst points)) (minimum (map snd points)) (maximum (map fst points) - minimum (map fst points) + 1) (maximum (map snd points) - minimum (map snd points) + 1))
   checkColor color =
