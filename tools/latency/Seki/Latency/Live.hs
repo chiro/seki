@@ -6,7 +6,7 @@ module Seki.Latency.Live (runWM, runLive) where
 import Control.Exception (bracket)
 import Control.Monad (foldM, forM, unless, void)
 import Data.Aeson (encode, object, (.=))
-import Data.ByteString qualified as BS
+import Data.Aeson.Key qualified as Key
 import Data.ByteString.Lazy qualified as BL
 import Data.IORef (atomicModifyIORef', newIORef)
 import Data.Map.Strict qualified as Map
@@ -16,8 +16,9 @@ import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Stats
 import Seki.Fixture.Probe
 import Seki.Integration.Harness
-import Seki.Internal.Core.Action (windows)
-import Seki.Internal.Core.ManageHook (idHook)
+import Seki.Internal.Core.Action (sendMessage, windows)
+import Seki.Internal.Core.Layout (Resize (..))
+import Seki.Internal.Core.ManageHook (doFloat, isDialog, (-->))
 import Seki.Internal.Core.Scene (defaultSceneStyle)
 import Seki.Internal.Core.StackSet qualified as S
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
@@ -132,11 +133,11 @@ runWM socket directory = do
       , policyTags = ["1", "2"]
       , policyBindings =
           zipWith
-            (\n action -> (RiverKeyBinding n (River.RiverSeatV1ModifiersFlags 0) (Just 0), windows action))
+            (\n action -> (RiverKeyBinding n (River.RiverSeatV1ModifiersFlags 0) (Just 0), action))
             [0xffbe ..]
-            [S.focusDown, S.focusUp, S.greedyView "2", S.greedyView "1"]
+            [windows S.focusDown, windows S.focusUp, windows (S.greedyView "2"), windows (S.greedyView "1"), sendMessage Shrink, sendMessage Expand]
       , policySceneStyle = defaultSceneStyle
-      , policyManageHook = idHook
+      , policyManageHook = isDialog --> doFloat
       , policyStartupHook = pure ()
       , policyPointerBindings = []
       , policyRestore = Nothing
@@ -145,8 +146,8 @@ runWM socket directory = do
       , policyLaunch = \_ -> fail "unexpected spawn"
       }
 
-runLive :: FilePath -> Word64 -> Int -> String -> IO ()
-runLive directory seed steps collector = do
+runLive :: FilePath -> WorkloadName -> Word64 -> Int -> String -> IO ()
+runLive directory workload seed steps collector = do
   unless (steps > 0 && steps <= 10000 && collector `elem` ["normal", "nonmoving", "profile"]) (fail "invalid live workload")
   requireExecutables ["river", "wtype", "wlr-randr"]
   createDirectoryIfMissing True directory
@@ -191,42 +192,49 @@ runLive directory seed steps collector = do
                   keeperPid <- managedProcessPid keeper
                   writeProcesses directory (("keyboard", keeperPid) : wmProcesses)
                   withProbe socket $ \probe -> do
-                    clients <- foldM (\opened role -> (\w -> opened <> [w]) <$> openRole probe opened role) [] (windowRoles M1)
+                    clients <- foldM (\opened role -> (\w -> opened <> [w]) <$> openRole probe opened role) [] (windowRoles workload)
                     let byIndex = Map.fromList (zip [0 ..] (reverse clients))
-                        owner = keyboardOwner <$> keyboardSnapshot probe
-                        await model = void (waitUntil "native focus acknowledgment" assertionTimeoutMicroseconds owner (== fmap (byIndex Map.!) (observedOwner (expectedObservation model))))
+                        indexOf = Map.fromList (zip (reverse clients) [0 ..])
+                        observe = do
+                          owner <- keyboardOwner <$> keyboardSnapshot probe
+                          sizes <- committedSizes probe
+                          pure (Observation (owner >>= (`Map.lookup` indexOf)) (Map.fromList [(i, size) | (w, size) <- Map.toList sizes, Just i <- [Map.lookup w indexOf]]))
+                        await model = void (waitUntil "native observation" assertionTimeoutMicroseconds observe (== expectedObservation model))
                         key number = runInputDriver clientEnv ["-k", "F" <> show (number :: Int)]
+                        drive model step = case step of
+                          EnterFullscreen -> requestFullscreen probe (byIndex Map.! modelFocus model)
+                          ExitFullscreen -> mapM_ (requestExitFullscreen probe . (byIndex Map.!)) (modelFullscreen model)
+                          _ -> key (stepCode step + 1)
                         perform model step = do
-                          key (stepCode step + 1)
+                          drive model step
                           let next = stepModel model step
                           await next
                           pure next
-                        verifyPicture model image = mapM_ fail (pictureMismatch (expectedLayers model) image)
-                        start0 = initialModel M1
+                        awaitPicture model =
+                          void (waitUntil "native picture" assertionTimeoutMicroseconds (pictureMismatch (expectedLayers model) <$> captureOutput socket name) (== Nothing))
+                        start0 = initialModel workload
                     await start0
-                    initial <- captureOutput socket name
-                    verifyPicture start0 initial
-                    warmed <- foldM perform start0 (take 24 (plan M1 seed start0))
-                    let measured = take steps (plan M1 (seed + 1) warmed)
+                    awaitPicture start0
+                    warmed <- foldM perform start0 (take 24 (plan workload seed start0))
+                    let measured = take steps (plan workload (seed + 1) warmed)
                     checkpoint wmPid 0
                     start <- getMonotonicTimeNSec
                     final <- foldM perform warmed measured
-                    finalImage <- captureOutput socket name
                     checkpoint wmPid 1
                     end <- getMonotonicTimeNSec
+                    awaitPicture final
                     restored <- foldM perform final (restoreSteps final)
                     keyCount <- keyboardSnapshot probe
                     runInputDriver clientEnv ["q"]
                     _ <- waitUntil "focused client receives q" assertionTimeoutMicroseconds (keyboardSnapshot probe) $ \after ->
                       all (\client -> Map.findWithDefault 0 client (pressedKeys after) == Map.findWithDefault 0 client (pressedKeys keyCount) + if client == byIndex Map.! modelFocus restored then 1 else 0) clients
-                    restoredImage <- captureOutput socket name
-                    verifyPicture restored restoredImage
-                    unless (if modelShown final then containsContent finalImage else BS.all (== 0) (imageRgb finalImage)) (fail "final visibility does not match native outcome")
+                    awaitPicture restored
                     BL.writeFile
                       (directory </> "driver.json")
                       ( encode
                           ( object
                               [ "mode" .= ("live" :: String)
+                              , "workload" .= workloadText workload
                               , "seed" .= seed
                               , "steps" .= steps
                               , "observed_actions" .= steps
@@ -234,8 +242,15 @@ runLive directory seed steps collector = do
                               , "warmup" .= (24 :: Int)
                               , "start_ns" .= start
                               , "end_ns" .= end
-                              , "final_focus_index" .= modelFocus final
-                              , "final_visible" .= modelShown final
+                              , "final_model"
+                                  .= object
+                                    [ "focus" .= modelFocus final
+                                    , "shown" .= modelShown final
+                                    , "ratio" .= show (modelRatio final)
+                                    , "fullscreen" .= modelFullscreen final
+                                    , "raise" .= modelRaise final
+                                    ]
+                              , "exercised" .= object [Key.fromString n .= c | (n, c) <- exerciseCounts (exercised warmed measured)]
                               , "native_checks" .= True
                               , "action_codes" .= map stepCode measured
                               , "valid" .= True
@@ -251,7 +266,6 @@ runLive directory seed steps collector = do
                 unless (exit == Just ExitSuccess) (fail ("WM did not exit cleanly: " <> show exit))
                 renderManagedProcessLogs river >>= writeFile (directory </> "river.log")
  where
-  containsContent = BS.any (/= 0) . imageRgb
   checkpoint pid index = do
     maybe (fail "WM PID unavailable") (signalProcess sigUSR2) pid
     let path = directory </> ("wm-checkpoint-" <> show (index :: Int) <> ".json")

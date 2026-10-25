@@ -214,7 +214,7 @@ def main():
         manifest["trials"].append(item)
         write(directory / "manifest.json", manifest)
         with (trial / "driver.log").open("w") as output:
-            command = [str(binary),"live",str(trial),str(args.seed),str(args.live_steps),collector,"+RTS","-N1","-RTS"]
+            command = [str(binary),"live",str(trial),str(args.seed),str(args.live_steps),collector,"m1","+RTS","-N1","-RTS"]
             process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
             cpu = []
             deadline = time.monotonic() + max(120, args.live_steps)
