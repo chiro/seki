@@ -42,6 +42,7 @@ import Control.Monad (forM, join, unless, void, when)
 import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
+import Data.Either (isRight)
 import Data.IORef
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
@@ -249,6 +250,7 @@ actorLoop actor state =
     Released buffer descriptor -> do
       send W.wlBufferInterface buffer W.encodeWlBufferDestroy
       void (closeOwnedFd descriptor)
+      readIORef (actorFiles actor) >>= filterMIO (fmap isRight . (`withOwnedFd` const (pure ()))) >>= writeIORef (actorFiles actor)
       continue state
     Ping serial -> send Xdg.xdgWmBaseInterface (actorWm actor) (Xdg.encodeXdgWmBasePong serial) >> continue state
     Seat (W.WlSeatCapabilities flags) -> do
@@ -540,8 +542,8 @@ captureOutput socketPath outputName = bounded ("capture " <> show outputName) $
 
 makeBuffer :: Connection -> Object W.WlShm -> IORef [OwnedFd] -> Int32 -> Int32 -> W.WlShmFormatEnum -> ByteString -> (Object W.WlBuffer -> OwnedFd -> IO ()) -> IO (Object W.WlShmPool, Object W.WlBuffer, OwnedFd)
 makeBuffer connection shm files width height format pixel released = do
-  allocated <- length <$> readIORef files
-  when (allocated >= 128) (fail "fixture connection exceeded 128 buffer allocations")
+  live <- length <$> readIORef files
+  when (live >= 128) (fail "fixture connection exceeded 128 live buffers")
   let size = toInteger width * toInteger height * 4
   unless (width > 0 && height > 0 && size <= 16 * 1024 * 1024) (fail ("invalid fixture buffer size: " <> show (width, height)))
   descriptor <- createPixelFile files (BS.concat (replicate (fromIntegral size `div` 4) pixel))
