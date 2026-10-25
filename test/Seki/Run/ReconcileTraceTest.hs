@@ -7,31 +7,35 @@ import Control.Applicative ((<|>))
 import Control.Exception (onException)
 import Control.Monad (foldM_, forM, forM_, replicateM, unless, when)
 import Data.ByteString (ByteString)
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Int (Int32)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.Set qualified as Set
+import Data.Text qualified as Text
 import Data.Word (Word32)
-import Seki.Internal.Core.Action (float, sink, windows, withFocused)
+import Seki.Internal.Core.Action (float, restart, sink, windows, withFocused)
 import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), mkRect, mkSize, rectX, rectY)
-import Seki.Internal.Core.Layout (LayoutClass (..), Mirror (..), SizePolicy (..), tolerant)
+import Seki.Internal.Core.Layout (CLR (..), Choose (..), LayoutClass (..), Mirror (..), SizePolicy (..), tolerant)
 import Seki.Internal.Core.ManageHook (ManageHook, appId, doFloat, doShift, idHook, isDialog, (-->), (=?))
 import Seki.Internal.Core.PointerOp (OpKind (..))
+import Seki.Internal.Core.Restore (OutputKey (..), RestoreState (..), SavedWorkspace (..), WindowKey (..))
 import Seki.Internal.Core.Scene (defaultSceneStyle)
-import Seki.Internal.Core.StackSet (FloatGeom (..), StackSet (..), WindowId (..), focusDown, index, integrate, peek, view)
+import Seki.Internal.Core.StackSet (FloatGeom (..), Screen (..), Stack (..), StackSet (..), WindowId (..), Workspace (..), focusDown, index, integrate, integrate', peek, view)
 import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..))
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.MockRiver (FrameReader, callbackDoneFrame, encodedFrame, encodedPayload, expectMockSuccess, expectRight, newFrameReader, receiveFrame, receiveKeyBindingRequest, receiveLayerShellOutputRequest, receiveLayerShellSeatRequest, receiveNewIdRequest, receivePointerBindingRequest, receiveRuntimeBinds, receiveStartupRequests, registryGlobalFrame, requireObjectId, runMock, sendFrames, withRuntimePair)
 import Seki.Run.Pointer (RiverPointerBinding (..))
-import Seki.Run.Policy (PolicyConfig (..), newPolicy, policyRuntimeHandlers, readPolicyState)
-import Seki.Run.Runtime (RiverExit (..), openRiverSessionAt, runRiverSession)
+import Seki.Run.Policy (PolicyConfig (..), newPolicy, policyRuntimeHandlers, readPolicyState, readRestoreState)
+import Seki.Run.Restart (RestartRefusal (..))
+import Seki.Run.Runtime (RiverExit (..), RiverRuntimeError, openRiverSessionAt, readRiverInventory, runRiverSession)
 import Seki.Run.Xkb (RiverKeyBinding (..))
-import Seki.Wire.Arguments (ArgumentEncoder, DecodeResult (..), getInt, putInt, putNewId, putNullableObject, putNullableString, putObject, putUint, runCompleteArgumentDecoder)
+import Seki.Wire.Arguments (ArgumentEncoder, DecodeResult (..), getInt, putInt, putNewId, putNullableObject, putNullableString, putObject, putString, putUint, runCompleteArgumentDecoder)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
-import Seki.Wire.Transport (Transport, closeTransport)
-import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..))
+import Seki.Wire.Transport (ReceivedChunk (..), Transport, closeTransport, receiveChunk)
+import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..), objectIdValue)
 import Test.Tasty (TestName, TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertEqual, assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck (arbitrary, elements, forAll, frequency, ioProperty, testProperty, vectorOf, withMaxSuccess)
@@ -64,6 +68,9 @@ tests =
     , testCase "a binding drag floats a tile at its shown box, moves it with set_position alone, and ends with op_end" testPointerMove
     , testCase "a left-edge resize informs the client before proposing and keeps the right edge under a smaller commit" testPointerResize
     , testCase "an op that replaces another starts in the sequence after the one that ends it" testPointerSwap
+    , testCase "a refused restart logs why and sends no stop" testRestartRefused
+    , testCase "a restart that passes its check sends stop after manage_finish and destroy on finished" testRestartStops
+    , testCase "a restore keeps saved windows in their tile and places the rest by the manage hook" testRestoreTrace
     , pointerProperty
     ]
  where
@@ -179,7 +186,7 @@ testTrace layout tiles steps = withRuntimePair $ \target peer -> do
             pure model'
     foldM_ run (map (const (Model Nothing Nothing Nothing Nothing Nothing Nothing Nothing)) traced) (steps ++ replicate 3 (Step 100 True (0, 0) []))
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig layout [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
+  policy <- expectRight =<< newPolicy (PolicyConfig layout [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -209,7 +216,7 @@ testFamilies = withRuntimePair $ \target peer -> do
   w4 <- requireObjectId 0xff0000a3
   output <- requireObjectId 0xff0000a4
   seat <- requireObjectId 0xff0000a5
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader
     (manager, _, layerShell) <- handshake reader peer
@@ -337,7 +344,7 @@ testChildUnderFull = withRuntimePair $ \target peer -> do
     requests parent 4 parentFocusedRender @?= []
     stacked [parentNode, childNode] parentFocusedRender @?= []
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) (isDialog --> doFloat) (pure ()) [])
+  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) (isDialog --> doFloat) (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -388,7 +395,7 @@ testFullSelection = withRuntimePair $ \target peer -> do
     requests seat 1 refocused @?= [focusPayload]
     _ <- render
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [(focusKey, windows focusDown)] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
+  policy <- expectRight =<< newPolicy (PolicyConfig Full [1 :: Int] [(focusKey, windows focusDown)] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -442,7 +449,7 @@ testTileFloats = withRuntimePair $ \target peer -> do
     requests node 1 resized @?= [recentered]
     assertEqual "a float stays unclipped" [] (requests window 22 resized)
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [(floatKey, withFocused float)] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [(floatKey, withFocused float)] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -496,7 +503,7 @@ testFullscreenExit = withRuntimePair $ \target peer -> do
     requests node 1 settled @?= [position]
     requests window 4 settled @?= []
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -541,7 +548,7 @@ testCropAcrossFullscreen = withRuntimePair $ \target peer -> do
     narrowClip <- clipBox 146 96
     assertEqual "after exit an oversized commit is clipped to the narrower tile" [narrowClip] (requests window 22 settled)
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -587,7 +594,7 @@ fullscreenOnRemovedOutput tags afterRemoval = withRuntimePair $ \target peer -> 
     forM_ [20, 3] $ \opcode -> requests window opcode removed @?= []
     afterRemoval removed window second
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) tags [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) tags [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -608,7 +615,7 @@ testFullscreenHidden = withRuntimePair $ \target peer -> do
   window <- requireObjectId 0xff000100
   output <- requireObjectId 0xff000101
   seat <- requireObjectId 0xff000102
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2] [(viewKey 1, windows (view 1)), (viewKey 2, windows (view 2))] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2] [(viewKey 1, windows (view 1)), (viewKey 2, windows (view 2))] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader
     (manager, xkb, layerShell) <- handshake reader peer
@@ -701,7 +708,7 @@ testFullscreenShownElsewhere = withRuntimePair $ \target peer -> do
     shownRender <- render
     requests window 5 shownRender @?= [mempty]
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2, 3] [(viewKey t, windows (view t)) | t <- [1, 2, 3]] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [])
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2, 3] [(viewKey t, windows (view t)) | t <- [1, 2, 3]] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -713,7 +720,7 @@ testFullscreenLostWhileHidden = withRuntimePair $ \target peer -> do
   output <- requireObjectId 0xff000121
   seat <- requireObjectId 0xff000122
   shifted <- requireObjectId 0xff000123
-  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2] [(viewKey 2, windows (view 2))] defaultSceneStyle (\_ -> pure ()) (appId =? "mpv" --> doShift 1) (pure ()) [])
+  policy <- expectRight =<< newPolicy (PolicyConfig (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2] [(viewKey 2, windows (view 2))] defaultSceneStyle (\_ -> pure ()) (appId =? "mpv" --> doShift 1) (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader
     (manager, xkb, layerShell) <- handshake reader peer
@@ -753,7 +760,7 @@ moveBinding :: RiverPointerBinding
 moveBinding = RiverPointerBinding 0x110 (River.RiverSeatV1ModifiersFlags 64)
 
 pointerConfig :: l -> ManageHook Int l -> PolicyConfig Int l
-pointerConfig layout hook = PolicyConfig layout [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) hook (pure ()) [(moveBinding, Move)]
+pointerConfig layout hook = PolicyConfig layout [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) hook (pure ()) [(moveBinding, Move)] Nothing (pure (Right ())) (\_ -> pure ())
 
 -- | One window on a 200 by 100 output and a seat with the move binding, after the window is shown and focused.
 data PointerTrace = PointerTrace
@@ -978,3 +985,103 @@ handshake reader peer = do
     , callbackDoneFrame callback 1
     ]
   receiveRuntimeBinds reader peer
+
+-- | A policy whose startup hook restarts, so the first manage sequence carries the restart.
+restartingConfig :: IO (Either RestartRefusal ()) -> (String -> IO ()) -> PolicyConfig Int Full
+restartingConfig = PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook restart [] Nothing
+
+restartTrace :: PolicyConfig Int Full -> (FrameReader -> Transport -> ObjectId -> IO ()) -> IO (Either RiverRuntimeError RiverExit)
+restartTrace config afterFirstManage = withRuntimePair $ \target peer -> do
+  output <- requireObjectId 0xff0000d0
+  done <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (manager, _, layerShell) <- handshake reader peer
+    sendFrames peer [event manager 7 (putNewId output)]
+    ls <- receiveLayerShellOutputRequest reader peer layerShell output
+    sendFrames peer [event output 2 (putInt 0 >> putInt 0), event output 3 (putInt 200 >> putInt 100), event ls 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100), event manager 2 (pure ())]
+    _ <- readUntil reader peer manager 2
+    afterFirstManage reader peer manager
+  policy <- expectRight =<< newPolicy config
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
+  result <- runRiverSession session
+  expectMockSuccess done
+  pure result
+
+testRestartRefused :: Assertion
+testRestartRefused = do
+  logged <- newIORef []
+  result <- restartTrace (restartingConfig (pure (Left (TargetMissing "/nonexistent/seki"))) (\line -> modifyIORef' logged (line :))) $ \reader peer manager -> do
+    sendFrames peer [event manager 3 (pure ())]
+    rendered <- readUntil reader peer manager 4
+    requests manager 0 rendered @?= []
+    closeTransport peer
+  result @?= Right RiverEnded
+  readIORef logged >>= (@?= ["restart refused: /nonexistent/seki does not exist"])
+
+testRestartStops :: Assertion
+testRestartStops = do
+  result <- restartTrace (restartingConfig (pure (Right ())) (\_ -> pure ())) $ \reader peer manager -> do
+    stop <- receiveFrame reader peer
+    (rawFrameSender stop, rawFrameOpcode stop) @?= (manager, Opcode 0)
+    sendFrames peer [event manager 1 (pure ())]
+    destroy <- receiveFrame reader peer
+    (rawFrameSender destroy, rawFrameOpcode destroy) @?= (manager, Opcode 1)
+    receiveChunk peer 8 >>= \case
+      Right Nothing -> pure ()
+      other -> assertFailure ("expected the runtime to close the connection, got " <> show (fmap (fmap receivedBytes) other))
+  result @?= Right RiverStopped
+
+{- | Two windows whose identifiers were saved in workspace 1 under its Full
+layout, one window with a new identifier, and two windows that share an
+identifier the save names. The saved two come back in their tile and stack
+order; the other three go through the manage hook to workspace 2.
+-}
+testRestoreTrace :: Assertion
+testRestoreTrace = withRuntimePair $ \target peer -> do
+  ws@[m1, m2, u, d1, d2] <- mapM requireObjectId [0xff0000e0, 0xff0000e1, 0xff0000e2, 0xff0000e3, 0xff0000e4]
+  output <- requireObjectId 0xff0000e5
+  logged <- newIORef []
+  let tall = Tall 1 (1 / 10) (1 / 2)
+      key = WindowKey . Text.pack
+      saved =
+        RestoreState
+          [ SavedWorkspace 1 (Just (OutputKey 56)) (show (Choose CR tall Full)) (Just (Stack (key "m1") [] [key "m2", key "gone", key "dup"]))
+          , SavedWorkspace 2 Nothing (show (Choose CL tall Full)) Nothing
+          ]
+          []
+          Set.empty
+          (Set.fromList ["foot"])
+      config = PolicyConfig (Choose CL tall Full) [1 :: Int, 2] [] defaultSceneStyle (\_ -> pure ()) (doShift 2) (pure ()) [] (Just saved) (pure (Right ())) (\line -> modifyIORef' logged (line :))
+  policy <- expectRight =<< newPolicy config
+  done <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (manager, _, layerShell) <- handshake reader peer
+    sendFrames peer (map (event manager 6 . putNewId) ws ++ [event manager 7 (putNewId output)])
+    mapM_ (\w -> receiveNewIdRequest reader peer w (Opcode 2)) ws
+    ls <- receiveLayerShellOutputRequest reader peer layerShell output
+    sendFrames
+      peer
+      ( [event w 17 (putString (Text.pack i)) | (w, i) <- zip ws ["m1", "m2", "new", "dup", "dup"]]
+          ++ [event output 1 (putUint 56), event output 2 (putInt 0 >> putInt 0), event output 3 (putInt 200 >> putInt 100), event ls 0 (putInt 0 >> putInt 0 >> putInt 200 >> putInt 100), event manager 2 (pure ())]
+      )
+    first <- readUntil reader peer manager 2
+    fullTile <- encodedPayload (putInt 196 >> putInt 96)
+    requests m1 3 first @?= [fullTile]
+    forM_ [m2, u, d1, d2] $ \w -> requests w 3 first @?= []
+    closeTransport peer
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
+  result <- runRiverSession session
+  expectMockSuccess done
+  result @?= Right RiverEnded
+  st <- readPolicyState policy
+  let window = WindowId . objectIdValue
+  case coreWorkspaces st of
+    AttachedState ss _ -> do
+      (tag (workspace (current ss)), layout (workspace (current ss)), stack (workspace (current ss))) @?= (1, Choose CR tall Full, Just (Stack (window m1) [] [window m2]))
+      map (integrate' . stack) (hidden ss) @?= [map window [d2, d1, u]]
+    HeadlessState _ -> assertFailure "expected the restored workspace on the output"
+  coreSpawnedOnce st @?= Set.fromList ["foot"]
+  readIORef logged >>= (@?= ["restore: 2 saved windows are gone"])
+  inventory <- readRiverInventory session
+  again <- readRestoreState policy inventory
+  map savedStack (savedWorkspaces again) @?= [Just (Stack (key "m1") [] [key "m2"]), Just (Stack (key "new") [] [])]
