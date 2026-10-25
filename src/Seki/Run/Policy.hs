@@ -116,6 +116,9 @@ data Policy i l = Policy
   -- ^ The startup hook until an output arrives.
   , policyPendingRestore :: IORef (Maybe (RestoreState i))
   -- ^ The saved state until the first manage sequence.
+  , policyDrainedInventory :: IORef LiveInventory
+  -- ^ The keys the last drain saw. River closes every window when it
+  -- processes stop, so the inventory at the session's end has none.
   }
 
 -- | Validate tags, binding identities and modifiers, border width, and premultiplied colors before connecting.
@@ -129,7 +132,7 @@ newPolicy config
       Left e -> pure (Left (PolicyTagError e))
       Right st -> case firstRepeat [] (map fst (policyBindings config)) of
         Just binding -> pure (Left (PolicyBindingConflict binding))
-        Nothing -> Right <$> (Policy config <$> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)) <*> newIORef (policyRestore config))
+        Nothing -> Right <$> (Policy config <$> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)) <*> newIORef (policyRestore config) <*> newIORef (LiveInventory Map.empty Map.empty))
  where
   -- River excludes capslock and numlock bits from its modifier enum.
   invalidModifiers = invalidBits . riverKeyBindingModifiers
@@ -218,6 +221,7 @@ prepareManagePlan policy snapshot = do
   events <- map ($ view) . reverse <$> atomicModifyIORef' (policyQueue policy) ([],)
   let (st, intents) = drainCore (policyManageHook (policyConfig policy)) events before
   writeIORef (policyState policy) st
+  writeIORef (policyDrainedInventory policy) (liveInventoryOf inventory)
   let effects = interpretIntents intents
   mapM_ (policyLaunch (policyConfig policy)) (planLaunch effects)
   let scene =
@@ -314,9 +318,12 @@ prepareRenderPlan policy snapshot = do
 readPolicyState :: Policy i l -> IO (CoreState i l)
 readPolicyState = readIORef . policyState
 
--- | The state to carry over, keyed by the inventory the session ended with.
-readRestoreState :: (Show l) => Policy i l -> RiverInventory -> IO (RestoreState i)
-readRestoreState policy inventory = saveCore (liveInventoryOf inventory) <$> readPolicyState policy
+{- | The state to carry over, keyed by the inventory of the last drain: the
+core holds exactly the windows that drain knew, while later events stay
+queued.
+-}
+readRestoreState :: (Show l) => Policy i l -> IO (RestoreState i)
+readRestoreState policy = saveCore <$> readIORef (policyDrainedInventory policy) <*> readPolicyState policy
 
 {- | The windows that have an identifier and the outputs that have a
 @wl_output@ name. An identifier two windows share names neither, so both

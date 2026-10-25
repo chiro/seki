@@ -30,7 +30,7 @@ import Seki.Run.MockRiver (FrameReader, encodedPayload, event, expectMockSuccess
 import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Policy (PolicyConfig (..), newPolicy, policyRuntimeHandlers, readPolicyState, readRestoreState)
 import Seki.Run.Restart (RestartRefusal (..))
-import Seki.Run.Runtime (RiverExit (..), RiverRuntimeError, openRiverSessionAt, readRiverInventory, runRiverSession)
+import Seki.Run.Runtime (RiverExit (..), RiverRuntimeError, openRiverSessionAt, runRiverSession)
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Arguments (DecodeResult (..), getInt, putInt, putNewId, putNullableObject, putNullableString, putObject, putString, putUint, runCompleteArgumentDecoder)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
@@ -1057,6 +1057,5 @@ testRestoreTrace = withRuntimePair $ \target peer -> do
     HeadlessState _ -> assertFailure "expected the restored workspace on the output"
   coreSpawnedOnce st @?= Set.fromList ["foot"]
   readIORef logged >>= (@?= ["restore: 2 saved windows are gone"])
-  inventory <- readRiverInventory session
-  again <- readRestoreState policy inventory
+  again <- readRestoreState policy
   map savedStack (savedWorkspaces again) @?= [Just (Stack (key "m1") [] [key "m2"]), Just (Stack (key "new") [] [])]
