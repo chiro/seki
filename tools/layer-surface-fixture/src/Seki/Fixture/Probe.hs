@@ -24,6 +24,7 @@ module Seki.Fixture.Probe (
   requestExitFullscreen,
   requestMove,
   captureOutput,
+  captureLayout,
   outputNames,
   Button (..),
   VirtualPointer,
@@ -496,7 +497,7 @@ captureOutput socketPath outputName = bounded ("capture " <> show outputName) $
       pure done
     (size, formats, _) <- readIORef constraints
     (width, height) <- maybe (fail "capture omitted buffer size") pure size
-    format <- if W.WlShmFormatEnumXrgb8888 `elem` formats then pure W.WlShmFormatEnumXrgb8888 else if W.WlShmFormatEnumArgb8888 `elem` formats then pure W.WlShmFormatEnumArgb8888 else fail ("capture has no supported SHM format: " <> show formats)
+    (format, toRgb) <- maybe (fail ("capture has no supported SHM format: " <> show formats)) pure (captureLayout formats)
     (_, buffer, descriptor) <- makeBuffer connection shm files (fromIntegral width) (fromIntegral height) format (BS.pack [0, 0, 0, 0]) (\_ _ -> pure ())
     result <- newIORef Nothing
     transform <- newIORef Nothing
@@ -537,8 +538,23 @@ captureOutput socketPath outputName = bounded ("capture " <> show outputName) $
               _ <- fdSeek fd AbsoluteSeek 0
               readAll fd (fromIntegral width * fromIntegral height * 4)
           )
-    let rgb = BS.pack [BS.index pixels (offset + channel) | offset <- [0, 4 .. BS.length pixels - 4], channel <- [2, 1, 0]]
-    pure (Image (fromIntegral width) (fromIntegral height) rgb)
+    pure (Image (fromIntegral width) (fromIntegral height) (toRgb pixels))
+
+{- | The first offered SHM format the capture can read, in preference order,
+with the conversion of its little-endian pixels to packed RGB.
+-}
+captureLayout :: [W.WlShmFormatEnum] -> Maybe (W.WlShmFormatEnum, ByteString -> ByteString)
+captureLayout offered =
+  case [(format, channels) | (format, channels) <- readable, format `elem` offered] of
+    (format, channels) : _ -> Just (format, \pixels -> BS.pack [BS.index pixels (offset + channel) | offset <- [0, 4 .. BS.length pixels - 4], channel <- channels])
+    [] -> Nothing
+ where
+  readable =
+    [ (W.WlShmFormatEnumXrgb8888, [2, 1, 0])
+    , (W.WlShmFormatEnumArgb8888, [2, 1, 0])
+    , (W.WlShmFormatEnumXbgr8888, [0, 1, 2])
+    , (W.WlShmFormatEnumAbgr8888, [0, 1, 2])
+    ]
 
 makeBuffer :: Connection -> Object W.WlShm -> IORef [OwnedFd] -> Int32 -> Int32 -> W.WlShmFormatEnum -> ByteString -> (Object W.WlBuffer -> OwnedFd -> IO ()) -> IO (Object W.WlShmPool, Object W.WlBuffer, OwnedFd)
 makeBuffer connection shm files width height format pixel released = do
