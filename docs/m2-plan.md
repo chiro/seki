@@ -761,8 +761,9 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
     `window_interaction`; an unbound press does.
   - A client `xdg_toplevel.move` with no button held never reaches the
     window manager: river sends no `pointer_move_requested`. With the button
-    held it does, and after `op_start_pointer` river sends `op_release` with
-    the first `op_delta`, while the button is still held.
+    held it does. The spike also saw `op_release` with the first `op_delta`
+    while the button was still held. Seki's own op does not reproduce that
+    (see the 2026-10-26 correction below).
   - Releasing the button of a binding op delivers `op_delta`, `op_release`,
     and then the binding's `released`, all before one `manage_start`. The
     `op_delta` repeats the last cumulative offset, so a press with no motion
@@ -781,8 +782,7 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
     press with no such window starts nothing.
   - A client op ends on `op_release` like any other. No fallback ends it on a
     later interaction, since river never forwards a request without a held
-    button. A client-drawn title bar therefore moves a float by the first
-    motion only on river 0.5.0.
+    button.
   - The binding's `released` also ends a binding op. It arrives after
     `op_release`, so it is normally a no-op.
   - A tiled window floats at the first nonzero delta, so the repeated
@@ -801,6 +801,13 @@ Status lifecycle and rules follow [M1 section 9](m1-plan.md#9-open-design-issues
   [ReconcileTraceTest](../test/Seki/Run/ReconcileTraceTest.hs), the hover
   test in [RuntimeTest](../test/Seki/Run/RuntimeTest.hs), and the real-river
   scenario `m2-pointer-drag`.
+- **Correction (2026-10-26, issue #24):** a client-drawn title bar drag
+  follows every motion until the release on river 0.5.0. The real-river
+  scenario `m2-client-move` moves a probe dialog by two motions with the
+  button held, and a throwaway run with zenity 4.2.2 followed nine motions.
+  River 0.5.0 sends `op_release` only after a release in op mode leaves no
+  button held (`Cursor.zig` `processButton`), so the spike's early
+  `op_release` did not come from the held drag itself.
 
 ### M2-D08. Window-manager handover on river
 
