@@ -208,7 +208,8 @@ ext-image-capture-source and ext-image-copy-capture protocols. Capture selects
 `wl_output.name`, excludes cursors, and reads real compositor SHM bytes after
 frame readiness. The compositor must advertise
 `ext_output_image_capture_source_manager_v1` and
-`ext_image_copy_capture_manager_v1`, with SHM XRGB8888 or ARGB8888 support.
+`ext_image_copy_capture_manager_v1`, with SHM XRGB8888, ARGB8888, XBGR8888, or
+ABGR8888 support.
 Clicks require `zwlr_virtual_pointer_manager_v1`.
 The fixture accepts only normal transform and unit scale.
 Each allocation is limited to 16 MiB and each connection to 128 live buffers.

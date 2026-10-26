@@ -246,6 +246,7 @@ test-suite seki-test
   main-is:        Main.hs
   other-modules:
     Seki.Fixture.LayerSurfaceTest
+    Seki.Fixture.ProbeTest
     Seki.Internal.Core.ActionTest
     Seki.Internal.Core.EventTest
     Seki.Internal.Core.GeometryGen
