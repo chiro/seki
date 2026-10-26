@@ -1,4 +1,5 @@
 {-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE ExplicitNamespaces #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 
@@ -20,8 +21,8 @@ module Seki.Fixture.Protocol.WlrVirtualPointerUnstableV1 (
   encodeZwlrVirtualPointerV1AxisDiscrete,
   encodeZwlrVirtualPointerV1Destroy,
   ZwlrVirtualPointerV1ErrorEnum (..),
-  pattern ZwlrVirtualPointerV1ErrorEnumInvalidAxis,
-  pattern ZwlrVirtualPointerV1ErrorEnumInvalidAxisSource,
+  data ZwlrVirtualPointerV1ErrorEnumInvalidAxis,
+  data ZwlrVirtualPointerV1ErrorEnumInvalidAxisSource,
   ZwlrVirtualPointerManagerV1,
   zwlrVirtualPointerManagerV1Interface,
   encodeZwlrVirtualPointerManagerV1CreateVirtualPointer,

@@ -1,4 +1,5 @@
 {-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE ExplicitNamespaces #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 
@@ -21,7 +22,7 @@ module Seki.Protocol.RiverLayerShellV1 (
   encodeRiverLayerShellV1GetOutput,
   encodeRiverLayerShellV1GetSeat,
   RiverLayerShellV1ErrorEnum (..),
-  pattern RiverLayerShellV1ErrorEnumObjectAlreadyCreated,
+  data RiverLayerShellV1ErrorEnumObjectAlreadyCreated,
   RiverLayerShellOutputV1,
   riverLayerShellOutputV1Interface,
   encodeRiverLayerShellOutputV1Destroy,

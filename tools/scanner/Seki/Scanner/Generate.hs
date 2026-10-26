@@ -96,6 +96,7 @@ makeProtocolIndex protocols =
 renderHeader :: GenerationConfig -> Protocol -> [Text]
 renderHeader config protocol =
   [ "{-# LANGUAGE EmptyDataDecls #-}"
+  , "{-# LANGUAGE ExplicitNamespaces #-}"
   , "{-# LANGUAGE OverloadedStrings #-}"
   , "{-# LANGUAGE PatternSynonyms #-}"
   , ""
@@ -168,7 +169,7 @@ enumExports :: Interface -> EnumDefinition -> Either GenerationError [Text]
 enumExports interface enumDefinition = do
   enumType <- enumTypeName interface enumDefinition
   patterns <- mapM (enumPatternName interface enumDefinition) (enumEntries enumDefinition)
-  pure ((enumType <> " (..)") : map ("pattern " <>) patterns)
+  pure ((enumType <> " (..)") : map ("data " <>) patterns)
 
 renderInterface :: ProtocolIndex -> Protocol -> Interface -> Either GenerationError [Text]
 renderInterface index currentProtocol interface = do

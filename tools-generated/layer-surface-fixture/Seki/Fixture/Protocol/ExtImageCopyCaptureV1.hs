@@ -1,4 +1,5 @@
 {-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE ExplicitNamespaces #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 
@@ -22,9 +23,9 @@ module Seki.Fixture.Protocol.ExtImageCopyCaptureV1 (
   encodeExtImageCopyCaptureManagerV1CreatePointerCursorSession,
   encodeExtImageCopyCaptureManagerV1Destroy,
   ExtImageCopyCaptureManagerV1ErrorEnum (..),
-  pattern ExtImageCopyCaptureManagerV1ErrorEnumInvalidOption,
+  data ExtImageCopyCaptureManagerV1ErrorEnumInvalidOption,
   ExtImageCopyCaptureManagerV1OptionsFlags (..),
-  pattern ExtImageCopyCaptureManagerV1OptionsFlagsPaintCursors,
+  data ExtImageCopyCaptureManagerV1OptionsFlagsPaintCursors,
   ExtImageCopyCaptureSessionV1,
   extImageCopyCaptureSessionV1Interface,
   encodeExtImageCopyCaptureSessionV1CreateFrame,
@@ -32,7 +33,7 @@ module Seki.Fixture.Protocol.ExtImageCopyCaptureV1 (
   ExtImageCopyCaptureSessionV1Event (..),
   decodeExtImageCopyCaptureSessionV1Event,
   ExtImageCopyCaptureSessionV1ErrorEnum (..),
-  pattern ExtImageCopyCaptureSessionV1ErrorEnumDuplicateFrame,
+  data ExtImageCopyCaptureSessionV1ErrorEnumDuplicateFrame,
   ExtImageCopyCaptureFrameV1,
   extImageCopyCaptureFrameV1Interface,
   encodeExtImageCopyCaptureFrameV1Destroy,
@@ -42,13 +43,13 @@ module Seki.Fixture.Protocol.ExtImageCopyCaptureV1 (
   ExtImageCopyCaptureFrameV1Event (..),
   decodeExtImageCopyCaptureFrameV1Event,
   ExtImageCopyCaptureFrameV1ErrorEnum (..),
-  pattern ExtImageCopyCaptureFrameV1ErrorEnumNoBuffer,
-  pattern ExtImageCopyCaptureFrameV1ErrorEnumInvalidBufferDamage,
-  pattern ExtImageCopyCaptureFrameV1ErrorEnumAlreadyCaptured,
+  data ExtImageCopyCaptureFrameV1ErrorEnumNoBuffer,
+  data ExtImageCopyCaptureFrameV1ErrorEnumInvalidBufferDamage,
+  data ExtImageCopyCaptureFrameV1ErrorEnumAlreadyCaptured,
   ExtImageCopyCaptureFrameV1FailureReasonEnum (..),
-  pattern ExtImageCopyCaptureFrameV1FailureReasonEnumUnknown,
-  pattern ExtImageCopyCaptureFrameV1FailureReasonEnumBufferConstraints,
-  pattern ExtImageCopyCaptureFrameV1FailureReasonEnumStopped,
+  data ExtImageCopyCaptureFrameV1FailureReasonEnumUnknown,
+  data ExtImageCopyCaptureFrameV1FailureReasonEnumBufferConstraints,
+  data ExtImageCopyCaptureFrameV1FailureReasonEnumStopped,
   ExtImageCopyCaptureCursorSessionV1,
   extImageCopyCaptureCursorSessionV1Interface,
   encodeExtImageCopyCaptureCursorSessionV1Destroy,
@@ -56,7 +57,7 @@ module Seki.Fixture.Protocol.ExtImageCopyCaptureV1 (
   ExtImageCopyCaptureCursorSessionV1Event (..),
   decodeExtImageCopyCaptureCursorSessionV1Event,
   ExtImageCopyCaptureCursorSessionV1ErrorEnum (..),
-  pattern ExtImageCopyCaptureCursorSessionV1ErrorEnumDuplicateSession,
+  data ExtImageCopyCaptureCursorSessionV1ErrorEnumDuplicateSession,
 )
 where
 

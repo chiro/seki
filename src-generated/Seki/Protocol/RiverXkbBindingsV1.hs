@@ -1,4 +1,5 @@
 {-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE ExplicitNamespaces #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 
@@ -22,7 +23,7 @@ module Seki.Protocol.RiverXkbBindingsV1 (
   encodeRiverXkbBindingsV1GetXkbBinding,
   encodeRiverXkbBindingsV1GetSeat,
   RiverXkbBindingsV1ErrorEnum (..),
-  pattern RiverXkbBindingsV1ErrorEnumObjectAlreadyCreated,
+  data RiverXkbBindingsV1ErrorEnumObjectAlreadyCreated,
   RiverXkbBindingV1,
   riverXkbBindingV1Interface,
   encodeRiverXkbBindingV1Destroy,
