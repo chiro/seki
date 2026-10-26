@@ -20,6 +20,7 @@ m2-float-dialog=passed
 m2-fullscreen=passed
 m2-size-policy=passed
 m2-pointer-drag=passed
+m2-client-move=passed
 m2-restart=passed
 m2-restart-fallback=passed
 m2-reference-config=passed
