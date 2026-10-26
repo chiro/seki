@@ -46,6 +46,7 @@ m2Scenarios =
   , ("m2-fullscreen", withFixture m2Config{policyBindings = viewBindings} "m2-fullscreen" 1 fullscreen)
   , ("m2-size-policy", sizePolicies)
   , ("m2-pointer-drag", withFixture m2Config{policyPointerBindings = policyPointerBindings (policyConfigOf def)} "m2-pointer-drag" 1 pointerDrag)
+  , ("m2-client-move", withFixture m2Config{policyManageHook = defaultManageHook} "m2-client-move" 1 clientMove)
   ]
 
 selfTest :: Fixture -> Probe -> IO ()
@@ -285,6 +286,33 @@ pointerDrag fixture probe = do
     floats >>= assertEqual "the stored box keeps its top-left and the minimum size" (floatedAt 302 202 300 200)
  where
   onFirst phase paints = picture fixture phase [(head (mOutputs fixture), paints)]
+
+{- | A client-drawn title bar drag: the dialog requests a move while the left
+button is held, and the float follows every motion until the release.
+-}
+clientMove :: Fixture -> Probe -> IO ()
+clientMove fixture probe = do
+  parent <- openWindow probe Red
+  dialog <- openWindowWith probe (windowSpec Green){specParent = Just parent, specCommit = CommitFixed 300 200}
+  onFirst "the dialog floats centered over its parent" [Paint Red fullBox False, Paint Green (Box 250 200 300 200) True]
+  dialogRiver <- riverWindow fixture "the dialog reaches river" ((== Just "seki-color-probe-2") . riverWindowAppId)
+  withVirtualPointer (mSocket fixture) (800, 600) $ \pointer -> do
+    pointerMoveTo pointer (400, 300)
+    _ <- waitUntil "the pointer is over the dialog" assertionTimeoutMicroseconds (pointerSnapshot probe) ((== Just dialog) . pointerOwner)
+    pointerPress pointer LeftButton
+    _ <- waitUntil "the held press reaches the dialog" assertionTimeoutMicroseconds (pointerSnapshot probe) ((== 1) . Map.findWithDefault 0 dialog . pointerPresses)
+    requestMove probe dialog
+    requested fixture "the move request reaches the window manager" dialogRiver PointerMoveRequested
+    pointerMoveTo pointer (450, 330)
+    onFirst "the first motion moves the dialog by its offset" [Paint Red fullBox False, Paint Green (Box 300 230 300 200) True]
+    pointerMoveTo pointer (500, 360)
+    onFirst "a second motion with the button held moves the dialog again" [Paint Red fullBox False, Paint Green (Box 350 260 300 200) True]
+    pointerRelease pointer LeftButton
+    pointerMoveTo pointer (600, 400)
+    onFirst "motion after the release leaves the dialog in place" [Paint Red fullBox False, Paint Green (Box 350 260 300 200) True]
+ where
+  onFirst phase paints = picture fixture phase [(head (mOutputs fixture), paints)]
+  fullBox = Box 2 2 796 596
 
 riverWindow :: Shared.Fixture l -> String -> (RiverWindowState -> Bool) -> IO RiverWindowState
 riverWindow fixture phase predicate =
