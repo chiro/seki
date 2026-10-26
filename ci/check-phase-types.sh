@@ -8,7 +8,9 @@ trap 'rm -rf -- "$scratch"' EXIT
 cabal build lib:seki-wire "$@"
 compiler_version=$(cabal exec "$@" -- ghc --numeric-version)
 package_db="dist-newstyle/packagedb/ghc-$compiler_version"
-wire_package=$(cabal exec "$@" -- ghc-pkg --package-db="$package_db" field z-seki-z-seki-wire id --simple-output)
+# cabal-install 3.16's exec passes ghc-pkg a -package-env flag it rejects,
+# so read the id from the registration file instead.
+wire_package=$(awk '$1 == "name:" { name = $2 } $1 == "id:" { id = $2 } END { if (name == "z-seki-z-seki-wire") print id }' "$package_db"/*-seki-wire.conf)
 
 manage_requests=(
   "proposeWindowDimensions w 100 100"
