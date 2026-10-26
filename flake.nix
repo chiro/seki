@@ -50,7 +50,6 @@
           FONTCONFIG_FILE = pkgs.makeFontsConf {
             fontDirectories = [ pkgs.dejavu_fonts ];
           };
-          LOCALE_ARCHIVE = "${pkgs.glibcLocales}/lib/locale/locale-archive";
           WLR_RENDERER = "pixman";
         };
       };
