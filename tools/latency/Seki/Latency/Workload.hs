@@ -34,7 +34,7 @@ module Seki.Latency.Workload (
 import Data.Bits (shiftR, testBit)
 import Data.ByteString qualified as BS
 import Data.Int (Int32)
-import Data.List (find, foldl')
+import Data.List (find)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, listToMaybe)

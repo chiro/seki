@@ -25,7 +25,7 @@ module Seki.Internal.Core.Restore (
   restoreCore,
 ) where
 
-import Data.Foldable (find, foldl', toList)
+import Data.Foldable (find, toList)
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
