@@ -4,14 +4,14 @@
   inputs.nixpkgs.url =
     "github:NixOS/nixpkgs/55bfb4d7437bd4e09ab7cba58a43bd68eb310044";
   inputs.nixpkgs-ghc.url =
-    "github:NixOS/nixpkgs/50ab793786d9de88ee30ec4e4c24fb4236fc2674";
+    "github:NixOS/nixpkgs/3ec636362e1816bc2f0888fa0fa2c69f1bc9e504";
 
   outputs = { nixpkgs, nixpkgs-ghc, ... }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
       toolchainPkgs = import nixpkgs-ghc { inherit system; };
-      haskellPackages = toolchainPkgs.haskell.packages.ghc966;
+      haskellPackages = toolchainPkgs.haskell.packages.ghc9141;
       ghc = haskellPackages.ghc;
       cabal = toolchainPkgs.cabal-install;
       sekiPackage = haskellPackages.callCabal2nix "seki" ./. { };
@@ -63,7 +63,7 @@
         foot = version pkgs.foot;
         ghc = version ghc;
         nixpkgs = "55bfb4d7437bd4e09ab7cba58a43bd68eb310044";
-        nixpkgs-ghc = "50ab793786d9de88ee30ec4e4c24fb4236fc2674";
+        nixpkgs-ghc = "3ec636362e1816bc2f0888fa0fa2c69f1bc9e504";
         renderer = "pixman";
         river = version pkgs.river;
         wlr-randr = version pkgs.wlr-randr;

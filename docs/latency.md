@@ -10,7 +10,7 @@ of 2026-10-18 and the M2 [workload report](latency-m2/report.md) of
 
 ## Run a comparison
 
-Use the pinned `ci` environment for river, wtype, wlr-randr, and GHC 9.6.6.
+Use the pinned `ci` environment for river, wtype, wlr-randr, and GHC 9.14.1.
 Python 3 is an additional prerequisite; `flake.nix` does not declare it in that
 shell. Make `python3` available when running these commands:
 
@@ -31,13 +31,13 @@ Both retained reports used local GHC 9.6.7 and Cabal 3.10. The M2 report ran
 with system-installed runtime dependencies. This is a local command, not the
 pinned release toolchain.
 For collection and profile runs, pass `--compiler` explicitly; the runner
-defaults to `ghc-9.6.7`. Report-only mode does not use a compiler.
+defaults to `ghc-9.14.1`. Report-only mode does not use a compiler.
 
 The runner builds once with `--enable-optimization=2` into
 `dist-newstyle/latency`. It alternates normal/nonmoving trials five times using
 the identical binary and `+RTS -N1 -T -s`; only the nonmoving side adds
 `--nonmoving-gc`. Unlike the production executable, the diagnostic is
-threaded and accepts RTS options. GHC 9.6 needs no `-eventlog` link option for
+threaded and accepts RTS options. GHC 9.14 needs no `-eventlog` link option for
 eventlog output. Do not compile concurrently with trials.
 
 For a short feasibility check, use a new directory and

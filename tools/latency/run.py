@@ -170,7 +170,7 @@ def report(directory):
               "The pure interval includes concrete structural checksum folding over every state, layout, tag, stack, floating rectangle, fullscreen window, pointer op, intent, and desired-scene field. Inputs are pre-generated and previous state fully evaluated. Independent invariants and deterministic replay occur outside the interval. Replay, serialization, and validation still contribute to pure-process lifetime RTS totals.", "",
               "Each native action waits until the probe observes the expected keyboard owner and the size every window last committed. Pictures are polled and checked pixel by pixel only outside the measured interval: before it, after it, and after the restoring actions. Final input delivery checks the target window. An idle-phase WM acknowledgment after the last action ensures the last completed render precedes interval end. Signal/checkpoint overhead lies in the broad driver interval, outside sequence timers. Startup, warmup, cleanup, and samples crossing the interval boundary remain in raw wm.json but are excluded from quantiles. Driver/native-client and river costs are excluded from WM RTS statistics.", "",
               "Scheduling, GC, and waiting remain possible limiters. Separate profile mode records a WM eventlog and Linux process CPU snapshots for WM, river, and driver; it is excluded from these trials. These observations do not identify source-level hotspots. No collector winner is inferred from noisy distributions or an unproven limiter.", "",
-              "The local compiler may differ from the repository's pinned GHC 9.6.6. Consult manifest.json for the exact compiler, build flags, platform, tools, trial order, and workload. Reproduction commands and limitations are in docs/latency.md."]
+              "The local compiler may differ from the repository's pinned GHC 9.14.1. Consult manifest.json for the exact compiler, build flags, platform, tools, trial order, and workload. Reproduction commands and limitations are in docs/latency.md."]
     write(directory / "summary.json", summary)
     (directory / "report.md").write_text("\n".join(lines) + "\n")
     return summary
@@ -223,7 +223,7 @@ def main():
     parser.add_argument("--live-steps", type=int, default=1023)
     parser.add_argument("--pure-steps", type=int, default=20000)
     parser.add_argument("--pure-windows", type=int, default=32)
-    parser.add_argument("--compiler", default="ghc-9.6.7")
+    parser.add_argument("--compiler", default="ghc-9.14.1")
     parser.add_argument("--binary", type=Path)
     parser.add_argument("--report-only", action="store_true")
     parser.add_argument("--profile", action="store_true")

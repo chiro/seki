@@ -241,7 +241,7 @@ The scanner freshness test verifies all committed native fixture bindings.
 
 The release wrapper forwards optional arguments to Cabal. For an installed
 local compiler, for example, run
-`WLR_RENDERER=pixman ci/run-integration.sh -w ghc-9.6.7 --offline`.
+`WLR_RENDERER=pixman ci/run-integration.sh -w ghc-9.14.1 --offline`.
 The default command continues to use the pinned compiler from `cabal.project`.
 
 ## Layer-surface fixture
@@ -365,7 +365,7 @@ jobs. The integration job always attempts to upload:
 
 The workflow actions, Haskell toolchain, and runtime packages are pinned.
 `flake.lock` records the source revisions and hashes. `flake.nix` uses a
-separate toolchain input because `cabal.project` requires GHC 9.6.6, while the
+separate toolchain input because `cabal.project` requires GHC 9.14.1, while the
 runtime input supplies the current pinned river/client closure. CI uses the
 `pixman` software renderer and does not depend on a runner GPU.
 

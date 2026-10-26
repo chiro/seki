@@ -1,7 +1,7 @@
 packages: .
 index-state: 2026-08-08T10:30:36Z
 
-with-compiler: ghc-9.6.6
+with-compiler: ghc-9.14.1
 write-ghc-environment-files: never
 
 -- Arch's ghc-libs package ships dynamic libraries; keeping development builds
