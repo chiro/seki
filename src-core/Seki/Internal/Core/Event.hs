@@ -13,7 +13,6 @@ module Seki.Internal.Core.Event (
 
 import Control.Monad (mfilter)
 import Data.Bifunctor (first)
-import Data.List (foldl')
 import Data.Monoid (Endo (..))
 import Data.Set qualified as Set
 import Seki.Internal.Core.Action (Action, Intent, runAction)

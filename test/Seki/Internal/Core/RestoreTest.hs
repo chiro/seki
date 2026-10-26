@@ -1,6 +1,6 @@
 module Seki.Internal.Core.RestoreTest (tests) where
 
-import Data.List (foldl', sort)
+import Data.List (sort)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe, isNothing, mapMaybe)
 import Data.Set qualified as Set
