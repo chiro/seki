@@ -8,7 +8,7 @@ import Control.Monad (foldM, unless)
 import Data.Aeson (encode, object, (.=))
 import Data.Bits (shiftR, xor)
 import Data.ByteString.Lazy qualified as BL
-import Data.List (foldl', sort)
+import Data.List (sort)
 import Data.Map.Strict qualified as Map
 import Data.Ratio (denominator, numerator)
 import Data.Set qualified as Set
