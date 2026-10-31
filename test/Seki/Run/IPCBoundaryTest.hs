@@ -1,0 +1,76 @@
+module Seki.Run.IPCBoundaryTest (tests) where
+
+import Control.Concurrent (threadDelay)
+import Control.Exception (IOException, bracket, finally, try)
+import Network.Socket
+import Seki.Internal.Config (def)
+import Seki.Run.Config (policyConfigOf)
+import Seki.Run.IPC (withIPCAt)
+import Seki.Run.Policy (newPolicy)
+import System.Directory (doesPathExist, getSymbolicLinkTarget, removeFile)
+import System.FilePath ((</>))
+import System.IO.Temp (withSystemTempDirectory)
+import System.Posix.Directory qualified as Posix
+import System.Posix.Files (createSymbolicLink, fileID, getSymbolicLinkStatus, setFileMode)
+import System.Process (createProcess, getProcessExitCode, proc, terminateProcess)
+import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.HUnit
+
+tests :: TestTree
+tests =
+  testGroup
+    "IPC endpoint ownership"
+    [ testCase "refuse foreign regular files and symlinks" $ temporary $ \path -> do
+        writeFile path "foreign"
+        refuses path
+        readFile path >>= assertEqual "foreign contents preserved" "foreign"
+        removeFile path
+        createSymbolicLink "target" path
+        refuses path
+        getSymbolicLinkTarget path >>= assertEqual "symlink preserved" "target"
+    , testCase "refuse live foreign socket and preserve its inode" $ temporary $ \path ->
+        bracket (socket AF_UNIX Stream defaultProtocol) close $ \peer -> do
+          bind peer (SockAddrUnix path)
+          listen peer 4
+          before <- getSymbolicLinkStatus path
+          refuses path
+          after <- getSymbolicLinkStatus path
+          fileID before @?= fileID after
+    , testCase "replace stale owned socket and clean own endpoint" $ temporary $ \path -> do
+        bracket (socket AF_UNIX Stream defaultProtocol) close $ \stale -> bind stale (SockAddrUnix path)
+        policy <- fresh
+        withIPCAt path policy (doesPathExist path >>= assertBool "bound endpoint exists")
+        doesPathExist path >>= assertEqual "own endpoint removed" False
+    , testCase "unsafe directory modes and read-only directory refuse startup" $
+        withSystemTempDirectory "seki-ipc-modes" $ \root -> do
+          let dir = root </> "seki"
+              path = dir </> "ipc.sock"
+          Posix.createDirectory dir 0o755
+          refuses path
+          setFileMode dir 0o500
+          refuses path `finally` setFileMode dir 0o700
+    , testCase "child processes cannot retain the server guard" $ temporary $ \path -> do
+        policy <- fresh
+        bracket
+          ( withIPCAt path policy $ do
+              (_, _, _, child) <- createProcess (proc "sleep" ["10"])
+              pure child
+          )
+          (\child -> terminateProcess child >> reap child)
+          ( \child -> do
+              getProcessExitCode child >>= assertEqual "child still running" Nothing
+              next <- fresh
+              withIPCAt path next (pure ())
+          )
+    ]
+ where
+  fresh = newPolicy (policyConfigOf def) >>= either (assertFailure . show) pure
+  temporary body = withSystemTempDirectory "seki-ipc-boundary" $ \root -> do
+    let dir = root </> "seki"
+    Posix.createDirectory dir 0o700
+    body (dir </> "ipc.sock")
+  refuses path = do
+    policy <- fresh
+    result <- try @IOException (withIPCAt path policy (pure ()))
+    assertBool "startup refused" (either (const True) (const False) result)
+  reap child = getProcessExitCode child >>= maybe (threadDelay 1000 >> reap child) (const (pure ()))

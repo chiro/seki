@@ -468,5 +468,20 @@ accepts fragmented requests, rejects oversized and invalid input, and checks
 A disconnected spawn client must not disable the next workspace command.
 The marker launcher records requests and does not execute the marker as a shell.
 Captures include `ipc-regression`, `socket-owner`, `framing`, and `slow-reader`.
-These checks do not establish title-only, real exec restart, physical input,
-two-output, exclusive-layer, or real Waybar behavior.
+`m3-ipc-metadata` checks initial state, occupied workspaces, connector names,
+immutable prior projections, and title-only updates with adversarial text.
+`m3-ipc-state` checks two outputs, exclusive layer keyboard availability,
+connection capacity, and idle subscription EOF cleanup. `m3-ipc-reconnect`
+drives real exec restart through a private virtual keyboard, observes a fresh
+CLI subscription session, and checks that a real spawn runs exactly once.
+
+`m3-ipc-perf` runs 1000 acknowledged workspace changes per load condition at
+1, 2, and 32 total connections. At the cap, 30 subscriptions remain unread.
+Command timing starts before write and ends at the applied-reply LF. Subscriber
+timing starts before the corresponding owner reducer pass and ends at receipt
+of a snapshot LF at or beyond its revision. State and JSON checks happen outside
+the interval. The 50 ms per-sample ceiling retains M3-D02's selected target.
+This probe does not measure displayed frames or prove an M2 comparison.
+
+The real Waybar, pinned Nix environment, physical input, and operator review
+remain separate acceptance gates. JSON escaping tests do not pass a visual gate.

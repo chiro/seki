@@ -45,7 +45,7 @@ may be skipped. Application replies use a separate bounded queue and are never
 replaced by snapshots. Commands have a 256 input backlog and drain in batches of
 32. At most 32 connections are active. Slow clients cannot block policy dispatch.
 Oversized snapshots produce an explicit `snapshot_too_large` error instead of a
-partial snapshot. Titles and output names are limited to 1024 Unicode characters with
+partial snapshot. Titles, output names, and layout descriptions are limited to 1024 Unicode characters with
 explicit truncation indicators. Escaped JSON byte size still obeys the line limit.
 
 The session owns admitted work and wake submission. A client disconnect, timeout,
@@ -77,3 +77,11 @@ external-configuration package proof. The public Seki configuration is unchanged
 The release shell includes Waybar and Python. The example invokes `sekictl` with a
 fixed argument list and escapes Pango markup independently from JSON encoding.
 Copy `examples/waybar/seki.py` to the path used in its accompanying config.
+
+
+Invalid requests retain a valid string request ID when JSON can be decoded.
+Malformed JSON or invalid IDs use the empty string as the error ID. Diagnostic
+messages are capped at 1024 characters. Workspace tags are identities and are
+never truncated. A configuration whose full workspace projection exceeds the
+line limit receives `snapshot_too_large`, including on subscription. Each such
+error retains the subscription's request ID.

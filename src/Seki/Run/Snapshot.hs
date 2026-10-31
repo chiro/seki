@@ -49,7 +49,8 @@ projectSnapshot session label tags revision st runtime =
       , "occupied" .= maybe False (not . null . integrate' . stack) ws
       , "visible" .= any ((== t) . tag . workspace) shown
       , "focused" .= (t == selected)
-      , "layout" .= fmap (description . layout) ws
+      , "layout" .= fmap (take 1024 . description . layout) ws
+      , "layout_truncated" .= maybe False ((> 1024) . length . take 1025 . description . layout) ws
       ]
    where
     ws = find ((== t) . tag) allWorkspaces
