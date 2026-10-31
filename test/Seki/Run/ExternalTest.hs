@@ -1,6 +1,8 @@
 module Seki.Run.ExternalTest (tests) where
 
-import Control.Exception (ErrorCall (..), throwIO, try)
+import Control.Concurrent (forkIO, killThread)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.Exception (ErrorCall (..), finally, throwIO, try)
 import Control.Monad (replicateM)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Seki.Run.External
@@ -48,4 +50,20 @@ tests =
         result <- try @ErrorCall (submitExternal (externalProducer queue) ())
         case result of Left _ -> pure (); Right _ -> assertFailure "exception lost"
         submitExternal (externalProducer queue) () >>= assertEqual "closed after exception" IngressClosed
+    , testCase "cancelling the wake owner closes pending admission" $ do
+        queue <- newExternalIngress
+        entered <- newEmptyMVar
+        blocked <- newEmptyMVar
+        done <- newEmptyMVar
+        bindExternalWake (externalLifecycle queue) (putMVar entered () >> takeMVar blocked) >>= assertBool "bound"
+        worker <- forkIO ((submitExternal (externalProducer queue) () >> pure ()) `finally` putMVar done ())
+        takeMVar entered
+        killThread worker
+        takeMVar done
+        submitExternal (externalProducer queue) () >>= assertEqual "cancelled owner closes" IngressClosed
+    , testCase "transport failure explicitly closes admission" $ do
+        queue <- newExternalIngress
+        bindExternalWake (externalLifecycle queue) (pure False) >>= assertBool "bound"
+        submitExternal (externalProducer queue) () >>= assertEqual "send failed" IngressClosed
+        drainExternal queue >>= assertEqual "no stranded work" (Drain [] False)
     ]

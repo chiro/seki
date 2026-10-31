@@ -434,3 +434,27 @@ tests and the complete release check.
 - The pinned suite targets Linux and river 0.5.0. seki's runtime minimum of
   river 0.4.5 does not establish the capture fixture's minimum version. Other
   compositor builds must provide the capture globals and formats listed above.
+
+## External ingress
+
+`m3-external-wake` uses the session-bound internal producer API. It verifies
+1000 idle workspace actions without input, arrivals during manage and render,
+explicit queue overload, FIFO progress across bounded batches, an enqueue
+after the final drain, and completion with all outputs removed and reattached.
+Each idle sample starts before admission and ends when the policy workspace
+is observed. It does not measure frame presentation. The per-action ceiling
+is 50 ms. The fixture polls at 100 microseconds for these samples.
+
+Set `SEKI_INTEGRATION_ARTIFACT_DIR` to retain successful PNG captures named
+`external-wake`, `manage-queue`, `render-queue`, `queue-limit`, `burst`,
+`drain-race`, and `headless`, with the output name appended. Captures use
+native compositor pixels and are outside timed intervals. Existing failure
+captures remain PPM. Session closure and stale-token rejection also have unit
+coverage. The separate `m3-external-session` lane exercises real shutdown with queued
+work and restored-session delayed completion.
+
+`m3-external-session` stops a real session with more than one batch queued,
+checks that the leftover batch is discarded, restores workspace state into a
+fresh session, and rejects delayed completions through the old producer.
+It covers internal restart handover on one river connection lifecycle,
+without an exec or an IPC transport.

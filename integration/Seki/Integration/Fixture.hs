@@ -10,6 +10,8 @@ module Seki.Integration.Fixture (
   BorderStyle (..),
   WindowRequest (..),
   withFixture,
+  withFixtureUsing,
+  saveCapture,
   withHeldLogo,
   withHeldLogoIn,
   windowRequests,
@@ -22,19 +24,20 @@ module Seki.Integration.Fixture (
   rgb,
 ) where
 
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (ThreadId, forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, tryReadMVar)
 import Control.Exception (SomeException, bracket, finally, onException, try)
 import Control.Monad (forM, forM_, void)
-import Data.Bits ((.&.))
+import Data.Bits (complement, shiftR, xor, (.&.))
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
-import Data.List (find)
+import Data.List (find, foldl')
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Word (Word32)
 import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Fixture.Probe
 import Seki.Integration.Harness
@@ -59,6 +62,7 @@ import System.Process (proc)
 
 data Fixture l = Fixture
   { mSocket :: FilePath
+  , mDispatcher :: ThreadId
   , mEnvironment :: [(String, String)]
   , mSession :: RiverSession
   , mPolicy :: Policy String l
@@ -112,13 +116,16 @@ withNestedRiver outputCount action = do
             }
 
 withFixture :: (LayoutClass l) => PolicyConfig String l -> String -> Int -> (Fixture l -> Probe -> IO ()) -> IO ()
-withFixture policyConfig name outputCount action =
+withFixture = withFixtureUsing id
+
+withFixtureUsing :: (LayoutClass l) => (RiverRuntimeHandlers -> RiverRuntimeHandlers) -> PolicyConfig String l -> String -> Int -> (Fixture l -> Probe -> IO ()) -> IO ()
+withFixtureUsing transform policyConfig name outputCount action =
   withNestedRiver outputCount $ \(NestedRiver socketPath environment _ river) -> do
     policy <- newPolicy policyConfig >>= requireRight "production policy"
     requests <- newIORef Map.empty
-    session <- openRiverSessionAt (UnixSocketPath socketPath) defaultObjectLimit (recordWindowRequests requests (policyRuntimeHandlers policy)) >>= requireRight "runtime"
+    session <- openRiverSessionAt (UnixSocketPath socketPath) defaultObjectLimit (transform (recordWindowRequests requests (policyRuntimeHandlers policy))) >>= requireRight "runtime"
     result <- newEmptyMVar
-    void (forkIO (runRiverSession session >>= putMVar result))
+    dispatcher <- forkIO (runRiverSession session >>= putMVar result)
     let cleanup = stopManagedProcess river >> waitForRuntimeExit result
     ( do
         _ <- waitUntil "fixture outputs discovered" assertionTimeoutMicroseconds (readRiverInventory session) (\i -> length (riverInventoryOutputs i) == outputCount && all ((/= Nothing) . riverOutputRectangle) (riverInventoryOutputs i))
@@ -133,7 +140,7 @@ withFixture policyConfig name outputCount action =
         firstOutput <- maybe (failIntegration "current wl_output has no native name") pure (lookup currentGlobal namesByGlobal)
         let outputs = firstOutput : filter (/= firstOutput) (map snd namesByGlobal)
         forM_ (zip [0 :: Int ..] outputs) $ \(index, output) -> void (runProcessCapture environment "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "800x600", "--pos", show (index * 800) <> ",0", "--scale", "1", "--transform", "normal"])
-        let fixture = Fixture socketPath environment session policy outputs name requests
+        let fixture = Fixture socketPath dispatcher environment session policy outputs name requests
         bracket (startManagedProcess "virtual keyboard lifetime" environment (proc "wtype" ["-s", "60000"])) stopManagedProcess $ \keeper ->
           withProbe
             socketPath
@@ -267,3 +274,30 @@ firstError (Just errorValue : _) = Just errorValue
 firstError (Nothing : rest) = firstError rest
 ppm :: Image -> BS.ByteString
 ppm frame = BS8.pack ("P6\n" <> show (imageWidth frame) <> " " <> show (imageHeight frame) <> "\n255\n") <> imageRgb frame
+
+saveCapture :: Fixture l -> String -> IO ()
+saveCapture fixture label = do
+  artifacts <- lookupEnv "SEKI_INTEGRATION_ARTIFACT_DIR"
+  forM_ artifacts $ \directory -> do
+    createDirectoryIfMissing True directory
+    forM_ (mOutputs fixture) $ \output -> do
+      frame <- captureOutput (mSocket fixture) output
+      BS.writeFile (directory </> label <> "-" <> Text.unpack output <> ".png") (png frame)
+
+-- PNG uses stored DEFLATE blocks so successful captures need no extra program.
+png :: Image -> BS.ByteString
+png frame = BS.pack [137, 80, 78, 71, 13, 10, 26, 10] <> chunk "IHDR" header <> chunk "IDAT" compressed <> chunk "IEND" BS.empty
+ where
+  header = word (fromIntegral (imageWidth frame)) <> word (fromIntegral (imageHeight frame)) <> BS.pack [8, 2, 0, 0, 0]
+  raw = BS.concat [BS.singleton 0 <> BS.take (imageWidth frame * 3) (BS.drop (y * imageWidth frame * 3) (imageRgb frame)) | y <- [0 .. imageHeight frame - 1]]
+  compressed = BS.pack [0x78, 0x01] <> blocks raw <> word adler
+  adler = let (a, b) = BS.foldl' (\(a, b) x -> let next = (a + fromIntegral x) `mod` 65521 in (next, (b + next) `mod` 65521)) (1, 0) raw in b * 65536 + a
+  blocks bytes =
+    let (part, rest) = BS.splitAt 65535 bytes
+        size = BS.length part
+        little n = BS.pack [fromIntegral n, fromIntegral (n `div` 256)]
+     in BS.singleton (if BS.null rest then 1 else 0) <> little size <> little (65535 - size) <> part <> if BS.null rest then BS.empty else blocks rest
+  chunk name bytes = word (fromIntegral (BS.length bytes)) <> name <> bytes <> word (crc (name <> bytes))
+  crc = complement . BS.foldl' (\c byte -> foldl' (\n _ -> if n .&. 1 == 1 then shiftR n 1 `xor` 0xedb88320 else shiftR n 1) (c `xor` fromIntegral byte) [1 .. 8 :: Int]) 0xffffffff
+  word :: Word32 -> BS.ByteString
+  word n = BS.pack [fromIntegral (shiftR n amount) | amount <- [24, 16, 8, 0]]

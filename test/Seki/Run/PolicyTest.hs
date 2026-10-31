@@ -32,7 +32,8 @@ import Seki.Internal.Core.StackSet (
 import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), WorkspaceTagError (..), Workspaces (..), fromWorkspaces, newCoreState)
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
-import Seki.Run.Inventory (RiverWindowState (..), riverInventoryWindows)
+import Seki.Run.External qualified as External
+import Seki.Run.Inventory (RiverWindowState (..), emptyRiverInventory, riverInventoryWindows)
 import Seki.Run.MockRiver (
   FrameReader,
   encodedFrame,
@@ -53,12 +54,14 @@ import Seki.Run.MockRiver (
  )
 import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Policy (
+  ExternalInput (..),
   Policy,
   PolicyConfig (..),
   PolicyError (..),
   launchDetached,
   newPolicy,
   parseResizeEdges,
+  policyExternalProducer,
   policyRuntimeHandlers,
   readPolicyState,
  )
@@ -85,7 +88,8 @@ tests :: TestTree
 tests =
   testGroup
     "runtime policy"
-    [ testCase "rejects configuration errors before connecting" testConfigErrors
+    [ testCase "external commands and completions run only during bounded manage drains" testExternalManage
+    , testCase "rejects configuration errors before connecting" testConfigErrors
     , testCase "applies river events at the next manage_start" testEventsAtManageStart
     , testCase "runs the manage hook on the properties river sent before manage_start" testManageHookProps
     , testCase "focuses on interaction and ignores pointer enter and leave" testSeatEvents
@@ -561,3 +565,23 @@ currentTagOf st = case coreWorkspaces st of
 lastMaybe :: [a] -> Maybe a
 lastMaybe [] = Nothing
 lastMaybe xs = Just (last xs)
+
+testExternalManage :: Assertion
+testExternalManage = do
+  launches <- newIORef []
+  let config = PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\marker -> modifyIORef' launches (<> [marker])) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ())
+  policy <- expectRight =<< newPolicy config
+  let handlers = policyRuntimeHandlers policy
+      producer = policyExternalProducer policy
+      snapshot = RiverRuntimeSnapshot emptyRiverInventory []
+  case riverExternalIngress handlers of
+    Nothing -> assertFailure "missing ingress"
+    Just lifecycle -> External.bindExternalWake lifecycle (pure True) >>= assertBool "bound"
+  mapM_ (\n -> External.submitExternal producer (if even n then ExternalCommand (spawn (show n)) else ExternalCompletion (spawn (show n))) >>= assertEqual "accepted" External.Accepted) [1 .. 33 :: Int]
+  readIORef launches >>= assertEqual "producer did not run actions" []
+  _ <- prepareRiverRenderPlan handlers snapshot
+  readIORef launches >>= assertEqual "render did not drain commands" []
+  _ <- prepareRiverManagePlan handlers snapshot
+  readIORef launches >>= assertEqual "first manage batch" (map show [1 .. 32 :: Int])
+  _ <- prepareRiverManagePlan handlers snapshot
+  readIORef launches >>= assertEqual "next manage completes finite burst" (map show [1 .. 33 :: Int])

@@ -28,7 +28,6 @@ data IngressState a = Dormant | Accepting (IO Bool) (Seq a) | Closed
 data Admission = Accepted | Full | IngressClosed deriving (Eq, Show)
 data Drain a = Drain {drainedInputs :: [a], drainHasMore :: Bool} deriving (Eq, Show)
 
--- | Only lifecycle operations cross the typed policy/runtime boundary.
 data ExternalLifecycle = ExternalLifecycle
   { bindExternalWake :: IO Bool -> IO Bool
   , wakeExternalPending :: IO ()
@@ -48,12 +47,14 @@ externalLifecycle (ExternalIngress state) = ExternalLifecycle bind wake close
     Dormant -> pure (Accepting notify Seq.empty, True)
     _ -> pure (current, False)
   close = modifyMVar state (const (pure (Closed, ())))
-  wake = modifyMVar state $ \current -> case current of
+  wake = wakePending `onException` close
+  wakePending = modifyMVar state $ \current -> case current of
     Accepting notify pending | not (Seq.null pending) -> do
       ok <- notify
       pure (if ok then current else Closed, ())
     _ -> pure (current, ())
 
+-- | Accepted means queued, not applied. Session closure discards pending inputs.
 submitExternal :: ExternalProducer a -> a -> IO Admission
 submitExternal (ExternalProducer (ExternalIngress state)) input =
   -- A cancelled send must not restore a queue whose only wake was abandoned.

@@ -337,6 +337,7 @@ test-suite seki-integration
     Seki.Integration.Harness
     Seki.Integration.M1
     Seki.Integration.M2
+    Seki.Integration.M3
     Seki.Integration.Reference
     Seki.Integration.Restart
   build-depends:
