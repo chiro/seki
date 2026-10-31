@@ -65,10 +65,10 @@ waybar = withFixture (policyConfigOf def) "m3-ipc-waybar" 1 $ \fixture probe -> 
   writeFile style "* { font-family: DejaVu Sans; font-size: 14px; min-height: 0; } window#waybar { background: #202020; color: #ffffff; } #custom-seki { padding: 0 8px; }\n"
   version <- runProcessCapture environment executable ["--version"]
   announce ("M3_WAYBAR_VERSION " <> show version)
-  withIPCAt (root </> "seki" </> "ipc.sock") (mPolicy fixture) $ do
+  withIPCAt (root </> "seki" </> "ipc.sock") (mPolicy fixture) $ withPrivateDbus environment $ \dbusEnvironment -> do
     redWindow <- openWindow probe Red
     setTitle probe redWindow "before"
-    bracket (startManagedProcess "real Waybar" environment (proc "dbus-run-session" ["--", executable, "--config", config, "--style", style])) stopManagedProcess $ \bar -> do
+    bracket (startManagedProcess "real Waybar" dbusEnvironment (proc executable ["--config", config, "--style", style])) stopManagedProcess $ \bar -> do
       before <- waitFrame "Waybar text rendered" white `onException` (renderManagedProcessLogs bar >>= announce)
       saveCapture fixture "waybar-initial"
       let hostile = Text.pack ("<span foreground='red'>PWN</span> & $(touch '" <> marker <> "') \\\"quote\\\"")
