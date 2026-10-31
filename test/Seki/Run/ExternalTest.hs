@@ -4,7 +4,7 @@ import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar, tryPutMVar)
 import Control.Exception (ErrorCall (..), finally, throwIO, try)
 import Control.Monad (replicateM, void)
-import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import GHC.Conc (ThreadStatus (..), threadStatus)
 import Seki.Run.External
 import System.Timeout (timeout)
@@ -68,6 +68,26 @@ tests =
         bindExternalWake (externalLifecycle queue) (pure False) >>= assertBool "bound"
         submitExternal (externalProducer queue) () >>= assertEqual "send failed" IngressClosed
         drainExternal queue >>= assertEqual "no stranded work" (Drain [] False)
+    , testCase "pending-wake refusal discards leftovers" $ pendingWakeFailure False (pure False)
+    , testCase "pending-wake exception discards leftovers" $ pendingWakeFailure True (throwIO (ErrorCall "pending wake failed"))
+    , testCase "pending-wake owner cancellation closes ingress" $ do
+        queue <- newExternalIngress
+        notify <- newIORef (pure True)
+        entered <- newEmptyMVar
+        blocked <- newEmptyMVar
+        done <- newEmptyMVar
+        let lifecycle = externalLifecycle queue
+            producer = externalProducer queue
+        bindExternalWake lifecycle (readIORef notify >>= id) >>= assertBool "bound"
+        mapM_ (submitExternal producer) [1 .. 40 :: Int]
+        _ <- drainExternal queue
+        writeIORef notify (putMVar entered () >> takeMVar blocked)
+        owner <- forkIO (wakeExternalPending lifecycle `finally` putMVar done ())
+        takeMVar entered
+        killThread owner
+        timeout 1000000 (takeMVar done) >>= assertEqual "owner stopped" (Just ())
+        drainExternal queue >>= assertEqual "leftovers discarded" (Drain [] False)
+        submitExternal producer 41 >>= assertEqual "closed" IngressClosed
     , testCase "cancelling a submitting waiter preserves accepted work" $
         cancelledWaiterPreservesIngress (\producer _ -> void (submitExternal producer 2))
     , testCase "cancelling a pending-wake waiter preserves accepted work" $
@@ -104,3 +124,18 @@ cancelledWaiterPreservesIngress operation = do
   drainExternal queue >>= assertEqual "accepted work survives unrelated cancellation" (Drain [1] False)
   submitExternal producer 3 >>= assertEqual "ingress remains usable" Accepted
   assertEqual "cancellation completes without waiting for another producer" (Just ()) cancelled
+
+pendingWakeFailure :: Bool -> IO Bool -> IO ()
+pendingWakeFailure shouldRaise failure = do
+  queue <- newExternalIngress
+  notify <- newIORef (pure True)
+  let lifecycle = externalLifecycle queue
+      producer = externalProducer queue
+  bindExternalWake lifecycle (readIORef notify >>= id) >>= assertBool "bound"
+  mapM_ (submitExternal producer) [1 .. 40 :: Int]
+  _ <- drainExternal queue
+  writeIORef notify failure
+  result <- try @ErrorCall (wakeExternalPending lifecycle)
+  assertEqual "exception propagation" shouldRaise (either (const True) (const False) result)
+  drainExternal queue >>= assertEqual "leftovers discarded" (Drain [] False)
+  submitExternal producer 41 >>= assertEqual "closed" IngressClosed

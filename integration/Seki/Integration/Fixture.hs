@@ -12,6 +12,7 @@ module Seki.Integration.Fixture (
   withFixture,
   withFixtureUsing,
   saveCapture,
+  saveOutputCapture,
   withHeldLogo,
   withHeldLogoIn,
   windowRequests,
@@ -32,7 +33,7 @@ import Data.Bits (complement, shiftR, xor, (.&.))
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
-import Data.List (find, foldl')
+import Data.List (find)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
@@ -281,8 +282,10 @@ saveCapture fixture label = do
   forM_ artifacts $ \directory -> do
     createDirectoryIfMissing True directory
     forM_ (mOutputs fixture) $ \output -> do
-      frame <- captureOutput (mSocket fixture) output
-      BS.writeFile (directory </> label <> "-" <> Text.unpack output <> ".png") (png frame)
+      saveOutputCapture (mSocket fixture) output (directory </> label <> "-" <> Text.unpack output <> ".png")
+
+saveOutputCapture :: FilePath -> Text -> FilePath -> IO ()
+saveOutputCapture socket output path = captureOutput socket output >>= BS.writeFile path . png
 
 png :: Image -> BS.ByteString
 png frame = BS.pack [137, 80, 78, 71, 13, 10, 26, 10] <> chunk "IHDR" header <> chunk "IDAT" compressed <> chunk "IEND" BS.empty
@@ -290,7 +293,7 @@ png frame = BS.pack [137, 80, 78, 71, 13, 10, 26, 10] <> chunk "IHDR" header <> 
   header = word (fromIntegral (imageWidth frame)) <> word (fromIntegral (imageHeight frame)) <> BS.pack [8, 2, 0, 0, 0]
   raw = BS.concat [BS.singleton 0 <> BS.take (imageWidth frame * 3) (BS.drop (y * imageWidth frame * 3) (imageRgb frame)) | y <- [0 .. imageHeight frame - 1]]
   compressed = BS.pack [0x78, 0x01] <> blocks raw <> word adler
-  adler = let (a, b) = BS.foldl' (\(a, b) x -> let next = (a + fromIntegral x) `mod` 65521 in (next, (b + next) `mod` 65521)) (1, 0) raw in b * 65536 + a
+  adler = let (a, b) = BS.foldl' (\(accA, accB) x -> let next = (accA + fromIntegral x) `mod` 65521 in (next, (accB + next) `mod` 65521)) (1, 0) raw in b * 65536 + a
   blocks bytes =
     let (part, rest) = BS.splitAt 65535 bytes
         size = BS.length part

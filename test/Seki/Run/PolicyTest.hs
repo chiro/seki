@@ -4,6 +4,7 @@ module Seki.Run.PolicyTest (tests) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (MVar)
+import Control.Concurrent.STM (atomically, newEmptyTMVarIO, tryReadTMVar)
 import Control.Exception (SomeException)
 import Data.ByteString.Char8 qualified as Char8
 import Data.IORef (modifyIORef', newIORef, readIORef)
@@ -577,11 +578,16 @@ testExternalManage = do
   case riverExternalIngress handlers of
     Nothing -> assertFailure "missing ingress"
     Just lifecycle -> External.bindExternalWake lifecycle (pure True) >>= assertBool "bound"
-  mapM_ (\n -> External.submitExternal producer (if even n then ExternalCommand (spawn (show n)) else ExternalCompletion (spawn (show n))) >>= assertEqual "accepted" External.Accepted) [1 .. 33 :: Int]
+  mapM_ (\n -> External.submitExternal producer (ExternalInput (spawn (show n)) Nothing) >>= assertEqual "accepted" External.Accepted) [1 .. 33 :: Int]
+  receipt <- newEmptyTMVarIO
+  External.submitExternal producer (ExternalInput (pure ()) (Just receipt)) >>= assertEqual "receipt command accepted" External.Accepted
+  atomically (tryReadTMVar receipt) >>= assertEqual "acceptance is not application" Nothing
   readIORef launches >>= assertEqual "producer did not run actions" []
   _ <- prepareRiverRenderPlan handlers snapshot
   readIORef launches >>= assertEqual "render did not drain commands" []
   _ <- prepareRiverManagePlan handlers snapshot
   readIORef launches >>= assertEqual "first manage batch" (map show [1 .. 32 :: Int])
+  atomically (tryReadTMVar receipt) >>= assertEqual "later batch still pending" Nothing
   _ <- prepareRiverManagePlan handlers snapshot
   readIORef launches >>= assertEqual "next manage completes finite burst" (map show [1 .. 33 :: Int])
+  atomically (tryReadTMVar receipt) >>= assertEqual "applied no-op has monotonic revision" (Just 2)

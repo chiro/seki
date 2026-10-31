@@ -83,7 +83,16 @@ referenceConfig = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-r
           launched "Mod-Shift-l locks the screen" ["alacritty", "amixer -D pulse sset Master 2%+", "xscreensaver-command --lock"]
           key ["q"]
           _ <- waitUntil "seki execs itself with --restore" assertionTimeoutMicroseconds (BS8.unpack <$> BS.readFile ("/proc/" <> show pid <> "/cmdline")) ("--restore" `isInfixOf`)
-          key ["2"]
+          _ <-
+            waitUntil
+              "restarted workspace binding selects Emacs"
+              assertionTimeoutMicroseconds
+              ( do
+                  key ["2"]
+                  frame <- captureOutput socket output
+                  pure (pictureErrorWith portedBorders [Paint Green fullTile True] frame)
+              )
+              (== Nothing)
           onOutput "emacs still shows the Emacs window after the restart" [Paint Green fullTile True]
           _ <- waitUntil "the Emacs window has keyboard focus after the restart" assertionTimeoutMicroseconds (keyboardSnapshot probe) ((== Just emacs) . keyboardOwner)
           input ["-k", "XF86AudioLowerVolume"]

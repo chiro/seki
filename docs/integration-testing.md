@@ -450,11 +450,48 @@ Set `SEKI_INTEGRATION_ARTIFACT_DIR` to retain successful PNG captures named
 `drain-race`, and `headless`, with the output name appended. Captures use
 native compositor pixels and are outside timed intervals. Existing failure
 captures remain PPM. Session closure and stale-token rejection also have unit
-coverage. The separate `m3-external-session` lane exercises real shutdown with queued
-work and restored-session delayed completion.
+coverage.
 
 `m3-external-session` stops a real session with more than one batch queued,
 checks that the leftover batch is discarded, restores workspace state into a
 fresh session, and rejects delayed completions through the old producer.
 It covers internal restart handover on one river connection lifecycle,
 without an exec or an IPC transport.
+
+
+## Bar IPC
+
+`m3-ipc-boundary` runs a private river and a real Unix server. It invokes the
+built `sekictl`, checks applied workspace receipts, refuses a second live server,
+accepts fragmented requests, rejects oversized and invalid input, and checks
+1000 acknowledged workspace changes while one subscription stays unread.
+A disconnected spawn client must not disable the next workspace command.
+The marker launcher records requests and does not execute the marker as a shell.
+Captures include `ipc-regression`, `socket-owner`, `framing`, and `slow-reader`.
+`m3-ipc-metadata` checks initial state, occupied workspaces, connector names,
+immutable prior projections, and title-only updates with adversarial text.
+`m3-ipc-state` checks two outputs, exclusive layer keyboard availability,
+connection capacity, and idle subscription EOF cleanup. `m3-ipc-reconnect`
+drives real exec restart through a private virtual keyboard, observes a fresh
+CLI subscription session, and checks that a real spawn runs exactly once.
+
+`m3-ipc-perf` runs 1000 acknowledged workspace changes per load condition at
+1, 2, and 32 total connections. At the cap, 30 subscriptions remain unread.
+Command timing starts before write and ends after capturing immutable policy
+state following the applied-reply LF. State correctness is checked afterward. Subscriber
+timing starts before the corresponding owner reducer pass and ends at receipt
+of a snapshot LF at or beyond its revision. State and JSON checks happen outside
+the interval. The 50 ms per-sample ceiling retains M3-D02's selected target.
+This probe does not measure displayed frames or prove an M2 comparison.
+
+`m3-ipc-waybar` runs the shipped Python example in real Waybar on a private
+D-Bus session and private river. It checks actual bar pixels after title and
+workspace changes. Adversarial title markup must render without red injected
+glyphs, and a shell marker must remain absent. Captures include the initial,
+adversarial, and workspace-update frames. Set `SEKI_CAPTURE_VIDEO=1` to retain
+60 native frames with timestamps for a review video. The optional private
+`SEKI_WAYBAR_EXECUTABLE` and `SEKI_WAYBAR_LIBRARY_PATH` select an extracted local
+binary; the release shell uses its pinned Waybar by default.
+
+Pinned Nix execution, physical input, and operator review remain separate gates.
+JSON escaping tests alone do not pass the visual gate.
