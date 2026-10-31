@@ -274,6 +274,7 @@ test-suite seki-test
     Seki.Scanner.GenerateTest
     Seki.Scanner.ParseTest
     Seki.Run.IPCTest
+    Seki.Run.IPCBoundaryTest
     Seki.Run.ExternalTest
     Seki.Run.InventoryTest
     Seki.Run.LatencyTest
@@ -350,6 +351,7 @@ test-suite seki-integration
     Seki.Integration.M1
     Seki.Integration.M2
     Seki.Integration.M3
+    Seki.Integration.IPCPerf
     Seki.Integration.Reference
     Seki.Integration.Restart
   build-depends:

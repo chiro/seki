@@ -25,6 +25,9 @@ tests =
         mapM_ (\args -> assertBool "usage error" (either (const True) (const False) (parseCLI args))) [[], ["layout", "bogus"], ["spawn", "  "], ["snapshot", "extra"]]
     , testCase "typed command schema" $
         decodeRequest "{\"version\":1,\"id\":\"a\",\"op\":\"workspace\",\"tag\":\"3\"}" @?= Right (Request "a" (Workspace "3"))
+    , testCase "invalid version preserves request correlation" $ case decodeRequest "{\"version\":9,\"id\":\"request-42\",\"op\":\"snapshot\"}" of
+        Left err -> errorRequestId err @?= "request-42"
+        Right _ -> assertFailure "unsupported version accepted"
     , testCase "reject invalid commands and input" $
         mapM_
           (assertBool "refused" . either (const True) (const False) . decodeRequest)
@@ -41,8 +44,8 @@ tests =
             , "revision" .= (7 :: Int)
             , "outputs" .= ([] :: [Value])
             , "workspaces"
-                .= [ object ["tag" .= ("3" :: Text.Text), "occupied" .= False, "visible" .= False, "focused" .= True, "layout" .= ("Full" :: String)]
-                   , object ["tag" .= ("1" :: Text.Text), "occupied" .= False, "visible" .= False, "focused" .= False, "layout" .= ("Full" :: String)]
+                .= [ object ["tag" .= ("3" :: Text.Text), "occupied" .= False, "visible" .= False, "focused" .= True, "layout" .= ("Full" :: String), "layout_truncated" .= False]
+                   , object ["tag" .= ("1" :: Text.Text), "occupied" .= False, "visible" .= False, "focused" .= False, "layout" .= ("Full" :: String), "layout_truncated" .= False]
                    ]
             , "focused_title" .= Null
             , "focused_title_truncated" .= False

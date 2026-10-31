@@ -2,6 +2,7 @@
 
 module Seki.Run.IPCSchema (
   Request (..),
+  RequestError (..),
   Operation (..),
   LayoutOp (..),
   decodeRequest,
@@ -11,12 +12,16 @@ module Seki.Run.IPCSchema (
   maxLineBytes,
 ) where
 
-import Data.Aeson (FromJSON (..), ToJSON (..), Value, eitherDecodeStrict', encode, object, withObject, (.:), (.=))
-import Data.Aeson.Types (Parser)
+import Data.Aeson (FromJSON (..), ToJSON (..), Value (..), eitherDecodeStrict', encode, object, withObject, (.:), (.=))
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Aeson.Types (Parser, parseEither)
+import Data.Bifunctor (first)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
 import Data.Text (Text)
 import Data.Text qualified as Text
+
+data RequestError = RequestError {errorRequestId :: Text, errorMessage :: String} deriving (Eq, Show)
 
 data Request = Request {requestId :: Text, requestOperation :: Operation} deriving (Eq, Show)
 data Operation = Snapshot | Subscribe | Workspace Text | Spawn Text | Layout LayoutOp deriving (Eq, Show)
@@ -51,10 +56,15 @@ instance FromJSON Request where
       _ -> fail "unknown operation"
     pure (Request ident operation)
 
-decodeRequest :: BS.ByteString -> Either String Request
+decodeRequest :: BS.ByteString -> Either RequestError Request
 decodeRequest bytes
-  | BS.length bytes > maxLineBytes = Left "line exceeds 65536 bytes"
-  | otherwise = eitherDecodeStrict' bytes
+  | BS.length bytes > maxLineBytes = Left (RequestError "" "line exceeds 65536 bytes")
+  | otherwise = do
+      value <- first (RequestError "") (eitherDecodeStrict' bytes)
+      let ident = case value of
+            Object fields | Just (String text) <- KeyMap.lookup "id" fields, Text.length text <= 128 -> text
+            _ -> ""
+      first (RequestError ident) (parseEither parseJSON value)
 
 encodeLine :: Value -> Either String BS.ByteString
 encodeLine value

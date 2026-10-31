@@ -20,6 +20,7 @@ import Seki.Fixture.LayerSurface qualified as Layer
 import Seki.Fixture.Probe (Color (..), openWindow, outputNames, setTitle, withProbe)
 import Seki.Integration.Fixture
 import Seki.Integration.Harness
+import Seki.Integration.IPCPerf (ipcPerfScenarios)
 import Seki.Internal.Config (def)
 import Seki.Internal.Core.Action (restart, spawn, windows)
 import Seki.Internal.Core.StackSet qualified as SS
@@ -164,7 +165,7 @@ sessionIsolation = withNestedRiver 1 $ \river -> do
     `finally` (stopManagedProcess (riverProcess river) >> waitForRuntimeExit done)
 
 ipcScenarios :: [(String, IO ())]
-ipcScenarios = [("m3-ipc-boundary", ipcBoundary), ("m3-ipc-metadata", ipcMetadata), ("m3-ipc-state", ipcState), ("m3-ipc-reconnect", ipcReconnect)]
+ipcScenarios = [("m3-ipc-boundary", ipcBoundary), ("m3-ipc-metadata", ipcMetadata), ("m3-ipc-state", ipcState), ("m3-ipc-reconnect", ipcReconnect), ("m3-ipc-limits", ipcLimits)] <> ipcPerfScenarios
 
 ipcBoundary :: IO ()
 ipcBoundary = do
@@ -263,6 +264,10 @@ ipcMetadata = withFixture (policyConfigOf def) "m3-ipc-metadata" 1 $ \fixture pr
     assertEqual "old immutable projection unchanged" (mappedRevision, Just "first title") (stillOldRevision, stillOldTitle)
     announce ("M3_IPC_TITLE_ONLY " <> show changed)
     saveCapture fixture "title"
+    setTitle probe window (Text.replicate 3000 "x")
+    (_, giant) <- waitTitle (Text.replicate 1024 "x")
+    assertEqual "giant title truncation is explicit" True ("\"focused_title_truncated\":true" `BS.isInfixOf` giant)
+    announce ("M3_IPC_GIANT_TITLE " <> show giant)
 
 snapshotTitle :: BS.ByteString -> IO (Integer, Maybe Text.Text)
 snapshotTitle bytes = do
@@ -316,7 +321,6 @@ ipcState = withFixture (policyConfigOf def) "m3-ipc-state" 2 $ \fixture probe ->
         announce ("M3_IPC_EXCLUSIVE_LAYER " <> show layerSnapshot)
       )
       `finally` (stopLayer `finally` killThread thread)
-    -- Each initial reply proves admission before the next connection starts.
     bracket
       ( replicateM 32 $ do
           client <- open
@@ -327,9 +331,10 @@ ipcState = withFixture (policyConfigOf def) "m3-ipc-state" 2 $ \fixture probe ->
       )
       (mapM_ close)
       $ \_ -> bracket open close $ \extra -> do
-        response <- timeout assertionTimeoutMicroseconds (recv extra 1)
-        assertEqual "33rd connection closed" (Just BS.empty) response
-    announce "M3_IPC_CAPACITY 32 admitted; 33rd closed"
+        response <- timeout assertionTimeoutMicroseconds (try @IOException (recv extra 1))
+        assertEqual "33rd connection closed" True (case response of Just (Left _) -> True; Just (Right bytes) -> BS.null bytes; Nothing -> False)
+    _ <- waitUntil "subscriber slots released on EOF without new state" assertionTimeoutMicroseconds (try @IOException snapshot) (either (const False) (BS.isInfixOf "\"snapshot\""))
+    announce "M3_IPC_CAPACITY 32 admitted; 33rd closed; idle EOF releases slots"
 
 snapshotFlags :: BS.ByteString -> IO ([Maybe Text.Text], [(Text.Text, Bool, Bool)], Bool)
 snapshotFlags bytes = do
@@ -366,13 +371,13 @@ ipcReconnect = withNestedRiver 1 $ \nested -> do
       readLines path = doesFileExist path >>= \exists -> if exists then BS.split 10 <$> BS.readFile path else pure []
       sessions = do
         bytes <- readLines logFile
-        mapM snapshotSession (filter (not . BS.null) bytes)
+        let complete = reverse (drop 1 (reverse bytes))
+        mapM snapshotSession (filter (not . BS.null) complete)
       key = runInputDriver environment ["-M", "logo", "-k", "q", "-m", "logo"]
   bracket (startManagedProcess "seki" environment (proc executable [])) stopManagedProcess $ \manager -> do
     [(_, output)] <- waitUntil "one output" assertionTimeoutMicroseconds (outputNames (riverSocket nested)) ((== 1) . length)
     withKeyboard environment . withProbe (riverSocket nested) $ \probe -> do
       _ <- openWindow probe Red
-      -- Fixed positional arguments keep paths out of shell source.
       bracket (startManagedProcess "sekictl subscribe" environment (proc "/bin/sh" ["-c", "exec \"$1\" subscribe > \"$2\"", "seki-subscribe", cli, logFile])) stopManagedProcess $ \_ -> do
         first <- waitUntil "initial CLI subscription" assertionTimeoutMicroseconds sessions (not . null)
         _ <- runProcessCapture environment cli ["spawn", "printf 'once\n' >> '" <> marker <> "'"]
@@ -395,3 +400,33 @@ snapshotSession bytes = do
   requireRight "session identity" (parseEither parser value)
  where
   parser = withObject "envelope" $ \e -> e .: "result" >>= withObject "result" (\r -> r .: "snapshot" >>= withObject "snapshot" (.: "session"))
+
+ipcLimits :: IO ()
+ipcLimits = do
+  launched <- newIORef []
+  let config =
+        (policyConfigOf def)
+          { policyTags = [show n <> replicate 1024 'x' | n <- [1 .. 128 :: Int]]
+          , policyLaunch = \command -> modifyIORef' launched (<> [command])
+          }
+  withFixture config "m3-ipc-limits" 1 $ \fixture _ -> do
+    root <- maybe (failIntegration "missing runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
+    let path = root </> "seki" </> "ipc.sock"
+        open = do
+          client <- socket AF_UNIX Stream defaultProtocol
+          connect client (SockAddrUnix path)
+          pure client
+        request bytes = bracket open close $ \client -> sendAll client bytes >> ipcLine client
+    withIPCAt path (mPolicy fixture) $ do
+      submitExternal (policyExternalProducer (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "publish oversized projection" Accepted
+      tooLarge <- request "{\"version\":1,\"id\":\"large-id\",\"op\":\"snapshot\"}\n"
+      assertEqual "oversized snapshot reported" True ("snapshot_too_large" `BS.isInfixOf` tooLarge)
+      assertEqual "oversize error preserves request ID" True ("large-id" `BS.isInfixOf` tooLarge)
+      bracket open close $ \subscriber -> do
+        sendAll subscriber "{\"version\":1,\"id\":\"subscribe-id\",\"op\":\"subscribe\"}\n"
+        initial <- ipcLine subscriber
+        assertEqual "oversized subscription is explicit" True ("snapshot_too_large" `BS.isInfixOf` initial)
+        applied <- request "{\"version\":1,\"id\":\"ack-id\",\"op\":\"spawn\",\"command\":\"large-snapshot-marker\"}\n"
+        assertEqual "oversized projection cannot drop application reply" True ("\"revision\"" `BS.isInfixOf` applied && "ack-id" `BS.isInfixOf` applied)
+        readIORef launched >>= assertEqual "spawn intent ran once" ["large-snapshot-marker"]
+      announce "M3_IPC_LIMITS oversized snapshot/subscription explicit; independent application reply preserved"

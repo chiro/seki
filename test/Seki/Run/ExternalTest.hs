@@ -68,8 +68,8 @@ tests =
         bindExternalWake (externalLifecycle queue) (pure False) >>= assertBool "bound"
         submitExternal (externalProducer queue) () >>= assertEqual "send failed" IngressClosed
         drainExternal queue >>= assertEqual "no stranded work" (Drain [] False)
-    , testCase "pending-wake refusal discards leftovers" $ pendingWakeFailure (pure False)
-    , testCase "pending-wake exception discards leftovers" $ pendingWakeFailure (throwIO (ErrorCall "pending wake failed"))
+    , testCase "pending-wake refusal discards leftovers" $ pendingWakeFailure False (pure False)
+    , testCase "pending-wake exception discards leftovers" $ pendingWakeFailure True (throwIO (ErrorCall "pending wake failed"))
     , testCase "pending-wake owner cancellation closes ingress" $ do
         queue <- newExternalIngress
         notify <- newIORef (pure True)
@@ -125,8 +125,8 @@ cancelledWaiterPreservesIngress operation = do
   submitExternal producer 3 >>= assertEqual "ingress remains usable" Accepted
   assertEqual "cancellation completes without waiting for another producer" (Just ()) cancelled
 
-pendingWakeFailure :: IO Bool -> IO ()
-pendingWakeFailure failure = do
+pendingWakeFailure :: Bool -> IO Bool -> IO ()
+pendingWakeFailure shouldRaise failure = do
   queue <- newExternalIngress
   notify <- newIORef (pure True)
   let lifecycle = externalLifecycle queue
@@ -135,6 +135,7 @@ pendingWakeFailure failure = do
   mapM_ (submitExternal producer) [1 .. 40 :: Int]
   _ <- drainExternal queue
   writeIORef notify failure
-  _ <- try @ErrorCall (wakeExternalPending lifecycle)
+  result <- try @ErrorCall (wakeExternalPending lifecycle)
+  assertEqual "exception propagation" shouldRaise (either (const True) (const False) result)
   drainExternal queue >>= assertEqual "leftovers discarded" (Drain [] False)
   submitExternal producer 41 >>= assertEqual "closed" IngressClosed

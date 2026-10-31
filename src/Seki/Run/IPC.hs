@@ -7,8 +7,8 @@ import Control.Concurrent (forkFinally, killThread)
 import Control.Concurrent.MVar (modifyMVar, modifyMVar_, newMVar)
 import Control.Concurrent.STM
 import Control.DeepSeq (force)
-import Control.Exception (IOException, bracket, evaluate, finally, mask, try)
-import Control.Monad (forever, unless, when)
+import Control.Exception (IOException, bracket, evaluate, finally, mask, onException, try)
+import Control.Monad (forever, unless, void, when)
 import Data.Aeson (Value, object, (.=))
 import Data.ByteString qualified as BS
 import Data.Map.Strict qualified as Map
@@ -31,7 +31,9 @@ import System.FilePath (isAbsolute, takeDirectory, (</>))
 import System.IO.Error (isAlreadyExistsError, isDoesNotExistError)
 import System.Posix.Directory qualified as Posix
 import System.Posix.Files
+import System.Posix.IO (FdOption (CloseOnExec), setFdOption)
 import System.Posix.Process (getProcessID)
+import System.Posix.Types (Fd (..))
 import System.Posix.User (getEffectiveUserID)
 import System.Timeout (timeout)
 
@@ -55,7 +57,7 @@ withEndpoint path body = do
   status <- getSymbolicLinkStatus dir
   unless (isDirectory status && fileOwner status == uid) (fail "unsafe IPC directory")
   unless (fileMode status `intersectFileModes` 0o077 == 0) (fail "IPC directory must have mode 0700")
-  bracket (socket AF_UNIX Stream defaultProtocol) close $ \guard -> do
+  bracket (ownedSocket) close $ \guard -> do
     bind guard (SockAddrUnix ('\0' : path))
     existing <- try @IOException (getSymbolicLinkStatus path)
     case existing of
@@ -63,13 +65,13 @@ withEndpoint path body = do
       Left e -> ioError e
       Right old -> do
         unless (isSocket old && fileOwner old == uid) (fail "unsafe IPC endpoint")
-        alive <- bracket (socket AF_UNIX Stream defaultProtocol) close $ \probe ->
+        alive <- bracket (ownedSocket) close $ \probe ->
           timeout 1000000 (try @IOException (connect probe (SockAddrUnix path)))
         case alive of
           Just (Left e) | isDoesNotExistError e -> pure ()
           Just (Left e) | ioeRefused e -> removeFile path
           _ -> fail "IPC endpoint is active or cannot be checked"
-    bracket (socket AF_UNIX Stream defaultProtocol) close $ \listener -> do
+    bracket (ownedSocket) close $ \listener -> do
       bind listener (SockAddrUnix path)
       owned <- getSymbolicLinkStatus path
       let cleanup = do
@@ -112,6 +114,7 @@ withIPCAt path policy body =
         (\_ -> atomically (writeTVar healthy False))
     let acceptLoop = forever $ mask $ \unmask -> do
           (client, _) <- unmask (accept listener)
+          closeOnExec client `onException` close client
           modifyMVar_ clients $ \active ->
             if Map.size active >= 32
               then close client >> pure active
@@ -138,13 +141,13 @@ withIPCAt path policy body =
       Just n -> do
         let (line, rest) = BS.splitAt n pending
         case decodeRequest line of
-          Left message -> sendValue (failure "" "invalid_request" message)
+          Left (RequestError ident message) -> sendValue (failure ident "invalid_request" message)
           Right (Request ident op) -> case op of
             Snapshot -> readSnapshot >>= sendSnapshot ident >> readRequests (BS.drop 1 rest)
-            Subscribe -> do
-              (revision, snapshot) <- readSnapshot
+            Subscribe -> bracket watchDisconnect stopWatcher $ \(_, ended) -> do
+              (revision, snapshot) <- atomically (disconnected ended `orElse` (readTVar latest >>= maybe retry pure))
               sendSnapshot ident (revision, snapshot)
-              stream ident revision
+              stream ended ident revision
             _ -> do
               case command op of
                 Left message -> sendValue (failure ident "invalid_command" message)
@@ -169,19 +172,30 @@ withIPCAt path policy body =
             chunk <- maybe (fail "IPC client read timeout") pure received
             unless (BS.null chunk) (readRequests (pending <> chunk))
     readSnapshot = atomically (readTVar latest >>= maybe retry pure)
-    stream ident lastRevision = do
-      next@(revision, _) <- atomically $ do
-        value@(revision, _) <- readTVar latest >>= maybe retry pure
-        check (revision /= lastRevision)
-        pure value
+    watchDisconnect = do
+      ended <- newEmptyTMVarIO
+      watcher <- forkFinally (void (recv client 1)) (\_ -> atomically (putTMVar ended ()))
+      pure (watcher, ended)
+    stopWatcher (watcher, ended) = killThread watcher >> atomically (readTMVar ended)
+    disconnected ended = readTMVar ended >> throwSTM (userError "IPC subscriber disconnected")
+    stream ended ident lastRevision = do
+      next@(revision, _) <-
+        atomically $
+          disconnected ended `orElse` do
+            value@(revision, _) <- readTVar latest >>= maybe retry pure
+            check (revision /= lastRevision)
+            pure value
       sendSnapshot ident next
-      stream ident revision
-    sendSnapshot ident (_, snapshot) = sendValue (reply ident (object ["snapshot" .= snapshot]))
+      stream ended ident revision
+    sendSnapshot ident (_, snapshot) = case encodeLine (reply ident (object ["snapshot" .= snapshot])) of
+      Left _ -> sendValue (failure ident "snapshot_too_large" "snapshot exceeds line limit")
+      Right line -> sendLine line
     sendValue value = case encodeLine value of
-      Left _ -> sendValue (failure "" "snapshot_too_large" "snapshot exceeds line limit")
-      Right line -> do
-        sent <- timeout 5000000 (sendAll client line)
-        when (sent == Nothing) (fail "IPC client write timeout")
+      Left _ -> fail "IPC response exceeds line limit"
+      Right line -> sendLine line
+    sendLine line = do
+      sent <- timeout 5000000 (sendAll client line)
+      when (sent == Nothing) (fail "IPC client write timeout")
   command = \case
     Workspace tag | Text.unpack tag `elem` policyTagsOf policy -> Right (Action.windows (StackSet.view (Text.unpack tag)))
     Spawn text -> Right (Action.spawn (Text.unpack text))
@@ -197,4 +211,13 @@ reply :: Text.Text -> Value -> Value
 reply ident result = object ["version" .= (1 :: Int), "id" .= ident, "result" .= result]
 
 failure :: Text.Text -> Text.Text -> String -> Value
-failure ident code message = object ["version" .= (1 :: Int), "id" .= ident, "error" .= object ["code" .= code, "message" .= message]]
+failure ident code message = object ["version" .= (1 :: Int), "id" .= ident, "error" .= object ["code" .= code, "message" .= Text.take 1024 (Text.pack message)]]
+
+ownedSocket :: IO Socket
+ownedSocket = do
+  sock <- socket AF_UNIX Stream defaultProtocol
+  closeOnExec sock `onException` close sock
+  pure sock
+
+closeOnExec :: Socket -> IO ()
+closeOnExec sock = withFdSocket sock (\fd -> setFdOption (Fd fd) CloseOnExec True)
