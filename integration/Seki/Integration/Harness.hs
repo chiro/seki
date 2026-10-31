@@ -11,6 +11,7 @@ module Seki.Integration.Harness (
   withUnixListener,
   ManagedProcess,
   startManagedProcess,
+  withPrivateDbus,
   renderManagedProcessLogs,
   managedProcessPid,
   stopManagedProcess,
