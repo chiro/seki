@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+"""Emit Waybar JSON lines from sekictl's restart-aware subscription."""
+import html
+import json
+import subprocess
+import sys
+
+
+def module(snapshot):
+    focused = next((w for w in snapshot["workspaces"] if w["focused"]), {})
+    text = " ".join(str(value) for value in (
+        focused.get("tag", ""), focused.get("layout", ""),
+        snapshot.get("focused_title") or ""))
+    return {"text": html.escape(text, quote=True), "tooltip": html.escape(text, quote=True)}
+
+
+def main():
+    with subprocess.Popen(["sekictl", "subscribe"], stdout=subprocess.PIPE,
+                          text=True, encoding="utf-8") as process:
+        try:
+            for line in process.stdout:
+                snapshot = json.loads(line)["result"]["snapshot"]
+                print(json.dumps(module(snapshot), ensure_ascii=True), flush=True)
+        except (BrokenPipeError, KeyboardInterrupt):
+            pass
+        finally:
+            process.terminate()
+            process.wait()
+
+
+if __name__ == "__main__":
+    main()

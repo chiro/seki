@@ -55,7 +55,11 @@ externalLifecycle (ExternalIngress state) = ExternalLifecycle bind wake close
       _ -> pure (current, Right ())
     either throwIO pure result
 
--- | Accepted means queued, not applied. Session closure discards pending inputs.
+{- | Accepted means queued, not applied. Session closure discards pending inputs.
+Cancelling a caller waiting for the ingress lock preserves admitted work. Failure
+or cancellation inside the caller-owned notify closes ingress. Session producers
+must outlive clients; client cleanup must never cancel a notify owner.
+-}
 submitExternal :: ExternalProducer a -> a -> IO Admission
 submitExternal (ExternalProducer (ExternalIngress state)) input = do
   result <- modifyMVarMasked state admit

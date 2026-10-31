@@ -14,7 +14,7 @@ module Seki.Run.Config (
 ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, try)
+import Control.Exception (IOException, finally, try)
 import System.Directory (removeFile)
 
 import Seki.Internal.Config (BorderConfig (..), Button (..), Config (..), KeyBinding (..), Keysym (..), Mods (..), PointerAction (..), PointerBinding (..))
@@ -23,10 +23,11 @@ import Seki.Internal.Core.PointerOp (HEdge (..), OpKind (..), ResizeEdges (..), 
 import Seki.Internal.Core.Restore (RestoreState)
 import Seki.Internal.Core.Scene (SceneStyle (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Run.IPC (withIPC)
 import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Policy (Policy, PolicyConfig (..), PolicyError, launchDetached, newPolicy, policyRuntimeHandlers, readRestoreState)
 import Seki.Run.Restart (Launch (..), RestartRefusal (..), checkRestart, describeLoadError, discoverLaunch, execRestart, loadRestoreFile, reapInheritedChildren, writeRestoreFile)
-import Seki.Run.Runtime (RiverExit (..), RiverRuntimeError (..), openRiverSessionAt, runRiverSession)
+import Seki.Run.Runtime (RiverExit (..), RiverRuntimeError (..), closeRiverSession, openRiverSessionAt, runRiverSession)
 import Seki.Run.Startup (WaylandStartupError (..))
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
@@ -122,7 +123,7 @@ runSessions launch configFor = pass (launchFirstTarget launch) unavailableRetrie
           openRiverSessionAt connection defaultObjectLimit (policyRuntimeHandlers policy) >>= \case
             Left e -> pure (Left (ConfigRuntimeError e))
             Right session ->
-              runRiverSession session >>= \case
+              (withIPC policy (runRiverSession session) `finally` closeRiverSession session) >>= \case
                 Left RiverRuntimeWindowManagerUnavailable
                   | retries > 0 -> do
                       logLine "window management unavailable, retrying"

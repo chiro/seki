@@ -18,6 +18,8 @@ module Seki.Run.Inventory (
   addRiverOutput,
   attachRiverWindowNode,
   attachRiverOutputLayerShell,
+  attachRiverOutputWlOutput,
+  applyWlOutputEvent,
   applyRiverWindowEvent,
   applyRiverOutputEvent,
   applyRiverLayerShellOutputEvent,
@@ -33,6 +35,7 @@ import Data.Word (Word32)
 import Seki.Internal.Core.Geometry (GeometryError, Point (..), Rect, mkRect, mkSize)
 import Seki.Protocol.RiverLayerShellV1 qualified as LayerShell
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Protocol.Wayland qualified as Wayland
 import Seki.Wire.Connection.ObjectTable (Object, objectId)
 import Seki.Wire.Types (ObjectId)
 
@@ -82,6 +85,8 @@ data RiverWindowState = RiverWindowState
 
 data RiverOutputState = RiverOutputState
   { riverOutputObject :: Object River.RiverOutputV1
+  , riverOutputWlOutput :: Maybe (Object Wayland.WlOutput)
+  , riverOutputName :: Maybe Text
   , riverOutputWlOutputName :: Maybe Word32
   , riverOutputPosition :: Maybe RiverPoint
   , riverOutputDimensions :: Maybe RiverSize
@@ -172,6 +177,8 @@ addRiverOutput output inventory = do
   let state =
         RiverOutputState
           { riverOutputObject = output
+          , riverOutputWlOutput = Nothing
+          , riverOutputName = Nothing
           , riverOutputWlOutputName = Nothing
           , riverOutputPosition = Nothing
           , riverOutputDimensions = Nothing
@@ -358,3 +365,15 @@ validWindowIdentifier value =
   not (Text.null value)
     && Text.length value <= 32
     && Text.all (\character -> character >= ' ' && character <= '~') value
+
+attachRiverOutputWlOutput :: Object River.RiverOutputV1 -> Object Wayland.WlOutput -> RiverInventory -> Either RiverInventoryError RiverInventory
+attachRiverOutputWlOutput output wlOutput inventory = case lookupRiverOutput (objectId output) inventory of
+  Nothing -> Left (RiverInventoryOutputNotTracked (objectId output))
+  Just state -> Right (updateOutput state{riverOutputWlOutput = Just wlOutput} inventory)
+
+applyWlOutputEvent :: Object River.RiverOutputV1 -> Wayland.WlOutputEvent fd -> RiverInventory -> Either RiverInventoryError RiverInventory
+applyWlOutputEvent output event inventory = case lookupRiverOutput (objectId output) inventory of
+  Nothing -> Right inventory
+  Just state -> case event of
+    Wayland.WlOutputName name -> Right (updateOutput state{riverOutputName = Just name} inventory)
+    _ -> Right inventory

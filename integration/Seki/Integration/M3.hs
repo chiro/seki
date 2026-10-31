@@ -1,14 +1,21 @@
-module Seki.Integration.M3 (m3Scenarios) where
+{-# LANGUAGE OverloadedStrings #-}
+
+module Seki.Integration.M3 (m3Scenarios, ipcScenarios) where
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
-import Control.Exception (finally)
+import Control.Exception (IOException, bracket, finally, try)
 import Control.Monad (forM_, void)
+import Data.Aeson (eitherDecodeStrict', withObject, (.:))
+import Data.Aeson.Types (parseEither)
+import Data.ByteString qualified as BS
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
 import Data.Text qualified as Text
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Conc (threadStatus)
-import Seki.Fixture.Probe (Color (..), openWindow)
+import Network.Socket
+import Network.Socket.ByteString (recv, sendAll)
+import Seki.Fixture.Probe (Color (..), openWindow, setTitle)
 import Seki.Integration.Fixture
 import Seki.Integration.Harness
 import Seki.Internal.Config (def)
@@ -17,11 +24,15 @@ import Seki.Internal.Core.StackSet qualified as SS
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
 import Seki.Run.Config (policyConfigOf)
 import Seki.Run.External
+import Seki.Run.IPC (withIPCAt)
 import Seki.Run.Inventory (riverInventoryOutputs)
 import Seki.Run.Policy
 import Seki.Run.Runtime
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
 import Seki.Wire.Transport (ConnectionTarget (..))
+import System.Environment (getEnv)
+import System.FilePath ((</>))
+import System.Timeout (timeout)
 
 m3Scenarios :: [(String, IO ())]
 m3Scenarios = [("m3-external-wake", externalWake), ("m3-external-session", sessionIsolation)]
@@ -46,7 +57,7 @@ externalWake = do
   withFixtureUsing decorate config "m3-external-wake" 1 $ \fixture probe -> do
     _ <- openWindow probe Red
     let producer = policyExternalProducer (mPolicy fixture)
-        submit marker = submitExternal producer (ExternalCommand (spawn marker)) >>= assertEqual "accepted marker" Accepted
+        submit marker = submitExternal producer (ExternalInput (spawn marker) Nothing) >>= assertEqual "accepted marker" Accepted
         expect markers = void (waitUntil "accepted commands applied in FIFO order" assertionTimeoutMicroseconds (readIORef applied) (== markers))
         inProducer action = do
           done <- newEmptyMVar
@@ -58,7 +69,7 @@ externalWake = do
       threadDelay 1000
       let tag = if odd n then "2" else "1"
       started <- getMonotonicTimeNSec
-      submitExternal producer (ExternalCommand (windows (SS.view tag))) >>= assertEqual "idle accepted" Accepted
+      submitExternal producer (ExternalInput (windows (SS.view tag)) Nothing) >>= assertEqual "idle accepted" Accepted
       let observe = do
             state <- readPolicyState (mPolicy fixture)
             case coreWorkspaces state of
@@ -84,7 +95,7 @@ externalWake = do
               ( inProducer
                   ( do
                       forM_ markers submit
-                      submitExternal producer (ExternalCompletion (spawn "overflow")) >>= assertEqual "explicit overload" Full
+                      submitExternal producer (ExternalInput (spawn "overflow") Nothing) >>= assertEqual "explicit overload" Full
                   )
               )
           , ()
@@ -101,7 +112,7 @@ externalWake = do
     saveCapture fixture "drain-race"
     forM_ (mOutputs fixture) $ \output -> void (runProcessCapture (mEnvironment fixture) "wlr-randr" ["--output", Text.unpack output, "--off"])
     void (waitUntil "no outputs" assertionTimeoutMicroseconds (readRiverInventory (mSession fixture)) (null . riverInventoryOutputs))
-    submitExternal producer (ExternalCompletion (spawn "headless")) >>= assertEqual "headless accepted" Accepted
+    submitExternal producer (ExternalInput (spawn "headless") Nothing) >>= assertEqual "headless accepted" Accepted
     void (waitUntil "headless completion" assertionTimeoutMicroseconds (readIORef applied) (elem "headless"))
     forM_ (mOutputs fixture) $ \output -> void (runProcessCapture (mEnvironment fixture) "wlr-randr" ["--output", Text.unpack output, "--on", "--custom-mode", "800x600"])
     void (waitUntil "output restored" assertionTimeoutMicroseconds (readRiverInventory (mSession fixture)) (not . null . riverInventoryOutputs))
@@ -121,7 +132,7 @@ sessionIsolation = withNestedRiver 1 $ \river -> do
   session <- open first
   done <- run session
   let old = policyExternalProducer first
-      accepted action = submitExternal old (ExternalCommand action) >>= assertEqual "first admission" Accepted
+      accepted action = submitExternal old (ExternalInput action Nothing) >>= assertEqual "first admission" Accepted
   ( do
       attached first
       accepted (windows (SS.view "2"))
@@ -129,7 +140,7 @@ sessionIsolation = withNestedRiver 1 $ \river -> do
       accepted restart
       forM_ [1 .. 64 :: Int] (\n -> accepted (spawn (show n)))
       requireRuntimeExit done >>= assertEqual "stop handshake with pending work" (Right RiverStopped)
-      submitExternal old (ExternalCompletion (windows (SS.view "3"))) >>= assertEqual "stopped session rejects completion" IngressClosed
+      submitExternal old (ExternalInput (windows (SS.view "3")) Nothing) >>= assertEqual "stopped session rejects completion" IngressClosed
       readIORef launched >>= assertEqual "stop closes leftover batch" (map show [1 .. 31 :: Int])
       saved <- readRestoreState first
       second <- newPolicy config{policyRestore = Just saved} >>= requireRight "restored policy"
@@ -137,13 +148,123 @@ sessionIsolation = withNestedRiver 1 $ \river -> do
       nextDone <- run next
       ( do
           attached second
-          submitExternal old (ExternalCompletion (windows (SS.view "3"))) >>= assertEqual "old token after restore" IngressClosed
+          submitExternal old (ExternalInput (windows (SS.view "3")) Nothing) >>= assertEqual "old token after restore" IngressClosed
           readPolicyState second >>= \state -> case coreWorkspaces state of
             AttachedState ss _ -> assertEqual "restored workspace unchanged by old token" "2" (SS.currentTag ss)
             _ -> failIntegration "restore headless"
-          submitExternal (policyExternalProducer second) (ExternalCommand (windows (SS.view "1"))) >>= assertEqual "fresh producer" Accepted
+          submitExternal (policyExternalProducer second) (ExternalInput (windows (SS.view "1")) Nothing) >>= assertEqual "fresh producer" Accepted
           void (waitUntil "new session progresses" assertionTimeoutMicroseconds (readPolicyState second) (\state -> case coreWorkspaces state of AttachedState ss _ -> SS.currentTag ss == "1"; _ -> False))
         )
         `finally` (stopManagedProcess (riverProcess river) >> waitForRuntimeExit nextDone)
     )
     `finally` (stopManagedProcess (riverProcess river) >> waitForRuntimeExit done)
+
+ipcScenarios :: [(String, IO ())]
+ipcScenarios = [("m3-ipc-boundary", ipcBoundary), ("m3-ipc-metadata", ipcMetadata)]
+
+ipcBoundary :: IO ()
+ipcBoundary = do
+  launched <- newIORef []
+  let config = (policyConfigOf def){policyLaunch = \cmd -> modifyIORef' launched (<> [cmd])}
+  withFixture config "m3-ipc-boundary" 1 $ \fixture _ -> do
+    root <- maybe (failIntegration "missing fixture runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
+    let path = root </> "seki" </> "ipc.sock"
+        open = do
+          client <- socket AF_UNIX Stream defaultProtocol
+          connect client (SockAddrUnix path)
+          pure client
+        request bytes = bracket open close $ \client -> sendAll client bytes >> ipcLine client
+    withIPCAt path (mPolicy fixture) $ do
+      submitExternal (policyExternalProducer (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "initial publication trigger" Accepted
+      initial <- request "{\"version\":1,\"id\":\"a\",\"op\":\"snapshot\"}\n"
+      assertEqual "initial snapshot" True ("\"workspaces\"" `BS.isInfixOf` initial)
+      cliExecutable <- getEnv "SEKICTL_EXECUTABLE"
+      cli <- runProcessCapture (mEnvironment fixture) cliExecutable ["workspace", "3"]
+      assertEqual "CLI applied receipt" True ("\"revision\"" `BS.isInfixOf` cli)
+      void (waitUntil "CLI workspace applied" assertionTimeoutMicroseconds (readPolicyState (mPolicy fixture)) (\st -> case coreWorkspaces st of AttachedState ss _ -> SS.currentTag ss == "3"; _ -> False))
+      saveCapture fixture "ipc-regression"
+      second <- try @IOException (withIPCAt path (mPolicy fixture) (pure ()))
+      assertEqual "second live server refused" True (either (const True) (const False) second)
+      _ <- request "{\"version\":1,\"id\":\"a\",\"op\":\"snapshot\"}\n"
+      saveCapture fixture "socket-owner"
+      bracket open close $ \client -> do
+        sendAll client "{\"version\":1,"
+        sendAll client "\"id\":\"frag\",\"op\":\"workspace\",\"tag\":\"2\"}\n"
+        response <- ipcLine client
+        assertEqual "fragment accepted once" True ("\"revision\"" `BS.isInfixOf` response)
+      bracket open close $ \client -> do
+        sendAll client (BS.replicate 65537 32)
+        ended <- timeout assertionTimeoutMicroseconds (recv client 1)
+        assertEqual "oversized disconnect" (Just BS.empty) ended
+      forM_ [BS.pack [255, 10], "{\"version\":9,\"id\":\"bad\",\"op\":\"snapshot\"}\n"] $ \bad -> do
+        response <- request bad
+        assertEqual "invalid request error" True ("\"error\"" `BS.isInfixOf` response)
+      saveCapture fixture "framing"
+      bracket open close $ \unread -> do
+        sendAll unread "{\"version\":1,\"id\":\"slow\",\"op\":\"subscribe\"}\n"
+        bracket open close $ \client -> do
+          forM_ [1 .. 1000 :: Int] $ \n -> do
+            let tag = if odd n then "1" else "2"
+            sendAll client ("{\"version\":1,\"id\":\"load\",\"op\":\"workspace\",\"tag\":\"" <> tag <> "\"}\n")
+            response <- ipcLine client
+            assertEqual "every update acknowledged after application" True ("\"revision\"" `BS.isInfixOf` response)
+        saveCapture fixture "slow-reader"
+      bracket open close $ \client -> sendAll client "{\"version\":1,\"id\":\"gone\",\"op\":\"spawn\",\"command\":\"disconnect-marker\"}\n"
+      void (waitUntil "disconnected client's admitted command applied" assertionTimeoutMicroseconds (readIORef launched) (elem "disconnect-marker"))
+      response <- request "{\"version\":1,\"id\":\"healthy\",\"op\":\"workspace\",\"tag\":\"3\"}\n"
+      assertEqual "disconnect preserves session ingress" True ("\"revision\"" `BS.isInfixOf` response)
+      announce "M3_IPC_BOUNDARY all 1000 updates acknowledged; disconnect isolation and duplicate server passed"
+
+ipcLine :: Socket -> IO BS.ByteString
+ipcLine client = do
+  result <- timeout assertionTimeoutMicroseconds (readLine BS.empty)
+  maybe (failIntegration "IPC response timed out") pure result
+ where
+  readLine pending = do
+    byte <- recv client 1
+    if byte == "\n" || BS.null byte
+      then pure pending
+      else if BS.length pending >= 65536 then failIntegration "oversized IPC reply" else readLine (pending <> byte)
+
+ipcMetadata :: IO ()
+ipcMetadata = withFixture (policyConfigOf def) "m3-ipc-metadata" 1 $ \fixture probe -> do
+  root <- maybe (failIntegration "missing runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
+  let path = root </> "seki" </> "ipc.sock"
+      open = do
+        client <- socket AF_UNIX Stream defaultProtocol
+        connect client (SockAddrUnix path)
+        pure client
+      title = "<b>&\"\n$(touch /tmp/seki-title-must-not-run)"
+  withIPCAt path (mPolicy fixture) $ bracket open close $ \subscriber -> do
+    sendAll subscriber "{\"version\":1,\"id\":\"sub\",\"op\":\"subscribe\"}\n"
+    submitExternal (policyExternalProducer (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "publish initial" Accepted
+    initial <- ipcLine subscriber
+    (initialRevision, initialTitle) <- snapshotTitle initial
+    assertEqual "initial subscription has no title" Nothing initialTitle
+    announce ("M3_IPC_INITIAL " <> show initial)
+    window <- openWindow probe Red
+    setTitle probe window "first title"
+    let waitTitle expected = do
+          line <- ipcLine subscriber
+          (revision, observed) <- snapshotTitle line
+          if observed == Just expected then pure (revision, line) else waitTitle expected
+    (mappedRevision, mapped) <- waitTitle "first title"
+    assertEqual "mapped revision increases" True (mappedRevision > initialRevision)
+    announce ("M3_IPC_MAPPED " <> show mapped)
+    saveCapture fixture "subscribe"
+    setTitle probe window title
+    (titleRevision, changed) <- waitTitle title
+    assertEqual "title-only revision increases" True (titleRevision > mappedRevision)
+    (stillOldRevision, stillOldTitle) <- snapshotTitle mapped
+    assertEqual "old immutable projection unchanged" (mappedRevision, Just "first title") (stillOldRevision, stillOldTitle)
+    announce ("M3_IPC_TITLE_ONLY " <> show changed)
+    saveCapture fixture "title"
+
+snapshotTitle :: BS.ByteString -> IO (Integer, Maybe Text.Text)
+snapshotTitle bytes = do
+  value <- requireRight "JSON snapshot" (eitherDecodeStrict' bytes)
+  requireRight "snapshot fields" (parseEither parser value)
+ where
+  parser = withObject "envelope" $ \envelope -> do
+    result <- envelope .: "result"
+    withObject "result" (\o -> o .: "snapshot" >>= withObject "snapshot" (\snapshot -> (,) <$> snapshot .: "revision" <*> snapshot .: "focused_title")) result

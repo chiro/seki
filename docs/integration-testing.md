@@ -450,11 +450,23 @@ Set `SEKI_INTEGRATION_ARTIFACT_DIR` to retain successful PNG captures named
 `drain-race`, and `headless`, with the output name appended. Captures use
 native compositor pixels and are outside timed intervals. Existing failure
 captures remain PPM. Session closure and stale-token rejection also have unit
-coverage. The separate `m3-external-session` lane exercises real shutdown with queued
-work and restored-session delayed completion.
+coverage.
 
 `m3-external-session` stops a real session with more than one batch queued,
 checks that the leftover batch is discarded, restores workspace state into a
 fresh session, and rejects delayed completions through the old producer.
 It covers internal restart handover on one river connection lifecycle,
 without an exec or an IPC transport.
+
+
+## Bar IPC
+
+`m3-ipc-boundary` runs a private river and a real Unix server. It invokes the
+built `sekictl`, checks applied workspace receipts, refuses a second live server,
+accepts fragmented requests, rejects oversized and invalid input, and checks
+1000 acknowledged workspace changes while one subscription stays unread.
+A disconnected spawn client must not disable the next workspace command.
+The marker launcher records requests and does not execute the marker as a shell.
+Captures include `ipc-regression`, `socket-owner`, `framing`, and `slow-reader`.
+These checks do not establish title-only, real exec restart, physical input,
+two-output, exclusive-layer, or real Waybar behavior.

@@ -27,6 +27,9 @@ module Seki.Run.Policy (
   newPolicy,
   ExternalInput (..),
   policyExternalProducer,
+  observePolicy,
+  closePolicyIngress,
+  policyTagsOf,
   policyRuntimeHandlers,
   readPolicyState,
   readRestoreState,
@@ -36,6 +39,7 @@ module Seki.Run.Policy (
 where
 
 import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent.STM (TMVar, atomically, tryPutTMVar)
 import Control.Exception (IOException, try)
 import Control.Monad (void)
 import Data.Bits (complement, (.&.))
@@ -108,13 +112,24 @@ data DrainView = DrainView
   -- ^ The op river runs, not the op the core wants.
   }
 
-data ExternalInput i l = ExternalCommand (Action i l ()) | ExternalCompletion (Action i l ())
+data ExternalInput i l = ExternalInput (Action i l ()) (Maybe (TMVar Integer))
+
+closePolicyIngress :: Policy i l -> IO ()
+closePolicyIngress = closeExternal . externalLifecycle . policyIngress
+
+policyTagsOf :: Policy i l -> [i]
+policyTagsOf = policyTags . policyConfig
+
+observePolicy :: Policy i l -> (Integer -> CoreState i l -> RiverRuntimeSnapshot -> IO ()) -> IO ()
+observePolicy policy = writeIORef (policyObserver policy)
 
 policyExternalProducer :: Policy i l -> ExternalProducer (ExternalInput i l)
 policyExternalProducer = externalProducer . policyIngress
 
 data Policy i l = Policy
-  { policyIngress :: ExternalIngress (ExternalInput i l)
+  { policyRevision :: IORef Integer
+  , policyObserver :: IORef (Integer -> CoreState i l -> RiverRuntimeSnapshot -> IO ())
+  , policyIngress :: ExternalIngress (ExternalInput i l)
   , policyConfig :: PolicyConfig i l
   , policyState :: IORef (CoreState i l)
   , policyReconcile :: IORef ReconcileState
@@ -141,7 +156,7 @@ newPolicy config
       Left e -> pure (Left (PolicyTagError e))
       Right st -> case firstRepeat [] (map fst (policyBindings config)) of
         Just binding -> pure (Left (PolicyBindingConflict binding))
-        Nothing -> Right <$> (Policy <$> newExternalIngress <*> pure config <*> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)) <*> newIORef (policyRestore config) <*> newIORef (LiveInventory Map.empty Map.empty))
+        Nothing -> Right <$> (Policy <$> newIORef 0 <*> newIORef (\_ _ _ -> pure ()) <*> newExternalIngress <*> pure config <*> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)) <*> newIORef (policyRestore config) <*> newIORef (LiveInventory Map.empty Map.empty))
  where
   -- River excludes capslock and numlock bits from its modifier enum.
   invalidModifiers = invalidBits . riverKeyBindingModifiers
@@ -230,13 +245,16 @@ prepareManagePlan policy snapshot = do
   let view = DrainView inventory (shownBox before previous) (`Map.lookup` reconciledOps previous)
   events <- map ($ view) . reverse <$> atomicModifyIORef' (policyQueue policy) ([],)
   external <- drainedInputs <$> drainExternal (policyIngress policy)
-  let externalEvent (ExternalCommand action) = RunAction action
-      externalEvent (ExternalCompletion action) = RunAction action
+  let externalEvent (ExternalInput action _) = RunAction action
       (st, intents) = drainCore (policyManageHook (policyConfig policy)) (events <> map externalEvent external) before
   writeIORef (policyState policy) st
   writeIORef (policyDrainedInventory policy) (liveInventoryOf inventory)
   let effects = interpretIntents intents
   mapM_ (policyLaunch (policyConfig policy)) (planLaunch effects)
+  revision <- atomicModifyIORef' (policyRevision policy) (\n -> (n + 1, n + 1))
+  observer <- readIORef (policyObserver policy)
+  observer revision st snapshot
+  mapM_ (\(ExternalInput _ receipt) -> mapM_ (\cell -> void (atomically (tryPutTMVar cell revision))) receipt) external
   let scene =
         planScene
           (policySceneStyle (policyConfig policy))
