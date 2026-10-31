@@ -1,11 +1,13 @@
 module Seki.Run.ExternalTest (tests) where
 
-import Control.Concurrent (forkIO, killThread)
-import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent (forkIO, killThread, threadDelay)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar, tryPutMVar)
 import Control.Exception (ErrorCall (..), finally, throwIO, try)
-import Control.Monad (replicateM)
+import Control.Monad (replicateM, void)
 import Data.IORef (modifyIORef', newIORef, readIORef)
+import GHC.Conc (ThreadStatus (..), threadStatus)
 import Seki.Run.External
+import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit
 
@@ -66,4 +68,39 @@ tests =
         bindExternalWake (externalLifecycle queue) (pure False) >>= assertBool "bound"
         submitExternal (externalProducer queue) () >>= assertEqual "send failed" IngressClosed
         drainExternal queue >>= assertEqual "no stranded work" (Drain [] False)
+    , testCase "cancelling a submitting waiter preserves accepted work" $
+        cancelledWaiterPreservesIngress (\producer _ -> void (submitExternal producer 2))
+    , testCase "cancelling a pending-wake waiter preserves accepted work" $
+        cancelledWaiterPreservesIngress (\_ lifecycle -> wakeExternalPending lifecycle)
     ]
+
+cancelledWaiterPreservesIngress :: (ExternalProducer Int -> ExternalLifecycle -> IO ()) -> IO ()
+cancelledWaiterPreservesIngress operation = do
+  queue <- newExternalIngress
+  entered <- newEmptyMVar
+  release <- newEmptyMVar
+  ownerDone <- newEmptyMVar
+  waiterDone <- newEmptyMVar
+  let lifecycle = externalLifecycle queue
+      producer = externalProducer queue
+      notify = void (tryPutMVar entered ()) >> readMVar release >> pure True
+  bindExternalWake lifecycle notify >>= assertBool "bound"
+  void (forkIO (submitExternal producer 1 >>= putMVar ownerDone))
+  takeMVar entered
+  waiter <- forkIO (operation producer lifecycle `finally` putMVar waiterDone ())
+  let waitBlocked =
+        threadStatus waiter >>= \status -> case status of
+          ThreadBlocked _ -> pure ()
+          _ -> threadDelay 1000 >> waitBlocked
+  blocked <- timeout 1000000 waitBlocked
+  cancelled <- timeout 100000 (killThread waiter >> takeMVar waiterDone)
+  putMVar release ()
+  first <- takeMVar ownerDone
+  case cancelled of
+    Nothing -> takeMVar waiterDone
+    Just () -> pure ()
+  assertEqual "waiter reached the blocked operation" (Just ()) blocked
+  assertEqual "wake owner accepted its input" Accepted first
+  drainExternal queue >>= assertEqual "accepted work survives unrelated cancellation" (Drain [1] False)
+  submitExternal producer 3 >>= assertEqual "ingress remains usable" Accepted
+  assertEqual "cancellation completes without waiting for another producer" (Just ()) cancelled

@@ -14,8 +14,8 @@ module Seki.Run.External (
   closeExternal,
 ) where
 
-import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
-import Control.Exception (onException)
+import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVarMasked, newMVar)
+import Control.Exception (SomeException, throwIO, try)
 import Data.Foldable (toList)
 import Data.Sequence (Seq, (|>))
 import Data.Sequence qualified as Seq
@@ -47,27 +47,31 @@ externalLifecycle (ExternalIngress state) = ExternalLifecycle bind wake close
     Dormant -> pure (Accepting notify Seq.empty, True)
     _ -> pure (current, False)
   close = modifyMVar state (const (pure (Closed, ())))
-  wake = wakePending `onException` close
-  wakePending = modifyMVar state $ \current -> case current of
-    Accepting notify pending | not (Seq.null pending) -> do
-      ok <- notify
-      pure (if ok then current else Closed, ())
-    _ -> pure (current, ())
+  wake = do
+    result <- modifyMVarMasked state $ \current -> case current of
+      Accepting notify pending | not (Seq.null pending) -> do
+        sent <- try @SomeException notify
+        pure (case sent of Right True -> current; _ -> Closed, () <$ sent)
+      _ -> pure (current, Right ())
+    either throwIO pure result
 
 -- | Accepted means queued, not applied. Session closure discards pending inputs.
 submitExternal :: ExternalProducer a -> a -> IO Admission
-submitExternal (ExternalProducer (ExternalIngress state)) input =
-  -- A cancelled send must not restore a queue whose only wake was abandoned.
-  modifyMVar state admit `onException` modifyMVar state (const (pure (Closed, ())))
+submitExternal (ExternalProducer (ExternalIngress state)) input = do
+  result <- modifyMVarMasked state admit
+  either throwIO pure result
  where
   admit current = case current of
     Accepting notify pending
-      | Seq.length pending >= 256 -> pure (current, Full)
+      | Seq.length pending >= 256 -> pure (current, Right Full)
       | Seq.null pending -> do
-          ok <- notify
-          pure (if ok then Accepting notify (Seq.singleton input) else Closed, if ok then Accepted else IngressClosed)
-      | otherwise -> pure (Accepting notify (pending |> input), Accepted)
-    _ -> pure (current, IngressClosed)
+          sent <- try @SomeException notify
+          pure
+            ( case sent of Right True -> Accepting notify (Seq.singleton input); _ -> Closed
+            , (\ok -> if ok then Accepted else IngressClosed) <$> sent
+            )
+      | otherwise -> pure (Accepting notify (pending |> input), Right Accepted)
+    _ -> pure (current, Right IngressClosed)
 
 drainExternal :: ExternalIngress a -> IO (Drain a)
 drainExternal (ExternalIngress state) = modifyMVar state $ \current -> case current of

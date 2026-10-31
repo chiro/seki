@@ -284,7 +284,6 @@ saveCapture fixture label = do
       frame <- captureOutput (mSocket fixture) output
       BS.writeFile (directory </> label <> "-" <> Text.unpack output <> ".png") (png frame)
 
--- PNG uses stored DEFLATE blocks so successful captures need no extra program.
 png :: Image -> BS.ByteString
 png frame = BS.pack [137, 80, 78, 71, 13, 10, 26, 10] <> chunk "IHDR" header <> chunk "IDAT" compressed <> chunk "IEND" BS.empty
  where
