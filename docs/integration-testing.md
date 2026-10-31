@@ -477,7 +477,8 @@ CLI subscription session, and checks that a real spawn runs exactly once.
 
 `m3-ipc-perf` runs 1000 acknowledged workspace changes per load condition at
 1, 2, and 32 total connections. At the cap, 30 subscriptions remain unread.
-Command timing starts before write and ends at the applied-reply LF. Subscriber
+Command timing starts before write and ends after capturing immutable policy
+state following the applied-reply LF. State correctness is checked afterward. Subscriber
 timing starts before the corresponding owner reducer pass and ends at receipt
 of a snapshot LF at or beyond its revision. State and JSON checks happen outside
 the interval. The 50 ms per-sample ceiling retains M3-D02's selected target.

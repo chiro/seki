@@ -12,6 +12,7 @@ import Data.Aeson.Types (parseEither)
 import Data.ByteString qualified as BS
 import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Map.Strict qualified as Map
+import Data.Text qualified as Text
 import GHC.Clock (getMonotonicTimeNSec)
 import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
@@ -73,8 +74,8 @@ ipcPerf = do
                     ( let loop = do
                             bytes <- readSnapshot
                             ended <- getMonotonicTimeNSec
-                            revision <- snapshotRevision bytes
-                            writeChan observed (Right (revision, ended))
+                            (revision, tag) <- snapshotObservation bytes
+                            writeChan observed (Right (revision, ended, tag))
                             loop
                        in loop
                     )
@@ -84,19 +85,24 @@ ipcPerf = do
                     )
             let stop = mapM_ (\thread -> killThread thread >> takeMVar done) reader
                 matching revision = do
-                  value <- readChan observed >>= requireRight "subscriber reader"
-                  if fst value >= revision then pure (snd value) else matching revision
+                  (observedRevision, received, tag) <- readChan observed >>= requireRight "subscriber reader"
+                  if observedRevision >= revision then pure (received, tag) else matching revision
             ( forM_ [1 .. 1000 :: Int] $ \n -> do
                 let tag = if odd n then "2" else "1"
                 started <- getMonotonicTimeNSec
                 sendAll commander ("{\"version\":1,\"id\":\"perf\",\"op\":\"workspace\",\"tag\":\"" <> tag <> "\"}\n")
                 response <- readReply
+                state <- readPolicyState (mPolicy fixture)
                 ended <- getMonotonicTimeNSec
                 revision <- appliedRevision response
-                state <- readPolicyState (mPolicy fixture)
                 assertEqual "observed requested workspace outside timed interval" (Just (if odd n then "2" else "1")) (case coreWorkspaces state of AttachedState ss _ -> Just (SS.currentTag ss); _ -> Nothing)
                 begin <- Map.lookup revision <$> readIORef starts >>= maybe (failIntegration "missing matching owner application") pure
-                change <- case subscriber of Nothing -> pure Nothing; Just _ -> Just . subtract begin <$> matching revision
+                change <- case subscriber of
+                  Nothing -> pure Nothing
+                  Just _ -> do
+                    (received, observedTag) <- matching revision
+                    assertEqual "subscriber state validated outside timed interval" (Text.pack (if odd n then "2" else "1")) observedTag
+                    pure (Just (received - begin))
                 assertEqual "command below preselected 50ms ceiling" True (ended - started < 50000000)
                 forM_ change $ \duration -> assertEqual "change to subscriber below 50ms ceiling" True (duration < 50000000)
                 announce ("M3_IPC_PERF " <> show clients <> " " <> show n <> " " <> show (ended - started) <> " " <> maybe "null" show change)
@@ -124,7 +130,25 @@ appliedRevision bytes = do
   value <- requireRight "command JSON" (eitherDecodeStrict' bytes)
   requireRight "application revision" (parseEither (withObject "envelope" (\o -> o .: "result" >>= withObject "result" (.: "revision"))) value)
 
-snapshotRevision :: BS.ByteString -> IO Integer
-snapshotRevision bytes = do
+snapshotObservation :: BS.ByteString -> IO (Integer, Text.Text)
+snapshotObservation bytes = do
   value <- requireRight "snapshot JSON" (eitherDecodeStrict' bytes)
-  requireRight "snapshot revision" (parseEither (withObject "envelope" (\o -> o .: "result" >>= withObject "result" (\r -> r .: "snapshot" >>= withObject "snapshot" (.: "revision")))) value)
+  requireRight "snapshot revision and state" (parseEither parser value)
+ where
+  parser = withObject "envelope" $ \o ->
+    o .: "result"
+      >>= withObject
+        "result"
+        ( \r ->
+            r .: "snapshot"
+              >>= withObject
+                "snapshot"
+                ( \snapshot -> do
+                    revision <- snapshot .: "revision"
+                    workspaces <- snapshot .: "workspaces"
+                    flags <- mapM (withObject "workspace" (\w -> (,) <$> w .: "tag" <*> w .: "focused")) workspaces
+                    case [tag | (tag, True) <- flags] of
+                      [tag] -> pure (revision, tag)
+                      _ -> fail "snapshot must have one intended workspace focus"
+                )
+        )
