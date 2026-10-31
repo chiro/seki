@@ -35,9 +35,10 @@ tests =
         assertBool "escaped size bounded" (either (const True) (const False) (encodeLine (String (Text.replicate 65536 "\n"))))
     , testCase "headless projection preserves configured order and unsupported capabilities" $ do
         st <- either (assertFailure . show) pure (newCoreState Full ["3", "1"])
-        projectSnapshot id ["3", "1"] 7 st (RiverRuntimeSnapshot emptyRiverInventory [])
+        projectSnapshot "test-session" id ["3", "1"] 7 st (RiverRuntimeSnapshot emptyRiverInventory [])
           @?= object
-            [ "revision" .= (7 :: Int)
+            [ "session" .= ("test-session" :: Text.Text)
+            , "revision" .= (7 :: Int)
             , "outputs" .= ([] :: [Value])
             , "workspaces"
                 .= [ object ["tag" .= ("3" :: Text.Text), "occupied" .= False, "visible" .= False, "focused" .= True, "layout" .= ("Full" :: String)]

@@ -2,20 +2,22 @@
 
 module Seki.Integration.M3 (m3Scenarios, ipcScenarios) where
 
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (forkFinally, forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (IOException, bracket, finally, try)
-import Control.Monad (forM_, void)
+import Control.Monad (forM_, replicateM, void)
 import Data.Aeson (eitherDecodeStrict', withObject, (.:))
 import Data.Aeson.Types (parseEither)
 import Data.ByteString qualified as BS
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
+import Data.List (isInfixOf, nub, sort)
 import Data.Text qualified as Text
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Conc (threadStatus)
 import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
-import Seki.Fixture.Probe (Color (..), openWindow, setTitle)
+import Seki.Fixture.LayerSurface qualified as Layer
+import Seki.Fixture.Probe (Color (..), openWindow, outputNames, setTitle, withProbe)
 import Seki.Integration.Fixture
 import Seki.Integration.Harness
 import Seki.Internal.Config (def)
@@ -30,8 +32,10 @@ import Seki.Run.Policy
 import Seki.Run.Runtime
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
 import Seki.Wire.Transport (ConnectionTarget (..))
-import System.Environment (getEnv)
+import System.Directory (doesFileExist)
+import System.Environment (getEnv, lookupEnv)
 import System.FilePath ((</>))
+import System.Process (proc)
 import System.Timeout (timeout)
 
 m3Scenarios :: [(String, IO ())]
@@ -160,7 +164,7 @@ sessionIsolation = withNestedRiver 1 $ \river -> do
     `finally` (stopManagedProcess (riverProcess river) >> waitForRuntimeExit done)
 
 ipcScenarios :: [(String, IO ())]
-ipcScenarios = [("m3-ipc-boundary", ipcBoundary), ("m3-ipc-metadata", ipcMetadata)]
+ipcScenarios = [("m3-ipc-boundary", ipcBoundary), ("m3-ipc-metadata", ipcMetadata), ("m3-ipc-state", ipcState), ("m3-ipc-reconnect", ipcReconnect)]
 
 ipcBoundary :: IO ()
 ipcBoundary = do
@@ -268,3 +272,126 @@ snapshotTitle bytes = do
   parser = withObject "envelope" $ \envelope -> do
     result <- envelope .: "result"
     withObject "result" (\o -> o .: "snapshot" >>= withObject "snapshot" (\snapshot -> (,) <$> snapshot .: "revision" <*> snapshot .: "focused_title")) result
+
+ipcState :: IO ()
+ipcState = withFixture (policyConfigOf def) "m3-ipc-state" 2 $ \fixture probe -> do
+  root <- maybe (failIntegration "missing runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
+  let path = root </> "seki" </> "ipc.sock"
+      open = do
+        client <- socket AF_UNIX Stream defaultProtocol
+        connect client (SockAddrUnix path)
+        pure client
+      request bytes = bracket open close $ \client -> sendAll client bytes >> ipcLine client
+      snapshot = request "{\"version\":1,\"id\":\"state\",\"op\":\"snapshot\"}\n"
+  withIPCAt path (mPolicy fixture) $ do
+    _ <- openWindow probe Red
+    submitExternal (policyExternalProducer (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "publish" Accepted
+    initial <- snapshot
+    (names, flags, available) <- snapshotFlags initial
+    assertEqual "two connector names" [Just "HEADLESS-1", Just "HEADLESS-2"] (sort names)
+    assertEqual "two workspaces visible" 2 (length (filter (\(_, shown, _) -> shown) flags))
+    assertEqual "one intended workspace focus" 1 (length (filter (\(_, _, focused) -> focused) flags))
+    assertEqual "window keyboard available" True available
+    cliExecutable <- getEnv "SEKICTL_EXECUTABLE"
+    _ <- runProcessCapture (mEnvironment fixture) cliExecutable ["workspace", "3"]
+    _ <- openWindow probe Green
+    changed <- snapshot
+    (_, flagsAfter, _) <- snapshotFlags changed
+    assertEqual "requested workspace focused" [("3", True, True)] (filter (\(_, _, focused) -> focused) flagsAfter)
+    announce ("M3_IPC_TWO_OUTPUTS " <> show changed)
+    saveCapture fixture "multi-output"
+    control <- Layer.newFixtureControl
+    ready <- newEmptyMVar
+    stopped <- newEmptyMVar
+    thread <- forkFinally (Layer.runLayerSurfaceFixture control (Layer.FixtureConfig 32 Layer.KeyboardInteractivityExclusive) (UnixSocketPath (mSocket fixture)) (putMVar ready)) (putMVar stopped)
+    let stopLayer = Layer.requestStop control >> waitForMVar "layer stopped" stopped >>= requireRight "layer thread" >>= requireRight "layer protocol" >>= assertEqual "layer clean stop" Layer.StoppedByRequest
+    ( do
+        _ <- waitForMVar "exclusive layer ready" ready
+        _ <- waitUntil "exclusive layer owns keyboard" assertionTimeoutMicroseconds (readRiverSeatBindings (mSession fixture)) (any ((== RiverLayerFocusExclusive) . riverSeatLayerFocus))
+        layerSnapshot <- waitUntil "IPC reflects layer keyboard" assertionTimeoutMicroseconds (snapshot >>= snapshotFlags) (\(_, _, keyboard) -> not keyboard)
+        let (_, layerFlags, layerKeyboard) = layerSnapshot
+        assertEqual "workspace intent preserved under layer focus" [("3", True, True)] (filter (\(_, _, focused) -> focused) layerFlags)
+        assertEqual "keyboard is unavailable under exclusive layer" False layerKeyboard
+        saveCapture fixture "layer-focus"
+        announce ("M3_IPC_EXCLUSIVE_LAYER " <> show layerSnapshot)
+      )
+      `finally` (stopLayer `finally` killThread thread)
+    -- Each initial reply proves admission before the next connection starts.
+    bracket
+      ( replicateM 32 $ do
+          client <- open
+          sendAll client "{\"version\":1,\"id\":\"capacity\",\"op\":\"subscribe\"}\n"
+          initialLine <- ipcLine client
+          assertEqual "connection admitted" True ("\"snapshot\"" `BS.isInfixOf` initialLine)
+          pure client
+      )
+      (mapM_ close)
+      $ \_ -> bracket open close $ \extra -> do
+        response <- timeout assertionTimeoutMicroseconds (recv extra 1)
+        assertEqual "33rd connection closed" (Just BS.empty) response
+    announce "M3_IPC_CAPACITY 32 admitted; 33rd closed"
+
+snapshotFlags :: BS.ByteString -> IO ([Maybe Text.Text], [(Text.Text, Bool, Bool)], Bool)
+snapshotFlags bytes = do
+  value <- requireRight "snapshot JSON" (eitherDecodeStrict' bytes)
+  requireRight "state fields" (parseEither parser value)
+ where
+  parser = withObject "envelope" $ \envelope -> do
+    result <- envelope .: "result"
+    withObject
+      "result"
+      ( \o ->
+          o .: "snapshot"
+            >>= withObject
+              "snapshot"
+              ( \s -> do
+                  outputs <- s .: "outputs"
+                  names <- mapM (withObject "output" (.: "name")) outputs
+                  workspaces <- s .: "workspaces"
+                  flags <- mapM (withObject "workspace" (\w -> (,,) <$> w .: "tag" <*> w .: "visible" <*> w .: "focused")) workspaces
+                  available <- s .: "keyboard_available"
+                  pure (names, flags, available)
+              )
+      )
+      result
+
+ipcReconnect :: IO ()
+ipcReconnect = withNestedRiver 1 $ \nested -> do
+  executable <- getEnv "SEKI_EXECUTABLE"
+  cli <- getEnv "SEKICTL_EXECUTABLE"
+  let environment = riverEnvironment nested
+      runtime = riverRuntimeDirectory nested
+      marker = runtime </> "spawn-count"
+      logFile = runtime </> "subscription.jsonl"
+      readLines path = doesFileExist path >>= \exists -> if exists then BS.split 10 <$> BS.readFile path else pure []
+      sessions = do
+        bytes <- readLines logFile
+        mapM snapshotSession (filter (not . BS.null) bytes)
+      key = runInputDriver environment ["-M", "logo", "-k", "q", "-m", "logo"]
+  bracket (startManagedProcess "seki" environment (proc executable [])) stopManagedProcess $ \manager -> do
+    [(_, output)] <- waitUntil "one output" assertionTimeoutMicroseconds (outputNames (riverSocket nested)) ((== 1) . length)
+    withKeyboard environment . withProbe (riverSocket nested) $ \probe -> do
+      _ <- openWindow probe Red
+      -- Fixed positional arguments keep paths out of shell source.
+      bracket (startManagedProcess "sekictl subscribe" environment (proc "/bin/sh" ["-c", "exec \"$1\" subscribe > \"$2\"", "seki-subscribe", cli, logFile])) stopManagedProcess $ \_ -> do
+        first <- waitUntil "initial CLI subscription" assertionTimeoutMicroseconds sessions (not . null)
+        _ <- runProcessCapture environment cli ["spawn", "printf 'once\n' >> '" <> marker <> "'"]
+        _ <- waitUntil "spawn executed once" assertionTimeoutMicroseconds (readLines marker) ((== ["once"]) . filter (not . BS.null))
+        pid <- managedProcessPid manager >>= maybe (failIntegration "manager pid missing") pure
+        key
+        _ <- waitUntil "real exec restart" assertionTimeoutMicroseconds (BS.readFile ("/proc/" <> show pid <> "/cmdline")) (isInfixOf "--restore" . map (toEnum . fromEnum) . BS.unpack)
+        after <- waitUntil "subscriber reconnects to a fresh session" (assertionTimeoutMicroseconds + 2000000) sessions ((>= 2) . length . nub)
+        assertEqual "session identity changed" True (length (nub after) > length (nub first))
+        readLines marker >>= assertEqual "spawn was not replayed" ["once", ""]
+        announce ("M3_IPC_RECONNECT " <> show (nub after))
+        artifacts <- lookupEnv "SEKI_INTEGRATION_ARTIFACT_DIR"
+        forM_ artifacts $ \directory -> do
+          BS.readFile logFile >>= BS.writeFile (directory </> "reconnect-subscription.jsonl")
+          saveOutputCapture (riverSocket nested) output (directory </> "reconnect.png")
+
+snapshotSession :: BS.ByteString -> IO Text.Text
+snapshotSession bytes = do
+  value <- requireRight "subscription JSON" (eitherDecodeStrict' bytes)
+  requireRight "session identity" (parseEither parser value)
+ where
+  parser = withObject "envelope" $ \e -> e .: "result" >>= withObject "result" (\r -> r .: "snapshot" >>= withObject "snapshot" (.: "session"))

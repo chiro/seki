@@ -28,3 +28,5 @@ m3-external-wake=passed
 m3-external-session=passed
 m3-ipc-boundary=passed
 m3-ipc-metadata=passed
+m3-ipc-state=passed
+m3-ipc-reconnect=passed
