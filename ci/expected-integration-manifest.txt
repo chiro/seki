@@ -32,3 +32,4 @@ m3-ipc-state=passed
 m3-ipc-reconnect=passed
 m3-ipc-limits=passed
 m3-ipc-perf=passed
+m3-ipc-waybar=passed

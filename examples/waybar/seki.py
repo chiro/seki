@@ -2,8 +2,8 @@
 """Emit Waybar JSON lines from sekictl's restart-aware subscription."""
 import html
 import json
+import signal
 import subprocess
-import sys
 
 
 def module(snapshot):
@@ -15,6 +15,10 @@ def module(snapshot):
 
 
 def main():
+    def stop(_signal, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stop)
     with subprocess.Popen(["sekictl", "subscribe"], stdout=subprocess.PIPE,
                           text=True, encoding="utf-8") as process:
         try:

@@ -352,6 +352,7 @@ test-suite seki-integration
     Seki.Integration.M2
     Seki.Integration.M3
     Seki.Integration.IPCPerf
+    Seki.Integration.Waybar
     Seki.Integration.Reference
     Seki.Integration.Restart
   build-depends:

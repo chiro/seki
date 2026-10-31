@@ -77,6 +77,7 @@ external-configuration package proof. The public Seki configuration is unchanged
 The release shell includes Waybar and Python. The example invokes `sekictl` with a
 fixed argument list and escapes Pango markup independently from JSON encoding.
 Copy `examples/waybar/seki.py` to the path used in its accompanying config.
+The example handles SIGTERM and reaps its CLI child when Waybar stops.
 
 
 Invalid requests retain a valid string request ID when JSON can be decoded.

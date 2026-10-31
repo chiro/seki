@@ -21,6 +21,7 @@ import Seki.Fixture.Probe (Color (..), openWindow, outputNames, setTitle, withPr
 import Seki.Integration.Fixture
 import Seki.Integration.Harness
 import Seki.Integration.IPCPerf (ipcPerfScenarios)
+import Seki.Integration.Waybar (waybarScenarios)
 import Seki.Internal.Config (def)
 import Seki.Internal.Core.Action (restart, spawn, windows)
 import Seki.Internal.Core.StackSet qualified as SS
@@ -165,7 +166,7 @@ sessionIsolation = withNestedRiver 1 $ \river -> do
     `finally` (stopManagedProcess (riverProcess river) >> waitForRuntimeExit done)
 
 ipcScenarios :: [(String, IO ())]
-ipcScenarios = [("m3-ipc-boundary", ipcBoundary), ("m3-ipc-metadata", ipcMetadata), ("m3-ipc-state", ipcState), ("m3-ipc-reconnect", ipcReconnect), ("m3-ipc-limits", ipcLimits)] <> ipcPerfScenarios
+ipcScenarios = [("m3-ipc-boundary", ipcBoundary), ("m3-ipc-metadata", ipcMetadata), ("m3-ipc-state", ipcState), ("m3-ipc-reconnect", ipcReconnect), ("m3-ipc-limits", ipcLimits)] <> ipcPerfScenarios <> waybarScenarios
 
 ipcBoundary :: IO ()
 ipcBoundary = do
