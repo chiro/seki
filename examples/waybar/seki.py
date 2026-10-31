@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Emit Waybar JSON lines from sekictl's restart-aware subscription."""
 import html
 import json
 import signal
