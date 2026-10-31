@@ -41,9 +41,17 @@ persistent output names or window identities.
 
 Subscribe delivers an initial snapshot, then updated immutable projections.
 A subscriber can have one replaceable pending snapshot. Intermediate revisions
-may be skipped. Application replies use a separate bounded queue and are never
-replaced by snapshots. Commands have a 256 input backlog and drain in batches of
-32. At most 32 connections are active. Slow clients cannot block policy dispatch.
+may be skipped. Each command connection processes one request and its reply
+before reading the next request. Application replies use per-command result
+cells and bounded socket writes; snapshot replacement cannot replace a reply.
+
+The session broker can hold 256 waiting commands plus one command awaiting its
+application receipt. It submits to the separate session ingress, which holds
+256 inputs and drains at most 32 per manage sequence. These are separate bounds,
+not a combined 256-command limit. At most 32 connections are active, each with
+at most one command in flight. A disconnected command handler awaiting its
+receipt keeps its connection slot until it finishes or the session stops.
+Slow clients cannot block policy dispatch.
 Oversized snapshots produce an explicit `snapshot_too_large` error instead of a
 partial snapshot. Titles, output names, and layout descriptions are limited to 1024 Unicode characters with
 explicit truncation indicators. Escaped JSON byte size still obeys the line limit.
