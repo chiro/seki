@@ -16,10 +16,11 @@ import Seki.Wire.Connection.ObjectTable (objectId)
 import Seki.Wire.Types (objectIdValue)
 
 -- | Call on the policy owner after reducing against this inventory.
-projectSnapshot :: (Eq i, LayoutClass l) => (i -> Text) -> [i] -> Integer -> CoreState i l -> RiverRuntimeSnapshot -> Value
-projectSnapshot label tags revision st runtime =
+projectSnapshot :: (Eq i, LayoutClass l) => Text -> (i -> Text) -> [i] -> Integer -> CoreState i l -> RiverRuntimeSnapshot -> Value
+projectSnapshot session label tags revision st runtime =
   object
-    [ "revision" .= revision
+    [ "session" .= session
+    , "revision" .= revision
     , "outputs" .= map outputValue (riverInventoryOutputs inventory)
     , "workspaces" .= map workspaceValue tags
     , "focused_title" .= fmap (Text.take 1024) title

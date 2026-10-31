@@ -12,6 +12,7 @@ module Seki.Integration.Fixture (
   withFixture,
   withFixtureUsing,
   saveCapture,
+  saveOutputCapture,
   withHeldLogo,
   withHeldLogoIn,
   windowRequests,
@@ -281,8 +282,10 @@ saveCapture fixture label = do
   forM_ artifacts $ \directory -> do
     createDirectoryIfMissing True directory
     forM_ (mOutputs fixture) $ \output -> do
-      frame <- captureOutput (mSocket fixture) output
-      BS.writeFile (directory </> label <> "-" <> Text.unpack output <> ".png") (png frame)
+      saveOutputCapture (mSocket fixture) output (directory </> label <> "-" <> Text.unpack output <> ".png")
+
+saveOutputCapture :: FilePath -> Text -> FilePath -> IO ()
+saveOutputCapture socket output path = captureOutput socket output >>= BS.writeFile path . png
 
 png :: Image -> BS.ByteString
 png frame = BS.pack [137, 80, 78, 71, 13, 10, 26, 10] <> chunk "IHDR" header <> chunk "IDAT" compressed <> chunk "IEND" BS.empty

@@ -14,6 +14,7 @@ import Data.ByteString qualified as BS
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import Foreign.C.Error (Errno (..), eCONNREFUSED)
+import GHC.Clock (getMonotonicTimeNSec)
 import GHC.IO.Exception (IOException (..))
 import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
@@ -30,6 +31,7 @@ import System.FilePath (isAbsolute, takeDirectory, (</>))
 import System.IO.Error (isAlreadyExistsError, isDoesNotExistError)
 import System.Posix.Directory qualified as Posix
 import System.Posix.Files
+import System.Posix.Process (getProcessID)
 import System.Posix.User (getEffectiveUserID)
 import System.Timeout (timeout)
 
@@ -85,12 +87,15 @@ withIPC policy body = ipcPath >>= \path -> withIPCAt path policy body
 withIPCAt :: (Layout.LayoutClass l) => FilePath -> Policy String l -> IO a -> IO a
 withIPCAt path policy body =
   withEndpoint path $ \listener -> mask $ \restore -> do
+    pid <- getProcessID
+    tick <- getMonotonicTimeNSec
+    let session = Text.pack (show pid <> "-" <> show tick)
     latest <- newTVarIO Nothing
     jobs <- newTBQueueIO 256
     clients <- newMVar Map.empty
     healthy <- newTVarIO True
     observePolicy policy $ \revision st runtime -> do
-      snapshot <- evaluate (force (projectSnapshot Text.pack (policyTagsOf policy) revision st runtime))
+      snapshot <- evaluate (force (projectSnapshot session Text.pack (policyTagsOf policy) revision st runtime))
       atomically (writeTVar latest (Just (revision, snapshot)))
     broker <-
       forkFinally
@@ -112,7 +117,7 @@ withIPCAt path policy body =
               then close client >> pure active
               else do
                 gate <- newEmptyTMVarIO
-                tid <- forkFinally (atomically (takeTMVar gate) >> unmask (serve client latest jobs healthy)) $ \_ -> do
+                tid <- forkFinally (atomically (takeTMVar gate) >> unmask (serve client latest jobs healthy session)) $ \_ -> do
                   close client
                   modifyMVar_ clients (pure . Map.filter (/= client))
                 atomically (putTMVar gate ())
@@ -127,7 +132,7 @@ withIPCAt path policy body =
           observePolicy policy (\_ _ _ -> pure ())
     restore body `finally` cleanup
  where
-  serve client latest jobs healthy = readRequests BS.empty
+  serve client latest jobs healthy session = readRequests BS.empty
    where
     readRequests pending = case BS.elemIndex 10 pending of
       Just n -> do
@@ -155,7 +160,7 @@ withIPCAt path policy body =
                       answer <- atomically (takeTMVar result `orElse` (readTVar healthy >>= check . not >> pure (Left "session command broker stopped")))
                       case answer of
                         Left message -> sendValue (failure ident "unavailable" message)
-                        Right revision -> sendValue (reply ident (object ["revision" .= revision]))
+                        Right revision -> sendValue (reply ident (object ["session" .= session, "revision" .= revision]))
               readRequests (BS.drop 1 rest)
       Nothing
         | BS.length pending > maxLineBytes -> pure ()

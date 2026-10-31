@@ -29,7 +29,7 @@ not mean a displayed frame or successful child process execution. External input
 FIFO does not establish a total order with protocol events.
 
 Snapshot results and subscription events contain a `snapshot` object with a
-session-local integer `revision`, `outputs`, and `workspaces` in configured order.
+session-local integer `revision`, an opaque `session` identifier, `outputs`, and `workspaces` in configured order.
 Output `name` is the nullable compositor connector name obtained from `wl_output`
 version 4. Its registry global and wire ID remain session-local.
 Each workspace has `tag`, `occupied`, `visible`, `focused`, and `layout`.
