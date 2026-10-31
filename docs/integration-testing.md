@@ -483,5 +483,14 @@ of a snapshot LF at or beyond its revision. State and JSON checks happen outside
 the interval. The 50 ms per-sample ceiling retains M3-D02's selected target.
 This probe does not measure displayed frames or prove an M2 comparison.
 
-The real Waybar, pinned Nix environment, physical input, and operator review
-remain separate acceptance gates. JSON escaping tests do not pass a visual gate.
+`m3-ipc-waybar` runs the shipped Python example in real Waybar on a private
+D-Bus session and private river. It checks actual bar pixels after title and
+workspace changes. Adversarial title markup must render without red injected
+glyphs, and a shell marker must remain absent. Captures include the initial,
+adversarial, and workspace-update frames. Set `SEKI_CAPTURE_VIDEO=1` to retain
+60 native frames with timestamps for a review video. The optional private
+`SEKI_WAYBAR_EXECUTABLE` and `SEKI_WAYBAR_LIBRARY_PATH` select an extracted local
+binary; the release shell uses its pinned Waybar by default.
+
+Pinned Nix execution, physical input, and operator review remain separate gates.
+JSON escaping tests alone do not pass the visual gate.
