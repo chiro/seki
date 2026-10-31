@@ -40,6 +40,8 @@
             pkgs.foot
             pkgs.glib
             pkgs.river
+            pkgs.waybar
+            pkgs.python3
             pkgs.wlr-randr
             pkgs.wtype
             pkgs.xdotool
@@ -65,6 +67,7 @@
         nixpkgs-ghc = "3ec636362e1816bc2f0888fa0fa2c69f1bc9e504";
         renderer = "pixman";
         river = version pkgs.river;
+        waybar = version pkgs.waybar;
         wlr-randr = version pkgs.wlr-randr;
         wtype = version pkgs.wtype;
         xdotool = version pkgs.xdotool;

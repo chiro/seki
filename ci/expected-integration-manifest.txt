@@ -26,3 +26,5 @@ m2-restart-fallback=passed
 m2-reference-config=passed
 m3-external-wake=passed
 m3-external-session=passed
+m3-ipc-boundary=passed
+m3-ipc-metadata=passed

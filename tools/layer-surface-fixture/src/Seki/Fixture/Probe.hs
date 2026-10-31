@@ -20,6 +20,7 @@ module Seki.Fixture.Probe (
   keyboardSnapshot,
   committedSizes,
   pointerSnapshot,
+  setTitle,
   requestFullscreen,
   requestExitFullscreen,
   requestMove,
@@ -106,7 +107,7 @@ data PointerSnapshot = PointerSnapshot
   deriving (Eq, Show)
 
 data Probe = Probe (Chan Input) (MVar (Either SomeException ())) (IORef KeyboardSnapshot) (IORef PointerSnapshot) (IORef (Map ProbeWindow (Int32, Int32)))
-data ToplevelRequest = SetFullscreen | UnsetFullscreen | Move
+data ToplevelRequest = SetFullscreen | UnsetFullscreen | Move | SetTitle Text
 data Input
   = Open WindowSpec (MVar ProbeWindow)
   | Size ProbeWindow Int32 Int32
@@ -228,6 +229,9 @@ actorAlive (Probe _ finished _ _ _) =
     Just (Left exception) -> throwIO exception
     _ -> pure ()
 
+setTitle :: Probe -> ProbeWindow -> Text -> IO ()
+setTitle probe window title = request probe window (SetTitle title)
+
 requestFullscreen :: Probe -> ProbeWindow -> IO ()
 requestFullscreen probe window = request probe window SetFullscreen
 
@@ -289,6 +293,7 @@ actorLoop actor state =
         Just w -> do
           let toplevel encoder = send Xdg.xdgToplevelInterface (windowToplevel w) encoder >> sync session (putMVar reply (Right ()))
           case value of
+            SetTitle title -> toplevel (Xdg.encodeXdgToplevelSetTitle title)
             SetFullscreen -> toplevel (Xdg.encodeXdgToplevelSetFullscreen Nothing)
             UnsetFullscreen -> toplevel Xdg.encodeXdgToplevelUnsetFullscreen
             Move -> maybe (putMVar reply (Left ("move needs a pointer press on " <> show window))) (toplevel . Xdg.encodeXdgToplevelMove (objectId (actorSeat actor))) (Map.lookup window (loopPressSerials state))

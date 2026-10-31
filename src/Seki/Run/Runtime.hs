@@ -38,6 +38,7 @@ import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Protocol.RiverLayerShellV1 qualified as LayerShell
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
+import Seki.Protocol.Wayland qualified as Wayland
 import Seki.Run.External (ExternalLifecycle, bindExternalWake, closeExternal, wakeExternalPending)
 import Seki.Run.Inventory (
   RiverInventory,
@@ -49,7 +50,9 @@ import Seki.Run.Inventory (
   applyRiverLayerShellOutputEvent,
   applyRiverOutputEvent,
   applyRiverWindowEvent,
+  applyWlOutputEvent,
   attachRiverOutputLayerShell,
+  attachRiverOutputWlOutput,
   attachRiverWindowNode,
   emptyRiverInventory,
   lookupRiverOutput,
@@ -112,11 +115,12 @@ import Seki.Wire.Connection (
   ConnectionError,
   DispatchResult (..),
   dispatchNextEvent,
+  eventRoute,
   submitInheritedObjectRequest,
   submitRequest,
  )
 import Seki.Wire.Connection.ObjectTable (Object, ObjectLimit, objectId)
-import Seki.Wire.Connection.Registry (RegistryError)
+import Seki.Wire.Connection.Registry (RegistryError, bindGlobalWithRoute, globalNameFromWord, globalVersion, selectGlobal)
 import Seki.Wire.Transport (ConnectionTarget, OwnedFd)
 import Seki.Wire.Types (ObjectId)
 
@@ -262,6 +266,7 @@ openRiverSessionWith openWayland runtimeHandlers =
       Right wayland -> do
         sequenceStatus <- newIORef (Right initialRiverSequenceState)
         inventoryState <- newIORef emptyRiverInventory
+        managerState <- newIORef Nothing
         xkbGlobalState <- newIORef Nothing
         layerShellGlobalState <- newIORef Nothing
         seatBindingsState <- newIORef Map.empty
@@ -271,6 +276,7 @@ openRiverSessionWith openWayland runtimeHandlers =
                 wayland
                 sequenceStatus
                 inventoryState
+                managerState
                 xkbGlobalState
                 layerShellGlobalState
                 seatBindingsState
@@ -280,6 +286,7 @@ openRiverSessionWith openWayland runtimeHandlers =
         case result of
           Left errorValue -> closeIngress >> closeWaylandSession wayland >> pure (Left errorValue)
           Right (manager, xkbBindings, layerShell) -> do
+            writeIORef managerState (Just manager)
             writeIORef xkbGlobalState (Just xkbBindings)
             writeIORef layerShellGlobalState (Just layerShell)
             bound <- case riverExternalIngress runtimeHandlers of
@@ -395,13 +402,14 @@ sequenceCheckedHandlers ::
   WaylandSession ->
   IORef (Either RiverRuntimeError RiverSequenceState) ->
   IORef RiverInventory ->
+  IORef (Maybe (Object River.RiverWindowManagerV1)) ->
   IORef (Maybe (Object Xkb.RiverXkbBindingsV1)) ->
   IORef (Maybe (Object LayerShell.RiverLayerShellV1)) ->
   IORef (Map ObjectId RiverSeatBindings) ->
   IORef Lifecycle ->
   RiverRuntimeHandlers ->
   RiverWindowManagerHandlers
-sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState layerShellGlobalState seatBindingsState lifecycle runtimeHandlers =
+sequenceCheckedHandlers wayland sequenceStatus inventoryState managerState xkbGlobalState layerShellGlobalState seatBindingsState lifecycle runtimeHandlers =
   handlers
     { handleRiverWindowManagerEvent = handleManagerEvent
     , handleRiverWindowCreated = handleWindowCreated
@@ -523,7 +531,9 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
     when updated $ do
       handleRiverOutputEvent handlers output event
       case event of
-        River.RiverOutputV1Removed ->
+        River.RiverOutputV1WlOutput name -> bindOutputName output name
+        River.RiverOutputV1Removed -> do
+          mapM_ (\obj -> submitRequest connection Wayland.wlOutputInterface obj Wayland.encodeWlOutputRelease >>= recordConnectionResult) (previous >>= riverOutputWlOutput)
           destroyLayerShellOutput (previous >>= riverOutputLayerShell) >>= \case
             False -> pure ()
             True ->
@@ -534,6 +544,31 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState xkbGlobalState lay
                 River.encodeRiverOutputV1Destroy
                 >>= recordConnectionResult
         _ -> pure ()
+  bindOutputName output name = do
+    catalog <- readWaylandGlobalCatalog wayland
+    case catalog >>= selectGlobal Wayland.wlOutputInterface 4 (globalNameFromWord name) of
+      Left _ -> pure ()
+      Right global | globalVersion global < 3 -> pure ()
+      Right global -> do
+        bound <-
+          bindGlobalWithRoute
+            connection
+            (waylandRegistry wayland)
+            global
+            ( eventRoute
+                Wayland.decodeWlOutputEvent
+                ( \_ event -> do
+                    void (updateInventory sequenceStatus inventoryState (applyWlOutputEvent output event))
+                    case event of
+                      Wayland.WlOutputDone -> do
+                        state <- readIORef lifecycle
+                        when (state == Managing) $ readIORef managerState >>= mapM_ (\manager -> submitManagerRequest manager River.encodeRiverWindowManagerV1ManageDirty)
+                      _ -> pure ()
+                )
+            )
+        case bound of
+          Left e -> recordRuntimeError sequenceStatus (RiverRuntimeConnectionError e)
+          Right obj -> void (updateInventory sequenceStatus inventoryState (attachRiverOutputWlOutput output obj))
   destroyLayerShellOutput = \case
     Nothing -> pure True
     Just layerShellOutput ->

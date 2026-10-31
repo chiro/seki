@@ -15,6 +15,8 @@ category:            System
 build-type:          Simple
 tested-with:         GHC ==9.10.3
 extra-source-files:
+  examples/waybar/seki.py
+  examples/waybar/config.jsonc
   tools/latency/run.py
   tools/latency/test_report.py
   cbits/seki_wayland_transport.h
@@ -34,6 +36,7 @@ extra-source-files:
 extra-doc-files:
   README.md
   THIRD_PARTY_NOTICES.md
+  docs/ipc.md
   docs/integration-testing.md
   docs/latency.md
   docs/latency-baseline/report.md
@@ -113,6 +116,9 @@ library seki-wire
     Seki.Protocol.RiverXkbBindingsV1
     Seki.Protocol.Wayland
     Seki.Run.External
+    Seki.Run.IPC
+    Seki.Run.IPCSchema
+    Seki.Run.Snapshot
     Seki.Run.Inventory
     Seki.Run.LayerShell
     Seki.Run.Latency
@@ -143,14 +149,17 @@ library seki-wire
     Seki.Wire.Transport.Syscall
   build-depends:
     base >=4.20 && <4.21,
+    aeson >=2.2 && <2.3,
     binary >=0.8.9 && <0.9,
     bytestring >=0.12.2 && <0.13,
     containers >=0.7 && <0.8,
+    deepseq >=1.5 && <1.6,
     directory >=1.3.8 && <1.4,
     filepath >=1.5.4 && <1.6,
     network >=3.1.4 && <3.3,
     process >=1.6.26 && <1.7,
     seki:seki-core,
+    stm >=2.5 && <2.6,
     text >=2.1.3 && <2.2,
     unix >=2.8.7 && <2.9
 
@@ -264,6 +273,7 @@ test-suite seki-test
     Seki.Internal.Layout.TallTest
     Seki.Scanner.GenerateTest
     Seki.Scanner.ParseTest
+    Seki.Run.IPCTest
     Seki.Run.ExternalTest
     Seki.Run.InventoryTest
     Seki.Run.LatencyTest
@@ -297,6 +307,7 @@ test-suite seki-test
   build-depends:
     aeson >=2.1 && <2.3,
     QuickCheck >=2.14.3 && <2.16,
+    aeson >=2.2 && <2.3,
     base >=4.20 && <4.21,
     binary >=0.8.9 && <0.9,
     bytestring >=0.12.2 && <0.13,
@@ -313,6 +324,7 @@ test-suite seki-test
     tasty-hunit >=0.10 && <0.11,
     tasty-quickcheck >=0.10 && <0.12,
     temporary >=1.3 && <1.4,
+    stm >=2.5 && <2.6,
     text >=2.1.3 && <2.2,
     unix >=2.8.7 && <2.9
 
@@ -331,7 +343,7 @@ test-suite seki-integration
   type:           exitcode-stdio-1.0
   hs-source-dirs: integration
   main-is:        Main.hs
-  build-tool-depends: seki:seki, seki:seki-reference-config
+  build-tool-depends: seki:seki, seki:seki-reference-config, seki:sekictl
   other-modules:
     Seki.Integration.Fixture
     Seki.Integration.Harness
@@ -385,3 +397,14 @@ executable seki-latency
 source-repository head
   type:     git
   location: https://github.com/chiro/seki.git
+
+executable sekictl
+  import:         warnings
+  hs-source-dirs: tools/sekictl/app
+  main-is:        Main.hs
+  build-depends:
+    base >=4.20 && <4.21,
+    aeson >=2.2 && <2.3,
+    bytestring >=0.12.2 && <0.13,
+    network >=3.1.4 && <3.3,
+    seki:seki-wire
