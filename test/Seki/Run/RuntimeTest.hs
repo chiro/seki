@@ -9,6 +9,7 @@ import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Internal.Core.Geometry (GeometryError (..), Point (..), mkRect, mkSize)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
+import Seki.Run.External qualified as External
 import Seki.Run.Inventory (
   RiverInventoryError (..),
   RiverOutputState (..),
@@ -87,7 +88,8 @@ tests :: TestTree
 tests =
   testGroup
     "river runtime"
-    [ testCase "opens, binds, dispatches, and closes an owned runtime" testOwnedRuntime
+    [ testCase "bounded external batches finish before re-wake and close on EOF" testExternalBatches
+    , testCase "opens, binds, dispatches, and closes an owned runtime" testOwnedRuntime
     , testCase "counts and rethrows sequence handler exceptions" testHandlerException
     , testCase "retires removed inventory objects and their nodes" testInventoryRemoval
     , testCase "does not finish a sequence after a phase-plan failure" testPhasePlanFailure
@@ -251,7 +253,8 @@ testInventoryRemoval =
       closeTransport peer
     let handlers =
           RiverRuntimeHandlers
-            { riverProtocolHandlers =
+            { riverExternalIngress = Nothing
+            , riverProtocolHandlers =
                 (protocolHandlers (\_ -> pure ()))
                   { handleRiverWindowEvent =
                       \_ event -> case event of
@@ -307,7 +310,8 @@ testPhasePlanFailure =
           assertFailure "sequence finish was sent after a failed phase plan"
     let handlers =
           RiverRuntimeHandlers
-            { riverProtocolHandlers = protocolHandlers (\_ -> pure ())
+            { riverExternalIngress = Nothing
+            , riverProtocolHandlers = protocolHandlers (\_ -> pure ())
             , riverKeyBindings = []
             , riverPointerBindings = []
             , handleRiverPointerBindingEvent = \_ _ _ -> pure ()
@@ -353,7 +357,8 @@ testInventoryFailure =
           assertFailure "runtime remained open after an inventory failure"
     let handlers =
           RiverRuntimeHandlers
-            { riverProtocolHandlers =
+            { riverExternalIngress = Nothing
+            , riverProtocolHandlers =
                 (protocolHandlers (\_ -> pure ()))
                   { handleRiverWindowEvent =
                       \_ _ -> modifyIORef' deliveredWindowEvents (+ 1)
@@ -403,7 +408,8 @@ testUnknownInteraction =
         _ -> assertFailure "runtime remained open after an unknown interaction"
     let handlers =
           (runtimeHandlers (\_ -> pure ()))
-            { riverProtocolHandlers =
+            { riverExternalIngress = Nothing
+            , riverProtocolHandlers =
                 (protocolHandlers (\_ -> pure ()))
                   { handleRiverSeatEvent = \_ _ -> modifyIORef' delivered (+ 1)
                   }
@@ -438,7 +444,8 @@ testNodeAcquisitionFailure =
           assertFailure "node request was sent despite the object limit"
     let handlers =
           RiverRuntimeHandlers
-            { riverProtocolHandlers =
+            { riverExternalIngress = Nothing
+            , riverProtocolHandlers =
                 (protocolHandlers (\_ -> pure ()))
                   { handleRiverWindowCreated =
                       \_ -> modifyIORef' deliveredCreations (+ 1)
@@ -525,7 +532,8 @@ testSeatBindingLifecycle =
       closeTransport peer
     let handlers =
           RiverRuntimeHandlers
-            { riverProtocolHandlers =
+            { riverExternalIngress = Nothing
+            , riverProtocolHandlers =
                 (protocolHandlers (\_ -> pure ()))
                   { handleRiverSeatCreated = \_ -> modifyIORef' seatCallbacks (+ 1)
                   , handleRiverSeatEvent =
@@ -996,7 +1004,8 @@ runtimeHandlers ::
   RiverRuntimeHandlers
 runtimeHandlers managerHandler =
   RiverRuntimeHandlers
-    { riverProtocolHandlers = protocolHandlers managerHandler
+    { riverExternalIngress = Nothing
+    , riverProtocolHandlers = protocolHandlers managerHandler
     , riverKeyBindings = []
     , riverPointerBindings = []
     , handleRiverPointerBindingEvent = \_ _ _ -> pure ()
@@ -1086,3 +1095,44 @@ testUnrequestedFinished =
     result <- runRiverSession session
     expectMockSuccess mockDone
     assertEqual "an unrequested finish ends the session" (Right RiverEnded) result
+
+testExternalBatches :: Assertion
+testExternalBatches = withRuntimePair $ \target peer -> do
+  queue <- External.newExternalIngress
+  applied <- newIORef []
+  mockDone <- runMock $ do
+    reader <- newFrameReader
+    (registryId, callbackId) <- receiveStartupRequests reader peer
+    sendFrames
+      peer
+      [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+      , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
+      , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
+      , callbackDoneFrame callbackId 91
+      ]
+    (manager, _, _) <- receiveRuntimeBinds reader peer
+    receiveSequenceCompletion reader peer manager (Opcode 3)
+    mapM_
+      ( \index -> do
+          sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
+          receiveSequenceCompletion reader peer manager (Opcode 2)
+          if index < 3 then receiveSequenceCompletion reader peer manager (Opcode 3) else pure ()
+          sendFrames peer [encodedFrame manager (Opcode 3) (pure ())]
+          receiveSequenceCompletion reader peer manager (Opcode 4)
+      )
+      [1 .. 3 :: Int]
+    closeTransport peer
+  let handlers =
+        (runtimeHandlers (\_ -> pure ()))
+          { riverExternalIngress = Just (External.externalLifecycle queue)
+          , prepareRiverManagePlan = \_ -> do
+              batch <- External.drainExternal queue
+              modifyIORef' applied (<> External.drainedInputs batch)
+              pure (pure KeepManaging)
+          }
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
+  mapM (External.submitExternal (External.externalProducer queue)) [1 .. 65 :: Int] >>= assertEqual "admitted burst" (replicate 65 External.Accepted)
+  runRiverSession session >>= assertEqual "EOF" (Right RiverEnded)
+  expectMockSuccess mockDone
+  readIORef applied >>= assertEqual "all batches applied once in FIFO order" [1 .. 65]
+  External.submitExternal (External.externalProducer queue) 66 >>= assertEqual "EOF closed producer" External.IngressClosed

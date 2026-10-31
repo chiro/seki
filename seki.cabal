@@ -112,6 +112,7 @@ library seki-wire
     Seki.Protocol.RiverWindowManagementV1
     Seki.Protocol.RiverXkbBindingsV1
     Seki.Protocol.Wayland
+    Seki.Run.External
     Seki.Run.Inventory
     Seki.Run.LayerShell
     Seki.Run.Latency
@@ -263,6 +264,7 @@ test-suite seki-test
     Seki.Internal.Layout.TallTest
     Seki.Scanner.GenerateTest
     Seki.Scanner.ParseTest
+    Seki.Run.ExternalTest
     Seki.Run.InventoryTest
     Seki.Run.LatencyTest
     Seki.Run.LatencyPureTest
@@ -335,6 +337,7 @@ test-suite seki-integration
     Seki.Integration.Harness
     Seki.Integration.M1
     Seki.Integration.M2
+    Seki.Integration.M3
     Seki.Integration.Reference
     Seki.Integration.Restart
   build-depends:

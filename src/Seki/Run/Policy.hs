@@ -25,6 +25,8 @@ module Seki.Run.Policy (
   parseResizeEdges,
   Policy,
   newPolicy,
+  ExternalInput (..),
+  policyExternalProducer,
   policyRuntimeHandlers,
   readPolicyState,
   readRestoreState,
@@ -54,6 +56,7 @@ import Seki.Internal.Core.StackSet (OutputId (..), Screen (..), StackSet (..), W
 import Seki.Internal.Core.State (CoreState (..), WorkspaceTagError, Workspaces (..), newCoreState)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
+import Seki.Run.External
 import Seki.Run.Inventory (RiverDimensionsHint (..), RiverInventory, RiverOutputState (..), RiverRectangle (..), RiverWindowState (..), lookupRiverOutput, lookupRiverWindow, riverInventoryOutputs, riverInventoryWindows, riverOutputRectangle)
 import Seki.Run.Phase (ManageM, RenderM, closeWindow)
 import Seki.Run.Pointer (RiverPointerBinding (..))
@@ -105,8 +108,14 @@ data DrainView = DrainView
   -- ^ The op river runs, not the op the core wants.
   }
 
+data ExternalInput i l = ExternalCommand (Action i l ()) | ExternalCompletion (Action i l ())
+
+policyExternalProducer :: Policy i l -> ExternalProducer (ExternalInput i l)
+policyExternalProducer = externalProducer . policyIngress
+
 data Policy i l = Policy
-  { policyConfig :: PolicyConfig i l
+  { policyIngress :: ExternalIngress (ExternalInput i l)
+  , policyConfig :: PolicyConfig i l
   , policyState :: IORef (CoreState i l)
   , policyReconcile :: IORef ReconcileState
   , policyScene :: IORef DesiredScene
@@ -132,7 +141,7 @@ newPolicy config
       Left e -> pure (Left (PolicyTagError e))
       Right st -> case firstRepeat [] (map fst (policyBindings config)) of
         Just binding -> pure (Left (PolicyBindingConflict binding))
-        Nothing -> Right <$> (Policy config <$> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)) <*> newIORef (policyRestore config) <*> newIORef (LiveInventory Map.empty Map.empty))
+        Nothing -> Right <$> (Policy <$> newExternalIngress <*> pure config <*> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)) <*> newIORef (policyRestore config) <*> newIORef (LiveInventory Map.empty Map.empty))
  where
   -- River excludes capslock and numlock bits from its modifier enum.
   invalidModifiers = invalidBits . riverKeyBindingModifiers
@@ -150,7 +159,8 @@ firstRepeat seen (x : xs)
 policyRuntimeHandlers :: (Eq i, Show i, LayoutClass l) => Policy i l -> RiverRuntimeHandlers
 policyRuntimeHandlers policy =
   RiverRuntimeHandlers
-    { riverProtocolHandlers =
+    { riverExternalIngress = Just (externalLifecycle (policyIngress policy))
+    , riverProtocolHandlers =
         RiverWindowManagerHandlers
           { handleRiverWindowManagerEvent = \_ _ -> pure ()
           , handleRiverWindowCreated = \window -> enqueueWith (WindowCreated (windowIdOf window) . windowProps window . drainInventory)
@@ -219,7 +229,10 @@ prepareManagePlan policy snapshot = do
   previous <- readIORef (policyReconcile policy)
   let view = DrainView inventory (shownBox before previous) (`Map.lookup` reconciledOps previous)
   events <- map ($ view) . reverse <$> atomicModifyIORef' (policyQueue policy) ([],)
-  let (st, intents) = drainCore (policyManageHook (policyConfig policy)) events before
+  external <- drainedInputs <$> drainExternal (policyIngress policy)
+  let externalEvent (ExternalCommand action) = RunAction action
+      externalEvent (ExternalCompletion action) = RunAction action
+      (st, intents) = drainCore (policyManageHook (policyConfig policy)) (events <> map externalEvent external) before
   writeIORef (policyState policy) st
   writeIORef (policyDrainedInventory policy) (liveInventoryOf inventory)
   let effects = interpretIntents intents
