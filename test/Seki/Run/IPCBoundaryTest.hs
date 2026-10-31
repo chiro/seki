@@ -1,8 +1,14 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Seki.Run.IPCBoundaryTest (tests) where
 
-import Control.Concurrent (threadDelay)
+import Control.Concurrent (forkFinally, killThread, threadDelay)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar)
 import Control.Exception (IOException, bracket, finally, try)
+import Control.Monad (replicateM)
+import Data.ByteString qualified as BS
 import Network.Socket
+import Network.Socket.ByteString (recv, sendAll)
 import Seki.Internal.Config (def)
 import Seki.Run.Config (policyConfigOf)
 import Seki.Run.IPC (withIPCAt)
@@ -13,6 +19,7 @@ import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Directory qualified as Posix
 import System.Posix.Files (createSymbolicLink, fileID, getSymbolicLinkStatus, setFileMode)
 import System.Process (createProcess, getProcessExitCode, proc, terminateProcess)
+import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit
 
@@ -49,6 +56,32 @@ tests =
           refuses path
           setFileMode dir 0o500
           refuses path `finally` setFileMode dir 0o700
+    , testCase "session cancellation closes connected client sockets" $ temporary $ \path -> do
+        policy <- fresh
+        ready <- newEmptyMVar
+        hold <- newEmptyMVar
+        joined <- newEmptyMVar
+        owner <- forkFinally (withIPCAt path policy (putMVar ready () >> takeMVar hold)) (putMVar joined)
+        let stop = do
+              killThread owner
+              timeout 1000000 (readMVar joined) >>= maybe (assertFailure "server cancellation did not finish") (const (pure ()))
+            open = do
+              client <- socket AF_UNIX Stream defaultProtocol
+              connect client (SockAddrUnix path)
+              sendAll client "{\"version\":1,\"id\":\"cancel\",\"op\":\"subscribe\"}\n"
+              pure client
+        ( do
+            timeout 1000000 (takeMVar ready) >>= assertEqual "server ready" (Just ())
+            bracket (replicateM 32 open) (mapM_ close) $ \clients -> do
+              stop
+              mapM_
+                ( \client -> do
+                    ended <- timeout 1000000 (try @IOException (recv client 1))
+                    assertBool "peer closed without relying on GC" (case ended of Just (Left _) -> True; Just (Right bytes) -> BS.null bytes; Nothing -> False)
+                )
+                clients
+          )
+          `finally` stop
     , testCase "child processes cannot retain the server guard" $ temporary $ \path -> do
         policy <- fresh
         bracket

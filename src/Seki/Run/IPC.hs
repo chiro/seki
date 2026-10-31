@@ -7,7 +7,7 @@ import Control.Concurrent (forkFinally, killThread)
 import Control.Concurrent.MVar (modifyMVar, modifyMVar_, newMVar)
 import Control.Concurrent.STM
 import Control.DeepSeq (force)
-import Control.Exception (IOException, bracket, evaluate, finally, mask, onException, try)
+import Control.Exception (IOException, bracket, bracketOnError, evaluate, finally, mask, onException, try)
 import Control.Monad (forever, unless, void, when)
 import Data.Aeson (Value, object, (.=))
 import Data.ByteString qualified as BS
@@ -112,19 +112,19 @@ withIPCAt path policy body =
             atomically (putTMVar result answer)
         )
         (\_ -> atomically (writeTVar healthy False))
-    let acceptLoop = forever $ mask $ \unmask -> do
-          (client, _) <- unmask (accept listener)
-          closeOnExec client `onException` close client
-          modifyMVar_ clients $ \active ->
-            if Map.size active >= 32
-              then close client >> pure active
-              else do
-                gate <- newEmptyTMVarIO
-                tid <- forkFinally (atomically (takeTMVar gate) >> unmask (serve client latest jobs healthy session)) $ \_ -> do
-                  close client
-                  modifyMVar_ clients (pure . Map.filter (/= client))
-                atomically (putTMVar gate ())
-                pure (Map.insert tid client active)
+    let acceptLoop = forever $ mask $ \unmask ->
+          bracketOnError (accept listener) (close . fst) $ \(client, _) -> do
+            closeOnExec client
+            modifyMVar_ clients $ \active ->
+              if Map.size active >= 32
+                then close client >> pure active
+                else do
+                  gate <- newEmptyTMVarIO
+                  tid <- forkFinally (atomically (takeTMVar gate) >> unmask (serve client latest jobs healthy session)) $ \_ -> do
+                    close client
+                    modifyMVar_ clients (pure . Map.filter (/= client))
+                  atomically (putTMVar gate ())
+                  pure (Map.insert tid client active)
     accepter <- forkFinally acceptLoop (const (pure ()))
     let cleanup = do
           closePolicyIngress policy
