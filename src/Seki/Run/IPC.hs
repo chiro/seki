@@ -24,7 +24,7 @@ import Seki.Internal.Core.Layout qualified as Layout
 import Seki.Internal.Core.StackSet qualified as StackSet
 import Seki.Run.External
 import Seki.Run.IPCSchema
-import Seki.Run.Policy (ExternalInput (..), Policy, closePolicyIngress, observePolicy, policyExternalProducer, policyTagsOf)
+import Seki.Run.Policy (ExternalInput (..), Policy, closePolicyIngress, observePolicy, policyExternalProducer, policyScratchpadNames, policyTagsOf)
 import Seki.Run.Snapshot (projectSnapshot)
 import System.Directory (removeFile)
 import System.Environment (getEnv)
@@ -221,6 +221,10 @@ withIPCAt path policy body =
       sent <- timeout 5000000 (sendAll client line)
       when (sent == Nothing) (fail "IPC client write timeout")
   command = \case
+    Scratchpad name | Text.unpack name `elem` policyScratchpadNames policy -> Right (Action.toggleScratchpad (Text.unpack name))
+    Scratchpad _ -> Left "unknown scratchpad"
+    ScratchpadReset name | Text.unpack name `elem` policyScratchpadNames policy -> Right (Action.resetScratchpad (Text.unpack name))
+    ScratchpadReset _ -> Left "unknown scratchpad"
     Workspace tag | Text.unpack tag `elem` policyTagsOf policy -> Right (Action.windows (StackSet.view (Text.unpack tag)))
     Spawn text -> Right (Action.spawn (Text.unpack text))
     Layout op -> Right $ case op of

@@ -10,6 +10,7 @@ import Seki.Internal.Core.ManageHookTest qualified as ManageHookTest
 import Seki.Internal.Core.PointerOpTest qualified as PointerOpTest
 import Seki.Internal.Core.RestoreTest qualified as RestoreTest
 import Seki.Internal.Core.SceneTest qualified as SceneTest
+import Seki.Internal.Core.ScratchpadTest qualified as ScratchpadTest
 import Seki.Internal.Core.StackSetTest qualified as StackSetTest
 import Seki.Internal.Core.StateTest qualified as StateTest
 import Seki.Internal.InputTest qualified as InputTest
@@ -31,6 +32,7 @@ import Seki.Run.ReconcileTraceTest qualified as ReconcileTraceTest
 import Seki.Run.RestartTest qualified as RestartTest
 import Seki.Run.RiverTest qualified as RiverTest
 import Seki.Run.RuntimeTest qualified as RuntimeTest
+import Seki.Run.ScratchpadTimerTest qualified as ScratchpadTimerTest
 import Seki.Run.SequenceTest qualified as SequenceTest
 import Seki.Run.SessionsTest qualified as SessionsTest
 import Seki.Run.StartupTest qualified as StartupTest
@@ -54,7 +56,9 @@ main =
   defaultMain
     ( testGroup
         "seki"
-        [ InputTest.tests
+        [ ScratchpadTimerTest.tests
+        , ScratchpadTest.tests
+        , InputTest.tests
         , IPCBoundaryTest.tests
         , IPCTest.tests
         , ExternalTest.tests

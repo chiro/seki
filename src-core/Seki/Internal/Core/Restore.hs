@@ -14,6 +14,7 @@ module Seki.Internal.Core.Restore (
   SavedFloat (..),
   SavedWorkspace (..),
   RestoreState (..),
+  SavedScratchpad (..),
   RestoreError (..),
   restoreVersion,
   encodeRestoreState,
@@ -26,66 +27,30 @@ module Seki.Internal.Core.Restore (
 ) where
 
 import Data.Foldable (find, toList)
-import Data.Int (Int32)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
 import Data.Set (Set)
 import Data.Set qualified as Set
-import Data.Text (Text)
 import Data.Traversable (mapAccumL)
-import Data.Word (Word32)
 import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), mkRect, mkSize, rectHeight, rectWidth, rectX, rectY)
-import Seki.Internal.Core.StackSet (FloatGeom (..), OutputId, Screen (..), Stack, StackSet (..), WindowId, Workspace (..), mapMaybeStack)
-import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..), fromWorkspaces, normalizeCore)
+import Seki.Internal.Core.Restore.Legacy qualified as Legacy
+import Seki.Internal.Core.Restore.Types
+import Seki.Internal.Core.Scratchpad (ownedWindow)
+import Seki.Internal.Core.Scratchpad.Types (ScratchpadState (..))
+import Seki.Internal.Core.StackSet (FloatGeom (..), OutputId, Screen (..), StackSet (..), WindowId, Workspace (..), mapMaybeStack)
+import Seki.Internal.Core.StackSet qualified as W
+import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..), fromWorkspaces, manageWindow, normalizeCore, overWorkspaces, unmanageWindow)
 import Text.Read (readMaybe)
-
--- | A river window identifier (version 4). Any text reads, since a key that matches no live window is dropped at restore.
-newtype WindowKey = WindowKey Text deriving (Eq, Ord, Show, Read)
-
--- | A @wl_output@ global name, which stays the same across a window-manager reconnect.
-newtype OutputKey = OutputKey Word32 deriving (Eq, Ord, Show, Read)
-
-{- | A float's stored box as plain numbers: x, y, width, and height relative
-to its output. Restore rebuilds the box through the geometry constructors,
-so a file cannot bypass their checks.
--}
-data SavedFloat = SavedClientSized | SavedFloatAt Int32 Int32 Int32 Int32
-  deriving (Eq, Show, Read)
-
-data SavedWorkspace i = SavedWorkspace
-  { savedTag :: i
-  , savedOutput :: Maybe OutputKey
-  -- ^ The output that showed it, or 'Nothing' when hidden or headless.
-  , savedLayout :: String
-  -- ^ 'show' of the layout, read on its own so an unreadable layout falls back alone.
-  , savedStack :: Maybe (Stack WindowKey)
-  }
-  deriving (Eq, Show, Read)
-
-{- | Everything a restart carries over. Workspaces come in StackSet order:
-the current one first (the remembered one when headless), then the visible
-ones, then the hidden ones. Unassigned outputs and the pointer op are left
-out: replaying the new connection's outputs rebuilds the first, and an op
-does not survive a reconnect.
--}
-data RestoreState i = RestoreState
-  { savedWorkspaces :: [SavedWorkspace i]
-  , savedFloats :: [(WindowKey, SavedFloat)]
-  -- ^ Bottom to top, so this one list is both the floating map and the raise order.
-  , savedFullscreen :: Set WindowKey
-  , savedSpawnedOnce :: Set String
-  }
-  deriving (Eq, Show, Read)
 
 -- | Why a saved file was not used. Either way seki starts fresh.
 data RestoreError = RestoreUnknownVersion String | RestoreUnreadable
   deriving (Eq, Show)
 
 restoreVersion :: Int
-restoreVersion = 1
+restoreVersion = 2
 
--- | The header line @seki-restore 1@, then 'show' of the state.
+-- | The header line @seki-restore 2@, then 'show' of the state.
 encodeRestoreState :: (Show i) => RestoreState i -> String
 encodeRestoreState st = header ++ "\n" ++ show st
 
@@ -97,9 +62,12 @@ decodeRestoreState :: (Read i) => String -> Either RestoreError (RestoreState i)
 decodeRestoreState text = case break (== '\n') text of
   (line, '\n' : body)
     | ["seki-restore", version] <- words line ->
-        if version == show restoreVersion
-          then maybe (Left RestoreUnreadable) Right (readMaybe body)
-          else Left (RestoreUnknownVersion version)
+        case version of
+          "2" -> maybe (Left RestoreUnreadable) Right (readMaybe body)
+          "1" -> case readMaybe body of
+            Nothing -> Left RestoreUnreadable
+            Just old -> Right (RestoreState (Legacy.savedWorkspaces old) (Legacy.savedFloats old) (Legacy.savedFullscreen old) (Legacy.savedSpawnedOnce old) [])
+          _ -> Left (RestoreUnknownVersion version)
   _ -> Left RestoreUnreadable
 
 header :: String
@@ -125,6 +93,7 @@ saveCore inventory st =
     { savedWorkspaces = [SavedWorkspace (tag w) (o >>= (`Map.lookup` outputKeys)) (show (layout w)) (stack w >>= mapMaybeStack (`Map.lookup` windowKeys)) | (w, o) <- shownOn]
     , savedFloats = [(k, savedFloat geom) | w <- coreRaiseOrder st, Just geom <- [Map.lookup w floats], Just k <- [Map.lookup w windowKeys]]
     , savedFullscreen = Set.fromList (mapMaybe (`Map.lookup` windowKeys) (Set.toList (coreFullscreen st)))
+    , savedScratchpads = mapMaybe savePad (Map.toList (coreScratchpads st))
     , savedSpawnedOnce = coreSpawnedOnce st
     }
  where
@@ -134,6 +103,13 @@ saveCore inventory st =
   (shownOn, floats) = case coreWorkspaces st of
     AttachedState ss _ -> ([(workspace s, Just (output s)) | s <- current ss : visible ss] ++ [(w, Nothing) | w <- hidden ss], floating ss)
     HeadlessState (HeadlessWorkspaces c hs f) -> ([(w, Nothing) | w <- c : hs], f)
+  savePad (name, slot) = do
+    w <- ownedWindow slot
+    key <- Map.lookup w windowKeys
+    case slot of
+      HiddenPad _ geom -> Just (SavedScratchpad name key True (savedFloat geom) Nothing)
+      ShownPad _ prior -> Just (SavedScratchpad name key False (savedFloat (Map.findWithDefault ClientSized w floats)) (prior >>= (`Map.lookup` windowKeys)))
+      _ -> Nothing
   savedFloat ClientSized = SavedClientSized
   savedFloat (FloatAt (OutputRect r)) = SavedFloatAt (rectX r) (rectY r) (rectWidth r) (rectHeight r)
 
@@ -173,8 +149,29 @@ for restored windows and outputs, while every other window is placed
 normally, its manage hook included.
 -}
 restoreCore :: (Eq i, Read l) => LiveInventory -> RestoreState i -> CoreState i l -> (CoreState i l, [RestoreNote i])
-restoreCore inventory saved fresh = (normalizeCore restored, walkNotes ++ map TagAdded added ++ gone ++ boxNotes)
+restoreCore inventory saved fresh = (normalizeCore restoredPads, walkNotes ++ map TagAdded added ++ gone ++ boxNotes ++ padBoxNotes)
  where
+  restoredPads = fst (foldl' restorePad (restored, Set.empty) (savedScratchpads saved))
+  padBoxNotes = [FloatBoxInvalid key | SavedScratchpad _ key _ geom _ <- savedScratchpads saved, floatGeom geom == Nothing]
+  setFloat w geom = overWorkspaces $ \ws -> case ws of
+    AttachedState ss waiting -> AttachedState (W.float w geom ss) waiting
+    HeadlessState h -> HeadlessState h{headlessFloating = Map.insert w geom (headlessFloating h)}
+  restorePad (st, seen) (SavedScratchpad name key isHidden savedGeom prior) = case Map.lookup key (liveWindows inventory) of
+    Just w
+      | w `Set.notMember` seen && Map.notMember name (coreScratchpads st) ->
+          let geom = maybe ClientSized id (floatGeom savedGeom)
+              released = setFloat w geom (overWorkspaces (manageWindow id w) st)
+              hasWorkspace = w `Set.member` restoredWindows
+              shown = if hasWorkspace then st else released
+              previous = prior >>= (`Map.lookup` liveWindows inventory)
+              next = case Map.lookup name (coreScratchpadDefinitions fresh) of
+                Nothing -> if isHidden then released else shown
+                Just _ ->
+                  if isHidden
+                    then (overWorkspaces (unmanageWindow w) st){coreScratchpads = Map.insert name (HiddenPad w geom) (coreScratchpads st)}
+                    else shown{coreScratchpads = Map.insert name (ShownPad w previous) (coreScratchpads shown)}
+           in (next, Set.insert w seen)
+    _ -> (st, seen)
   configured = case coreWorkspaces fresh of
     AttachedState ss _ -> map workspace (current ss : visible ss) ++ hidden ss
     HeadlessState (HeadlessWorkspaces c hs _) -> c : hs
@@ -216,7 +213,8 @@ restoreCore inventory saved fresh = (normalizeCore restored, walkNotes ++ map Ta
       [] -> coreWorkspaces fresh
   restored =
     (fromWorkspaces workspaces')
-      { coreSpawnedOnce = savedSpawnedOnce saved
+      { coreScratchpadDefinitions = coreScratchpadDefinitions fresh
+      , coreSpawnedOnce = savedSpawnedOnce saved
       , coreRaiseOrder = map fst floats
       , coreFullscreen = Set.fromList [w | k <- Set.toList (savedFullscreen saved), Just w <- [Map.lookup k (liveWindows inventory)], w `Set.member` restoredWindows]
       }

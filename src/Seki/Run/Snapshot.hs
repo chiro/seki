@@ -4,10 +4,12 @@ module Seki.Run.Snapshot (projectSnapshot) where
 
 import Data.Aeson (Value (..), object, (.=))
 import Data.List (find)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Seki.Internal.Core.Layout (LayoutClass, description)
+import Seki.Internal.Core.Scratchpad.Types (ScratchpadState (..))
 import Seki.Internal.Core.StackSet (OutputId (..), Screen (..), StackSet (..), WindowId (..), Workspace (..), integrate', peek)
 import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..))
 import Seki.Run.InputSnapshot (inputValue, xkbValue)
@@ -20,7 +22,8 @@ import Seki.Wire.Types (objectIdValue)
 projectSnapshot :: (Eq i, LayoutClass l) => Text -> (i -> Text) -> [i] -> Integer -> CoreState i l -> RiverRuntimeSnapshot -> Value
 projectSnapshot session label tags revision st runtime =
   object
-    [ "session" .= session
+    [ "scratchpads" .= [object ["name" .= name, "state" .= status slot] | (name, slot) <- Map.toList (coreScratchpads st)]
+    , "session" .= session
     , "revision" .= revision
     , "outputs" .= map outputValue (riverInventoryOutputs inventory)
     , "workspaces" .= map workspaceValue tags
@@ -33,6 +36,11 @@ projectSnapshot session label tags revision st runtime =
     , "submap" .= Null
     ]
  where
+  status slot = case slot of
+    LaunchPending _ -> "pending" :: Text
+    LaunchTimedOut _ -> "timed-out-latched"
+    HiddenPad _ _ -> "hidden"
+    ShownPad _ _ -> "shown"
   inventory = riverRuntimeInventory runtime
   (selected, shown, allWorkspaces, focused) = case coreWorkspaces st of
     HeadlessState h -> (tag (headlessCurrent h), [], headlessCurrent h : headlessHidden h, Nothing)

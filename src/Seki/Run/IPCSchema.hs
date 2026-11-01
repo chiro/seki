@@ -25,7 +25,7 @@ import Data.Text qualified as Text
 data RequestError = RequestError {errorRequestId :: Text, errorMessage :: String, errorClosesConnection :: Bool} deriving (Eq, Show)
 
 data Request = Request {requestId :: Text, requestOperation :: Operation} deriving (Eq, Show)
-data Operation = Snapshot | Subscribe | Workspace Text | Spawn Text | Layout LayoutOp deriving (Eq, Show)
+data Operation = Snapshot | Subscribe | Scratchpad Text | ScratchpadReset Text | Workspace Text | Spawn Text | Layout LayoutOp deriving (Eq, Show)
 data LayoutOp = Next | Shrink | Expand | IncMaster | DecMaster deriving (Eq, Show, Enum, Bounded)
 
 maxLineBytes :: Int
@@ -41,6 +41,8 @@ instance FromJSON Request where
     operation <- case op of
       "snapshot" -> pure Snapshot
       "subscribe" -> pure Subscribe
+      "scratchpad" -> Scratchpad <$> o .: "name"
+      "scratchpad-reset" -> ScratchpadReset <$> o .: "name"
       "workspace" -> Workspace <$> o .: "tag"
       "spawn" -> do
         command <- o .: "command"
@@ -69,12 +71,14 @@ encodeLine value
   bytes = BL.take (fromIntegral maxLineBytes + 1) (encode value)
 
 cliUsage :: String
-cliUsage = "usage: sekictl snapshot | subscribe | workspace TAG | spawn COMMAND | layout {next|shrink|expand|inc-master|dec-master}"
+cliUsage = "usage: sekictl snapshot | subscribe | scratchpad NAME | scratchpad-reset NAME | workspace TAG | spawn COMMAND | layout {next|shrink|expand|inc-master|dec-master}"
 
 parseCLI :: [String] -> Either String Operation
 parseCLI args = case args of
   ["snapshot"] -> Right Snapshot
   ["subscribe"] -> Right Subscribe
+  ["scratchpad", name] -> Right (Scratchpad (Text.pack name))
+  ["scratchpad-reset", name] -> Right (ScratchpadReset (Text.pack name))
   ["workspace", tag] -> Right (Workspace (Text.pack tag))
   ["spawn", command] -> first (const cliUsage) (spawnOperation (Text.pack command))
   ["layout", action] -> maybe (Left cliUsage) (Right . Layout) (layoutOperation (Text.pack action))
@@ -86,6 +90,8 @@ instance ToJSON Request where
     fields = case operation of
       Snapshot -> ["op" .= ("snapshot" :: Text)]
       Subscribe -> ["op" .= ("subscribe" :: Text)]
+      Scratchpad name -> ["op" .= ("scratchpad" :: Text), "name" .= name]
+      ScratchpadReset name -> ["op" .= ("scratchpad-reset" :: Text), "name" .= name]
       Workspace tag -> ["op" .= ("workspace" :: Text), "tag" .= tag]
       Spawn command -> ["op" .= ("spawn" :: Text), "command" .= command]
       Layout action -> ["op" .= ("layout" :: Text), "action" .= layoutName action]

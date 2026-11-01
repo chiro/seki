@@ -299,3 +299,7 @@ Input devices can be configured with ordered `inputRules` in `Config`. Patterns
 and settings are validated before connecting. See [input configuration](docs/input.md)
 for a public-only example and [IPC](docs/ipc.md) for per-device layout and setting
 results. The Waybar example displays named keyboards independently.
+
+Named terminal scratchpads can hide outside workspace navigation and return on
+the current output. See [scratchpad configuration and recovery](docs/scratchpads.md)
+for the public API, matching precedence and restart limits.

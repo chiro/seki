@@ -186,7 +186,7 @@ testTrace layout tiles steps = withRuntimePair $ \target peer -> do
             pure model'
     foldM_ run (map (const (Model Nothing Nothing Nothing Nothing Nothing Nothing Nothing)) traced) (steps ++ replicate 3 (Step 100 True (0, 0) []))
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig [] layout [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig [] [] layout [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -216,7 +216,7 @@ testFamilies = withRuntimePair $ \target peer -> do
   w4 <- requireObjectId 0xff0000a3
   output <- requireObjectId 0xff0000a4
   seat <- requireObjectId 0xff0000a5
-  policy <- expectRight =<< newPolicy (PolicyConfig [] (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig [] [] (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader
     (manager, _, layerShell) <- handshake reader peer
@@ -344,7 +344,7 @@ testChildUnderFull = withRuntimePair $ \target peer -> do
     requests parent 4 parentFocusedRender @?= []
     stacked [parentNode, childNode] parentFocusedRender @?= []
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig [] Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) (isDialog --> doFloat) (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig [] [] Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) (isDialog --> doFloat) (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -395,7 +395,7 @@ testFullSelection = withRuntimePair $ \target peer -> do
     requests seat 1 refocused @?= [focusPayload]
     _ <- render
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig [] Full [1 :: Int] [(focusKey, windows focusDown)] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig [] [] Full [1 :: Int] [(focusKey, windows focusDown)] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -449,7 +449,7 @@ testTileFloats = withRuntimePair $ \target peer -> do
     requests node 1 resized @?= [recentered]
     assertEqual "a float stays unclipped" [] (requests window 22 resized)
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig [] (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [(floatKey, withFocused float)] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig [] [] (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [(floatKey, withFocused float)] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -503,7 +503,7 @@ testFullscreenExit = withRuntimePair $ \target peer -> do
     requests node 1 settled @?= [position]
     requests window 4 settled @?= []
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig [] (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig [] [] (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -548,7 +548,7 @@ testCropAcrossFullscreen = withRuntimePair $ \target peer -> do
     narrowClip <- clipBox 146 96
     assertEqual "after exit an oversized commit is clipped to the narrower tile" [narrowClip] (requests window 22 settled)
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig [] (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig [] [] (Tall 1 (1 / 10) (1 / 2)) [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -594,7 +594,7 @@ fullscreenOnRemovedOutput tags afterRemoval = withRuntimePair $ \target peer -> 
     forM_ [20, 3] $ \opcode -> requests window opcode removed @?= []
     afterRemoval removed window second
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig [] (Tall 1 (1 / 10) (1 / 2)) tags [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig [] [] (Tall 1 (1 / 10) (1 / 2)) tags [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -615,7 +615,7 @@ testFullscreenHidden = withRuntimePair $ \target peer -> do
   window <- requireObjectId 0xff000100
   output <- requireObjectId 0xff000101
   seat <- requireObjectId 0xff000102
-  policy <- expectRight =<< newPolicy (PolicyConfig [] (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2] [(viewKey 1, windows (view 1)), (viewKey 2, windows (view 2))] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig [] [] (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2] [(viewKey 1, windows (view 1)), (viewKey 2, windows (view 2))] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader
     (manager, xkb, layerShell) <- handshake reader peer
@@ -708,7 +708,7 @@ testFullscreenShownElsewhere = withRuntimePair $ \target peer -> do
     shownRender <- render
     requests window 5 shownRender @?= [mempty]
     closeTransport peer
-  policy <- expectRight =<< newPolicy (PolicyConfig [] (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2, 3] [(viewKey t, windows (view t)) | t <- [1, 2, 3]] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig [] [] (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2, 3] [(viewKey t, windows (view t)) | t <- [1, 2, 3]] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
   result <- runRiverSession session
   expectMockSuccess done
@@ -720,7 +720,7 @@ testFullscreenLostWhileHidden = withRuntimePair $ \target peer -> do
   output <- requireObjectId 0xff000121
   seat <- requireObjectId 0xff000122
   shifted <- requireObjectId 0xff000123
-  policy <- expectRight =<< newPolicy (PolicyConfig [] (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2] [(viewKey 2, windows (view 2))] defaultSceneStyle (\_ -> pure ()) (appId =? "mpv" --> doShift 1) (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig [] [] (Tall 1 (1 / 10) (1 / 2)) [1 :: Int, 2] [(viewKey 2, windows (view 2))] defaultSceneStyle (\_ -> pure ()) (appId =? "mpv" --> doShift 1) (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ()))
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader
     (manager, xkb, layerShell) <- handshake reader peer
@@ -760,7 +760,7 @@ moveBinding :: RiverPointerBinding
 moveBinding = RiverPointerBinding 0x110 (River.RiverSeatV1ModifiersFlags 64)
 
 pointerConfig :: l -> ManageHook Int l -> PolicyConfig Int l
-pointerConfig layout hook = PolicyConfig [] layout [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) hook (pure ()) [(moveBinding, Move)] Nothing (pure (Right ())) (\_ -> pure ())
+pointerConfig layout hook = PolicyConfig [] [] layout [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) hook (pure ()) [(moveBinding, Move)] Nothing (pure (Right ())) (\_ -> pure ())
 
 -- | One window on a 200 by 100 output and a seat with the move binding, after the window is shown and focused.
 data PointerTrace = PointerTrace
@@ -963,7 +963,7 @@ fullscreenRequests window frames = [rawFrameOpcode f | f <- frames, rawFrameSend
 
 -- | A policy whose startup hook restarts, so the first manage sequence carries the restart.
 restartingConfig :: IO (Either RestartRefusal ()) -> (String -> IO ()) -> PolicyConfig Int Full
-restartingConfig = PolicyConfig [] Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook restart [] Nothing
+restartingConfig = PolicyConfig [] [] Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook restart [] Nothing
 
 restartTrace :: PolicyConfig Int Full -> (FrameReader -> Transport -> ObjectId -> IO ()) -> IO (Either RiverRuntimeError RiverExit)
 restartTrace config afterFirstManage = withRuntimePair $ \target peer -> do
@@ -1026,7 +1026,8 @@ testRestoreTrace = withRuntimePair $ \target peer -> do
           []
           Set.empty
           (Set.fromList ["foot"])
-      config = PolicyConfig [] (Choose CL tall Full) [1 :: Int, 2] [] defaultSceneStyle (\_ -> pure ()) (doShift 2) (pure ()) [] (Just saved) (pure (Right ())) (\line -> modifyIORef' logged (line :))
+          []
+      config = PolicyConfig [] [] (Choose CL tall Full) [1 :: Int, 2] [] defaultSceneStyle (\_ -> pure ()) (doShift 2) (pure ()) [] (Just saved) (pure (Right ())) (\line -> modifyIORef' logged (line :))
   policy <- expectRight =<< newPolicy config
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader

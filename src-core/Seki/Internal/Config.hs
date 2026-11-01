@@ -45,6 +45,7 @@ import Seki.Internal.Core.Layout (ChangeLayout (..), Choose, IncMasterN (..), La
 import Seki.Internal.Core.ManageHook (isDialog, (-->))
 import Seki.Internal.Core.ManageHook qualified as Core
 import Seki.Internal.Core.Scene (BorderColor (..))
+import Seki.Internal.Core.Scratchpad.Types (Scratchpad)
 import Seki.Internal.Core.StackSet qualified as StackSet
 import Seki.Internal.Input (InputRule)
 import Seki.Internal.Layout.Full (Full (..))
@@ -108,7 +109,8 @@ data BorderConfig = BorderConfig
   deriving (Eq, Show)
 
 data Config l = Config
-  { inputRules :: [InputRule]
+  { scratchpads :: [Scratchpad]
+  , inputRules :: [InputRule]
   , modMask :: Mods
   , terminal :: String
   , workspaces :: [String]
@@ -130,7 +132,8 @@ data Config l = Config
 def :: Config StdLayouts
 def =
   Config
-    { inputRules = []
+    { scratchpads = []
+    , inputRules = []
     , modMask = Mod4
     , terminal = "foot"
     , workspaces = map show [1 .. 9 :: Int]

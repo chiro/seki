@@ -297,7 +297,8 @@ outputIdentity fixture name = do
 m1Config :: PolicyConfig String M1Layout
 m1Config =
   PolicyConfig
-    { policyInputRules = []
+    { policyScratchpads = []
+    , policyInputRules = []
     , policyLayout = Tall 1 (1 / 10) (1 / 2) ||| Mirror (Tall 1 (1 / 10) (1 / 2)) ||| Full
     , policyTags = ["1", "2", "3"]
     , policyBindings = [(RiverKeyBinding (0xffbe + fromIntegral (fromEnum key)) (River.RiverSeatV1ModifiersFlags 0) (Just 0), action key) | key <- [Down .. SelectTwo]]

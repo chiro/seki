@@ -30,6 +30,7 @@ module Seki.Run.Policy (
   observePolicy,
   closePolicyIngress,
   policyTagsOf,
+  policyScratchpadNames,
   policyRuntimeHandlers,
   readPolicyState,
   readRestoreState,
@@ -50,15 +51,16 @@ import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, mapMaybe)
 import Data.Word (Word32)
-import Seki.Internal.Core.Action (Action, Intent (..))
-import Seki.Internal.Core.Event (CoreEvent (..), drainCore)
+import Seki.Internal.Core.Action (Action, Intent (..), scratchpadTimeout)
+import Seki.Internal.Core.Event (CoreEvent (..), drainCoreWithScratchpads)
 import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), Rect, mkRect, mkSize, rectX, rectY, translate)
 import Seki.Internal.Core.Layout (LayoutClass)
 import Seki.Internal.Core.ManageHook (DimensionsHint (..), ManageHook, WindowProps (..), noWindowProps)
 import Seki.Internal.Core.PointerOp (HEdge (..), OpId, OpInput (..), OpKind (..), OpOrigin (..), OpRequest (..), ResizeEdges (..), SeatId (..), SizeBounds (..), VEdge (..), noSizeBounds)
 import Seki.Internal.Core.Restore (LiveInventory (..), OutputKey (..), RestoreState, WindowKey (..), describeRestoreNote, restoreCore, saveCore)
 import Seki.Internal.Core.Scene (BorderColor (..), DesiredScene (..), OutputArea (..), SceneStyle (..), planScene)
-import Seki.Internal.Core.StackSet (OutputId (..), Screen (..), StackSet (..), WindowId (..), Workspace (..), integrate')
+import Seki.Internal.Core.Scratchpad.Types (Scratchpad (..), validateScratchpads)
+import Seki.Internal.Core.StackSet (FloatGeom (..), OutputId (..), Screen (..), StackSet (..), WindowId (..), Workspace (..), integrate')
 import Seki.Internal.Core.State (CoreState (..), WorkspaceTagError, Workspaces (..), newCoreState)
 import Seki.Internal.Input (InputRule (..), SettingError, validateInputSetting)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
@@ -72,6 +74,7 @@ import Seki.Run.Reconcile (ReconcileState, emptyReconcileState, reconcileManage,
 import Seki.Run.Restart (RestartRefusal, describeRefusal)
 import Seki.Run.River (RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (ManageOutcome (..), PointerBindingEvent (..), RenderOutcome, RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
+import Seki.Run.ScratchpadTimer
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable (Object, objectId)
 import Seki.Wire.Types (mkObjectId, objectIdValue)
@@ -80,7 +83,8 @@ import System.IO (hPutStrLn, stderr)
 import System.Process (createProcess, getProcessExitCode, proc)
 
 data PolicyConfig i l = PolicyConfig
-  { policyInputRules :: [InputRule]
+  { policyScratchpads :: [Scratchpad]
+  , policyInputRules :: [InputRule]
   , policyLayout :: l
   , policyTags :: [i]
   , policyBindings :: [(RiverKeyBinding, Action i l ())]
@@ -99,7 +103,8 @@ data PolicyConfig i l = PolicyConfig
   }
 
 data PolicyError i
-  = PolicyInvalidInputSetting SettingError
+  = PolicyInvalidScratchpads String
+  | PolicyInvalidInputSetting SettingError
   | PolicyInvalidSceneStyle SceneStyle
   | PolicyTagError (WorkspaceTagError i)
   | PolicyBindingConflict RiverKeyBinding
@@ -121,7 +126,10 @@ data DrainView = DrainView
 data ExternalInput i l = ExternalInput (Action i l ()) (Maybe (TMVar Integer))
 
 closePolicyIngress :: Policy i l -> IO ()
-closePolicyIngress = closeExternal . externalLifecycle . policyIngress
+closePolicyIngress policy = closeScratchpadTimer (policyScratchpadTimer policy) >> closeExternal (externalLifecycle (policyIngress policy))
+
+policyScratchpadNames :: Policy i l -> [String]
+policyScratchpadNames = map scratchpadName . policyScratchpads . policyConfig
 
 policyTagsOf :: Policy i l -> [i]
 policyTagsOf = policyTags . policyConfig
@@ -133,7 +141,8 @@ policyExternalProducer :: Policy i l -> ExternalProducer (ExternalInput i l)
 policyExternalProducer = externalProducer . policyIngress
 
 data Policy i l = Policy
-  { policyLastInput :: IORef (Maybe Value)
+  { policyScratchpadTimer :: ScratchpadTimer
+  , policyLastInput :: IORef (Maybe Value)
   , policyRevision :: IORef Integer
   , policyObserver :: IORef (Integer -> CoreState i l -> RiverRuntimeSnapshot -> IO ())
   , policyIngress :: ExternalIngress (ExternalInput i l)
@@ -155,6 +164,7 @@ data Policy i l = Policy
 -- | Validate tags, binding identities and modifiers, border width, and premultiplied colors before connecting.
 newPolicy :: (Eq i) => PolicyConfig i l -> IO (Either (PolicyError i) (Policy i l))
 newPolicy config
+  | Left message <- validateScratchpads (policyScratchpads config) = pure (Left (PolicyInvalidScratchpads message))
   | Left e <- mapM_ validateInputSetting (concatMap ruleSettings (policyInputRules config)) = pure (Left (PolicyInvalidInputSetting e))
   | not validStyle = pure (Left (PolicyInvalidSceneStyle style))
   | binding : _ <- filter invalidModifiers (map fst (policyBindings config)) = pure (Left (PolicyInvalidModifiers binding))
@@ -164,7 +174,7 @@ newPolicy config
       Left e -> pure (Left (PolicyTagError e))
       Right st -> case firstRepeat [] (map fst (policyBindings config)) of
         Just binding -> pure (Left (PolicyBindingConflict binding))
-        Nothing -> Right <$> (Policy <$> newIORef Nothing <*> newIORef 0 <*> newIORef (\_ _ _ -> pure ()) <*> newExternalIngress <*> pure config <*> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)) <*> newIORef (policyRestore config) <*> newIORef (LiveInventory Map.empty Map.empty))
+        Nothing -> Right <$> (Policy <$> newScratchpadTimer <*> newIORef Nothing <*> newIORef 0 <*> newIORef (\_ _ _ -> pure ()) <*> newExternalIngress <*> pure config <*> newIORef st{coreScratchpadDefinitions = Map.fromList [(scratchpadName p, (scratchpadCommand p, FloatAt (scratchpadGeometry p))) | p <- policyScratchpads config]} <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)) <*> newIORef (policyRestore config) <*> newIORef (LiveInventory Map.empty Map.empty))
  where
   -- River excludes capslock and numlock bits from its modifier enum.
   invalidModifiers = invalidBits . riverKeyBindingModifiers
@@ -183,7 +193,7 @@ policyRuntimeHandlers :: (Eq i, Show i, LayoutClass l) => Policy i l -> RiverRun
 policyRuntimeHandlers policy =
   RiverRuntimeHandlers
     { riverInputRules = policyInputRules (policyConfig policy)
-    , riverExternalIngress = Just (externalLifecycle (policyIngress policy))
+    , riverExternalIngress = Just ingressLifecycle
     , riverProtocolHandlers =
         RiverWindowManagerHandlers
           { handleRiverWindowManagerEvent = \_ _ -> pure ()
@@ -226,6 +236,7 @@ policyRuntimeHandlers policy =
     , prepareRiverRenderPlan = prepareRenderPlan policy
     }
  where
+  ingressLifecycle = let lifecycle = externalLifecycle (policyIngress policy) in lifecycle{closeExternal = closeScratchpadTimer (policyScratchpadTimer policy) >> closeExternal lifecycle}
   bindings = policyBindings (policyConfig policy)
   pointerBindings = policyPointerBindings (policyConfig policy)
   startOp origin kind seat window view =
@@ -258,11 +269,18 @@ prepareManagePlan policy snapshot = do
   events <- map ($ view) . reverse <$> atomicModifyIORef' (policyQueue policy) ([],)
   external <- drainedInputs <$> drainExternal (policyIngress policy)
   let externalEvent (ExternalInput action _) = RunAction action
-      (st, intents) = drainCore (policyManageHook (policyConfig policy)) (events <> map externalEvent external) before
+      (st, intents) = drainCoreWithScratchpads (policyScratchpads (policyConfig policy)) (policyManageHook (policyConfig policy)) (events <> map externalEvent external) before
   writeIORef (policyState policy) st
   writeIORef (policyDrainedInventory policy) (liveInventoryOf inventory)
   let effects = interpretIntents intents
   mapM_ (policyLaunch (policyConfig policy)) (planLaunch effects)
+  mapM_ (policyLog (policyConfig policy)) (planNotices effects)
+  mapM_
+    ( \(name, generation, command) -> do
+        policyLaunch (policyConfig policy) command
+        scheduleScratchpad (policyScratchpadTimer policy) (\key token -> submitExternal (policyExternalProducer policy) (ExternalInput (scratchpadTimeout key token) Nothing)) name generation
+    )
+    (planPads effects)
   revision <- atomicModifyIORef' (policyRevision policy) (\n -> (n + 1, n + 1))
   observer <- readIORef (policyObserver policy)
   observer revision st snapshot
@@ -303,7 +321,9 @@ prepareManagePlan policy snapshot = do
 
 -- | Every intent's effect on a manage sequence, in order.
 data IntentPlan = IntentPlan
-  { planLaunch :: [String]
+  { planPads :: [(String, Integer, String)]
+  , planNotices :: [String]
+  , planLaunch :: [String]
   , planClose :: [WindowId]
   , planReclaim :: Bool
   , planRestart :: Bool
@@ -311,9 +331,11 @@ data IntentPlan = IntentPlan
 
 -- | A case over every 'Intent', so a new one cannot be silently ignored.
 interpretIntents :: [Intent] -> IntentPlan
-interpretIntents = foldr add (IntentPlan [] [] False False)
+interpretIntents = foldr add (IntentPlan [] [] [] [] False False)
  where
   add intent plan = case intent of
+    LaunchScratchpad name generation command -> plan{planPads = (name, generation, command) : planPads plan}
+    ScratchpadNotice message -> plan{planNotices = message : planNotices plan}
     Spawn cmd -> plan{planLaunch = cmd : planLaunch plan}
     CloseWindow w -> plan{planClose = w : planClose plan}
     ReclaimFocus -> plan{planReclaim = True}
