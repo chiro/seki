@@ -453,7 +453,7 @@ sendLibinput managerRef outstanding state connection apply failed device =
                                   L.riverLibinputAccelConfigV1Interface
                                   config
                                   (\result -> L.encodeRiverLibinputAccelConfigV1SetPoints result (case kind of CurveFallback -> L.RiverLibinputAccelConfigV1AccelTypeEnumFallback; CurveMotion -> L.RiverLibinputAccelConfigV1AccelTypeEnumMotion; CurveScroll -> L.RiverLibinputAccelConfigV1AccelTypeEnumScroll) (encodeDoubles [step]) (encodeDoubles values))
-                                  (\outcome -> if outcome == SettingApplied then points rest else complete outcome >> destroy)
+                                  (\outcome -> (if outcome == SettingApplied then points rest else complete outcome >> destroy) `onException` destroy)
                       points curves `onException` destroy
             setting -> case settingRequest setting of
               Nothing -> complete SettingUnavailable
