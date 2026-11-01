@@ -24,7 +24,7 @@ This command:
 
 1. builds `seki-integration`;
 2. explicitly enables the real-compositor scenarios;
-3. applies a 120-second suite timeout;
+3. applies a 480-second suite timeout;
 4. requires the exact completion manifest; and
 5. writes `manifest.txt` and a log limited to the last 1 MiB beneath
    `artifacts/integration/`.
@@ -536,8 +536,9 @@ output and checks unavailable then resubmitted mapping. It claims submission,
 not applied pointer coordinates. `m3-input-perf` retains 1000 contiguous native
 layout-to-subscriber receipts with a 50 ms p99 ceiling. Its bounded process budget
 is 30 seconds because the source emits at 10 ms intervals; ordinary assertions
-retain their 10-second budget. The full suite budget is 240 seconds to include
-the added input cases.
+retain their 10-second budget. The full suite has a 480-second outer limit for the input cases and five
+1,000-toggle scratchpad trials. Individual assertion and latency budgets stay
+fixed.
 
 The backend consumes `LD_PRELOAD` in its startup constructor, before river can
 fork/exec its init command. The init handshake reports and checks an empty preload;
