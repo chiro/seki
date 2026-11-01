@@ -2,7 +2,7 @@
 
 module Seki.Run.IPCTest (tests) where
 
-import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson (Value (..), object, toJSON, (.=))
 import Data.ByteString qualified as BS
 import Data.Text qualified as Text
 import Seki.Internal.Core.State (newCoreState)
@@ -25,6 +25,17 @@ tests =
         mapM_ (\args -> assertBool "usage error" (either (const True) (const False) (parseCLI args))) [[], ["layout", "bogus"], ["spawn", "  "], ["snapshot", "extra"]]
     , testCase "typed command schema" $
         decodeRequest "{\"version\":1,\"id\":\"a\",\"op\":\"workspace\",\"tag\":\"3\"}" @?= Right (Request "a" (Workspace "3"))
+    , testCase "only framing and JSON errors close request connections" $ do
+        mapM_ (\bytes -> case decodeRequest bytes of Left err -> assertBool "fatal input" (errorClosesConnection err); Right _ -> assertFailure "invalid input accepted") ["{", BS.pack [255], BS.replicate 65537 32]
+        mapM_ (\bytes -> case decodeRequest bytes of Left err -> assertBool "schema error is recoverable" (not (errorClosesConnection err)); Right _ -> assertFailure "invalid schema accepted") ["{}", "{\"version\":9}", "[]"]
+    , testCase "CLI layout names and wire encoding share their contract" $
+        mapM_
+          ( \(name, action) -> do
+              parseCLI ["layout", name] @?= Right (Layout action)
+              bytes <- either assertFailure pure (encodeLine (toJSON (Request "roundtrip" (Layout action))))
+              decodeRequest bytes @?= Right (Request "roundtrip" (Layout action))
+          )
+          [("next", Next), ("shrink", Shrink), ("expand", Expand), ("inc-master", IncMaster), ("dec-master", DecMaster)]
     , testCase "invalid version preserves request correlation" $ case decodeRequest "{\"version\":9,\"id\":\"request-42\",\"op\":\"snapshot\"}" of
         Left err -> errorRequestId err @?= "request-42"
         Right _ -> assertFailure "unsupported version accepted"

@@ -18,14 +18,15 @@ import Data.Aeson.Types (Parser, parseEither)
 import Data.Bifunctor (first)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
+import Data.List (find)
 import Data.Text (Text)
 import Data.Text qualified as Text
 
-data RequestError = RequestError {errorRequestId :: Text, errorMessage :: String} deriving (Eq, Show)
+data RequestError = RequestError {errorRequestId :: Text, errorMessage :: String, errorClosesConnection :: Bool} deriving (Eq, Show)
 
 data Request = Request {requestId :: Text, requestOperation :: Operation} deriving (Eq, Show)
 data Operation = Snapshot | Subscribe | Workspace Text | Spawn Text | Layout LayoutOp deriving (Eq, Show)
-data LayoutOp = Next | Shrink | Expand | IncMaster | DecMaster deriving (Eq, Show)
+data LayoutOp = Next | Shrink | Expand | IncMaster | DecMaster deriving (Eq, Show, Enum, Bounded)
 
 maxLineBytes :: Int
 maxLineBytes = 65536
@@ -43,28 +44,22 @@ instance FromJSON Request where
       "workspace" -> Workspace <$> o .: "tag"
       "spawn" -> do
         command <- o .: "command"
-        if Text.null (Text.strip command) then fail "empty command" else pure (Spawn command)
+        either fail pure (spawnOperation command)
       "layout" -> do
         action <- o .: "action" :: Parser Text
-        Layout <$> case action of
-          "next" -> pure Next
-          "shrink" -> pure Shrink
-          "expand" -> pure Expand
-          "inc-master" -> pure IncMaster
-          "dec-master" -> pure DecMaster
-          _ -> fail "unknown layout action"
+        maybe (fail "unknown layout action") (pure . Layout) (layoutOperation action)
       _ -> fail "unknown operation"
     pure (Request ident operation)
 
 decodeRequest :: BS.ByteString -> Either RequestError Request
 decodeRequest bytes
-  | BS.length bytes > maxLineBytes = Left (RequestError "" "line exceeds 65536 bytes")
+  | BS.length bytes > maxLineBytes = Left (RequestError "" "line exceeds 65536 bytes" True)
   | otherwise = do
-      value <- first (RequestError "") (eitherDecodeStrict' bytes)
+      value <- first (\message -> RequestError "" message True) (eitherDecodeStrict' bytes)
       let ident = case value of
             Object fields | Just (String text) <- KeyMap.lookup "id" fields, Text.length text <= 128 -> text
             _ -> ""
-      first (RequestError ident) (parseEither parseJSON value)
+      first (\message -> RequestError ident message False) (parseEither parseJSON value)
 
 encodeLine :: Value -> Either String BS.ByteString
 encodeLine value
@@ -81,15 +76,8 @@ parseCLI args = case args of
   ["snapshot"] -> Right Snapshot
   ["subscribe"] -> Right Subscribe
   ["workspace", tag] -> Right (Workspace (Text.pack tag))
-  ["spawn", command] | not (Text.null (Text.strip (Text.pack command))) -> Right (Spawn (Text.pack command))
-  ["layout", action] ->
-    Layout <$> case action of
-      "next" -> Right Next
-      "shrink" -> Right Shrink
-      "expand" -> Right Expand
-      "inc-master" -> Right IncMaster
-      "dec-master" -> Right DecMaster
-      _ -> Left cliUsage
+  ["spawn", command] -> first (const cliUsage) (spawnOperation (Text.pack command))
+  ["layout", action] -> maybe (Left cliUsage) (Right . Layout) (layoutOperation (Text.pack action))
   _ -> Left cliUsage
 
 instance ToJSON Request where
@@ -101,9 +89,19 @@ instance ToJSON Request where
       Workspace tag -> ["op" .= ("workspace" :: Text), "tag" .= tag]
       Spawn command -> ["op" .= ("spawn" :: Text), "command" .= command]
       Layout action -> ["op" .= ("layout" :: Text), "action" .= layoutName action]
-    layoutName action = case action of
-      Next -> "next" :: Text
-      Shrink -> "shrink"
-      Expand -> "expand"
-      IncMaster -> "inc-master"
-      DecMaster -> "dec-master"
+
+layoutName :: LayoutOp -> Text
+layoutName action = case action of
+  Next -> "next"
+  Shrink -> "shrink"
+  Expand -> "expand"
+  IncMaster -> "inc-master"
+  DecMaster -> "dec-master"
+
+layoutOperation :: Text -> Maybe LayoutOp
+layoutOperation name = find ((== name) . layoutName) [minBound .. maxBound]
+
+spawnOperation :: Text -> Either String Operation
+spawnOperation command
+  | Text.null (Text.strip command) = Left "empty command"
+  | otherwise = Right (Spawn command)
