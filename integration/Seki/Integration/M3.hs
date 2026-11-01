@@ -34,7 +34,7 @@ import Seki.Run.Policy
 import Seki.Run.Runtime
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
 import Seki.Wire.Transport (ConnectionTarget (..))
-import System.Directory (doesFileExist)
+import System.Directory (doesFileExist, getCurrentDirectory)
 import System.Environment (getEnv, lookupEnv)
 import System.FilePath ((</>))
 import System.Process (proc)
@@ -404,6 +404,9 @@ snapshotSession bytes = do
 
 ipcLimits :: IO ()
 ipcLimits = do
+  cli <- getEnv "SEKICTL_EXECUTABLE"
+  cwd <- getCurrentDirectory
+  _ <- runProcessCapture [] "python3" [cwd </> "integration/ipc-stream.py", cli]
   launched <- newIORef []
   let config =
         (policyConfigOf def)

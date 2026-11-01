@@ -15,6 +15,7 @@ category:            System
 build-type:          Simple
 tested-with:         GHC ==9.10.3
 extra-source-files:
+  integration/ipc-stream.py
   examples/waybar/seki.py
   examples/waybar/config.jsonc
   tools/latency/run.py

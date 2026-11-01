@@ -7,14 +7,19 @@ import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar)
 import Control.Exception (IOException, bracket, finally, try)
 import Control.Monad (replicateM)
 import Data.ByteString qualified as BS
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
 import Seki.Internal.Config (def)
 import Seki.Run.Config (policyConfigOf)
-import Seki.Run.IPC (withIPCAt)
-import Seki.Run.Policy (newPolicy)
+import Seki.Run.External qualified as External
+import Seki.Run.IPC (withIPC, withIPCAt)
+import Seki.Run.Inventory (emptyRiverInventory)
+import Seki.Run.Policy (newPolicy, policyRuntimeHandlers)
+import Seki.Run.Runtime (RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
 import System.Directory (doesPathExist, getSymbolicLinkTarget, removeFile)
-import System.FilePath ((</>))
+import System.Environment (lookupEnv, setEnv, unsetEnv)
+import System.FilePath (takeDirectory, (</>))
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Directory qualified as Posix
 import System.Posix.Files (createSymbolicLink, fileID, getSymbolicLinkStatus, setFileMode)
@@ -82,6 +87,63 @@ tests =
                 clients
           )
           `finally` stop
+    , testCase "optional endpoint failure runs the body once and logs" $ temporary $ \path -> do
+        writeFile path "foreign"
+        policy <- fresh
+        logs <- newIORef []
+        calls <- newIORef (0 :: Int)
+        mapM_
+          ( \runtime ->
+              withRuntime runtime $
+                withIPC (\message -> modifyIORef' logs (<> [message])) policy (modifyIORef' calls (+ 1))
+          )
+          [Just (takeDirectory (takeDirectory path)), Just "relative", Nothing]
+        readIORef calls >>= assertEqual "WM body still runs" 3
+        readIORef logs >>= assertBool "setup failure is diagnosed" . any (\message -> take 15 message == "IPC unavailable")
+        readFile path >>= assertEqual "foreign endpoint untouched" "foreign"
+    , testCase "optional IPC never retries an exception from the WM body" $ temporary $ \path -> do
+        policy <- fresh
+        calls <- newIORef (0 :: Int)
+        result <-
+          withRuntime (Just (takeDirectory (takeDirectory path))) $
+            try @IOException (withIPC (const (pure ())) policy (modifyIORef' calls (+ 1) >> ioError (userError "WM body failed")))
+        assertBool "body exception propagates" (either (const True) (const False) result)
+        readIORef calls >>= assertEqual "body ran only once" 1
+    , testCase "unfilled command receipt stops the broker within its deadline" $ temporary $ \path -> do
+        policy <- fresh
+        case riverExternalIngress (policyRuntimeHandlers policy) of
+          Nothing -> assertFailure "missing ingress"
+          Just ingress -> External.bindExternalWake ingress (pure True) >>= assertBool "bound"
+        withIPCAt path policy $ bracket (openClient path) close $ \client -> do
+          sendAll client "{\"version\":1,\"id\":\"held\",\"op\":\"spawn\",\"command\":\"unused\"}\n"
+          reply <- lineWithin 8000000 client
+          assertBool "no false failure claim for potentially applied command" ("application is unknown" `BS.isInfixOf` reply)
+          sendAll client "{\"version\":1,\"id\":\"next\",\"op\":\"spawn\",\"command\":\"unused\"}\n"
+          next <- line client
+          assertBool "later commands see unavailable broker" ("unavailable" `BS.isInfixOf` next)
+    , testCase "semantic request error preserves the next request" $ temporary $ \path -> do
+        policy <- fresh
+        withIPCAt path policy $ do
+          _ <- prepareRiverManagePlan (policyRuntimeHandlers policy) (RiverRuntimeSnapshot emptyRiverInventory [])
+          bracket (openClient path) close $ \client -> do
+            sendAll client "{\"version\":1,\"id\":\"bad\",\"op\":\"layout\",\"action\":\"bogus\"}\n{\"version\":1,\"id\":\"next\",\"op\":\"snapshot\"}\n"
+            first <- line client
+            assertBool "invalid action has an error" ("invalid_request" `BS.isInfixOf` first)
+            second <- line client
+            assertBool "same connection returns snapshot" ("snapshot" `BS.isInfixOf` second)
+    , testCase "subscriber input is not mistaken for EOF" $ temporary $ \path -> do
+        policy <- fresh
+        withIPCAt path policy $ do
+          let manage = prepareRiverManagePlan (policyRuntimeHandlers policy) (RiverRuntimeSnapshot emptyRiverInventory [])
+          _ <- manage
+          bracket (openClient path) close $ \client -> do
+            sendAll client "{\"version\":1,\"id\":\"sub\",\"op\":\"subscribe\"}\n"
+            _ <- line client
+            sendAll client "\nkeepalive\n"
+            threadDelay 10000
+            _ <- manage
+            next <- line client
+            assertBool "subscription still receives a snapshot" ("snapshot" `BS.isInfixOf` next)
     , testCase "child processes cannot retain the server guard" $ temporary $ \path -> do
         policy <- fresh
         bracket
@@ -107,3 +169,26 @@ tests =
     result <- try @IOException (withIPCAt path policy (pure ()))
     assertBool "startup refused" (either (const True) (const False) result)
   reap child = getProcessExitCode child >>= maybe (threadDelay 1000 >> reap child) (const (pure ()))
+
+openClient :: FilePath -> IO Socket
+openClient path = do
+  client <- socket AF_UNIX Stream defaultProtocol
+  connect client (SockAddrUnix path)
+  pure client
+
+line :: Socket -> IO BS.ByteString
+line = lineWithin 2000000
+
+lineWithin :: Int -> Socket -> IO BS.ByteString
+lineWithin micros client = do
+  result <- timeout micros (go BS.empty)
+  maybe (assertFailure "IPC response timeout" >> pure BS.empty) pure result
+ where
+  go bytes = do
+    chunk <- recv client 1
+    if BS.null chunk || chunk == "\n" then pure bytes else go (bytes <> chunk)
+
+withRuntime :: Maybe FilePath -> IO a -> IO a
+withRuntime value action = bracket (lookupEnv "XDG_RUNTIME_DIR") restore $ \_ -> restore value >> action
+ where
+  restore = maybe (unsetEnv "XDG_RUNTIME_DIR") (setEnv "XDG_RUNTIME_DIR")

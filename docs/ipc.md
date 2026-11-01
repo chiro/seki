@@ -4,6 +4,13 @@ The IPC endpoint is `$XDG_RUNTIME_DIR/seki/ipc.sock`. The containing directory
 belongs to the effective user and has mode 0700. Clients have that user's authority,
 including permission to execute shell commands through `spawn`.
 
+There is one IPC server per runtime directory. Endpoint setup errors are logged,
+and window management continues without IPC for that session pass. An existing
+owner's endpoint is untouched. Clients still address the fixed path, so a second
+WM sharing the runtime directory cannot be selected through IPC. Use a separate
+runtime directory for isolated test sessions. Setup is attempted again on a new
+session pass; a degraded running session does not replace the existing endpoint.
+
 Each message is one UTF-8 JSON object followed by LF. The maximum request or reply
 line is 65536 bytes excluding LF. CR before LF counts toward this limit. Invalid
 UTF-8, malformed JSON, and oversized lines terminate that client connection.
@@ -20,7 +27,9 @@ IDs correlate replies within a connection. The server does not deduplicate IDs.
 
 Layout actions are `next`, `shrink`, `expand`, `inc-master`, and `dec-master`.
 Unknown operations, versions, actions, and workspace tags are errors. Empty spawn
-commands are errors. Fields not used by an operation are ignored.
+commands are errors. Schema errors receive `invalid_request` and permit another
+request on the same connection. Unknown workspace tags receive `invalid_command`.
+Fields not used by an operation are ignored.
 
 Replies contain `version`, `id`, and either `result` or `error`. Errors contain
 `code` and `message`. An application result contains `revision`. It means the
@@ -51,7 +60,12 @@ application receipt. It submits to the separate session ingress, which holds
 not a combined 256-command limit. At most 32 connections are active, each with
 at most one command in flight. A disconnected command handler awaiting its
 receipt keeps its connection slot until it finishes or the session stops.
-Slow clients cannot block policy dispatch.
+Slow clients cannot block policy dispatch. Client reads time out after 60 seconds
+and writes after 5 seconds. The broker waits at most 5 seconds for an admitted
+command's application receipt. If no receipt arrives, it reports `unavailable`
+with application unknown and stops admitting commands for that session. Other
+queued requests receive `unavailable`; commands are never automatically replayed.
+A timeout does not undo a command that may apply later.
 Oversized snapshots produce an explicit `snapshot_too_large` error instead of a
 partial snapshot. Titles, output names, and layout descriptions are limited to 1024 Unicode characters with
 explicit truncation indicators. Escaped JSON byte size still obeys the line limit.
@@ -69,7 +83,10 @@ and must never interpolate titles into shell commands.
 
 
 `subscribe` occupies its connection until EOF. It does not accept further
-requests on that connection. `sekictl subscribe` reconnects after one second
+requests on that connection. Further client bytes are discarded until EOF; they
+are not interpreted as requests and do not signal disconnection.
+`sekictl subscribe` prints server error replies to stderr and keeps reading the
+same stream, including after `snapshot_too_large`. It reconnects after one second
 and writes diagnostics to stderr. Other commands make one attempt and never
 replay after an ambiguous disconnect. Exit codes are 0 for success, 1 for a
 server error, 64 for usage or request size errors, and 69 for a transport or

@@ -123,7 +123,7 @@ runSessions launch configFor = pass (launchFirstTarget launch) unavailableRetrie
           openRiverSessionAt connection defaultObjectLimit (policyRuntimeHandlers policy) >>= \case
             Left e -> pure (Left (ConfigRuntimeError e))
             Right session ->
-              (withIPC policy (runRiverSession session) `finally` closeRiverSession session) >>= \case
+              (withIPC logLine policy (runRiverSession session) `finally` closeRiverSession session) >>= \case
                 Left RiverRuntimeWindowManagerUnavailable
                   | retries > 0 -> do
                       logLine "window management unavailable, retrying"
