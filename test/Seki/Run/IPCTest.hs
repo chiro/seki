@@ -15,7 +15,7 @@ import Seki.Protocol.RiverInputManagementV1 qualified as Input
 import Seki.Protocol.Wayland qualified as Wayland
 import Seki.Run.IPCSchema
 import Seki.Run.Input (InputDevice (..), InputInventory (..), SettingOutcome (..), discoverInput, emptyInputInventory)
-import Seki.Run.InputSnapshot (inputValue, outcomeName, settingValue)
+import Seki.Run.InputSnapshot (inputStatusValue, inputValue, outcomeName, settingValue)
 import Seki.Run.Inventory (emptyRiverInventory)
 import Seki.Run.Runtime (RiverInputSnapshot (..), RiverRuntimeSnapshot (..))
 import Seki.Run.Snapshot (projectSnapshot)
@@ -43,6 +43,20 @@ tests =
         st <- either (assertFailure . show) pure (newCoreState Full ["1"])
         let snapshot = projectSnapshot "large-input" id ["1"] 1 st (RiverRuntimeSnapshot emptyRiverInventory (InputAvailable inventory) [])
         assertBool "bounded actual IPC line" (either (const False) ((< 65536) . BS.length) (encodeLine snapshot))
+    , testCase "input logs retain bounded device names" $ do
+        (table, _) <- either (assertFailure . show) pure (newObjectTable defaultObjectLimit Wayland.wlDisplayInterface)
+        (_, device) <- either (assertFailure . show) pure (allocateClientObject Input.riverInputDeviceV1Interface 2 table)
+        let inventory = discoverInput device emptyInputInventory
+            named = inventory{inputDevices = Map.map (\d -> d{inputName = Just "Lane5 Synthetic Touchpad"}) (inputDevices inventory)}
+            large = inventory{inputDevices = Map.map (\d -> d{inputName = Just (Text.replicate 4096 "界")}) (inputDevices inventory)}
+        assertBool "status names the device" ("Lane5 Synthetic Touchpad" `BS.isInfixOf` Lazy.toStrict (encode (inputStatusValue (InputAvailable named))))
+        assertBool "long status name is marked truncated" ("\"name_truncated\":true" `BS.isInfixOf` Lazy.toStrict (encode (inputStatusValue (InputAvailable large))))
+        assertBool "status name is bounded" (Lazy.length (encode (inputStatusValue (InputAvailable large))) < 2048)
+    , testCase "unavailable rules name each requested setting" $ do
+        patternValue <- either (assertFailure . show) pure (compileDevicePattern "*")
+        let projected = Lazy.toStrict (encode (inputValue (InputUnavailable [InputRule patternValue Nothing [Tap True, CapsLock True]])))
+        assertBool "unavailable tap is identified" ("\"setting\":\"tap\"" `BS.isInfixOf` projected)
+        assertBool "unavailable caps lock is identified" ("\"setting\":\"caps_lock\"" `BS.isInfixOf` projected)
     , testCase "curve projection is bounded and finite" $ do
         let value = settingValue (Acceleration (AccelerationCurves [AccelCurve CurveMotion 1 (replicate 4096 0.5)]))
         assertBool "maximum curve summarized" (Lazy.length (encode value) < 512)

@@ -13,7 +13,7 @@
 
 #define KEYMAP_LIMIT (4 * 1024 * 1024)
 
-/* The post-fork child uses syscalls only, with no Haskell or allocator state. */
+/* The post-fork child uses async-signal-safe calls only, with no Haskell or allocator state. */
 static void load_keymap(int socket, const char *path) {
     unsigned char buffer[16384];
     struct stat st;

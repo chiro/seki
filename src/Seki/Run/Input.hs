@@ -260,7 +260,6 @@ openInputSession rules wayland failed = do
         worker <- newKeymapWorker
         restore
           ( do
-              libRevision <- newIORef (0 :: Integer)
               let session = InputSession available state notify outputs apply worker drain
                   apply = do
                     inventory <- readIORef state
@@ -270,7 +269,7 @@ openInputSession rules wayland failed = do
                     cancelKeymaps worker (\token -> not (any (matchesToken token) (Map.elems (inputDevices next))))
                     mapM_ send requests
                     mapM_ sendXkb (Map.elems (inputDevices next))
-                    mapM_ (sendLibinput libManager libRevision state connection apply failed) (Map.elems (inputDevices next))
+                    mapM_ (sendLibinput libManager state connection apply failed) (Map.elems (inputDevices next))
                     latest <- readIORef state
                     live <- readIORef available
                     previous <- readIORef published
@@ -511,8 +510,20 @@ syncInput wayland failed action =
       (eventRoute Wayland.decodeWlCallbackEvent (\_ _ -> action))
       >>= either failed (const (pure ()))
 
-sendLibinput :: IORef (Maybe (Object L.RiverLibinputConfigV1)) -> IORef Integer -> IORef InputInventory -> Connection -> IO () -> (ConnectionError -> IO ()) -> InputDevice -> IO ()
-sendLibinput managerRef outstanding state connection apply failed device =
+awaitingLibinput :: InputInventory -> Int
+awaitingLibinput inventory =
+  length
+    [ ()
+    | device <- Map.elems (inputDevices inventory)
+    , inputLifecycle device == Ready
+    , facetLifecycle (inputLibinput device) == FacetReady
+    , (key, setting) <- Map.toList (inputResults device)
+    , libinputKey key
+    , settingOutcome setting == SettingAwaiting
+    ]
+
+sendLibinput :: IORef (Maybe (Object L.RiverLibinputConfigV1)) -> IORef InputInventory -> Connection -> IO () -> (ConnectionError -> IO ()) -> InputDevice -> IO ()
+sendLibinput managerRef state connection apply failed device =
   case (facetLifecycle facet, facetObject facet) of
     (FacetReady, Just object) | inputLifecycle device == Ready -> mapM_ (send object) (Map.toList (inputResults device))
     _ -> pure ()
@@ -523,7 +534,7 @@ sendLibinput managerRef outstanding state connection apply failed device =
     | libinputKey key
     , settingOutcome desired == SettingPending
     , supportsSetting facet (settingDesired desired) == Just True = do
-        count <- readIORef outstanding
+        count <- awaitingLibinput <$> readIORef state
         when (count < 256) $ do
           modifyIORef' state (\i -> i{inputDevices = Map.adjust (\d -> d{inputResults = Map.adjust (\r -> r{settingOutcome = SettingAwaiting}) key (inputResults d)}) generation (inputDevices i)})
           let complete outcome = modifyIORef' state (acknowledgeLibinput generation object desired outcome)
@@ -532,7 +543,6 @@ sendLibinput managerRef outstanding state connection apply failed device =
                 L.RiverLibinputResultV1Unsupported -> SettingUnsupported
                 L.RiverLibinputResultV1Invalid -> SettingRejectedInvalid
               request parentInterface parent makeRequest callback = do
-                modifyIORef' outstanding (+ 1)
                 response <-
                   submitNewObjectRequestWithRoute
                     connection
@@ -541,9 +551,9 @@ sendLibinput managerRef outstanding state connection apply failed device =
                     L.riverLibinputResultV1Interface
                     1
                     (makeRequest . objectId)
-                    (eventRoute L.decodeRiverLibinputResultV1Event (\_ event -> modifyIORef' outstanding (subtract 1) >> callback (acknowledged event) >> apply))
+                    (eventRoute L.decodeRiverLibinputResultV1Event (\_ event -> callback (acknowledged event) >> apply))
                 case response of
-                  Left e -> modifyIORef' outstanding (subtract 1) >> callback SettingUnavailable >> failed e
+                  Left e -> callback SettingUnavailable >> failed e
                   Right _ -> pure ()
           case settingDesired desired of
             Acceleration (AccelerationCurves curves) ->

@@ -4,6 +4,7 @@
 module Seki.Run.RuntimeTest (tests) where
 
 import Control.Exception (ErrorCall (..), onException, throwIO, try)
+import Control.Monad (forM_)
 import Data.Binary.Get qualified as Get
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as Lazy
@@ -107,6 +108,7 @@ tests =
     "river runtime"
     [ testCase "finished optional input manager remains unavailable with core live" testInputFinished
     , testCase "libinput custom curves success rejection removal v1/v2" (mapM_ (\v -> mapM_ (testCustomLibinput v) [0, 1, 2, 3, 4]) [1, 2])
+    , testCase "retired libinput requests do not exhaust admission" (mapM_ (testRetiredLibinputRequests False) [255, 256, 512] >> testRetiredLibinputRequests True 256)
     , testCase "XKB retains two distinct keyboards with empty rules" testTwoXkbKeyboards
     , testCase "XKB synthetic v1/v2/v3 batching, feedback and scrolllock gate" (mapM_ testXkbConfig [1, 2, 3])
     , testCase "libinput full synthetic peer surface and acknowledgements v1/v2" (mapM_ (\v -> mapM_ (testLibinput False v) [0, 1, 2]) [1, 2])
@@ -1585,3 +1587,42 @@ testInputFinished = withRuntimePair $ \target peer -> do
   assertEqual "core remains live" (Right RiverEnded) =<< runRiverSession session
   expectMockSuccess mockDone
   assertEqual "finished manager unavailable" (InputUnavailable rules) =<< readRiverInputSnapshot session
+
+testRetiredLibinputRequests :: Bool -> Int -> Assertion
+testRetiredLibinputRequests facetOnly races = withRuntimePair $ \target peer -> do
+  patternValue <- expectRight (compileDevicePattern "*")
+  mockDone <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (registry, callback) <- receiveStartupRequests reader peer
+    sendFrames peer [registryGlobalFrame registry 7 "river_window_manager_v1" 4, registryGlobalFrame registry 8 "river_xkb_bindings_v1" 3, registryGlobalFrame registry 9 "river_layer_shell_v1" 1, registryGlobalFrame registry 10 "river_input_manager_v1" 2, registryGlobalFrame registry 11 "river_libinput_config_v1" 2, callbackDoneFrame callback 1]
+    input <- receiveGlobalBind reader peer "generic first" 10 "river_input_manager_v1" 2
+    libinput <- receiveGlobalBind reader peer "libinput second" 11 "river_libinput_config_v1" 2
+    (manager, _, _) <- receiveRuntimeBinds reader peer
+    _ <- recordInputWakes reader manager
+    let announce index = do
+          generic <- requireObjectId (0xff000001 + 2 * fromIntegral index)
+          device <- requireObjectId (0xff000002 + 2 * fromIntegral index)
+          sendFrames peer [encodedFrame input (Opcode 1) (putNewId generic), encodedFrame generic (Opcode 1) (putUint 1), encodedFrame generic (Opcode 2) (putString "flapping touchpad"), encodedFrame libinput (Opcode 1) (putNewId device), encodedFrame device (Opcode 1) (putObject generic), encodedFrame device (Opcode 5) (putInt 3), encodedFrame generic (Opcode 3) (pure ()), encodedFrame device (Opcode 55) (pure ())]
+          absence <- receiveFrame reader peer >>= decodeNewId
+          sendFrames peer [callbackDoneFrame absence (fromIntegral index + 2)]
+          pure (generic, device)
+    forM_ [0 .. races - 1] $ \index -> do
+      (generic, device) <- announce index
+      _ <- receiveLibinputRequest reader peer device (Opcode 2) (putUint 1)
+      if facetOnly
+        then do
+          sendFrames peer [encodedFrame device (Opcode 0) (pure ())]
+          receiveExpectedRequest reader peer device (Opcode 0) (pure ())
+        else do
+          sendFrames peer [encodedFrame generic (Opcode 0) (pure ())]
+          receiveExpectedRequest reader peer device (Opcode 0) (pure ())
+          receiveExpectedRequest reader peer generic (Opcode 0) (pure ())
+    (_, device) <- announce races
+    sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
+    frame <- receiveFrame reader peer
+    closeTransport peer
+    pure (device, rawFrameSender frame, rawFrameOpcode frame)
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (\_ -> pure ())){riverInputRules = [InputRule patternValue Nothing [Tap True]]})
+  _ <- runRiverSession session
+  (device, sender, opcode) <- expectMockSuccess mockDone
+  assertEqual "fresh device receives its tap setter as the next request" (device, Opcode 2) (sender, opcode)

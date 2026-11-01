@@ -43,7 +43,7 @@ inputValue (InputUnavailable rules) =
       , "settings"
           .= bounded
             4096
-            [ object ["requested" .= settingValue setting, "status" .= ("unavailable" :: Text)]
+            [ object ["setting" .= keyName (settingKey setting), "requested" .= settingValue setting, "status" .= ("unavailable" :: Text)]
             | setting <- ruleSettings rule
             ]
       ]
@@ -66,6 +66,8 @@ inputStatusValue (InputAvailable inventory) =
   statusValue device =
     object
       [ "identity" .= identityValue device
+      , "name" .= fmap (Text.take 128) (inputName device)
+      , "name_truncated" .= maybe False ((> 128) . Text.length) (inputName device)
       , "libinput" .= facetName (facetLifecycle (inputLibinput device))
       , "xkb" .= facetName (xkbLifecycle (inputXkb device))
       , "results" .= resultsValue device

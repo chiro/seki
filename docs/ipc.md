@@ -139,14 +139,15 @@ Tiling layout remains the workspace's `layout` field.
 Input changes wake the runtime owner and are projected with the same immutable
 inventory as the window snapshot. Workers never read input maps or send Wayland
 requests. Unchanged input does not trigger another wake. Input changes are logged
-as bounded structured JSON with session/device/setting identities. JSON and Pango
+as bounded structured JSON with session/device/setting identities and device names
+(capped at 128 characters, with `name_truncated`). JSON and Pango
 escaping are separate; the Waybar helper escapes the combined display string and
 never interpolates device or layout data into a shell command. Older snapshots
 with absent or null xkb remain accepted.
 
 When input protocols are unavailable, `requested_rules` contains bounded rule
 summaries (`name_pattern`, nullable `type`, bounded `settings`). Each requested
-setting explicitly has status unavailable. The rule collection has an 8000-byte
+setting explicitly includes `setting`, `requested`, and status `unavailable`. The rule collection has an 8000-byte
 item budget and each settings collection 4096 bytes, with counts and truncation.
 The pattern is its escaped source form. This diagnostic never claims a matched
 device or an applied setting. Status logs omit unchanged current values, so a

@@ -65,7 +65,7 @@ libinputKey key = key `elem` libinputKeys
 libinputKeys :: [SettingKey]
 libinputKeys = [SendEventsKey, TapKey, TapButtonMapKey, DragKey, DragLockKey, ThreeFingerDragKey, CalibrationMatrixKey, AccelerationKey, AccelSpeedKey, NaturalScrollKey, LeftHandedKey, ClickMethodKey, ClickfingerButtonMapKey, MiddleEmulationKey, ScrollMethodKey, ScrollButtonKey, ScrollButtonLockKey, DisableWhileTypingKey, DisableWhileTrackpointKey, RotationKey]
 
--- Support is absent until its own event; unknown masks remain diagnostic data.
+-- Support is absent until its own event.
 updateFacet :: L.RiverLibinputDeviceV1Event fd -> LibinputFacet -> LibinputFacet
 updateFacet event facet = case event of
   L.RiverLibinputDeviceV1SendEventsSupport (L.RiverLibinputDeviceV1SendEventsModesFlags value) -> facet{facetSupport = foldr (\key -> Map.insert key (if value .&. complement 3 /= 0 then Left (Text.pack (show value)) else Right value)) (facetSupport facet) [SendEventsKey]}
@@ -130,7 +130,7 @@ recordValue key get set decoded facet = case decoded >>= (\value -> case validat
   Left diagnostic -> set (Map.delete key (get facet)) facet{facetDiagnostics = take 16 ((Text.pack (show key) <> ": " <> diagnostic) : facetDiagnostics facet)}
   Right value -> set (Map.insert (settingKey value) value (get facet)) facet
 
--- Nothing is still discovering; False is an explicit unsupported capability.
+-- Unknown or undiscovered support is Nothing; False is explicitly unsupported.
 supportsSetting :: LibinputFacet -> InputSetting -> Maybe Bool
 supportsSetting facet setting = case Map.lookup (settingKey setting) (facetSupport facet) of
   Nothing -> Nothing
