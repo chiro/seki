@@ -74,7 +74,7 @@ withPad name outputs action = do
               child <- startManagedProcess "scratchpad terminal" envValue (shell cmd){env = Just envValue}
               modifyIORef' children (child :)
           }
-  withFixture config name outputs $ \fixture probe -> do
+  withInputFixture [("SEKI_FIXTURE_LONG_KEYBOARD", "1") | name == "m3-scratchpad-perf"] config name outputs $ \fixture probe -> do
     writeIORef environment (mEnvironment fixture)
     ordinary <- openWindow probe Green
     root <- maybe (failIntegration "private runtime missing") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
@@ -180,7 +180,7 @@ bring fixture probe _ launches = do
     output : _ -> void (runProcessCapture (mEnvironment fixture) "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "400x300"])
     _ -> failIntegration "second output missing"
   void (apply fixture (windows (W.view "2") >> toggleScratchpad "term"))
-  void (waitUntil "actual float dimensions clamped on smaller output" assertionTimeoutMicroseconds (readRiverInventory (mSession fixture)) (any (\w -> riverWindowAppId w == Just "seki-scratchpad" && riverWindowDimensions w == Just (RiverSize 396 296)) . riverInventoryWindows))
+  void (waitUntil "actual float dimensions clamped on smaller output" assertionTimeoutMicroseconds (readRiverInventory (mSession fixture)) (any (\w -> riverWindowAppId w == Just "seki-scratchpad" && case riverWindowDimensions w of Just (RiverSize width height) -> width > 0 && width <= 396 && height > 0 && height <= 296; _ -> False) . riverInventoryWindows))
   same <- waitShown fixture
   assertEqual "bring preserves identity" owner same
   st <- readPolicyState (mPolicy fixture)

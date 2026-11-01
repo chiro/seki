@@ -91,9 +91,9 @@ restorePads changed = withNestedRiver 2 $ \nested -> do
               modifyIORef' children (child :)
           }
       stopChildren = readIORef children >>= mapM_ stopManagedProcess
-  ( withProbe (riverSocket nested) $ \probe -> do
-      saved <- withManager nested config $ \policy _ ended -> do
-        _ <- openWindow probe Green
+  ( withKeyboard (riverEnvironment nested) $ withProbe (riverSocket nested) $ \probe -> do
+      (saved, ordinary) <- withManager nested config $ \policy _ ended -> do
+        ordinary <- openWindow probe Green
         apply policy (toggleScratchpad "term")
         void (awaitOwner policy "term")
         apply policy (toggleScratchpad "term" >> toggleScratchpad "other")
@@ -101,7 +101,8 @@ restorePads changed = withNestedRiver 2 $ \nested -> do
         capture nested (if changed then "lane10-before" else "lane7-before")
         apply policy restart
         requireRuntimeExit ended >>= assertEqual "scratchpad restart stop handshake" (Right RiverStopped)
-        readRestoreState policy
+        saved <- readRestoreState policy
+        pure (saved, ordinary)
       assertEqual "two actual initial launches" 2 =<< readIORef launches
       if changed
         then do
@@ -129,6 +130,11 @@ restorePads changed = withNestedRiver 2 $ \nested -> do
             apply policy (toggleScratchpad "term")
             void (awaitOwner policy "term")
             capture nested "lane7-hidden-returned"
+            apply policy (toggleScratchpad "term" >> toggleScratchpad "other")
+            void (waitUntil "real keyboard restored to ordinary window" assertionTimeoutMicroseconds (keyboardSnapshot probe) ((== Just ordinary) . keyboardOwner))
+            before <- Map.findWithDefault 0 ordinary . pressedKeys <$> keyboardSnapshot probe
+            runInputDriver (riverEnvironment nested) ["-k", "a"]
+            void (waitUntil "ordinary input works after pad restart" assertionTimeoutMicroseconds (keyboardSnapshot probe) ((> before) . Map.findWithDefault 0 ordinary . pressedKeys))
         assertEqual "no restore process launch" 2 =<< readIORef launches
         -- Keep the session alive until clients have actually closed.
         stopChildren

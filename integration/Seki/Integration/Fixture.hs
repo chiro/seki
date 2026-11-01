@@ -154,7 +154,7 @@ withFixtureEnvironment extra transform policyConfig name outputCount action =
         let outputs = firstOutput : filter (/= firstOutput) (map snd namesByGlobal)
         forM_ (zip [0 :: Int ..] outputs) $ \(index, output) -> void (runProcessCapture environment "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "800x600", "--pos", show (index * 800) <> ",0", "--scale", "1", "--transform", "normal"])
         let fixture = Fixture socketPath dispatcher environment session policy outputs name requests
-        bracket (startManagedProcess "virtual keyboard lifetime" environment (proc "wtype" ["-s", "60000"])) stopManagedProcess $ \keeper ->
+        bracket (startManagedProcess "virtual keyboard lifetime" environment (proc "wtype" ["-s", if lookup "SEKI_FIXTURE_LONG_KEYBOARD" extra == Just "1" then "180000" else "60000"])) stopManagedProcess $ \keeper ->
           withProbe
             socketPath
             ( \probe ->
