@@ -193,12 +193,13 @@ validateInputSetting setting = case setting of
   MapRectangle (Just (InputRectangle _ _ width height)) | width < 0 || height < 0 -> Left InvalidRectangle
   CalibrationMatrix values | length values /= 6 || any (not . finite) values -> Left InvalidMatrix
   AccelSpeed speed | not (finite speed) || speed < -1 || speed > 1 -> Left InvalidAccelSpeed
-  Acceleration (AccelerationCurves curves) | null curves || any invalidCurve curves -> Left InvalidCurve
+  Acceleration (AccelerationCurves curves) | null curves || length curves > 3 || any invalidCurve curves || length (map (\(AccelCurve kind _ _) -> kind) curves) /= length (unique (map (\(AccelCurve kind _ _) -> kind) curves)) -> Left InvalidCurve
   Rotation angle | angle >= 360 -> Left InvalidRotation
   ActiveLayout (LayoutByIndex index) | index < 0 -> Left InvalidLayout
   ActiveLayout (LayoutByName name) | Text.null name || Text.any (== '\0') name -> Left InvalidLayout
   Keymap path | null path || '\0' `elem` path -> Left EmptyKeymapPath
   _ -> Right ()
  where
+  unique = foldr (\v acc -> if v `elem` acc then acc else v : acc) []
   finite value = not (isNaN value || isInfinite value)
-  invalidCurve (AccelCurve _ step points) = not (finite step) || step <= 0 || length points < 2 || any (\value -> not (finite value) || value < 0) points
+  invalidCurve (AccelCurve _ step points) = not (finite step) || step <= 0 || length points < 2 || length points > 4096 || any (\value -> not (finite value) || value < 0) points

@@ -128,6 +128,7 @@ library seki-wire
     Seki.Run.Snapshot
     Seki.Run.Inventory
     Seki.Run.Input
+    Seki.Run.Libinput
     Seki.Run.LayerShell
     Seki.Run.Latency
     Seki.Run.Config
