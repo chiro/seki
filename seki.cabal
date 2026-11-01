@@ -85,6 +85,7 @@ library seki-core
   hs-source-dirs:  src-core
   exposed-modules:
     Seki.Internal.Config
+    Seki.Internal.Input
     Seki.Internal.Core.Action
     Seki.Internal.Core.Event
     Seki.Internal.Core.Geometry
@@ -263,6 +264,7 @@ test-suite seki-test
   other-modules:
     Seki.Fixture.LayerSurfaceTest
     Seki.Fixture.ProbeTest
+    Seki.Internal.InputTest
     Seki.Internal.Core.ActionTest
     Seki.Internal.Core.EventTest
     Seki.Internal.Core.GeometryGen
