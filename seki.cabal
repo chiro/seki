@@ -15,6 +15,10 @@ category:            System
 build-type:          Simple
 tested-with:         GHC ==9.10.3
 extra-source-files:
+  ci/check-package.sh
+  ci/check-phase-types.sh
+  ci/run-integration.sh
+  ci/expected-integration-manifest.txt
   integration/input/backend.c
   integration/input/keymap.c
   integration/input/hold.c
