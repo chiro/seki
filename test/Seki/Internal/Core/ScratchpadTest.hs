@@ -154,4 +154,20 @@ tests =
         let pending = fst (run [act (toggleScratchpad "term")] attached)
             (_, effects) = run [act (scratchpadTimeout "term" 1)] pending
         assertBool "no automatic focus claim" (ReclaimFocus `notElem` effects)
+    , testCase "public insertion cannot expose an owned hidden identity" $ do
+        let (st, _) = run [act (toggleScratchpad "term" >> windows (W.insertUp pad))] shown
+        slot st @?= Just (HiddenPad pad (W.FloatAt box))
+        W.member pad (ssOf st) @?= False
+        W.peek (ssOf st) @?= Just ordinary
+    , testProperty "hidden pad stays outside arbitrary user workspace navigation" $ \(NonNegative n) ->
+        let hiddenState = fst (run [act (toggleScratchpad "term")] shown)
+            actions = take (n `mod` 100) (cycle [windows (W.insertUp pad), windows (W.view "2"), windows W.focusDown, windows (W.view "1")])
+            (st, _) = run (map act actions) hiddenState
+         in not (W.member pad (ssOf st)) .&&. (slot st == Just (HiddenPad pad (W.FloatAt box)))
+    , testCase "public deletion hides ownership and preserves hidden restore" $ do
+        let st = fst (run [act (windows (W.delete pad))] shown)
+            restored = fst (restoreCore inv (saveCore inv st) initial)
+        slot st @?= Just (HiddenPad pad (W.FloatAt box))
+        slot restored @?= slot st
+        W.member pad (ssOf st) @?= False
     ]
