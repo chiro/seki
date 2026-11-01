@@ -16,6 +16,9 @@ module Seki.Run.Input (
   openInputSession,
   readInputInventory,
   refreshInputOutputs,
+  inputCompletionWake,
+  drainInputCompletions,
+  closeInputSession,
   SettingOutcome (..),
   SettingResult (..),
   GenericRequest (..),
@@ -24,26 +27,32 @@ module Seki.Run.Input (
   finishFacetDiscovery,
 ) where
 
-import Control.Exception (onException)
+import Control.Exception (bracket, mask, onException)
 import Control.Monad (void, when)
 import Data.IORef
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
+import Data.Text qualified as Text
 import Data.Unique (hashUnique, newUnique)
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Internal.Input
 import Seki.Protocol.RiverInputManagementV1 qualified as Input
 import Seki.Protocol.RiverLibinputConfigV1 qualified as L
+import Seki.Protocol.RiverXkbConfigV1 qualified as X
 import Seki.Protocol.Wayland qualified as Wayland
+import Seki.Run.External (ExternalLifecycle)
+import Seki.Run.Keymap
 import Seki.Run.Libinput
 import Seki.Run.Startup
+import Seki.Run.XkbConfig
 import Seki.Wire.Arguments (fixedFromRaw)
 import Seki.Wire.Connection
 import Seki.Wire.Connection.ObjectTable (Object, objectId, objectVersion)
 import Seki.Wire.Connection.Registry
+import Seki.Wire.Transport (closeOwnedFd)
 import Seki.Wire.Types (ObjectId)
 import System.Posix.Process (getProcessID)
 
@@ -62,6 +71,7 @@ data InputDevice = InputDevice
   , inputType :: Maybe DeviceType
   , inputDefaults :: Map SettingKey InputSetting
   , inputCurrent :: Map SettingKey InputSetting
+  , inputXkb :: XkbFacet
   , inputLibinput :: LibinputFacet
   , inputResults :: Map SettingKey SettingResult
   }
@@ -80,7 +90,7 @@ discoverInput :: Object Input.RiverInputDeviceV1 -> InputInventory -> InputInven
 discoverInput object inventory =
   inventory
     { inputNextGeneration = next + 1
-    , inputDevices = Map.insert generation (InputDevice (InputIdentity (inputSessionIdentity inventory) generation) generation object Discovering Nothing Nothing Map.empty Map.empty (emptyFacet FacetUnavailable) Map.empty) (inputDevices inventory)
+    , inputDevices = Map.insert generation (InputDevice (InputIdentity (inputSessionIdentity inventory) generation) generation object Discovering Nothing Nothing Map.empty Map.empty (emptyXkbFacet FacetUnavailable) (emptyFacet FacetUnavailable) Map.empty) (inputDevices inventory)
     }
  where
   next = inputNextGeneration inventory
@@ -102,7 +112,7 @@ updateInput generation event inventory = inventory{inputDevices = Map.adjust upd
  where
   update d | inputLifecycle d == Removed = d
   update d = case event of
-    Input.RiverInputDeviceV1Removed -> d{inputLifecycle = Removed, inputLibinput = emptyFacet FacetRemoved, inputResults = fmap (\r -> r{settingOutcome = SettingRemoved}) (inputResults d)}
+    Input.RiverInputDeviceV1Removed -> d{inputLifecycle = Removed, inputXkb = emptyXkbFacet FacetRemoved, inputLibinput = emptyFacet FacetRemoved, inputResults = fmap (\r -> r{settingOutcome = SettingRemoved}) (inputResults d)}
     Input.RiverInputDeviceV1Name name -> d{inputName = Just name}
     Input.RiverInputDeviceV1Type kind -> d{inputType = deviceType kind}
     Input.RiverInputDeviceV1Done -> case (inputName d, inputType d) of
@@ -115,7 +125,7 @@ updateInput generation event inventory = inventory{inputDevices = Map.adjust upd
     Input.RiverInputDeviceV1TypeEnumTablet -> Just Tablet
     _ -> Nothing
 
-data SettingOutcome = SettingPending | SettingAwaiting | SettingApplied | SettingRejectedInvalid | SettingSent | SettingUnavailable | SettingUnsupported | SettingInvalid SettingError | SettingRemoved deriving (Eq, Show)
+data SettingOutcome = SettingPending | SettingLoading | SettingCompiling | SettingAwaiting | SettingApplied | SettingRejectedInvalid | SettingSent | SettingObserved | SettingUnavailable | SettingUnsupported | SettingInvalid SettingError | SettingRemoved deriving (Eq, Show)
 data SettingResult = SettingResult
   { settingDesired :: InputSetting
   , settingRevision :: Integer
@@ -161,6 +171,16 @@ planInput rules outputs inventory =
     MapRectangle rectangle -> [GenericMapRectangle generation (maybe (InputRectangle 0 0 0 0) id rectangle)]
     _ -> []
   classifyDevice device kind setting
+    | xkbKey (settingKey setting) =
+        let facet = inputXkb device
+         in SettingResult setting 0 (xkbGeneration facet) (objectId <$> xkbObject facet) $ case validateInputSetting setting of
+              Left e -> SettingInvalid e
+              Right () -> case xkbLifecycle facet of
+                FacetUnavailable -> SettingUnavailable
+                FacetRemoved -> SettingUnavailable
+                FacetDiscovering -> SettingPending
+                FacetReady | ScrollLock _ <- setting, maybe True ((< 3) . objectVersion) (xkbObject facet) -> SettingUnsupported
+                FacetReady -> SettingPending
     | libinputKey (settingKey setting) = SettingResult setting 0 (facetGeneration (inputLibinput device)) (objectId <$> facetObject (inputLibinput device)) $ case validateInputSetting setting of
         Left e -> SettingInvalid e
         Right () -> case facetLifecycle (inputLibinput device) of
@@ -192,7 +212,16 @@ data InputSession = InputSession
   { inputState :: IORef InputInventory
   , inputOutputs :: IORef (Map Text ObjectId)
   , inputApply :: IO ()
+  , inputWorker :: KeymapWorker (InputIdentity, Object X.RiverXkbKeyboardV1, SettingResult)
+  , inputDrain :: IO ()
   }
+
+inputCompletionWake :: InputSession -> ExternalLifecycle
+inputCompletionWake = keymapWake . inputWorker
+closeInputSession :: InputSession -> IO ()
+closeInputSession = closeKeymapWorker . inputWorker
+drainInputCompletions :: InputSession -> IO ()
+drainInputCompletions = inputDrain
 
 refreshInputOutputs :: InputSession -> Map Text ObjectId -> IO ()
 refreshInputOutputs session outputs = writeIORef (inputOutputs session) outputs >> inputApply session
@@ -208,95 +237,176 @@ openInputSession rules wayland failed = do
     Right globals -> case selectGlobals Input.riverInputManagerV1Interface 2 globals of
       Left _ -> pure (Right Nothing)
       Right [] -> pure (Right Nothing)
-      Right (global : _) -> do
+      Right (global : _) -> mask $ \restore -> do
         identity <- InputSessionIdentity <$> (fromIntegral <$> getProcessID) <*> getMonotonicTimeNSec <*> (hashUnique <$> newUnique)
         state <- newIORef emptyInputInventory{inputSessionIdentity = identity}
         outputs <- newIORef Map.empty
         libManager <- newIORef Nothing
         libEnabled <- newIORef False
-        libRevision <- newIORef (0 :: Integer)
-        let session = InputSession state outputs apply
-            apply = do
-              inventory <- readIORef state
-              targets <- readIORef outputs
-              let (next, requests) = planInput rules targets inventory
-              writeIORef state next
-              mapM_ send requests
-              mapM_ (sendLibinput libManager libRevision state connection apply failed) (Map.elems (inputDevices next))
-            send command = do
-              let (generation, key, request) = case command of
-                    GenericRepeat gen rate delay -> (gen, RepeatInfoKey, Input.encodeRiverInputDeviceV1SetRepeatInfo rate delay)
-                    GenericScroll gen raw -> (gen, ScrollFactorKey, Input.encodeRiverInputDeviceV1SetScrollFactor (fixedFromRaw raw))
-                    GenericMapOutput gen target -> (gen, MapOutputKey, Input.encodeRiverInputDeviceV1MapToOutput target)
-                    GenericMapRectangle gen (InputRectangle x y width height) -> (gen, MapRectangleKey, Input.encodeRiverInputDeviceV1MapToRectangle x y width height)
-              inventory <- readIORef state
-              case Map.lookup generation (inputDevices inventory) of
-                Just device
-                  | inputLifecycle device == Ready ->
-                      submitRequest connection Input.riverInputDeviceV1Interface (inputObject device) request >>= \case
-                        Left e -> failed e
-                        Right () -> modifyIORef' state (\inventoryValue -> inventoryValue{inputDevices = Map.adjust (\d -> d{inputResults = Map.adjust (\r -> r{settingOutcome = SettingSent}) key (inputResults d)}) generation (inputDevices inventoryValue)})
-                _ -> pure ()
-            connection = waylandConnection wayland
-            result = either failed (const (pure ()))
-            created object = do
-              enabled <- readIORef libEnabled
-              modifyIORef' state (\inventory -> let new = discoverInput object inventory in new{inputDevices = Map.adjust (\d -> d{inputLibinput = emptyFacet (if enabled then FacetDiscovering else FacetUnavailable)}) (InputGeneration (inputNextGeneration inventory)) (inputDevices new)})
-              when enabled $ do
-                generation <- InputGeneration . subtract 1 . inputNextGeneration <$> readIORef state
-                syncInput wayland failed $ do
-                  modifyIORef' state (\i -> i{inputDevices = Map.adjust (\d -> if facetObject (inputLibinput d) == Nothing then d{inputLibinput = emptyFacet FacetUnavailable} else d) generation (inputDevices i)})
-                  apply
-              when (objectVersion object == 1) $ do
-                cohort <- discoveryCohort <$> readIORef state
-                void
-                  ( submitNewObjectRequestWithRoute
-                      connection
-                      Wayland.wlDisplayInterface
-                      (waylandDisplay wayland)
-                      Wayland.wlCallbackInterface
-                      1
-                      (Wayland.encodeWlDisplaySync . objectId)
-                      (eventRoute Wayland.decodeWlCallbackEvent (\_ _ -> modifyIORef' state (finishDiscovery cohort) >> apply))
-                      >>= either failed (const (pure ()))
-                  )
-            handle object event = do
-              inventory <- readIORef state
-              let identities = Map.keys (Map.filter (\d -> inputObject d == object && inputLifecycle d /= Removed) (inputDevices inventory))
-              mapM_ (\generation -> modifyIORef' state (updateInput generation event)) identities
-              apply
-              case event of
-                Input.RiverInputDeviceV1Removed -> do
-                  mapM_ (\gen -> retireFacet connection failed (inputLibinput <$> Map.lookup gen (inputDevices inventory))) identities
-                  submitRequest connection Input.riverInputDeviceV1Interface object Input.encodeRiverInputDeviceV1Destroy >>= result
-                  modifyIORef' state (\i -> i{inputDevices = foldr Map.delete (inputDevices i) identities})
-                _ -> pure ()
-            route =
-              eventRouteWithServerObjects
-                Input.decodeRiverInputManagerV1Event
-                ( \case
-                    Input.RiverInputManagerV1InputDevice new -> [serverObjectRoute new Input.riverInputDeviceV1Interface (eventRoute Input.decodeRiverInputDeviceV1Event handle) (void . created)]
-                    _ -> []
-                )
-                ( \manager -> \case
-                    Input.RiverInputManagerV1Finished -> do
-                      inventory <- readIORef state
-                      mapM_
-                        ( \d -> when (inputLifecycle d /= Removed) $ do
-                            modifyIORef' state (updateInput (inputGeneration d) Input.RiverInputDeviceV1Removed)
-                            retireFacet connection failed (Just (inputLibinput d))
-                            submitRequest connection Input.riverInputDeviceV1Interface (inputObject d) Input.encodeRiverInputDeviceV1Destroy >>= result
-                        )
-                        (Map.elems (inputDevices inventory))
-                      submitRequest connection Input.riverInputManagerV1Interface manager Input.encodeRiverInputManagerV1Destroy >>= result
+        xkbEnabled <- newIORef False
+        xkbManager <- newIORef Nothing
+        keymapObjects <- newIORef Map.empty
+        keymapOutstanding <- newIORef (0 :: Int)
+        worker <- newKeymapWorker
+        restore
+          ( do
+              libRevision <- newIORef (0 :: Integer)
+              let session = InputSession state outputs apply worker drain
+                  apply = do
+                    inventory <- readIORef state
+                    targets <- readIORef outputs
+                    let (next, requests) = planInput rules targets inventory
+                    writeIORef state next
+                    cancelKeymaps worker (\token -> not (any (matchesToken token) (Map.elems (inputDevices next))))
+                    mapM_ send requests
+                    mapM_ sendXkb (Map.elems (inputDevices next))
+                    mapM_ (sendLibinput libManager libRevision state connection apply failed) (Map.elems (inputDevices next))
+                  matchesToken (identityValue, object, desired) device = inputIdentity device == identityValue && inputLifecycle device == Ready && xkbObject (inputXkb device) == Just object && xkbGeneration (inputXkb device) == settingFacet desired && maybe False (\r -> settingRevision r == settingRevision desired && settingDesired r == settingDesired desired) (Map.lookup KeymapKey (inputResults device))
+                  setKeymapOutcome token outcome = modifyIORef' state (\i -> i{inputDevices = fmap (\d -> if matchesToken token d then d{inputResults = Map.adjust (\r -> r{settingOutcome = outcome}) KeymapKey (inputResults d)} else d) (inputDevices i)})
+                  retireKeymap keymap = do
+                    modifyIORef' keymapObjects (Map.delete (objectId keymap))
+                    submitRequest connection X.riverXkbKeymapV1Interface keymap X.encodeRiverXkbKeymapV1Destroy >>= either failed pure
+                  retireKeymaps = do
+                    objects <- atomicModifyIORef' keymapObjects (\old -> (Map.empty, Map.elems old))
+                    mapM_ retireKeymap objects
+                  drain =
+                    bracket
+                      (drainKeymaps worker)
+                      (mapM_ (mapM_ (void . closeOwnedFd) . snd))
+                      ( mapM_
+                          ( \(token@(_, keyboard, _), snapshot) -> do
+                              inventory <- readIORef state
+                              let live = any (matchesToken token) (Map.elems (inputDevices inventory))
+                              case (live, snapshot) of
+                                (False, _) -> modifyIORef' keymapOutstanding (subtract 1) >> mapM_ (void . closeOwnedFd) snapshot
+                                (True, Nothing) -> modifyIORef' keymapOutstanding (subtract 1) >> setKeymapOutcome token SettingUnavailable
+                                (True, Just fd) ->
+                                  readIORef xkbManager >>= \case
+                                    Nothing -> modifyIORef' keymapOutstanding (subtract 1) >> void (closeOwnedFd fd) >> setKeymapOutcome token SettingUnavailable
+                                    Just manager -> do
+                                      setKeymapOutcome token SettingCompiling
+                                      let response keymap event = do
+                                            modifyIORef' keymapOutstanding (subtract 1)
+                                            latest <- readIORef state
+                                            when (any (matchesToken token) (Map.elems (inputDevices latest))) $ case event of
+                                              X.RiverXkbKeymapV1Success -> submitRequest connection X.riverXkbKeyboardV1Interface keyboard (X.encodeRiverXkbKeyboardV1SetKeymap (objectId keymap)) >>= either failed (const (setKeymapOutcome token SettingSent))
+                                              X.RiverXkbKeymapV1Failure message -> do
+                                                setKeymapOutcome token SettingRejectedInvalid
+                                                modifyIORef' state (\i -> i{inputDevices = fmap (\d -> if matchesToken token d then d{inputXkb = (inputXkb d){xkbDiagnostics = take 16 (Text.take 1024 message : xkbDiagnostics (inputXkb d))}} else d) (inputDevices i)})
+                                            retireKeymap keymap
+                                            apply
+                                      createdKeymap <- submitNewObjectRequestWithRoute connection X.riverXkbConfigV1Interface manager X.riverXkbKeymapV1Interface (objectVersion manager) (\keymap -> X.encodeRiverXkbConfigV1CreateKeymap (objectId keymap) fd X.RiverXkbConfigV1KeymapFormatEnumTextV1) (eventRoute X.decodeRiverXkbKeymapV1Event response) `onException` void (closeOwnedFd fd)
+                                      case createdKeymap of
+                                        Left e -> modifyIORef' keymapOutstanding (subtract 1) >> void (closeOwnedFd fd) >> setKeymapOutcome token SettingUnavailable >> failed e
+                                        Right keymap -> modifyIORef' keymapObjects (Map.insert (objectId keymap) keymap)
+                              pure ()
+                          )
+                      )
+                      >> apply
+                  sendXkb device = case (inputLifecycle device, xkbLifecycle (inputXkb device), xkbObject (inputXkb device)) of
+                    (Ready, FacetReady, Just object) -> mapM_ (sendOne object) (Map.toList (inputResults device))
                     _ -> pure ()
-                )
-        bound <- bindGlobalWithRoute connection (waylandRegistry wayland) global route
-        case bound of
-          Left e -> pure (Left e)
-          Right _ -> do
-            bindLibinput wayland globals state libManager libEnabled apply failed
-            pure (Right (Just session))
+                   where
+                    sendOne object (KeymapKey, desired)
+                      | settingOutcome desired == SettingPending
+                      , Keymap path <- settingDesired desired = do
+                          count <- readIORef keymapOutstanding
+                          when (count < 32) $ do
+                            accepted <- enqueueKeymap worker (inputIdentity device, object, desired) path
+                            when accepted (modifyIORef' keymapOutstanding (+ 1) >> setKeymapOutcome (inputIdentity device, object, desired) SettingLoading)
+                    sendOne object (key, desired)
+                      | maybe True ((== SettingSent) . settingOutcome) (Map.lookup KeymapKey (inputResults device))
+                      , settingOutcome desired == SettingPending
+                      , Just request <- xkbRequest (settingDesired desired) =
+                          submitRequest connection X.riverXkbKeyboardV1Interface object request >>= \case
+                            Left e -> failed e
+                            Right () -> modifyIORef' state (\i -> i{inputDevices = Map.adjust (\d -> d{inputResults = Map.adjust (\r -> r{settingOutcome = SettingSent}) key (inputResults d)}) (inputGeneration device) (inputDevices i)})
+                    sendOne _ _ = pure ()
+                  send command = do
+                    let (generation, key, request) = case command of
+                          GenericRepeat gen rate delay -> (gen, RepeatInfoKey, Input.encodeRiverInputDeviceV1SetRepeatInfo rate delay)
+                          GenericScroll gen raw -> (gen, ScrollFactorKey, Input.encodeRiverInputDeviceV1SetScrollFactor (fixedFromRaw raw))
+                          GenericMapOutput gen target -> (gen, MapOutputKey, Input.encodeRiverInputDeviceV1MapToOutput target)
+                          GenericMapRectangle gen (InputRectangle x y width height) -> (gen, MapRectangleKey, Input.encodeRiverInputDeviceV1MapToRectangle x y width height)
+                    inventory <- readIORef state
+                    case Map.lookup generation (inputDevices inventory) of
+                      Just device
+                        | inputLifecycle device == Ready ->
+                            submitRequest connection Input.riverInputDeviceV1Interface (inputObject device) request >>= \case
+                              Left e -> failed e
+                              Right () -> modifyIORef' state (\inventoryValue -> inventoryValue{inputDevices = Map.adjust (\d -> d{inputResults = Map.adjust (\r -> r{settingOutcome = SettingSent}) key (inputResults d)}) generation (inputDevices inventoryValue)})
+                      _ -> pure ()
+                  connection = waylandConnection wayland
+                  result = either failed (const (pure ()))
+                  created object = do
+                    enabled <- readIORef libEnabled
+                    xenabled <- readIORef xkbEnabled
+                    modifyIORef' state (\inventory -> let new = discoverInput object inventory in new{inputDevices = Map.adjust (\d -> d{inputXkb = emptyXkbFacet (if xenabled then FacetDiscovering else FacetUnavailable), inputLibinput = emptyFacet (if enabled then FacetDiscovering else FacetUnavailable)}) (InputGeneration (inputNextGeneration inventory)) (inputDevices new)})
+                    when xenabled $ do
+                      generation <- InputGeneration . subtract 1 . inputNextGeneration <$> readIORef state
+                      syncInput wayland failed $ do
+                        modifyIORef' state (\i -> i{inputDevices = Map.adjust (\d -> if xkbObject (inputXkb d) == Nothing then d{inputXkb = emptyXkbFacet FacetUnavailable} else d) generation (inputDevices i)})
+                        apply
+                    when enabled $ do
+                      generation <- InputGeneration . subtract 1 . inputNextGeneration <$> readIORef state
+                      syncInput wayland failed $ do
+                        modifyIORef' state (\i -> i{inputDevices = Map.adjust (\d -> if facetObject (inputLibinput d) == Nothing then d{inputLibinput = emptyFacet FacetUnavailable} else d) generation (inputDevices i)})
+                        apply
+                    when (objectVersion object == 1) $ do
+                      cohort <- discoveryCohort <$> readIORef state
+                      void
+                        ( submitNewObjectRequestWithRoute
+                            connection
+                            Wayland.wlDisplayInterface
+                            (waylandDisplay wayland)
+                            Wayland.wlCallbackInterface
+                            1
+                            (Wayland.encodeWlDisplaySync . objectId)
+                            (eventRoute Wayland.decodeWlCallbackEvent (\_ _ -> modifyIORef' state (finishDiscovery cohort) >> apply))
+                            >>= either failed (const (pure ()))
+                        )
+                  handle object event = do
+                    inventory <- readIORef state
+                    let identities = Map.keys (Map.filter (\d -> inputObject d == object && inputLifecycle d /= Removed) (inputDevices inventory))
+                    mapM_ (\generation -> modifyIORef' state (updateInput generation event)) identities
+                    apply
+                    case event of
+                      Input.RiverInputDeviceV1Removed -> do
+                        cancelKeymaps worker (\(InputIdentity _ gen, _, _) -> gen `elem` identities)
+                        mapM_ (\gen -> retireFacet connection failed (inputLibinput <$> Map.lookup gen (inputDevices inventory))) identities
+                        submitRequest connection Input.riverInputDeviceV1Interface object Input.encodeRiverInputDeviceV1Destroy >>= result
+                        modifyIORef' state (\i -> i{inputDevices = foldr Map.delete (inputDevices i) identities})
+                      _ -> pure ()
+                  route =
+                    eventRouteWithServerObjects
+                      Input.decodeRiverInputManagerV1Event
+                      ( \case
+                          Input.RiverInputManagerV1InputDevice new -> [serverObjectRoute new Input.riverInputDeviceV1Interface (eventRoute Input.decodeRiverInputDeviceV1Event handle) (void . created)]
+                          _ -> []
+                      )
+                      ( \manager -> \case
+                          Input.RiverInputManagerV1Finished -> do
+                            inventory <- readIORef state
+                            mapM_
+                              ( \d -> when (inputLifecycle d /= Removed) $ do
+                                  modifyIORef' state (updateInput (inputGeneration d) Input.RiverInputDeviceV1Removed)
+                                  retireXkb connection failed (inputXkb d)
+                                  retireFacet connection failed (Just (inputLibinput d))
+                                  submitRequest connection Input.riverInputDeviceV1Interface (inputObject d) Input.encodeRiverInputDeviceV1Destroy >>= result
+                              )
+                              (Map.elems (inputDevices inventory))
+                            submitRequest connection Input.riverInputManagerV1Interface manager Input.encodeRiverInputManagerV1Destroy >>= result
+                          _ -> pure ()
+                      )
+              bound <- bindGlobalWithRoute connection (waylandRegistry wayland) global route
+              case bound of
+                Left e -> closeKeymapWorker worker >> pure (Left e)
+                Right _ -> do
+                  bindLibinput wayland globals state libManager libEnabled apply failed
+                  bindXkb wayland globals state xkbEnabled xkbManager retireKeymaps apply failed
+                  pure (Right (Just session))
+          )
+          `onException` closeKeymapWorker worker
 
 retireFacet :: Connection -> (ConnectionError -> IO ()) -> Maybe LibinputFacet -> IO ()
 retireFacet connection failed facet = case facet >>= facetObject of
@@ -367,7 +477,7 @@ bindLibinput wayland globals state managerRef enabled apply failed =
     _ -> pure ()
 
 publishFacet :: InputDevice -> LibinputFacet -> InputDevice
-publishFacet device facet = device{inputLibinput = facet, inputDefaults = facetDefaults facet, inputCurrent = facetCurrent facet}
+publishFacet device facet = device{inputLibinput = facet, inputDefaults = facetDefaults facet, inputCurrent = Map.union (xkbValues (xkbCurrent (inputXkb device))) (facetCurrent facet)}
 
 syncInput :: WaylandSession -> (ConnectionError -> IO ()) -> IO () -> IO ()
 syncInput wayland failed action =
@@ -478,3 +588,70 @@ finishFacetDiscovery object token inventory = inventory{inputDevices = fmap read
     | otherwise = device
    where
     facet = inputLibinput device
+
+bindXkb :: WaylandSession -> GlobalCatalog -> IORef InputInventory -> IORef Bool -> IORef (Maybe (Object X.RiverXkbConfigV1)) -> IO () -> IO () -> (ConnectionError -> IO ()) -> IO ()
+bindXkb wayland globals state enabled managerRef retireKeymaps apply failed = case selectGlobals X.riverXkbConfigV1Interface 3 globals of
+  Right (global : _) -> do
+    writeIORef enabled True
+    serial <- newIORef (0 :: Integer)
+    pending <- newIORef Map.empty
+    let connection = waylandConnection wayland
+        result = either failed pure
+        destroy object = submitRequest connection X.riverXkbKeyboardV1Interface object X.encodeRiverXkbKeyboardV1Destroy >>= result
+        publish d facet = d{inputXkb = facet, inputResults = fmap (observe (xkbCurrent facet)) (inputResults d), inputCurrent = Map.union (xkbValues (xkbCurrent facet)) (Map.filterWithKey (\k _ -> not (xkbKey k)) (inputCurrent d))}
+        observe current r
+          | settingOutcome r == SettingSent && matches current (settingDesired r) = r{settingOutcome = SettingObserved}
+          | otherwise = r
+        matches current setting = case setting of
+          ActiveLayout (LayoutByIndex n) -> maybe False ((== toInteger n) . toInteger . fst) (xkbLayout current)
+          ActiveLayout (LayoutByName n) -> maybe False ((== Just n) . snd) (xkbLayout current)
+          _ -> Map.lookup (settingKey setting) (xkbValues current) == Just setting
+        commit object token = modifyIORef' state (\i -> i{inputDevices = fmap (\d -> let f = inputXkb d in if inputLifecycle d /= Removed && xkbObject f == Just object && xkbGeneration f == Just token && xkbLifecycle f == FacetDiscovering then publish d (commitXkb f) else d) (inputDevices i)}) >> apply
+        created object = do
+          token <- atomicModifyIORef' serial (\n -> (n + 1, FacetGeneration n))
+          modifyIORef' pending (Map.insert (objectId object) token)
+          when (objectVersion object == 1) (syncInput wayland failed (commit object token))
+        handle object event = do
+          inventory <- readIORef state
+          case event of
+            X.RiverXkbKeyboardV1InputDevice generic -> do
+              token <- atomicModifyIORef' pending (\p -> (Map.delete (objectId object) p, Map.lookup (objectId object) p))
+              case Map.lookupMin (Map.filter (\d -> objectId (inputObject d) == generic && inputLifecycle d /= Removed) (inputDevices inventory)) of
+                Nothing -> destroy object
+                Just (generation, _) -> modifyIORef' state (\i -> i{inputDevices = Map.adjust (\d -> d{inputXkb = (emptyXkbFacet FacetDiscovering){xkbObject = Just object, xkbGeneration = token}}) generation (inputDevices i)})
+            _ -> do
+              let matching = Map.keys (Map.filter ((== Just object) . xkbObject . inputXkb) (inputDevices inventory))
+                  update d =
+                    let f = stageXkb event (inputXkb d)
+                     in case event of
+                          X.RiverXkbKeyboardV1Removed -> publish d (emptyXkbFacet FacetRemoved)
+                          X.RiverXkbKeyboardV1Done -> publish d (commitXkb f)
+                          _
+                            | objectVersion object == 1 && xkbLifecycle f == FacetReady -> publish d (commitXkb f)
+                            | otherwise -> d{inputXkb = f}
+              modifyIORef' state (\i -> i{inputDevices = foldr (Map.adjust update) (inputDevices i) matching})
+              case event of
+                X.RiverXkbKeyboardV1Removed -> destroy object
+                _ -> pure ()
+          apply
+        route =
+          eventRouteWithServerObjects
+            X.decodeRiverXkbConfigV1Event
+            (\event -> case event of X.RiverXkbConfigV1XkbKeyboard new -> [serverObjectRoute new X.riverXkbKeyboardV1Interface (eventRoute X.decodeRiverXkbKeyboardV1Event handle) created]; _ -> [])
+            ( \manager event -> case event of
+                X.RiverXkbConfigV1Finished -> do
+                  writeIORef enabled False
+                  writeIORef managerRef Nothing
+                  retireKeymaps
+                  inventory <- readIORef state
+                  mapM_ (mapM_ destroy . xkbObject . inputXkb) (Map.elems (inputDevices inventory))
+                  modifyIORef' state (\i -> i{inputDevices = fmap (\d -> publish d (emptyXkbFacet FacetUnavailable)) (inputDevices i)})
+                  submitRequest connection X.riverXkbConfigV1Interface manager X.encodeRiverXkbConfigV1Destroy >>= result
+                  apply
+                _ -> pure ()
+            )
+    bindGlobalWithRoute connection (waylandRegistry wayland) global route >>= either failed (writeIORef managerRef . Just)
+  _ -> pure ()
+
+retireXkb :: Connection -> (ConnectionError -> IO ()) -> XkbFacet -> IO ()
+retireXkb connection failed facet = mapM_ (\object -> submitRequest connection X.riverXkbKeyboardV1Interface object X.encodeRiverXkbKeyboardV1Destroy >>= either failed pure) (xkbObject facet)

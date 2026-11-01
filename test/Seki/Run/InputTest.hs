@@ -2,15 +2,26 @@
 
 module Seki.Run.InputTest (tests) where
 
+import Control.Concurrent (threadDelay)
+import Control.Exception (IOException, bracket, try)
 import Data.ByteString qualified as BS
 import Data.Map.Strict qualified as Map
 import Seki.Internal.Input
 import Seki.Protocol.RiverInputManagementV1 qualified as Input
 import Seki.Protocol.RiverLibinputConfigV1 qualified as L
+import Seki.Protocol.RiverXkbConfigV1 qualified as X
 import Seki.Protocol.Wayland qualified as Wayland
+import Seki.Run.External
 import Seki.Run.Input
+import Seki.Run.Keymap
 import Seki.Run.Libinput
+import Seki.Run.XkbConfig
 import Seki.Wire.Connection.ObjectTable
+import Seki.Wire.Transport (closeOwnedFd, withOwnedFd)
+import System.Directory (removeFile)
+import System.IO (hClose, hPutStr, openTempFile)
+import System.Posix.IO.ByteString (fdRead, fdWrite)
+import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit
 
@@ -18,7 +29,67 @@ tests :: TestTree
 tests =
   testGroup
     "runtime input"
-    [ testCase "libinput native float/double payloads reject malformed lengths and values" $ do
+    [ testCase "XKB batches layout names/index and locks independently" $ do
+        let initial = emptyXkbFacet FacetDiscovering
+            staged = stageXkb (X.RiverXkbKeyboardV1Layout 1 (Just "Japanese")) (stageXkb X.RiverXkbKeyboardV1CapslockEnabled initial)
+        assertEqual "initial current unavailable" Nothing (xkbLayout (xkbCurrent staged))
+        assertEqual "generic discovery cannot commit XKB" FacetDiscovering (xkbLifecycle staged)
+        let ready = commitXkb staged
+        assertEqual "reported name and index" (Just (1, Just "Japanese")) (xkbLayout (xkbCurrent ready))
+        assertEqual "caps observed" (Just True) (xkbCapsLock (xkbCurrent ready))
+        assertEqual "unreported lock stays unknown" Nothing (xkbNumLock (xkbCurrent ready))
+    , testCase "XKB planner gates scrolllock by negotiated version and preserves other facets" $ do
+        generic <- object 2
+        (table, _) <- either (assertFailure . show) pure (newObjectTable defaultObjectLimit Wayland.wlDisplayInterface)
+        (_, keyboard) <- either (assertFailure . show) pure (allocateClientObject X.riverXkbKeyboardV1Interface 2 table)
+        rules <- rulesFor [ActiveLayout (LayoutByName "Japanese"), CapsLock True, NumLock False, ScrollLock True, RepeatInfo 37 410]
+        let gen = InputGeneration 0
+            base = updateInput gen Input.RiverInputDeviceV1Done (metadata gen (discoverInput generic emptyInputInventory))
+            ready = base{inputDevices = Map.adjust (\d -> d{inputXkb = (emptyXkbFacet FacetReady){xkbObject = Just keyboard, xkbGeneration = Just (FacetGeneration 0)}}) gen (inputDevices base)}
+            (planned, requests) = planInput rules Map.empty ready
+            outcome key = settingOutcome <$> (Map.lookup gen (inputDevices planned) >>= Map.lookup key . inputResults)
+        assertEqual "older scrolllock unsupported" (Just SettingUnsupported) (outcome ScrollLockKey)
+        assertEqual "layout planned" (Just SettingPending) (outcome ActiveLayoutKey)
+        assertEqual "generic still planned" [GenericRepeat gen 37 410] requests
+        assertEqual "no invented defaults" (Just Map.empty) (inputDefaults <$> Map.lookup gen (inputDevices planned))
+    , testCase "keymap helper snapshots immutable bounded contents and closes idempotently" $
+        bracket (openTempFile "/tmp" "seki-keymap-test") (\(path, _) -> removeFile path) $ \(path, handle) -> do
+          hPutStr handle "xkb_keymap {};"
+          hClose handle
+          bracket newKeymapWorker closeKeymapWorker $ \worker -> do
+            _ <- bindExternalWake (keymapWake worker) (pure True)
+            admitted <- enqueueKeymap worker (1 :: Int) path
+            assertBool "admitted" admitted
+            let await = drainKeymaps worker >>= \caseValue -> case caseValue of [] -> threadDelay 1000 >> await; value -> pure value
+            completed <- timeout 3000000 await
+            case completed of
+              Just [(1, Just fd)] -> do
+                writeFile path "changed"
+                bytes <- withOwnedFd fd (\raw -> fdRead raw 100)
+                assertEqual "source mutation cannot change sealed snapshot" (Right "xkb_keymap {};\0") bytes
+                rejected <- withOwnedFd fd (\raw -> try @IOException (fdWrite raw "mutation"))
+                assertBool "snapshot sealed against writes" (case rejected of Right (Left _) -> True; _ -> False)
+                assertBool "close once" =<< closeOwnedFd fd
+                assertBool "second close no ownership" . not =<< closeOwnedFd fd
+              other -> assertFailure ("missing helper result: " <> show (fmap (map fst) other))
+    , testCase "keymap loader rejects missing, directory, empty, malformed UTF8 and embedded NUL" $
+        bracket (openTempFile "/tmp" "seki-keymap-invalid") (\(path, _) -> removeFile path) $ \(path, handle) -> do
+          hClose handle
+          bracket newKeymapWorker closeKeymapWorker $ \worker -> do
+            _ <- bindExternalWake (keymapWake worker) (pure True)
+            let check file = do
+                  admitted <- enqueueKeymap worker () file
+                  assertBool "admitted" admitted
+                  let await = drainKeymaps worker >>= \items -> case items of [] -> threadDelay 1000 >> await; value -> pure value
+                  result <- timeout 3000000 await
+                  case result of Just [((), Nothing)] -> pure (); _ -> assertFailure "invalid input returned a resource or hung"
+            check (path <> ".missing")
+            check "/tmp"
+            mapM_ (\bytes -> BS.writeFile path bytes >> check path) [BS.empty, BS.pack [0xc0, 0x80], BS.pack [0xed, 0xa0, 0x80], BS.pack [0, 65], BS.replicate (4 * 1024 * 1024 + 1) 65]
+            closeKeymapWorker worker
+            assertEqual "closed admission" False =<< enqueueKeymap worker () path
+            assertBool "closed completions empty" . null =<< drainKeymaps worker
+    , testCase "libinput native float/double payloads reject malformed lengths and values" $ do
         assertEqual "six native floats" (Right [1, 0, 0, 0, 1, 0]) (decodeFloats (encodeFloats [1, 0, 0, 0, 1, 0]))
         assertEqual "one native double" (Right 0.25) (decodeDouble (encodeDoubles [0.25]))
         mapM_ (\n -> assertBool "wrong matrix length" (either (const True) (const False) (decodeFloats (BS.replicate n 0)))) [0, 8, 23, 25, 48]

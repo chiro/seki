@@ -89,6 +89,7 @@ import Seki.Run.Sequence (
  )
 import Seki.Run.Startup (waylandConnection)
 import Seki.Run.Xkb (RiverKeyBinding (..), RiverXkbBootstrapError (..))
+import Seki.Run.XkbConfig
 import Seki.Wire.Arguments (fixedFromRaw, putArray, putFixed, putInt, putNewId, putObject, putString, putUint)
 import Seki.Wire.Arguments qualified as SekiArguments
 import Seki.Wire.Connection (ConnectionError (..), dispatchNextEvent)
@@ -97,13 +98,15 @@ import Seki.Wire.Connection.Registry (RegistryError (..), globalNameFromWord)
 import Seki.Wire.Transport (OwnedFd, ReceivedChunk (..), Transport, closeTransport, receiveChunk)
 import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..))
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (Assertion, assertEqual, assertFailure, testCase)
+import Test.Tasty.HUnit (Assertion, assertBool, assertEqual, assertFailure, testCase)
 
 tests :: TestTree
 tests =
   testGroup
     "river runtime"
     [ testCase "libinput custom curves success rejection removal v1/v2" (mapM_ (\v -> mapM_ (testCustomLibinput v) [0, 1, 2, 3, 4]) [1, 2])
+    , testCase "XKB retains two distinct keyboards with empty rules" testTwoXkbKeyboards
+    , testCase "XKB synthetic v1/v2/v3 batching, feedback and scrolllock gate" (mapM_ testXkbConfig [1, 2, 3])
     , testCase "libinput full synthetic peer surface and acknowledgements v1/v2" (mapM_ (\v -> mapM_ (testLibinput v) [0, 1, 2]) [1, 2])
     , testCase "requested generic rules report unavailable without optional global" testInputUnavailable
     , testCase "v1 transport callbacks only ready their captured cohort" testInputCohort
@@ -1450,3 +1453,83 @@ testCustomLibinput version outcome = withRuntimePair $ \target peer -> do
       if outcome == 3
         then assertEqual "removed generation released before late result" [] (Map.elems (InputState.inputDevices inventory))
         else assertEqual "only final acknowledgement applies custom configuration" [case outcome of { 0 -> InputState.SettingApplied; 1 -> InputState.SettingUnsupported; 4 -> InputState.SettingUnavailable; _ -> InputState.SettingRejectedInvalid }] [InputState.settingOutcome result | device <- Map.elems (InputState.inputDevices inventory), result <- Map.elems (InputState.inputResults device)]
+
+testXkbConfig :: Word32 -> Assertion
+testXkbConfig version = withRuntimePair $ \target peer -> do
+  patternValue <- expectRight (compileDevicePattern "*")
+  mockDone <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (registry, callback) <- receiveStartupRequests reader peer
+    let genericVersion = min version 2
+    sendFrames peer [registryGlobalFrame registry 7 "river_window_manager_v1" 4, registryGlobalFrame registry 8 "river_xkb_bindings_v1" 3, registryGlobalFrame registry 9 "river_layer_shell_v1" 1, registryGlobalFrame registry 10 "river_input_manager_v1" genericVersion, registryGlobalFrame registry 11 "river_xkb_config_v1" version, callbackDoneFrame callback 1]
+    input <- receiveGlobalBind reader peer "generic first" 10 "river_input_manager_v1" genericVersion
+    xkb <- receiveGlobalBind reader peer "XKB config follows generic" 11 "river_xkb_config_v1" version
+    (manager, _, _) <- receiveRuntimeBinds reader peer
+    generic <- requireObjectId 0xff000001
+    keyboard <- requireObjectId 0xff000002
+    sendFrames peer [encodedFrame input (Opcode 1) (putNewId generic), encodedFrame generic (Opcode 1) (putUint 1), encodedFrame generic (Opcode 2) (putString "synthetic XKB peer"), encodedFrame xkb (Opcode 1) (putNewId keyboard), encodedFrame keyboard (Opcode 1) (putObject generic), encodedFrame keyboard (Opcode 2) (putUint 0 >> putString "English"), encodedFrame keyboard (Opcode 4) (pure ()), encodedFrame keyboard (Opcode 6) (pure ())]
+    absence <- receiveFrame reader peer >>= decodeNewId
+    genericBarrier <- if version == 1 then Just <$> (receiveFrame reader peer >>= decodeNewId) else pure Nothing
+    xkbBarrier <- if version == 1 then Just <$> (receiveFrame reader peer >>= decodeNewId) else pure Nothing
+    sendFrames peer [callbackDoneFrame absence 2]
+    case genericBarrier of
+      Just cb -> sendFrames peer [callbackDoneFrame cb 3]
+      Nothing -> sendFrames peer [encodedFrame generic (Opcode 3) (pure ())]
+    sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
+    receiveSequenceCompletion reader peer manager (Opcode 2)
+    sendFrames peer [encodedFrame manager (Opcode 3) (pure ())]
+    receiveSequenceCompletion reader peer manager (Opcode 4)
+    case xkbBarrier of
+      Just cb -> sendFrames peer [callbackDoneFrame cb 4]
+      Nothing -> sendFrames peer [encodedFrame keyboard (Opcode 7) (pure ())]
+    receiveExpectedRequest reader peer keyboard (Opcode 3) (putString "Japanese")
+    receiveExpectedRequest reader peer keyboard (Opcode 4) (pure ())
+    receiveExpectedRequest reader peer keyboard (Opcode 7) (pure ())
+    if version == 3 then receiveExpectedRequest reader peer keyboard (Opcode 8) (pure ()) else pure ()
+    sendFrames peer [encodedFrame keyboard (Opcode 2) (putUint 1 >> putString "Japanese"), encodedFrame keyboard (Opcode 3) (pure ()), encodedFrame keyboard (Opcode 6) (pure ())]
+    if version >= 2 then sendFrames peer [encodedFrame keyboard (Opcode 7) (pure ())] else pure ()
+    sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
+    receiveSequenceCompletion reader peer manager (Opcode 2)
+    closeTransport peer
+  let settings = [ActiveLayout (LayoutByName "Japanese"), CapsLock True, NumLock False, ScrollLock True]
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (\_ -> pure ())){riverInputRules = [InputRule patternValue Nothing settings]})
+  assertEqual "mock EOF" (Right RiverEnded) =<< runRiverSession session
+  expectMockSuccess mockDone
+  readRiverInputSnapshot session >>= \case
+    InputUnavailable _ -> assertFailure "missing mock inventory"
+    InputAvailable inventory -> case Map.elems (InputState.inputDevices inventory) of
+      [device] -> do
+        assertEqual "layout is per device" (Just (1, Just "Japanese")) (xkbLayout (xkbCurrent (InputState.inputXkb device)))
+        assertEqual "observed, never inferred applied" (Just InputState.SettingObserved) (InputState.settingOutcome <$> Map.lookup ActiveLayoutKey (InputState.inputResults device))
+        assertEqual "version gate" (Just (if version == 3 then InputState.SettingSent else InputState.SettingUnsupported)) (InputState.settingOutcome <$> Map.lookup ScrollLockKey (InputState.inputResults device))
+      _ -> assertFailure "wrong mock inventory"
+
+testTwoXkbKeyboards :: Assertion
+testTwoXkbKeyboards = withRuntimePair $ \target peer -> do
+  mockDone <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (registry, callback) <- receiveStartupRequests reader peer
+    sendFrames peer [registryGlobalFrame registry 7 "river_window_manager_v1" 4, registryGlobalFrame registry 8 "river_xkb_bindings_v1" 3, registryGlobalFrame registry 9 "river_layer_shell_v1" 1, registryGlobalFrame registry 10 "river_input_manager_v1" 2, registryGlobalFrame registry 11 "river_xkb_config_v1" 2, callbackDoneFrame callback 1]
+    input <- receiveGlobalBind reader peer "generic" 10 "river_input_manager_v1" 2
+    xkb <- receiveGlobalBind reader peer "XKB config" 11 "river_xkb_config_v1" 2
+    (manager, _, _) <- receiveRuntimeBinds reader peer
+    let announce number name layout = do
+          generic <- requireObjectId number
+          keyboard <- requireObjectId (number + 1)
+          sendFrames peer [encodedFrame input (Opcode 1) (putNewId generic), encodedFrame generic (Opcode 1) (putUint 1), encodedFrame generic (Opcode 2) (putString name), encodedFrame generic (Opcode 3) (pure ()), encodedFrame xkb (Opcode 1) (putNewId keyboard), encodedFrame keyboard (Opcode 1) (putObject generic), encodedFrame keyboard (Opcode 2) (putUint layout >> putString name), encodedFrame keyboard (Opcode 7) (pure ())]
+    announce 0xff000001 "English" 0
+    announce 0xff000003 "Japanese" 1
+    first <- receiveFrame reader peer >>= decodeNewId
+    second <- receiveFrame reader peer >>= decodeNewId
+    sendFrames peer [callbackDoneFrame first 2, callbackDoneFrame second 3, encodedFrame manager (Opcode 2) (pure ())]
+    receiveSequenceCompletion reader peer manager (Opcode 2)
+    closeTransport peer
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (runtimeHandlers (\_ -> pure ()))
+  assertEqual "WM unchanged with empty rules" (Right RiverEnded) =<< runRiverSession session
+  expectMockSuccess mockDone
+  readRiverInputSnapshot session >>= \case
+    InputUnavailable _ -> assertFailure "missing inventory"
+    InputAvailable inventory -> do
+      let devices = Map.elems (InputState.inputDevices inventory)
+      assertEqual "each canonical generation retains its own state" [Just (0, Just "English"), Just (1, Just "Japanese")] (map (xkbLayout . xkbCurrent . InputState.inputXkb) devices)
+      assertBool "no results invented for empty rules" (all (Map.null . InputState.inputResults) devices)

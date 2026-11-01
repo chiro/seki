@@ -112,7 +112,7 @@ library seki-wire
     src-generated
   include-dirs:    cbits
   includes:        seki_wayland_transport.h
-  c-sources:       cbits/seki_wayland_transport.c
+  c-sources:       cbits/seki_wayland_transport.c cbits/seki_keymap.c
   cc-options:      -Wall -Wextra -Wpedantic
   exposed-modules:
     Seki.Protocol.RiverInputManagementV1
@@ -129,6 +129,8 @@ library seki-wire
     Seki.Run.Inventory
     Seki.Run.Input
     Seki.Run.Libinput
+    Seki.Run.Keymap
+    Seki.Run.XkbConfig
     Seki.Run.LayerShell
     Seki.Run.Latency
     Seki.Run.Config
