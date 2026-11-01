@@ -8,9 +8,10 @@ import Control.Concurrent.MVar (modifyMVar, modifyMVar_, newMVar)
 import Control.Concurrent.STM
 import Control.DeepSeq (force)
 import Control.Exception (IOException, bracket, bracketOnError, evaluate, finally, mask, onException, try)
-import Control.Monad (forever, unless, void, when)
+import Control.Monad (forever, unless, when)
 import Data.Aeson (Value, object, (.=))
 import Data.ByteString qualified as BS
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import Foreign.C.Error (Errno (..), eCONNREFUSED)
@@ -83,8 +84,17 @@ withEndpoint path body = do
  where
   ioeRefused e = fmap Errno (ioe_errno e) == Just eCONNREFUSED
 
-withIPC :: (Layout.LayoutClass l) => Policy String l -> IO a -> IO a
-withIPC policy body = ipcPath >>= \path -> withIPCAt path policy body
+withIPC :: (Layout.LayoutClass l) => (String -> IO ()) -> Policy String l -> IO a -> IO a
+withIPC logLine policy body = do
+  entered <- newIORef False
+  attempt <- try @IOException (ipcPath >>= \path -> withIPCAt path policy (writeIORef entered True >> body))
+  case attempt of
+    Right value -> pure value
+    Left setupError -> do
+      started <- readIORef entered
+      if started
+        then ioError setupError
+        else logLine ("IPC unavailable: " <> show setupError <> "; continuing without IPC") >> body
 
 withIPCAt :: (Layout.LayoutClass l) => FilePath -> Policy String l -> IO a -> IO a
 withIPCAt path policy body =
@@ -106,7 +116,13 @@ withIPCAt path policy body =
             receipt <- newEmptyTMVarIO
             admitted <- submitExternal (policyExternalProducer policy) (ExternalInput action (Just receipt))
             answer <- case admitted of
-              Accepted -> Right <$> atomically (takeTMVar receipt)
+              Accepted -> do
+                received <- timeout 5000000 (atomically (takeTMVar receipt))
+                case received of
+                  Just revision -> pure (Right revision)
+                  Nothing -> do
+                    atomically (putTMVar result (Left "command receipt timed out; application is unknown"))
+                    fail "IPC command broker receipt timed out"
               Full -> pure (Left "command queue is full")
               IngressClosed -> pure (Left "session ingress is closed")
             atomically (putTMVar result answer)
@@ -141,7 +157,9 @@ withIPCAt path policy body =
       Just n -> do
         let (line, rest) = BS.splitAt n pending
         case decodeRequest line of
-          Left (RequestError ident message) -> sendValue (failure ident "invalid_request" message)
+          Left err -> do
+            sendValue (failure (errorRequestId err) "invalid_request" (errorMessage err))
+            unless (errorClosesConnection err) (readRequests (BS.drop 1 rest))
           Right (Request ident op) -> case op of
             Snapshot -> readSnapshot >>= sendSnapshot ident >> readRequests (BS.drop 1 rest)
             Subscribe -> bracket watchDisconnect stopWatcher $ \(_, ended) -> do
@@ -156,10 +174,15 @@ withIPCAt path policy body =
                   queued <- atomically $ do
                     full <- isFullTBQueue jobs
                     alive <- readTVar healthy
-                    if full || not alive then pure False else writeTBQueue jobs (action, result) >> pure True
-                  if not queued
-                    then sendValue (failure ident "overloaded" "command queue is full")
-                    else do
+                    if not alive
+                      then pure (Left ("unavailable", "session command broker stopped"))
+                      else
+                        if full
+                          then pure (Left ("overloaded", "command queue is full"))
+                          else writeTBQueue jobs (action, result) >> pure (Right ())
+                  case queued of
+                    Left (code, message) -> sendValue (failure ident code message)
+                    Right () -> do
                       answer <- atomically (takeTMVar result `orElse` (readTVar healthy >>= check . not >> pure (Left "session command broker stopped")))
                       case answer of
                         Left message -> sendValue (failure ident "unavailable" message)
@@ -174,7 +197,8 @@ withIPCAt path policy body =
     readSnapshot = atomically (readTVar latest >>= maybe retry pure)
     watchDisconnect = do
       ended <- newEmptyTMVarIO
-      watcher <- forkFinally (void (recv client 1)) (\_ -> atomically (putTMVar ended ()))
+      let awaitEOF = recv client 4096 >>= \bytes -> unless (BS.null bytes) awaitEOF
+      watcher <- forkFinally awaitEOF (\_ -> atomically (putTMVar ended ()))
       pure (watcher, ended)
     stopWatcher (watcher, ended) = killThread watcher >> atomically (readTMVar ended)
     disconnected ended = readTMVar ended >> throwSTM (userError "IPC subscriber disconnected")

@@ -57,7 +57,7 @@ consume client subscription pending = case BS.elemIndex 10 pending of
         | KeyMap.lookup "version" value /= Just (Number 1) || KeyMap.lookup "id" value /= Just (String "sekictl") -> fail "invalid IPC response version or request ID"
         | KeyMap.member "error" value -> do
             Char8.hPutStrLn stderr line
-            exitWith (ExitFailure 1)
+            if subscription then consume client True (BS.drop 1 rest) else exitWith (ExitFailure 1)
         | Just Object{} <- KeyMap.lookup "result" value -> do
             Char8.putStrLn line
             if subscription then consume client True (BS.drop 1 rest) else pure ()

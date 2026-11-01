@@ -12,8 +12,9 @@ import Seki.Internal.Core.ManageHook (doShift, idHook)
 import Seki.Internal.Core.Scene (defaultSceneStyle)
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Run.Config (SekiArgs (..), parseSekiArgs, runConfig, runSessions)
+import Seki.Run.IPC (withIPCAt)
 import Seki.Run.MockRiver (FrameReader, encodedPayload, event, expectMockSuccess, handshake, newFrameReader, openRuntimePair, readUntil, receiveFrame, receiveLayerShellOutputRequest, receiveNewIdRequest, requests, requireObjectId, runMock, sendFrames)
-import Seki.Run.Policy (PolicyConfig (..))
+import Seki.Run.Policy (PolicyConfig (..), newPolicy)
 import Seki.Run.Restart (Launch (..), RestartRefusal (..))
 import Seki.Wire.Arguments (putInt, putNewId, putString, putUint)
 import Seki.Wire.Transport (ConnectionTarget (..), ReceivedChunk (..), Transport, closeTransport, receiveChunk)
@@ -113,7 +114,7 @@ testFallback = withSystemTempDirectory "seki-sessions" $ \dir -> do
   assertBool ("the restored session refuses its own restart: " <> show lines') ("restart refused: no executable path was recorded at startup" `elem` lines')
 
 testUnavailableRetry :: Assertion
-testUnavailableRetry = do
+testUnavailableRetry = withSystemTempDirectory "seki-retry-ipc" $ \dir -> do
   (first, firstPeer) <- openRuntimePair
   (second, secondPeer) <- openRuntimePair
   logged <- newIORef []
@@ -128,11 +129,17 @@ testUnavailableRetry = do
     _ <- enumerate reader secondPeer globals 0xff000030 "w1"
     closeTransport secondPeer
   let launch = Launch (Right first) (Right second) (Right "/opt/seki") (Left NoStateDirectory) (\_ _ _ -> throwIO (userError "unused"))
-  result <- runSessions launch (const (sessionConfig logged (Just ())){policyStartupHook = pure ()}) Nothing
+  owner <- newPolicy (sessionConfig logged (Just ())) >>= either (assertFailure . show) pure
+  result <-
+    withEnv "XDG_RUNTIME_DIR" dir $
+      withIPCAt (dir </> "seki" </> "ipc.sock") owner $
+        runSessions launch (const (sessionConfig logged (Just ())){policyStartupHook = pure ()}) Nothing
   expectMockSuccess firstDone
   expectMockSuccess secondDone
   result @?= Right ()
-  readIORef logged >>= \lines' -> assertBool ("the retry is logged: " <> show lines') ("window management unavailable, retrying" `elem` lines')
+  readIORef logged >>= \lines' -> do
+    assertBool ("the retry is logged: " <> show lines') ("window management unavailable, retrying" `elem` lines')
+    assertBool "occupied IPC endpoint is diagnosed" (any ((== "IPC unavailable") . take 15) lines')
 
 testUnknownVersion :: Assertion
 testUnknownVersion = withSystemTempDirectory "seki-sessions" $ \dir -> do
@@ -153,5 +160,6 @@ testUnknownVersion = withSystemTempDirectory "seki-sessions" $ \dir -> do
   expectMockSuccess done
   either (assertFailure . show) pure result
   listDirectory dir >>= (@?= [])
- where
-  withEnv name value action = bracket (lookupEnv name) (maybe (unsetEnv name) (setEnv name)) (\_ -> setEnv name value >> action)
+
+withEnv :: String -> String -> IO a -> IO a
+withEnv name value action = bracket (lookupEnv name) (maybe (unsetEnv name) (setEnv name)) (\_ -> setEnv name value >> action)
