@@ -548,3 +548,9 @@ Client fixture environments strip inherited preload variables. The held-loader
 probe explicitly selects only `hold.so` and asserts that separate scope. These
 checks prevent a Nix-built backend from leaking dependencies into a host `/bin/sh`
 or unrelated clients; no libc path override or longer init timeout is used.
+
+`m3-scratchpad-restore-missing-float` restores a v2 state whose ordinary float
+list is empty while the scratchpad records still contain valid boxes. It checks
+shown and hidden ownership, geometry, launch counts, and ordinary keyboard input
+after a real reconnect. Its captures use a separate prefix from the normal
+restart case.

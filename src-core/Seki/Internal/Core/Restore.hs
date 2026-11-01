@@ -162,7 +162,7 @@ restoreCore inventory saved fresh = (normalizeCore restoredPads, walkNotes ++ ma
           let geom = maybe ClientSized id (floatGeom savedGeom)
               released = setFloat w geom (overWorkspaces (manageWindow id w) st)
               hasWorkspace = w `Set.member` restoredWindows
-              shown = if hasWorkspace then st else released
+              shown = if hasWorkspace then setFloat w geom st else released
               previous = prior >>= (`Map.lookup` liveWindows inventory)
               next = case Map.lookup name (coreScratchpadDefinitions fresh) of
                 Nothing -> if isHidden then released else shown
