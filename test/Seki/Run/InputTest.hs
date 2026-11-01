@@ -29,7 +29,22 @@ tests :: TestTree
 tests =
   testGroup
     "runtime input"
-    [ testCase "XKB batches layout names/index and locks independently" $ do
+    [ testCase "local keymap failure is terminal for an unchanged target" $ do
+        generic <- object 2
+        (table, _) <- either (assertFailure . show) pure (newObjectTable defaultObjectLimit Wayland.wlDisplayInterface)
+        (_, keyboard) <- either (assertFailure . show) pure (allocateClientObject X.riverXkbKeyboardV1Interface 3 table)
+        rules <- rulesFor [Keymap "/missing.xkb"]
+        let gen = InputGeneration 0
+            base = updateInput gen Input.RiverInputDeviceV1Done (metadata gen (discoverInput generic emptyInputInventory))
+            ready = base{inputDevices = Map.adjust (\d -> d{inputXkb = (emptyXkbFacet FacetReady){xkbObject = Just keyboard, xkbGeneration = Just (FacetGeneration 0)}}) gen (inputDevices base)}
+            (planned, _) = planInput rules Map.empty ready
+            failed = planned{inputDevices = Map.adjust (\d -> d{inputResults = fmap (\r -> r{settingOutcome = SettingUnavailable}) (inputResults d)}) gen (inputDevices planned)}
+            (again, _) = planInput rules Map.empty failed
+        assertEqual "no retry or revision churn" failed again
+        changed <- rulesFor [Keymap "/changed.xkb"]
+        let (retry, _) = planInput changed Map.empty again
+        assertEqual "changed path is admitted" [SettingPending] [settingOutcome r | d <- Map.elems (inputDevices retry), r <- Map.elems (inputResults d)]
+    , testCase "XKB batches layout names/index and locks independently" $ do
         let initial = emptyXkbFacet FacetDiscovering
             staged = stageXkb (X.RiverXkbKeyboardV1Layout 1 (Just "Japanese")) (stageXkb X.RiverXkbKeyboardV1CapslockEnabled initial)
         assertEqual "initial current unavailable" Nothing (xkbLayout (xkbCurrent staged))
@@ -96,7 +111,8 @@ tests =
         mapM_ (\n -> assertBool "wrong speed length" (either (const True) (const False) (decodeDouble (BS.replicate n 0)))) [0, 4, 7, 9, 16]
         assertBool "NaN rejected" (either (const True) (const False) (decodeDouble (encodeDoubles [0 / 0])))
         assertBool "Infinity rejected" (either (const True) (const False) (decodeFloats (encodeFloats [1, 0, 0, 0, 1, 1 / 0])))
-        assertEqual "oversize curve" (Left InvalidCurve) (validateInputSetting (Acceleration (AccelerationCurves [AccelCurve CurveMotion 1 (replicate 4097 0)])))
+        assertEqual "maximum native curve" (Right ()) (validateInputSetting (Acceleration (AccelerationCurves [AccelCurve CurveMotion 1 (replicate 64 0)])))
+        assertEqual "oversize curve" (Left InvalidCurve) (validateInputSetting (Acceleration (AccelerationCurves [AccelCurve CurveMotion 1 (replicate 65 0)])))
         assertEqual "duplicate curve" (Left InvalidCurve) (validateInputSetting (Acceleration (AccelerationCurves [AccelCurve CurveMotion 1 [0, 1], AccelCurve CurveMotion 2 [1, 2]])))
     , testCase "libinput support and unknown wire values never invent defaults" $ do
         let initial = emptyFacet FacetDiscovering

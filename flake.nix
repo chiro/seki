@@ -39,6 +39,11 @@
             pkgs.dejavu_fonts
             pkgs.foot
             pkgs.glib
+            pkgs.stdenv.cc
+            pkgs.pkg-config
+            pkgs.wlroots_0_20
+            pkgs.wayland
+            pkgs.libxkbcommon
             pkgs.river
             pkgs.waybar
             pkgs.python3

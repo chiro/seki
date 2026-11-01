@@ -2,15 +2,24 @@
 
 module Seki.Run.IPCTest (tests) where
 
-import Data.Aeson (Value (..), object, (.=))
+import Data.Aeson (Value (..), encode, object, (.=))
+import Data.Aeson.KeyMap qualified as KM
 import Data.ByteString qualified as BS
+import Data.ByteString.Lazy qualified as Lazy
+import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import Seki.Internal.Core.State (newCoreState)
+import Seki.Internal.Input
 import Seki.Internal.Layout.Full (Full (..))
+import Seki.Protocol.RiverInputManagementV1 qualified as Input
+import Seki.Protocol.Wayland qualified as Wayland
 import Seki.Run.IPCSchema
+import Seki.Run.Input (InputDevice (..), InputInventory (..), SettingOutcome (..), discoverInput, emptyInputInventory)
+import Seki.Run.InputSnapshot (inputValue, outcomeName, settingValue)
 import Seki.Run.Inventory (emptyRiverInventory)
-import Seki.Run.Runtime (RiverRuntimeSnapshot (..))
+import Seki.Run.Runtime (RiverInputSnapshot (..), RiverRuntimeSnapshot (..))
 import Seki.Run.Snapshot (projectSnapshot)
+import Seki.Wire.Connection.ObjectTable
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit
 
@@ -18,7 +27,30 @@ tests :: TestTree
 tests =
   testGroup
     "IPC"
-    [ testCase "CLI operations and usage errors" $ do
+    [ testCase "large input metadata retains explicit truncation within framing" $ do
+        (table, _) <- either (assertFailure . show) pure (newObjectTable defaultObjectLimit Wayland.wlDisplayInterface)
+        (_, device) <- either (assertFailure . show) pure (allocateClientObject Input.riverInputDeviceV1Interface 2 table)
+        let discovered = foldl' (\i _ -> discoverInput device i) emptyInputInventory [1 .. 200 :: Int]
+            inventory = discovered{inputDevices = Map.map (\d -> d{inputName = Just (Text.replicate 4096 "界"), inputType = Just Keyboard}) (inputDevices discovered)}
+            projected = inputValue (InputAvailable inventory)
+        case projected of
+          Object fields -> case KM.lookup "devices" fields of
+            Just (Object devices) -> do
+              KM.lookup "count" devices @?= Just (Number 200)
+              KM.lookup "truncated" devices @?= Just (Bool True)
+            _ -> assertFailure "device collection missing"
+          _ -> assertFailure "input object missing"
+        st <- either (assertFailure . show) pure (newCoreState Full ["1"])
+        let snapshot = projectSnapshot "large-input" id ["1"] 1 st (RiverRuntimeSnapshot emptyRiverInventory (InputAvailable inventory) [])
+        assertBool "bounded actual IPC line" (either (const False) ((< 65536) . BS.length) (encodeLine snapshot))
+    , testCase "curve projection is bounded and finite" $ do
+        let value = settingValue (Acceleration (AccelerationCurves [AccelCurve CurveMotion 1 (replicate 4096 0.5)]))
+        assertBool "maximum curve summarized" (Lazy.length (encode value) < 512)
+        settingValue (AccelSpeed (0 / 0)) @?= Null
+        outcomeName SettingSent @?= "sent"
+        outcomeName SettingObserved @?= "observed"
+        outcomeName SettingApplied @?= "applied"
+    , testCase "CLI operations and usage errors" $ do
         parseCLI ["workspace", "3"] @?= Right (Workspace "3")
         parseCLI ["spawn", "echo hello world"] @?= Right (Spawn "echo hello world")
         parseCLI ["layout", "next"] @?= Right (Layout Next)
@@ -38,7 +70,7 @@ tests =
         assertBool "escaped size bounded" (either (const True) (const False) (encodeLine (String (Text.replicate 65536 "\n"))))
     , testCase "headless projection preserves configured order and unsupported capabilities" $ do
         st <- either (assertFailure . show) pure (newCoreState Full ["3", "1"])
-        projectSnapshot "test-session" id ["3", "1"] 7 st (RiverRuntimeSnapshot emptyRiverInventory [])
+        projectSnapshot "test-session" id ["3", "1"] 7 st (RiverRuntimeSnapshot emptyRiverInventory (InputUnavailable []) [])
           @?= object
             [ "session" .= ("test-session" :: Text.Text)
             , "revision" .= (7 :: Int)
@@ -51,6 +83,7 @@ tests =
             , "focused_title_truncated" .= False
             , "keyboard_available" .= False
             , "urgent" .= Null
+            , "input" .= object ["availability" .= ("unavailable" :: Text.Text), "requested_rule_count" .= (0 :: Int), "requested_rules" .= object ["items" .= ([] :: [Value]), "count" .= (0 :: Int), "truncated" .= False], "devices" .= object ["items" .= ([] :: [Value]), "count" .= (0 :: Int), "truncated" .= False]]
             , "xkb" .= Null
             , "submap" .= Null
             ]

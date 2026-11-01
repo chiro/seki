@@ -43,7 +43,7 @@ import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Protocol.Wayland qualified as Wayland
 import Seki.Run.External (ExternalLifecycle, bindExternalWake, closeExternal, wakeExternalPending)
-import Seki.Run.Input (InputInventory, InputSession, closeInputSession, drainInputCompletions, inputCompletionWake, openInputSession, readInputInventory, refreshInputOutputs)
+import Seki.Run.Input (InputInventory, InputSession, bindInputNotify, closeInputSession, drainInputCompletions, inputCompletionWake, inputSessionAvailable, openInputSession, readInputInventory, refreshInputOutputs)
 import Seki.Run.Inventory (
   RiverInventory,
   RiverInventoryError (..),
@@ -212,6 +212,7 @@ newtype RenderOutcome = RenderOutcome {renderNeedsManage :: Bool} deriving (Eq, 
 -- | Pure inputs available to runtime manage and render planning.
 data RiverRuntimeSnapshot = RiverRuntimeSnapshot
   { riverRuntimeInventory :: RiverInventory
+  , riverRuntimeInput :: RiverInputSnapshot
   , riverRuntimeSeatBindings :: [RiverSeatBindings]
   }
   deriving (Eq, Show)
@@ -320,6 +321,7 @@ openRiverSessionWith openWayland runtimeHandlers
                         case sent of
                           Left e -> recordRuntimeError sequenceStatus (RiverRuntimeConnectionError e) >> pure False
                           Right () -> pure True
+                  readIORef inputSession >>= mapM_ (\session -> bindInputNotify session (void inputNotify))
                   writeIORef ownsIngress bound
                   inputBound <- readIORef inputSession >>= maybe (pure True) (\session -> bindExternalWake (inputCompletionWake session) inputNotify)
                   if not bound || not inputBound
@@ -799,7 +801,8 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState managerState xkbGl
   readRuntimeSnapshot = do
     inventory <- readIORef inventoryState
     seats <- Map.elems <$> readIORef seatBindingsState
-    pure (RiverRuntimeSnapshot inventory seats)
+    input <- readIORef inputSession >>= maybe (pure (InputUnavailable (riverInputRules runtimeHandlers))) (snapshotInput (riverInputRules runtimeHandlers))
+    pure (RiverRuntimeSnapshot inventory input seats)
   prepareKeyBinding bindingState = do
     let definition = riverKeyBindingDefinition bindingState
         binding = riverKeyBindingObject bindingState
@@ -1010,4 +1013,9 @@ readRiverInputSnapshot :: RiverSession -> IO RiverInputSnapshot
 readRiverInputSnapshot session =
   readIORef (riverInputSession session) >>= \case
     Nothing -> pure (InputUnavailable (riverInputPolicy session))
-    Just input -> InputAvailable <$> readInputInventory input
+    Just input -> snapshotInput (riverInputPolicy session) input
+
+snapshotInput :: [InputRule] -> InputSession -> IO RiverInputSnapshot
+snapshotInput rules input = do
+  available <- readIORef (inputSessionAvailable input)
+  if available then InputAvailable <$> readInputInventory input else pure (InputUnavailable rules)

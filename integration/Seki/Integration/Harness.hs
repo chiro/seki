@@ -23,6 +23,7 @@ module Seki.Integration.Harness (
   assertEqual,
   announce,
   runProcessCapture,
+  runProcessCaptureWithin,
   runInputDriver,
   waitUntil,
   assertionTimeoutMicroseconds,
@@ -441,7 +442,8 @@ integrationConfig ::
   PolicyConfig String Full
 integrationConfig probeMode executable footConfigPath probeSocketPath clientEnvironment terminalProcess =
   PolicyConfig
-    { policyLayout = Full
+    { policyInputRules = []
+    , policyLayout = Full
     , policyTags = ["1"]
     , policyBindings = [(functionKeyBinding 0xffbe, spawn "integration-terminal"), (functionKeyBinding 0xffbf, kill)]
     , policySceneStyle = defaultSceneStyle{sceneBorderWidth = 0}
@@ -1334,12 +1336,15 @@ configureTwoOutputs childEnvironment outputNames =
     _ -> failIntegration ("cannot configure unexpected output names: " <> show outputNames)
 
 runProcessCapture :: [(String, String)] -> FilePath -> [String] -> IO ByteString
-runProcessCapture childEnvironment command arguments =
+runProcessCapture = runProcessCaptureWithin assertionTimeoutMicroseconds
+
+runProcessCaptureWithin :: Int -> [(String, String)] -> FilePath -> [String] -> IO ByteString
+runProcessCaptureWithin duration childEnvironment command arguments =
   bracket
     (startManagedProcess command childEnvironment (proc command arguments))
     stopManagedProcess
     $ \process -> do
-      exitCode <- waitForProcessWithTimeout (command <> " exit") process
+      exitCode <- waitForExitCode duration (managedProcessHandle process) >>= maybe (renderManagedProcessLogs process >>= failIntegration . (("timeout waiting for " <> command <> " exit") <>)) pure
       stdoutBytes <- waitForBoundedLog (managedProcessStdout process)
       unless (exitCode == ExitSuccess) $ do
         logs <- renderManagedProcessLogs process

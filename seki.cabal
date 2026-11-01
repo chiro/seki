@@ -15,7 +15,14 @@ category:            System
 build-type:          Simple
 tested-with:         GHC ==9.10.3
 extra-source-files:
+  integration/input/backend.c
+  integration/input/keymap.c
+  integration/input/hold.c
+  integration/input/build.sh
+  integration/input/guard.py
+  integration/input/subscriber.py
   examples/waybar/seki.py
+  examples/waybar/test_seki.py
   examples/waybar/config.jsonc
   tools/latency/run.py
   tools/latency/test_report.py
@@ -37,6 +44,7 @@ extra-source-files:
   protocol/wayland/wayland.xml
   protocol/wlr-protocols/wlr-virtual-pointer-unstable-v1.xml
 extra-doc-files:
+  docs/input.md
   README.md
   THIRD_PARTY_NOTICES.md
   docs/ipc.md
@@ -69,6 +77,7 @@ library
   hs-source-dirs:  src-public
   exposed-modules:
     Seki
+    Seki.Input
     Seki.Core.Geometry
     Seki.Core.Layout
     Seki.Core.StackSet
@@ -100,6 +109,7 @@ library seki-core
     Seki.Internal.Layout.Tall
   build-depends:
     base >=4.20 && <4.21,
+    bytestring >=0.12.2 && <0.13,
     containers >=0.7 && <0.8,
     text >=2.1.3 && <2.2,
     transformers >=0.6.1 && <0.7
@@ -125,6 +135,7 @@ library seki-wire
     Seki.Run.External
     Seki.Run.IPC
     Seki.Run.IPCSchema
+    Seki.Run.InputSnapshot
     Seki.Run.Snapshot
     Seki.Run.Inventory
     Seki.Run.Input
@@ -253,6 +264,7 @@ executable seki
 executable seki-reference-config
   import:         warnings
   hs-source-dirs: test-public
+  ghc-options: -Werror
   main-is:        ReferenceConfigMain.hs
   other-modules:  PortedConfig
   ghc-options:    -Werror
@@ -346,6 +358,7 @@ test-suite seki-public
   import:         warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: test-public
+  ghc-options: -Werror
   main-is:        Main.hs
   other-modules:  ConfigMain PortedConfig
   build-depends:
@@ -364,6 +377,7 @@ test-suite seki-integration
     Seki.Integration.M1
     Seki.Integration.M2
     Seki.Integration.M3
+    Seki.Integration.Input
     Seki.Integration.IPCPerf
     Seki.Integration.Waybar
     Seki.Integration.Reference

@@ -41,8 +41,10 @@ where
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.STM (TMVar, atomically, tryPutTMVar)
 import Control.Exception (IOException, try)
-import Control.Monad (void)
+import Control.Monad (void, when)
+import Data.Aeson (Value, encode)
 import Data.Bits (complement, (.&.))
+import Data.ByteString.Lazy.Char8 qualified as Lazy
 import Data.Foldable (find)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Map.Strict qualified as Map
@@ -58,9 +60,11 @@ import Seki.Internal.Core.Restore (LiveInventory (..), OutputKey (..), RestoreSt
 import Seki.Internal.Core.Scene (BorderColor (..), DesiredScene (..), OutputArea (..), SceneStyle (..), planScene)
 import Seki.Internal.Core.StackSet (OutputId (..), Screen (..), StackSet (..), WindowId (..), Workspace (..), integrate')
 import Seki.Internal.Core.State (CoreState (..), WorkspaceTagError, Workspaces (..), newCoreState)
+import Seki.Internal.Input (InputRule (..), SettingError, validateInputSetting)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Run.External
+import Seki.Run.InputSnapshot (inputStatusValue)
 import Seki.Run.Inventory (RiverDimensionsHint (..), RiverInventory, RiverOutputState (..), RiverRectangle (..), RiverWindowState (..), lookupRiverOutput, lookupRiverWindow, riverInventoryOutputs, riverInventoryWindows, riverOutputRectangle)
 import Seki.Run.Phase (ManageM, RenderM, closeWindow)
 import Seki.Run.Pointer (RiverPointerBinding (..))
@@ -76,7 +80,8 @@ import System.IO (hPutStrLn, stderr)
 import System.Process (createProcess, getProcessExitCode, proc)
 
 data PolicyConfig i l = PolicyConfig
-  { policyLayout :: l
+  { policyInputRules :: [InputRule]
+  , policyLayout :: l
   , policyTags :: [i]
   , policyBindings :: [(RiverKeyBinding, Action i l ())]
   , policySceneStyle :: SceneStyle
@@ -94,7 +99,8 @@ data PolicyConfig i l = PolicyConfig
   }
 
 data PolicyError i
-  = PolicyInvalidSceneStyle SceneStyle
+  = PolicyInvalidInputSetting SettingError
+  | PolicyInvalidSceneStyle SceneStyle
   | PolicyTagError (WorkspaceTagError i)
   | PolicyBindingConflict RiverKeyBinding
   | PolicyInvalidModifiers RiverKeyBinding
@@ -127,7 +133,8 @@ policyExternalProducer :: Policy i l -> ExternalProducer (ExternalInput i l)
 policyExternalProducer = externalProducer . policyIngress
 
 data Policy i l = Policy
-  { policyRevision :: IORef Integer
+  { policyLastInput :: IORef (Maybe Value)
+  , policyRevision :: IORef Integer
   , policyObserver :: IORef (Integer -> CoreState i l -> RiverRuntimeSnapshot -> IO ())
   , policyIngress :: ExternalIngress (ExternalInput i l)
   , policyConfig :: PolicyConfig i l
@@ -148,6 +155,7 @@ data Policy i l = Policy
 -- | Validate tags, binding identities and modifiers, border width, and premultiplied colors before connecting.
 newPolicy :: (Eq i) => PolicyConfig i l -> IO (Either (PolicyError i) (Policy i l))
 newPolicy config
+  | Left e <- mapM_ validateInputSetting (concatMap ruleSettings (policyInputRules config)) = pure (Left (PolicyInvalidInputSetting e))
   | not validStyle = pure (Left (PolicyInvalidSceneStyle style))
   | binding : _ <- filter invalidModifiers (map fst (policyBindings config)) = pure (Left (PolicyInvalidModifiers binding))
   | binding : _ <- filter (invalidBits . riverPointerModifiers) (map fst (policyPointerBindings config)) = pure (Left (PolicyInvalidPointerModifiers binding))
@@ -156,7 +164,7 @@ newPolicy config
       Left e -> pure (Left (PolicyTagError e))
       Right st -> case firstRepeat [] (map fst (policyBindings config)) of
         Just binding -> pure (Left (PolicyBindingConflict binding))
-        Nothing -> Right <$> (Policy <$> newIORef 0 <*> newIORef (\_ _ _ -> pure ()) <*> newExternalIngress <*> pure config <*> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)) <*> newIORef (policyRestore config) <*> newIORef (LiveInventory Map.empty Map.empty))
+        Nothing -> Right <$> (Policy <$> newIORef Nothing <*> newIORef 0 <*> newIORef (\_ _ _ -> pure ()) <*> newExternalIngress <*> pure config <*> newIORef st <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)) <*> newIORef (policyRestore config) <*> newIORef (LiveInventory Map.empty Map.empty))
  where
   -- River excludes capslock and numlock bits from its modifier enum.
   invalidModifiers = invalidBits . riverKeyBindingModifiers
@@ -174,7 +182,7 @@ firstRepeat seen (x : xs)
 policyRuntimeHandlers :: (Eq i, Show i, LayoutClass l) => Policy i l -> RiverRuntimeHandlers
 policyRuntimeHandlers policy =
   RiverRuntimeHandlers
-    { riverInputRules = []
+    { riverInputRules = policyInputRules (policyConfig policy)
     , riverExternalIngress = Just (externalLifecycle (policyIngress policy))
     , riverProtocolHandlers =
         RiverWindowManagerHandlers
@@ -234,6 +242,9 @@ running.
 -}
 prepareManagePlan :: (Eq i, Show i, LayoutClass l) => Policy i l -> RiverRuntimeSnapshot -> IO (ManageM ManageOutcome)
 prepareManagePlan policy snapshot = do
+  let input = inputStatusValue (riverRuntimeInput snapshot)
+  previousInput <- atomicModifyIORef' (policyLastInput policy) (\old -> (Just input, old))
+  when (not (null (policyInputRules (policyConfig policy))) && previousInput /= Just input) (policyLog (policyConfig policy) ("input: " <> Lazy.unpack (encode input)))
   current <- readIORef (policyState policy)
   pending <- atomicModifyIORef' (policyPendingRestore policy) (Nothing,)
   before <- case pending of

@@ -10,6 +10,7 @@ import Data.Text qualified as Text
 import Seki.Internal.Core.Layout (LayoutClass, description)
 import Seki.Internal.Core.StackSet (OutputId (..), Screen (..), StackSet (..), WindowId (..), Workspace (..), integrate', peek)
 import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), Workspaces (..))
+import Seki.Run.InputSnapshot (inputValue, xkbValue)
 import Seki.Run.Inventory (RiverOutputState (..), RiverWindowState (..), riverInventoryOutputs, riverInventoryWindows)
 import Seki.Run.Runtime (RiverLayerFocus (..), RiverRuntimeSnapshot (..), RiverSeatBindings (..))
 import Seki.Wire.Connection.ObjectTable (objectId)
@@ -27,7 +28,8 @@ projectSnapshot session label tags revision st runtime =
     , "focused_title_truncated" .= maybe False ((> 1024) . Text.length) title
     , "keyboard_available" .= keyboardAvailable
     , "urgent" .= Null
-    , "xkb" .= Null
+    , "xkb" .= xkbValue (riverRuntimeInput runtime)
+    , "input" .= inputValue (riverRuntimeInput runtime)
     , "submap" .= Null
     ]
  where

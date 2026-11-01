@@ -36,6 +36,13 @@ trap finalize_log EXIT
 
 cd -- "$repository_root"
 
+python3 -B examples/waybar/test_seki.py
+python3 integration/input/guard.py
+fixture_build=$(mktemp -d "${TMPDIR:-/tmp}/seki-input-build.XXXXXXXX")
+trap 'finalize_log; python3 integration/input/guard.py; rm -rf -- "$fixture_build"' EXIT
+bash integration/input/build.sh "$fixture_build"
+export SEKI_INPUT_BACKEND="$fixture_build/backend.so"
+
 set +e
 cabal build seki-integration "$@" 2>&1 | tee -a "$raw_log"
 build_status=${PIPESTATUS[0]}
@@ -57,7 +64,7 @@ SEKI_RUN_INTEGRATION=1 \
   SEKI_REFERENCE_CONFIG_EXECUTABLE="$reference_config_executable" \
   SEKI_INTEGRATION_ARTIFACT_DIR="$artifact_directory" \
   SEKI_INTEGRATION_MANIFEST="$manifest" \
-  timeout 120s "$integration_executable" 2>&1 | tee -a "$raw_log"
+  timeout 240s "$integration_executable" 2>&1 | tee -a "$raw_log"
 suite_status=${PIPESTATUS[0]}
 set -e
 

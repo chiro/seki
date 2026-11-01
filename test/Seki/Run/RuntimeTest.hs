@@ -51,6 +51,7 @@ import Seki.Run.MockRiver (
   receiveRuntimeBindsAtManagerVersion,
   receiveSequenceCompletion,
   receiveStartupRequests,
+  recordInputWakes,
   registryGlobalFrame,
   requireObjectId,
   runMock,
@@ -104,7 +105,8 @@ tests :: TestTree
 tests =
   testGroup
     "river runtime"
-    [ testCase "libinput custom curves success rejection removal v1/v2" (mapM_ (\v -> mapM_ (testCustomLibinput v) [0, 1, 2, 3, 4]) [1, 2])
+    [ testCase "finished optional input manager remains unavailable with core live" testInputFinished
+    , testCase "libinput custom curves success rejection removal v1/v2" (mapM_ (\v -> mapM_ (testCustomLibinput v) [0, 1, 2, 3, 4]) [1, 2])
     , testCase "XKB retains two distinct keyboards with empty rules" testTwoXkbKeyboards
     , testCase "XKB synthetic v1/v2/v3 batching, feedback and scrolllock gate" (mapM_ testXkbConfig [1, 2, 3])
     , testCase "libinput full synthetic peer surface and acknowledgements v1/v2" (mapM_ (\v -> mapM_ (testLibinput v) [0, 1, 2]) [1, 2])
@@ -1185,6 +1187,7 @@ testInput version = withRuntimePair $ \target peer -> do
       ]
     input <- receiveGlobalBind reader peer "input first" 10 "river_input_manager_v1" version
     (manager, _, _) <- receiveRuntimeBinds reader peer
+    wakeCount <- recordInputWakes reader manager
     device <- requireObjectId 0xff000001
     sendFrames peer [encodedFrame input (Opcode 1) (putNewId device)]
     barrier <-
@@ -1220,6 +1223,7 @@ testInput version = withRuntimePair $ \target peer -> do
     receiveExpectedRequest reader peer pointer (Opcode 5) (putInt (-10) >> putInt 20 >> putInt 100 >> putInt 200)
     sendFrames peer [encodedFrame pointer (Opcode 0) (pure ())]
     receiveExpectedRequest reader peer pointer (Opcode 0) (pure ())
+    wakeCount >>= \count -> assertBool "input changes request owner publication" (count > 0)
     closeTransport peer
   let handlers = (runtimeHandlers (\_ -> pure ())){riverInputRules = [InputRule patternValue Nothing [RepeatInfo 37 410, ScrollFactor 1.5, MapOutput Nothing, MapRectangle (Just (InputRectangle (-10) 20 100 200))]]}
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
@@ -1238,6 +1242,7 @@ testInputCohort = withRuntimePair $ \target peer -> do
     sendFrames peer [registryGlobalFrame registry 7 "river_window_manager_v1" 4, registryGlobalFrame registry 8 "river_xkb_bindings_v1" 3, registryGlobalFrame registry 9 "river_layer_shell_v1" 1, registryGlobalFrame registry 10 "river_input_manager_v1" 1, callbackDoneFrame callback 1]
     input <- receiveGlobalBind reader peer "input" 10 "river_input_manager_v1" 1
     (manager, _, _) <- receiveRuntimeBinds reader peer
+    wakeCount <- recordInputWakes reader manager
     a <- requireObjectId 0xff000001
     b <- requireObjectId 0xff000002
     let announce device = sendFrames peer [encodedFrame input (Opcode 1) (putNewId device), encodedFrame device (Opcode 1) (putUint 0), encodedFrame device (Opcode 2) (putString "fixture")]
@@ -1251,6 +1256,7 @@ testInputCohort = withRuntimePair $ \target peer -> do
     receiveSequenceCompletion reader peer manager (Opcode 2)
     sendFrames peer [callbackDoneFrame callbackB 3]
     receiveExpectedRequest reader peer b (Opcode 2) (putInt 37 >> putInt 410)
+    wakeCount >>= \count -> assertBool "input changes request owner publication" (count > 0)
     closeTransport peer
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (\_ -> pure ())){riverInputRules = [InputRule patternValue Nothing [RepeatInfo 37 410]]})
   assertEqual "cohort EOF" (Right RiverEnded) =<< runRiverSession session
@@ -1282,6 +1288,7 @@ testLibinput version offset = withRuntimePair $ \target peer -> do
     input <- receiveGlobalBind reader peer "generic first" 10 "river_input_manager_v1" version
     libinput <- receiveGlobalBind reader peer "libinput second" 11 "river_libinput_config_v1" version
     (manager, _, _) <- receiveRuntimeBinds reader peer
+    wakeCount <- recordInputWakes reader manager
     generic <- requireObjectId 0xff000001
     device <- requireObjectId 0xff000002
     sendFrames peer [encodedFrame input (Opcode 1) (putNewId generic), encodedFrame generic (Opcode 1) (putUint 1), encodedFrame generic (Opcode 2) (putString "synthetic libinput peer"), encodedFrame libinput (Opcode 1) (putNewId device), encodedFrame device (Opcode 1) (putObject generic)]
@@ -1358,6 +1365,7 @@ testLibinput version offset = withRuntimePair $ \target peer -> do
     if version == 2 then sendFrames peer [encodedFrame device (Opcode 55) (pure ())] else pure ()
     sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
     receiveSequenceCompletion reader peer manager (Opcode 2)
+    wakeCount >>= \count -> assertBool "input changes request owner publication" (count > 0)
     closeTransport peer
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (\_ -> pure ())){riverInputRules = [InputRule patternValue Nothing settings]})
   assertEqual "clean synthetic peer EOF" (Right RiverEnded) =<< runRiverSession session
@@ -1393,6 +1401,7 @@ testCustomLibinput version outcome = withRuntimePair $ \target peer -> do
     input <- receiveGlobalBind reader peer "generic first" 10 "river_input_manager_v1" version
     libinput <- receiveGlobalBind reader peer "libinput second" 11 "river_libinput_config_v1" version
     (manager, _, _) <- receiveRuntimeBinds reader peer
+    wakeCount <- recordInputWakes reader manager
     generic <- requireObjectId 0xff000001
     device <- requireObjectId 0xff000002
     sendFrames peer [encodedFrame input (Opcode 1) (putNewId generic), encodedFrame generic (Opcode 1) (putUint 1), encodedFrame generic (Opcode 2) (putString "synthetic libinput peer"), encodedFrame libinput (Opcode 1) (putNewId device), encodedFrame device (Opcode 1) (putObject generic)]
@@ -1443,6 +1452,7 @@ testCustomLibinput version outcome = withRuntimePair $ \target peer -> do
           else receiveExpectedRequest reader peer config (Opcode 0) (pure ())
     sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
     receiveSequenceCompletion reader peer manager (Opcode 2)
+    wakeCount >>= \count -> assertBool "input changes request owner publication" (count > 0)
     closeTransport peer
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (\_ -> pure ())){riverInputRules = [InputRule patternValue Nothing settings]})
   assertEqual "custom peer clean EOF" (Right RiverEnded) =<< runRiverSession session
@@ -1465,6 +1475,7 @@ testXkbConfig version = withRuntimePair $ \target peer -> do
     input <- receiveGlobalBind reader peer "generic first" 10 "river_input_manager_v1" genericVersion
     xkb <- receiveGlobalBind reader peer "XKB config follows generic" 11 "river_xkb_config_v1" version
     (manager, _, _) <- receiveRuntimeBinds reader peer
+    wakeCount <- recordInputWakes reader manager
     generic <- requireObjectId 0xff000001
     keyboard <- requireObjectId 0xff000002
     sendFrames peer [encodedFrame input (Opcode 1) (putNewId generic), encodedFrame generic (Opcode 1) (putUint 1), encodedFrame generic (Opcode 2) (putString "synthetic XKB peer"), encodedFrame xkb (Opcode 1) (putNewId keyboard), encodedFrame keyboard (Opcode 1) (putObject generic), encodedFrame keyboard (Opcode 2) (putUint 0 >> putString "English"), encodedFrame keyboard (Opcode 4) (pure ()), encodedFrame keyboard (Opcode 6) (pure ())]
@@ -1490,6 +1501,7 @@ testXkbConfig version = withRuntimePair $ \target peer -> do
     if version >= 2 then sendFrames peer [encodedFrame keyboard (Opcode 7) (pure ())] else pure ()
     sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
     receiveSequenceCompletion reader peer manager (Opcode 2)
+    wakeCount >>= \count -> assertBool "input changes request owner publication" (count > 0)
     closeTransport peer
   let settings = [ActiveLayout (LayoutByName "Japanese"), CapsLock True, NumLock False, ScrollLock True]
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (\_ -> pure ())){riverInputRules = [InputRule patternValue Nothing settings]})
@@ -1513,6 +1525,7 @@ testTwoXkbKeyboards = withRuntimePair $ \target peer -> do
     input <- receiveGlobalBind reader peer "generic" 10 "river_input_manager_v1" 2
     xkb <- receiveGlobalBind reader peer "XKB config" 11 "river_xkb_config_v1" 2
     (manager, _, _) <- receiveRuntimeBinds reader peer
+    wakeCount <- recordInputWakes reader manager
     let announce number name layout = do
           generic <- requireObjectId number
           keyboard <- requireObjectId (number + 1)
@@ -1523,6 +1536,7 @@ testTwoXkbKeyboards = withRuntimePair $ \target peer -> do
     second <- receiveFrame reader peer >>= decodeNewId
     sendFrames peer [callbackDoneFrame first 2, callbackDoneFrame second 3, encodedFrame manager (Opcode 2) (pure ())]
     receiveSequenceCompletion reader peer manager (Opcode 2)
+    wakeCount >>= \count -> assertBool "input changes request owner publication" (count > 0)
     closeTransport peer
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (runtimeHandlers (\_ -> pure ()))
   assertEqual "WM unchanged with empty rules" (Right RiverEnded) =<< runRiverSession session
@@ -1533,3 +1547,24 @@ testTwoXkbKeyboards = withRuntimePair $ \target peer -> do
       let devices = Map.elems (InputState.inputDevices inventory)
       assertEqual "each canonical generation retains its own state" [Just (0, Just "English"), Just (1, Just "Japanese")] (map (xkbLayout . xkbCurrent . InputState.inputXkb) devices)
       assertBool "no results invented for empty rules" (all (Map.null . InputState.inputResults) devices)
+
+testInputFinished :: Assertion
+testInputFinished = withRuntimePair $ \target peer -> do
+  patternValue <- expectRight (compileDevicePattern "*")
+  let rules = [InputRule patternValue Nothing [RepeatInfo 37 410]]
+  mockDone <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (registry, callback) <- receiveStartupRequests reader peer
+    sendFrames peer [registryGlobalFrame registry 7 "river_window_manager_v1" 4, registryGlobalFrame registry 8 "river_xkb_bindings_v1" 3, registryGlobalFrame registry 9 "river_layer_shell_v1" 1, registryGlobalFrame registry 10 "river_input_manager_v1" 2, callbackDoneFrame callback 1]
+    input <- receiveGlobalBind reader peer "input" 10 "river_input_manager_v1" 2
+    (manager, _, _) <- receiveRuntimeBinds reader peer
+    _ <- recordInputWakes reader manager
+    sendFrames peer [encodedFrame input (Opcode 0) (pure ())]
+    receiveExpectedRequest reader peer input (Opcode 1) (pure ())
+    sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
+    receiveSequenceCompletion reader peer manager (Opcode 2)
+    closeTransport peer
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (\_ -> pure ())){riverInputRules = rules})
+  assertEqual "core remains live" (Right RiverEnded) =<< runRiverSession session
+  expectMockSuccess mockDone
+  assertEqual "finished manager unavailable" (InputUnavailable rules) =<< readRiverInputSnapshot session

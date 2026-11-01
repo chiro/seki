@@ -5,6 +5,7 @@ module Seki.Internal.Input (
   DevicePattern,
   PatternError (..),
   compileDevicePattern,
+  devicePatternText,
   matchesDevicePattern,
   InputRule (..),
   InputSetting (..),
@@ -27,11 +28,13 @@ module Seki.Internal.Input (
   validateInputSetting,
 ) where
 
+import Data.ByteString qualified as BS
 import Data.Int (Int32)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as TextEncoding
 import Data.Word (Word32)
 
 data DeviceType = Keyboard | Pointer | Touch | Tablet deriving (Eq, Ord, Show)
@@ -151,6 +154,16 @@ compileDevicePattern source
   parse ('?' : rest) = (AnyCharacter :) <$> parse rest
   parse (c : rest) = (Literal c :) <$> parse rest
 
+-- | Recover the escaped pattern for diagnostics and configuration displays.
+devicePatternText :: DevicePattern -> Text
+devicePatternText (DevicePattern tokens) = Text.concat (map render tokens)
+ where
+  render AnySequence = "*"
+  render AnyCharacter = "?"
+  render (Literal c)
+    | c `elem` ['*', '?', '\\'] = Text.pack ['\\', c]
+    | otherwise = Text.singleton c
+
 matchesDevicePattern :: DevicePattern -> Text -> Bool
 matchesDevicePattern (DevicePattern tokens) name = case foldr step initial tokens of
   matched : _ -> matched
@@ -196,10 +209,10 @@ validateInputSetting setting = case setting of
   Acceleration (AccelerationCurves curves) | null curves || length curves > 3 || any invalidCurve curves || length (map (\(AccelCurve kind _ _) -> kind) curves) /= length (unique (map (\(AccelCurve kind _ _) -> kind) curves)) -> Left InvalidCurve
   Rotation angle | angle >= 360 -> Left InvalidRotation
   ActiveLayout (LayoutByIndex index) | index < 0 -> Left InvalidLayout
-  ActiveLayout (LayoutByName name) | Text.null name || Text.any (== '\0') name -> Left InvalidLayout
+  ActiveLayout (LayoutByName name) | Text.null name || Text.any (== '\0') name || BS.length (TextEncoding.encodeUtf8 name) > 4083 -> Left InvalidLayout
   Keymap path | null path || '\0' `elem` path -> Left EmptyKeymapPath
   _ -> Right ()
  where
   unique = foldr (\v acc -> if v `elem` acc then acc else v : acc) []
   finite value = not (isNaN value || isInfinite value)
-  invalidCurve (AccelCurve _ step points) = not (finite step) || step <= 0 || length points < 2 || length points > 4096 || any (\value -> not (finite value) || value < 0) points
+  invalidCurve (AccelCurve _ step points) = not (finite step) || step <= 0 || length points < 2 || length points > 64 || any (\value -> not (finite value) || value < 0) points

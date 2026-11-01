@@ -15,6 +15,8 @@ module Seki.Run.Input (
   InputSession,
   openInputSession,
   readInputInventory,
+  inputSessionAvailable,
+  bindInputNotify,
   refreshInputOutputs,
   inputCompletionWake,
   drainInputCompletions,
@@ -156,7 +158,7 @@ planInput rules outputs inventory =
         let desired = resolveInputRules rules name kind
             results = Map.mapWithKey preserveSent (Map.map (classifyDevice device kind) desired)
             preserveSent key new = case Map.lookup key (inputResults device) of
-              Just old | settingDesired old == settingDesired new, settingTarget old == settingTarget new, settingFacet old == settingFacet new, settingOutcome new == SettingPending, settingOutcome old `notElem` [SettingUnavailable, SettingRemoved] -> old
+              Just old | settingDesired old == settingDesired new, settingTarget old == settingTarget new, settingFacet old == settingFacet new, settingOutcome new == SettingPending, settingOutcome old /= SettingRemoved -> old
               Just old | settingDesired old == settingDesired new, settingTarget old == settingTarget new, settingFacet old == settingFacet new, settingOutcome old == settingOutcome new -> old
               Just old -> new{settingRevision = settingRevision old + 1}
               _ -> new
@@ -209,17 +211,22 @@ planInput rules outputs inventory =
       result supported = SettingResult setting 0 Nothing Nothing (if supported then SettingPending else SettingUnsupported)
 
 data InputSession = InputSession
-  { inputState :: IORef InputInventory
+  { inputSessionAvailable :: IORef Bool
+  , inputState :: IORef InputInventory
+  , inputNotify :: IORef (IO ())
   , inputOutputs :: IORef (Map Text ObjectId)
   , inputApply :: IO ()
   , inputWorker :: KeymapWorker (InputIdentity, Object X.RiverXkbKeyboardV1, SettingResult)
   , inputDrain :: IO ()
   }
 
+bindInputNotify :: InputSession -> IO () -> IO ()
+bindInputNotify session = writeIORef (inputNotify session)
+
 inputCompletionWake :: InputSession -> ExternalLifecycle
 inputCompletionWake = keymapWake . inputWorker
 closeInputSession :: InputSession -> IO ()
-closeInputSession = closeKeymapWorker . inputWorker
+closeInputSession session = writeIORef (inputNotify session) (pure ()) >> closeKeymapWorker (inputWorker session)
 drainInputCompletions :: InputSession -> IO ()
 drainInputCompletions = inputDrain
 
@@ -239,7 +246,10 @@ openInputSession rules wayland failed = do
       Right [] -> pure (Right Nothing)
       Right (global : _) -> mask $ \restore -> do
         identity <- InputSessionIdentity <$> (fromIntegral <$> getProcessID) <*> getMonotonicTimeNSec <*> (hashUnique <$> newUnique)
+        available <- newIORef True
         state <- newIORef emptyInputInventory{inputSessionIdentity = identity}
+        notify <- newIORef (pure ())
+        published <- newIORef (True, emptyInputInventory{inputSessionIdentity = identity})
         outputs <- newIORef Map.empty
         libManager <- newIORef Nothing
         libEnabled <- newIORef False
@@ -251,7 +261,7 @@ openInputSession rules wayland failed = do
         restore
           ( do
               libRevision <- newIORef (0 :: Integer)
-              let session = InputSession state outputs apply worker drain
+              let session = InputSession available state notify outputs apply worker drain
                   apply = do
                     inventory <- readIORef state
                     targets <- readIORef outputs
@@ -261,6 +271,12 @@ openInputSession rules wayland failed = do
                     mapM_ send requests
                     mapM_ sendXkb (Map.elems (inputDevices next))
                     mapM_ (sendLibinput libManager libRevision state connection apply failed) (Map.elems (inputDevices next))
+                    latest <- readIORef state
+                    live <- readIORef available
+                    previous <- readIORef published
+                    when ((live, latest) /= previous) $ do
+                      writeIORef published (live, latest)
+                      readIORef notify >>= id
                   matchesToken (identityValue, object, desired) device = inputIdentity device == identityValue && inputLifecycle device == Ready && xkbObject (inputXkb device) == Just object && xkbGeneration (inputXkb device) == settingFacet desired && maybe False (\r -> settingRevision r == settingRevision desired && settingDesired r == settingDesired desired) (Map.lookup KeymapKey (inputResults device))
                   setKeymapOutcome token outcome = modifyIORef' state (\i -> i{inputDevices = fmap (\d -> if matchesToken token d then d{inputResults = Map.adjust (\r -> r{settingOutcome = outcome}) KeymapKey (inputResults d)} else d) (inputDevices i)})
                   retireKeymap keymap = do
@@ -376,6 +392,7 @@ openInputSession rules wayland failed = do
                         mapM_ (\gen -> retireFacet connection failed (inputLibinput <$> Map.lookup gen (inputDevices inventory))) identities
                         submitRequest connection Input.riverInputDeviceV1Interface object Input.encodeRiverInputDeviceV1Destroy >>= result
                         modifyIORef' state (\i -> i{inputDevices = foldr Map.delete (inputDevices i) identities})
+                        apply
                       _ -> pure ()
                   route =
                     eventRouteWithServerObjects
@@ -386,6 +403,7 @@ openInputSession rules wayland failed = do
                       )
                       ( \manager -> \case
                           Input.RiverInputManagerV1Finished -> do
+                            writeIORef available False
                             inventory <- readIORef state
                             mapM_
                               ( \d -> when (inputLifecycle d /= Removed) $ do
@@ -396,6 +414,7 @@ openInputSession rules wayland failed = do
                               )
                               (Map.elems (inputDevices inventory))
                             submitRequest connection Input.riverInputManagerV1Interface manager Input.encodeRiverInputManagerV1Destroy >>= result
+                            apply
                           _ -> pure ()
                       )
               bound <- bindGlobalWithRoute connection (waylandRegistry wayland) global route

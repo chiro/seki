@@ -56,7 +56,8 @@ prepareConfig = newPolicy . policyConfigOf
 policyConfigOf :: Config l -> PolicyConfig String l
 policyConfigOf config =
   PolicyConfig
-    { policyLayout = layoutHook config
+    { policyInputRules = inputRules config
+    , policyLayout = layoutHook config
     , policyTags = workspaces config
     , policyBindings = [(lower binding, action) | (binding, action) <- keys config config]
     , policySceneStyle = SceneStyle (borderWidth style) (focusedBorderColor style) (unfocusedBorderColor style)

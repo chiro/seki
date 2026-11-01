@@ -62,6 +62,7 @@ tests =
           , (Acceleration (AccelerationCurves [AccelCurve CurveMotion 0 [1, 2]]), InvalidCurve)
           , (Rotation 360, InvalidRotation)
           , (ActiveLayout (LayoutByIndex (-1)), InvalidLayout)
+          , (ActiveLayout (LayoutByName (Text.replicate 1362 "界")), InvalidLayout)
           , (Keymap "", EmptyKeymapPath)
           ]
         mapM_

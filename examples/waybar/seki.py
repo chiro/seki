@@ -6,10 +6,21 @@ import subprocess
 
 
 def module(snapshot):
-    focused = next((w for w in snapshot["workspaces"] if w["focused"]), {})
+    focused = next((w for w in snapshot.get("workspaces", []) if w["focused"]), {})
     text = " ".join(str(value) for value in (
         focused.get("tag", ""), focused.get("layout", ""),
-        snapshot.get("focused_title") or ""))
+        snapshot.get("focused_title") or "")).strip()
+    keyboards = (snapshot.get("xkb") or {}).get("items", [])
+    layouts = []
+    for keyboard in sorted(keyboards, key=lambda k: (
+            k.get("name") or "", json.dumps(k.get("identity"), sort_keys=True))):
+        state = keyboard.get("state") or {}
+        layouts.append("{}: {}".format(keyboard.get("name") or "?",
+                                      state.get("layout_name") or "?"))
+    if layouts:
+        text += (" | " if text else "") + "; ".join(layouts)
+    if (snapshot.get("xkb") or {}).get("truncated"):
+        text += " …"
     return {"text": html.escape(text, quote=True), "tooltip": html.escape(text, quote=True)}
 
 

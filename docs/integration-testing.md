@@ -495,3 +495,46 @@ binary; the release shell uses its pinned Waybar by default.
 
 Pinned Nix execution, physical input, and operator review remain separate gates.
 JSON escaping tests alone do not pass the visual gate.
+
+### Private input family
+
+The release runner builds `integration/input/backend.c` and its keymap generator
+in a private temporary directory, then injects the resulting DSO only into each
+child river. The pinned CI shell supplies river's actual wlroots 0.20 SDK,
+Wayland, libxkbcommon, C compiler and pkg-config. The source distribution ships
+these inputs; no developer artifact directory is required. Pre/postflight guards
+reject overlapping headless rivers and never kill a process they do not own.
+Every fixture retains its existing bounded managed-process cleanup.
+
+`m3-input-v1` and `m3-input-v2` use three child-compositor synthetic devices,
+including two keyboards with different reported layouts. They load a generated
+US/Japanese keymap through Config.inputRules, observe repeat submission and layout
+feedback, retain unavailable tap on non-libinput input, replace generations after
+removal, and prove a fixed US binding while the current keyboard layout is Japanese.
+V1 is capped negotiation on river 0.5.0, not execution of river 0.4.5.
+`m3-input-optional-absent` hides only the optional input globals while core WM
+continues. `m3-input-waybar` runs actual Waybar with private D-Bus and checks pixel
+changes from native per-device layout changes. `m3-input-keymap-invalid` and
+`m3-input-keymap-missing` distinguish compositor compilation rejection from local
+load failure without stopping core WM. `m3-input-curve-maximum` sends 64 Double
+points to a real transient libinput config object without attaching a device.
+Its success proves native config acceptance, not physical acceleration behavior.
+
+These cases complement the registered unit/mock setter, barrier, stale callback,
+immutable FD, shutdown and resource tests. They do not establish physical tap,
+scroll, acceleration, unplug behavior, or operator acceptance. Those require the
+separately approved hardware lanes. Set SEKI_CAPTURE_VIDEO=1 only for a focused
+Waybar case to capture 30 seconds of native frames; compilation and performance
+runs must remain serial with fixtures.
+
+`m3-input-worker-lifecycle` starts a separate private runtime with a test-only
+loader interposer. It confirms the stopped loader inherits only fd 3, receives a
+normal workspace application reply while the loader is held, reaps work on device
+replacement, and reaps a fresh held helper when river ends. It never signals an
+unrelated process. `m3-input-output-mapping` disables/re-enables a private headless
+output and checks unavailable then resubmitted mapping. It claims submission,
+not applied pointer coordinates. `m3-input-perf` retains 1000 contiguous native
+layout-to-subscriber receipts with a 50 ms p99 ceiling. Its bounded process budget
+is 30 seconds because the source emits at 10 ms intervals; ordinary assertions
+retain their 10-second budget. The full suite budget is 240 seconds to include
+the added input cases.

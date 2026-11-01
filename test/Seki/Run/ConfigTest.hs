@@ -14,6 +14,7 @@ import Seki.Internal.Core.ManageHook (WindowProps (..), appId, composeAll, doShi
 import Seki.Internal.Core.PointerOp (HEdge (..), OpKind (..), ResizeEdges (..), VEdge (..))
 import Seki.Internal.Core.StackSet qualified as StackSet
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..), fromWorkspaces)
+import Seki.Internal.Input
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
@@ -30,7 +31,13 @@ tests :: TestTree
 tests =
   testGroup
     "configuration"
-    [ testCase "default configuration values" $ do
+    [ testCase "input rules lower and validate before connecting" $ do
+        patternValue <- either (fail . show) pure (compileDevicePattern (Text.pack "*"))
+        let rules = [InputRule patternValue Nothing [RepeatInfo 37 410]]
+        policy <- prepareConfig def{inputRules = rules} >>= either (assertFailure . show) pure
+        assertEqual "runtime rules" rules (riverInputRules (policyRuntimeHandlers policy))
+        prepareConfig def{inputRules = [InputRule patternValue Nothing [AccelSpeed (0 / 0)]]} >>= either (assertEqual "invalid setting" (PolicyInvalidInputSetting InvalidAccelSpeed)) (const (assertFailure "invalid input accepted"))
+    , testCase "default configuration values" $ do
         assertEqual "modifier" Mod4 (modMask def)
         assertEqual "terminal" "foot" (terminal def)
         assertEqual "tags" (map show [1 .. 9 :: Int]) (workspaces def)

@@ -61,7 +61,7 @@ windows to workspace 2, so only a restored window is proposed a tile there.
 -}
 sessionConfig :: IORef [String] -> Maybe a -> PolicyConfig String Full
 sessionConfig logged restored =
-  PolicyConfig Full ["1", "2"] [] defaultSceneStyle (\_ -> pure ()) hook restart [] Nothing check (\line -> modifyIORef' logged (line :))
+  PolicyConfig [] Full ["1", "2"] [] defaultSceneStyle (\_ -> pure ()) hook restart [] Nothing check (\line -> modifyIORef' logged (line :))
  where
   hook = maybe idHook (const (doShift "2")) restored
   check = pure (maybe (Right ()) (const (Left TargetUnrecorded)) restored)

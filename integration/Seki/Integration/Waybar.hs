@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Seki.Integration.Waybar (waybarScenarios) where
+module Seki.Integration.Waybar (waybarScenarios, waybarFixture) where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket, onException)
@@ -14,7 +14,7 @@ import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Fixture.Probe
 import Seki.Integration.Fixture
 import Seki.Integration.Harness
-import Seki.Internal.Config (def)
+import Seki.Internal.Config (StdLayouts, def)
 import Seki.Run.Config (policyConfigOf)
 import Seki.Run.IPC (withIPCAt)
 import System.Directory (createDirectoryIfMissing, doesFileExist, getCurrentDirectory)
@@ -26,7 +26,10 @@ waybarScenarios :: [(String, IO ())]
 waybarScenarios = [("m3-ipc-waybar", waybar)]
 
 waybar :: IO ()
-waybar = withFixture (policyConfigOf def) "m3-ipc-waybar" 1 $ \fixture probe -> do
+waybar = withFixture (policyConfigOf def) "m3-ipc-waybar" 1 (waybarFixture False)
+
+waybarFixture :: Bool -> Fixture StdLayouts -> Probe -> IO ()
+waybarFixture inputMode fixture probe = do
   root <- maybe (failIntegration "missing runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
   cli <- getEnv "SEKICTL_EXECUTABLE"
   executable <- fromMaybe "waybar" <$> lookupEnv "SEKI_WAYBAR_EXECUTABLE"
@@ -71,6 +74,11 @@ waybar = withFixture (policyConfigOf def) "m3-ipc-waybar" 1 $ \fixture probe -> 
     bracket (startManagedProcess "real Waybar" dbusEnvironment (proc executable ["--config", config, "--style", style])) stopManagedProcess $ \bar -> do
       before <- waitFrame "Waybar text rendered" white `onException` (renderManagedProcessLogs bar >>= announce)
       saveCapture fixture "waybar-initial"
+      if inputMode
+        then do
+          _ <- waitFrame "native per-device layout changes actual Waybar pixels" (\frame -> white frame && strip frame /= strip before)
+          saveCapture fixture "waybar-input-layout"
+        else pure ()
       let hostile = Text.pack ("<span foreground='red'>PWN</span> & $(touch '" <> marker <> "') \\\"quote\\\"")
       setTitle probe redWindow hostile
       after <- waitFrame "title changes actual Waybar pixels" (\frame -> white frame && strip frame /= strip before)

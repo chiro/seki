@@ -94,3 +94,60 @@ messages are capped at 1024 characters. Workspace tags are identities and are
 never truncated. A configuration whose full workspace projection exceeds the
 line limit receives `snapshot_too_large`, including on subscription. Each such
 error retains the subscription's request ID.
+
+### Input devices (M3-03)
+
+`input.availability` is `available` or `unavailable`. Absence of optional input
+protocols does not stop window management. `requested_rule_count` accompanies
+unavailability. An available inventory has a session object (`pid`, monotonic
+`token`, process `unique`) and `devices`: `{items, count, truncated}`. Count is the
+complete live inventory size; items are a deterministic generation-ordered prefix
+whose encoded values consume at most 24000 bytes. No removal history is retained.
+Device identity combines this session and a monotonic `generation`. `wire_id` is
+an ephemeral diagnostic and can be reused; never use it as a stable identity.
+
+Each device has nullable `name`, `type`, lifecycle (`discovering`, `ready`,
+`removed`), libinput availability and an `xkb` object. Names are capped at 128
+characters with `name_truncated`. Defaults and current values are arrays of
+`{setting, value}`; an absent setting is unknown, never an assumed default.
+Generic input management has no default/current feedback. XKB has no defaults.
+Results are `{setting, requested, revision, status}`. Status is one of `pending`,
+`loading`, `compiling`, `awaiting`, `applied`, `rejected_invalid`, `sent`,
+`observed`, `unavailable`, `unsupported`, `invalid`, `removed`.
+Only libinput success acknowledgements mean applied. Generic requests remain
+sent. XKB layout/lock requests become observed only after matching feedback.
+Keymap compilation success permits assignment; assignment remains sent. Local
+load errors are unavailable; compositor compilation errors are rejected_invalid.
+No keymap contents are serialized. Paths and selectors have explicit truncation flags and are capped at 128
+characters. Custom curves include movement type, step, point_count, at most eight
+points and an explicit truncated flag; matrix values are finite or null.
+Diagnostics use the same bounded collection shape, capped at 1024 encoded bytes,
+with at most 32 retained facet messages, each projected as a 128-character
+`message` and explicit `truncated` flag. Nonfinite numbers are null.
+
+`xkb` is null when input management is unavailable; otherwise it is a bounded
+collection (8000 encoded item bytes) of `{identity, name, state}` for keyboards.
+State holds availability, nullable layout_index/layout_name, caps_lock, num_lock,
+and scroll_lock. Unknown locks are null, including scroll lock before protocol
+v3. Layout names are capped at 128 characters with `layout_name_truncated`; keyboard
+summary names have `name_truncated`. Separate keyboards retain separate
+states; this is not an active-global-keyboard indicator. The shipped Waybar helper
+sorts by name then identity and displays every retained device as `name: layout`,
+using `?` for unknown values and an ellipsis when the collection is truncated.
+Tiling layout remains the workspace's `layout` field.
+
+Input changes wake the runtime owner and are projected with the same immutable
+inventory as the window snapshot. Workers never read input maps or send Wayland
+requests. Unchanged input does not trigger another wake. Input changes are logged
+as bounded structured JSON with session/device/setting identities. JSON and Pango
+escaping are separate; the Waybar helper escapes the combined display string and
+never interpolates device or layout data into a shell command. Older snapshots
+with absent or null xkb remain accepted.
+
+When input protocols are unavailable, `requested_rules` contains bounded rule
+summaries (`name_pattern`, nullable `type`, bounded `settings`). Each requested
+setting explicitly has status unavailable. The rule collection has an 8000-byte
+item budget and each settings collection 4096 bytes, with counts and truncation.
+The pattern is its escaped source form. This diagnostic never claims a matched
+device or an applied setting. Status logs omit unchanged current values, so a
+layout feedback stream does not duplicate terminal setting-result log entries.
