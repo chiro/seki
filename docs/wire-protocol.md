@@ -81,7 +81,14 @@ The river release contains these interface versions:
 
 M0 vendored `wayland.xml`, `river-window-management-v1.xml`, and
 `river-xkb-bindings-v1.xml`. M1 added `river-layer-shell-v1.xml` to the runtime.
-Input-configuration protocols remain deferred to M3. Integration-only sources
+M3-03 adds generated input-configuration bindings pinned to river v0.5.0,
+commit `cc4a291b2b9375fe3d5fe5a64b6f510b463f888b`. Their generated maxima
+are input management v2, libinput configuration v2 and XKB configuration v3.
+The v1 wire signatures remain compatible with river 0.4.5. These bindings alone
+do not enable runtime input rules. Arrays remain opaque bytes; libinput Double
+validation belongs in its adapter. Input and libinput `done` events require v2;
+XKB `done` requires v2 and scrolllock requests/events require v3.
+Integration-only sources
 include wlr-layer-shell, xdg-shell, and the image-capture protocols. See
 [`protocol/SOURCES.md`](../protocol/SOURCES.md) for the current pins.
 Cross-protocol interface and enum references are resolved across all XML

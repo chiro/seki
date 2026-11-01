@@ -43,6 +43,8 @@ Copyright © 2025 Isaac Freund (river-xkb-bindings-v1)
 
 Copyright © 2025 Isaac Freund (river-layer-shell-v1)
 
+Copyright © 2025 Isaac Freund (river-input-management-v1, river-libinput-config-v1, river-xkb-config-v1)
+
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in
 the Software without restriction, including without limitation the rights to

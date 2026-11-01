@@ -23,6 +23,9 @@ extra-source-files:
   fourmolu.yaml
   protocol/SHA256SUMS
   protocol/SOURCES.md
+  protocol/river/river-input-management-v1.xml
+  protocol/river/river-libinput-config-v1.xml
+  protocol/river/river-xkb-config-v1.xml
   protocol/river/river-layer-shell-v1.xml
   protocol/river/river-window-management-v1.xml
   protocol/river/river-xkb-bindings-v1.xml
@@ -111,6 +114,9 @@ library seki-wire
   c-sources:       cbits/seki_wayland_transport.c
   cc-options:      -Wall -Wextra -Wpedantic
   exposed-modules:
+    Seki.Protocol.RiverInputManagementV1
+    Seki.Protocol.RiverLibinputConfigV1
+    Seki.Protocol.RiverXkbConfigV1
     Seki.Protocol.RiverLayerShellV1
     Seki.Protocol.RiverWindowManagementV1
     Seki.Protocol.RiverXkbBindingsV1

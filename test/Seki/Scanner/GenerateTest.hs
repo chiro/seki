@@ -6,8 +6,11 @@ import Data.ByteString qualified as ByteString
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as TextIO
+import Seki.Protocol.RiverInputManagementV1 qualified as Input
+import Seki.Protocol.RiverLibinputConfigV1 qualified as Libinput
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as RiverXkb
+import Seki.Protocol.RiverXkbConfigV1 qualified as XkbConfig
 import Seki.Protocol.Wayland qualified as Wayland
 import Seki.Scanner.Generate (GenerationConfig (..), generateProtocolModule)
 import Seki.Scanner.IR (Protocol)
@@ -15,6 +18,7 @@ import Seki.Scanner.Parse (parseProtocolFile)
 import Seki.Wire.Arguments (
   ArgumentEncoder,
   DecodeResult (..),
+  putArray,
   putNewId,
   putObject,
   putString,
@@ -23,6 +27,7 @@ import Seki.Wire.Arguments (
   runCompleteArgumentDecoder,
  )
 import Seki.Wire.Binding qualified as Binding
+import Seki.Wire.Connection.Registry (applyRegistryEvent, emptyGlobalCatalog, globalVersion, selectGlobals)
 import Seki.Wire.Types (ObjectId, Opcode (..), mkObjectId)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertEqual, assertFailure, testCase)
@@ -33,6 +38,10 @@ tests =
     "Wayland binding generator"
     [ testCase "matches the committed Wayland binding" testGeneratedBindingFreshness
     , testCase "matches the committed river bindings" testGeneratedRiverBindingsFreshness
+    , testCase "matches the committed input bindings" testInputBindingsFreshness
+    , testCase "marks input batching and scrolllock with their negotiated versions" testInputMessageVersions
+    , testCase "retains opaque libinput request arrays" testLibinputOpaqueArray
+    , testCase "caps input global negotiation at generated and advertised versions" testInputVersions
     , testCase "matches the committed layer-surface fixture binding" testGeneratedFixtureBindingFreshness
     , testCase "matches the committed native probe bindings" testProbeBindingsFreshness
     , testCase "matches the committed virtual pointer binding" testVirtualPointerBindingFreshness
@@ -376,3 +385,70 @@ testProbeBindingsFreshness = do
     generated <- expectGenerated config (target : references) target
     committed <- TextIO.readFile ("tools-generated/layer-surface-fixture/Seki/Fixture/Protocol/" <> moduleSuffix <> ".hs")
     assertEqual (moduleSuffix <> " generated binding") committed generated
+
+testInputBindingsFreshness :: Assertion
+testInputBindingsFreshness = do
+  wayland <- expectProtocolFile waylandProtocolPath
+  input <- expectProtocolFile "protocol/river/river-input-management-v1.xml"
+  mapM_
+    (check wayland input)
+    [ ("RiverInputManagementV1", "river-input-management-v1")
+    , ("RiverLibinputConfigV1", "river-libinput-config-v1")
+    , ("RiverXkbConfigV1", "river-xkb-config-v1")
+    ]
+ where
+  check wayland input (suffix, stem) = do
+    let path = "protocol/river/" <> stem <> ".xml"
+    target <- expectProtocolFile path
+    generated <-
+      expectGenerated
+        ( GenerationConfig
+            ("Seki.Protocol." <> Text.pack suffix)
+            (Text.pack path)
+            "river v0.5.0, commit cc4a291b2b9375fe3d5fe5a64b6f510b463f888b"
+        )
+        (if stem == "river-input-management-v1" then [target, wayland] else [target, wayland, input])
+        target
+    committed <- TextIO.readFile ("src-generated/Seki/Protocol/" <> suffix <> ".hs")
+    assertEqual (suffix <> " generated binding") committed generated
+
+testLibinputOpaqueArray :: Assertion
+testLibinputOpaqueArray = do
+  resultId <- requireObjectId 31
+  let bytes = ByteString.pack [255, 0, 42, 128, 1]
+      request = Libinput.encodeRiverLibinputDeviceV1SetAccelSpeed resultId bytes :: Binding.RequestEncoder ()
+  assertEqual
+    "preserves arbitrary opaque bytes, including malformed Double payloads"
+    (runArgumentEncoder (putNewId resultId >> putArray bytes))
+    (runArgumentEncoder (Binding.requestArguments request))
+
+testInputVersions :: Assertion
+testInputVersions = do
+  check Input.riverInputManagerV1Interface 2
+  check Libinput.riverLibinputConfigV1Interface 2
+  check XkbConfig.riverXkbConfigV1Interface 3
+ where
+  check interface maximumVersion = mapM_ (one interface maximumVersion) [1, maximumVersion, 99]
+  one interface maximumVersion advertised = do
+    catalog <-
+      either
+        (assertFailure . show)
+        pure
+        (applyRegistryEvent (Wayland.WlRegistryGlobal 7 (Binding.interfaceName interface) advertised :: Wayland.WlRegistryEvent ()) emptyGlobalCatalog)
+    globals <- either (assertFailure . show) pure (selectGlobals interface 99 catalog)
+    assertEqual "negotiated version" [min advertised maximumVersion] (map globalVersion globals)
+
+testInputMessageVersions :: Assertion
+testInputMessageVersions = do
+  check (Input.decodeRiverInputDeviceV1Event (Opcode 3))
+  check (Libinput.decodeRiverLibinputDeviceV1Event (Opcode 55))
+  check (XkbConfig.decodeRiverXkbKeyboardV1Event (Opcode 7))
+  assertEqual
+    "scrolllock requires v3"
+    3
+    (Binding.requestSince XkbConfig.encodeRiverXkbKeyboardV1ScrolllockEnable)
+ where
+  check Nothing = assertFailure "missing done event"
+  check (Just decoder) = do
+    assertEqual "batch boundary event" "done" (Binding.eventName decoder)
+    assertEqual "done requires v2" 2 (Binding.eventSince decoder)
