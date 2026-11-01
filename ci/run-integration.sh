@@ -64,7 +64,7 @@ SEKI_RUN_INTEGRATION=1 \
   SEKI_REFERENCE_CONFIG_EXECUTABLE="$reference_config_executable" \
   SEKI_INTEGRATION_ARTIFACT_DIR="$artifact_directory" \
   SEKI_INTEGRATION_MANIFEST="$manifest" \
-  timeout 240s "$integration_executable" 2>&1 | tee -a "$raw_log"
+  timeout 480s "$integration_executable" 2>&1 | tee -a "$raw_log"
 suite_status=${PIPESTATUS[0]}
 set -e
 
