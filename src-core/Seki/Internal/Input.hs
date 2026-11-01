@@ -28,7 +28,6 @@ module Seki.Internal.Input (
 ) where
 
 import Data.Int (Int32)
-import Data.List (foldl')
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
@@ -189,7 +188,7 @@ data SettingError
 validateInputSetting :: InputSetting -> Either SettingError ()
 validateInputSetting setting = case setting of
   RepeatInfo rate delay | rate < 0 || delay < 0 -> Left NegativeRepeat
-  ScrollFactor factor | not (finite factor) || factor < 0 || factor > 8388607.99609375 -> Left InvalidScrollFactor
+  ScrollFactor factor | not (finite factor) || factor < 0 || factor > 8388607.99609375 || (factor > 0 && factor * 256 <= 0.5) -> Left InvalidScrollFactor
   MapOutput (Just name) | Text.null name || Text.any (== '\0') name -> Left EmptyOutputName
   MapRectangle (Just (InputRectangle _ _ width height)) | width < 0 || height < 0 -> Left InvalidRectangle
   CalibrationMatrix values | length values /= 6 || any (not . finite) values -> Left InvalidMatrix

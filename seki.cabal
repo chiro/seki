@@ -127,6 +127,7 @@ library seki-wire
     Seki.Run.IPCSchema
     Seki.Run.Snapshot
     Seki.Run.Inventory
+    Seki.Run.Input
     Seki.Run.LayerShell
     Seki.Run.Latency
     Seki.Run.Config
@@ -285,6 +286,7 @@ test-suite seki-test
     Seki.Run.IPCBoundaryTest
     Seki.Run.ExternalTest
     Seki.Run.InventoryTest
+    Seki.Run.InputTest
     Seki.Run.LatencyTest
     Seki.Run.LatencyPureTest
     Seki.Run.LatencyWorkloadTest

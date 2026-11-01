@@ -5,11 +5,15 @@ module Seki.Run.RuntimeTest (tests) where
 
 import Control.Exception (ErrorCall (..), onException, throwIO, try)
 import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.Map.Strict qualified as Map
+import Data.Word (Word32)
 import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Internal.Core.Geometry (GeometryError (..), Point (..), mkRect, mkSize)
+import Seki.Internal.Input
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Run.External qualified as External
+import Seki.Run.Input qualified as InputState
 import Seki.Run.Inventory (
   RiverInventoryError (..),
   RiverOutputState (..),
@@ -23,12 +27,15 @@ import Seki.Run.LayerShell (RiverLayerShellBootstrapError (..))
 import Seki.Run.MockRiver (
   FrameReader,
   callbackDoneFrame,
+  decodeNewId,
   encodedFrame,
   expectMockSuccess,
   expectNoBootstrapBind,
   expectRight,
+  handshake,
   newFrameReader,
   receiveExpectedRequest,
+  receiveFrame,
   receiveGlobalBind,
   receiveKeyBindingRequest,
   receiveLayerShellOutputRequest,
@@ -53,6 +60,7 @@ import Seki.Run.Runtime (
   PointerBindingEvent (..),
   RenderOutcome (..),
   RiverExit (..),
+  RiverInputSnapshot (..),
   RiverLayerFocus (..),
   RiverRuntimeError (..),
   RiverRuntimeHandlers (..),
@@ -60,6 +68,7 @@ import Seki.Run.Runtime (
   RiverSeatBindings (..),
   closeRiverSession,
   openRiverSessionAt,
+  readRiverInputSnapshot,
   readRiverInventory,
   readRiverSeatBindings,
   riverLayerShell,
@@ -75,12 +84,12 @@ import Seki.Run.Sequence (
  )
 import Seki.Run.Startup (waylandConnection)
 import Seki.Run.Xkb (RiverKeyBinding (..), RiverXkbBootstrapError (..))
-import Seki.Wire.Arguments (putInt, putNewId, putObject, putUint)
+import Seki.Wire.Arguments (fixedFromRaw, putFixed, putInt, putNewId, putObject, putString, putUint)
 import Seki.Wire.Connection (ConnectionError (..), dispatchNextEvent)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit, makeObjectLimit, objectId)
 import Seki.Wire.Connection.Registry (RegistryError (..), globalNameFromWord)
 import Seki.Wire.Transport (OwnedFd, ReceivedChunk (..), Transport, closeTransport, receiveChunk)
-import Seki.Wire.Types (ObjectId, Opcode (..))
+import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertEqual, assertFailure, testCase)
 
@@ -88,7 +97,10 @@ tests :: TestTree
 tests =
   testGroup
     "river runtime"
-    [ testCase "bounded external batches finish before re-wake and close on EOF" testExternalBatches
+    [ testCase "requested generic rules report unavailable without optional global" testInputUnavailable
+    , testCase "v1 transport callbacks only ready their captured cohort" testInputCohort
+    , testCase "generic input v1 uses a creation sync and v2 uses done" (testInput 1 >> testInput 2)
+    , testCase "bounded external batches finish before re-wake and close on EOF" testExternalBatches
     , testCase "opens, binds, dispatches, and closes an owned runtime" testOwnedRuntime
     , testCase "counts and rethrows sequence handler exceptions" testHandlerException
     , testCase "retires removed inventory objects and their nodes" testInventoryRemoval
@@ -185,6 +197,7 @@ testOwnedRuntime =
     assertEqual "successful measured kinds" [ManageSequence, RenderSequence, RenderSequence, ManageSequence, RenderSequence] (map sampleKind (recordingSamples recording))
     assertEqual "entry brackets handler and submission" True (and (zipWith (\sample now -> sampleStartedNS sample <= now && now <= sampleSubmittedNS sample) (recordingSamples recording) times))
     assertEqual "no measurement failures" (5, 0, 0) (recordingSuccessful recording, recordingFailed recording, recordingDropped recording)
+    assertEqual "optional input absent" (InputUnavailable []) =<< readRiverInputSnapshot session
     closeRiverSession session
 
 testHandlerException :: Assertion
@@ -253,7 +266,8 @@ testInventoryRemoval =
       closeTransport peer
     let handlers =
           RiverRuntimeHandlers
-            { riverExternalIngress = Nothing
+            { riverInputRules = []
+            , riverExternalIngress = Nothing
             , riverProtocolHandlers =
                 (protocolHandlers (\_ -> pure ()))
                   { handleRiverWindowEvent =
@@ -310,7 +324,8 @@ testPhasePlanFailure =
           assertFailure "sequence finish was sent after a failed phase plan"
     let handlers =
           RiverRuntimeHandlers
-            { riverExternalIngress = Nothing
+            { riverInputRules = []
+            , riverExternalIngress = Nothing
             , riverProtocolHandlers = protocolHandlers (\_ -> pure ())
             , riverKeyBindings = []
             , riverPointerBindings = []
@@ -357,7 +372,8 @@ testInventoryFailure =
           assertFailure "runtime remained open after an inventory failure"
     let handlers =
           RiverRuntimeHandlers
-            { riverExternalIngress = Nothing
+            { riverInputRules = []
+            , riverExternalIngress = Nothing
             , riverProtocolHandlers =
                 (protocolHandlers (\_ -> pure ()))
                   { handleRiverWindowEvent =
@@ -408,7 +424,8 @@ testUnknownInteraction =
         _ -> assertFailure "runtime remained open after an unknown interaction"
     let handlers =
           (runtimeHandlers (\_ -> pure ()))
-            { riverExternalIngress = Nothing
+            { riverInputRules = []
+            , riverExternalIngress = Nothing
             , riverProtocolHandlers =
                 (protocolHandlers (\_ -> pure ()))
                   { handleRiverSeatEvent = \_ _ -> modifyIORef' delivered (+ 1)
@@ -444,7 +461,8 @@ testNodeAcquisitionFailure =
           assertFailure "node request was sent despite the object limit"
     let handlers =
           RiverRuntimeHandlers
-            { riverExternalIngress = Nothing
+            { riverInputRules = []
+            , riverExternalIngress = Nothing
             , riverProtocolHandlers =
                 (protocolHandlers (\_ -> pure ()))
                   { handleRiverWindowCreated =
@@ -532,7 +550,8 @@ testSeatBindingLifecycle =
       closeTransport peer
     let handlers =
           RiverRuntimeHandlers
-            { riverExternalIngress = Nothing
+            { riverInputRules = []
+            , riverExternalIngress = Nothing
             , riverProtocolHandlers =
                 (protocolHandlers (\_ -> pure ()))
                   { handleRiverSeatCreated = \_ -> modifyIORef' seatCallbacks (+ 1)
@@ -1004,7 +1023,8 @@ runtimeHandlers ::
   RiverRuntimeHandlers
 runtimeHandlers managerHandler =
   RiverRuntimeHandlers
-    { riverExternalIngress = Nothing
+    { riverInputRules = []
+    , riverExternalIngress = Nothing
     , riverProtocolHandlers = protocolHandlers managerHandler
     , riverKeyBindings = []
     , riverPointerBindings = []
@@ -1124,7 +1144,8 @@ testExternalBatches = withRuntimePair $ \target peer -> do
     closeTransport peer
   let handlers =
         (runtimeHandlers (\_ -> pure ()))
-          { riverExternalIngress = Just (External.externalLifecycle queue)
+          { riverInputRules = []
+          , riverExternalIngress = Just (External.externalLifecycle queue)
           , prepareRiverManagePlan = \_ -> do
               batch <- External.drainExternal queue
               modifyIORef' applied (<> External.drainedInputs batch)
@@ -1136,3 +1157,105 @@ testExternalBatches = withRuntimePair $ \target peer -> do
   expectMockSuccess mockDone
   readIORef applied >>= assertEqual "all batches applied once in FIFO order" [1 .. 65]
   External.submitExternal (External.externalProducer queue) 66 >>= assertEqual "EOF closed producer" External.IngressClosed
+
+testInput :: Word32 -> Assertion
+testInput version = withRuntimePair $ \target peer -> do
+  patternValue <- expectRight (compileDevicePattern "*")
+  mockDone <- runMock $ do
+    reader <- newFrameReader
+    (registry, callback) <- receiveStartupRequests reader peer
+    sendFrames
+      peer
+      [ registryGlobalFrame registry 7 "river_window_manager_v1" 4
+      , registryGlobalFrame registry 8 "river_xkb_bindings_v1" 3
+      , registryGlobalFrame registry 9 "river_layer_shell_v1" 1
+      , registryGlobalFrame registry 10 "river_input_manager_v1" version
+      , callbackDoneFrame callback 1
+      ]
+    input <- receiveGlobalBind reader peer "input first" 10 "river_input_manager_v1" version
+    (manager, _, _) <- receiveRuntimeBinds reader peer
+    device <- requireObjectId 0xff000001
+    sendFrames peer [encodedFrame input (Opcode 1) (putNewId device)]
+    barrier <-
+      if version == 1
+        then do
+          frame <- receiveFrame reader peer
+          assertEqual "discovery sync" (Opcode 0) (rawFrameOpcode frame)
+          Just <$> decodeNewId frame
+        else pure Nothing
+    sendFrames
+      peer
+      [ encodedFrame device (Opcode 1) (putUint 0)
+      , encodedFrame device (Opcode 2) (putString "fixture")
+      , encodedFrame manager (Opcode 2) (pure ())
+      ]
+    -- A manage round trip proves metadata alone has not emitted a setter.
+    receiveSequenceCompletion reader peer manager (Opcode 2)
+    case barrier of
+      Just cb -> sendFrames peer [callbackDoneFrame cb 2]
+      Nothing -> sendFrames peer [encodedFrame device (Opcode 3) (pure ())]
+    receiveExpectedRequest reader peer device (Opcode 2) (putInt 37 >> putInt 410)
+    sendFrames peer [encodedFrame device (Opcode 0) (pure ())]
+    receiveExpectedRequest reader peer device (Opcode 0) (pure ())
+    pointer <- requireObjectId 0xff000002
+    sendFrames peer [encodedFrame input (Opcode 1) (putNewId pointer)]
+    pointerBarrier <- if version == 1 then Just <$> (receiveFrame reader peer >>= decodeNewId) else pure Nothing
+    sendFrames peer [encodedFrame pointer (Opcode 1) (putUint 1), encodedFrame pointer (Opcode 2) (putString "pointer")]
+    case pointerBarrier of
+      Just cb -> sendFrames peer [callbackDoneFrame cb 3]
+      Nothing -> sendFrames peer [encodedFrame pointer (Opcode 3) (pure ())]
+    receiveExpectedRequest reader peer pointer (Opcode 3) (putFixed (fixedFromRaw 384))
+    receiveExpectedRequest reader peer pointer (Opcode 4) (putUint 0)
+    receiveExpectedRequest reader peer pointer (Opcode 5) (putInt (-10) >> putInt 20 >> putInt 100 >> putInt 200)
+    sendFrames peer [encodedFrame pointer (Opcode 0) (pure ())]
+    receiveExpectedRequest reader peer pointer (Opcode 0) (pure ())
+    closeTransport peer
+  let handlers = (runtimeHandlers (\_ -> pure ())){riverInputRules = [InputRule patternValue Nothing [RepeatInfo 37 410, ScrollFactor 1.5, MapOutput Nothing, MapRectangle (Just (InputRectangle (-10) 20 100 200))]]}
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
+  assertEqual "runtime clean EOF" (Right RiverEnded) =<< runRiverSession session
+  expectMockSuccess mockDone
+  readRiverInputSnapshot session >>= \case
+    InputUnavailable _ -> assertFailure "input manager unexpectedly unavailable"
+    InputAvailable inventory -> assertEqual "removed generation retained" [InputState.Removed, InputState.Removed] (map InputState.inputLifecycle (Map.elems (InputState.inputDevices inventory)))
+
+testInputCohort :: Assertion
+testInputCohort = withRuntimePair $ \target peer -> do
+  patternValue <- expectRight (compileDevicePattern "*")
+  mockDone <- runMock $ do
+    reader <- newFrameReader
+    (registry, callback) <- receiveStartupRequests reader peer
+    sendFrames peer [registryGlobalFrame registry 7 "river_window_manager_v1" 4, registryGlobalFrame registry 8 "river_xkb_bindings_v1" 3, registryGlobalFrame registry 9 "river_layer_shell_v1" 1, registryGlobalFrame registry 10 "river_input_manager_v1" 1, callbackDoneFrame callback 1]
+    input <- receiveGlobalBind reader peer "input" 10 "river_input_manager_v1" 1
+    (manager, _, _) <- receiveRuntimeBinds reader peer
+    a <- requireObjectId 0xff000001
+    b <- requireObjectId 0xff000002
+    let announce device = sendFrames peer [encodedFrame input (Opcode 1) (putNewId device), encodedFrame device (Opcode 1) (putUint 0), encodedFrame device (Opcode 2) (putString "fixture")]
+    announce a
+    callbackA <- receiveFrame reader peer >>= decodeNewId
+    announce b
+    callbackB <- receiveFrame reader peer >>= decodeNewId
+    sendFrames peer [encodedFrame a (Opcode 0) (pure ())]
+    receiveExpectedRequest reader peer a (Opcode 0) (pure ())
+    sendFrames peer [callbackDoneFrame callbackA 2, encodedFrame manager (Opcode 2) (pure ())]
+    receiveSequenceCompletion reader peer manager (Opcode 2)
+    sendFrames peer [callbackDoneFrame callbackB 3]
+    receiveExpectedRequest reader peer b (Opcode 2) (putInt 37 >> putInt 410)
+    closeTransport peer
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (\_ -> pure ())){riverInputRules = [InputRule patternValue Nothing [RepeatInfo 37 410]]})
+  assertEqual "cohort EOF" (Right RiverEnded) =<< runRiverSession session
+  expectMockSuccess mockDone
+
+testInputUnavailable :: Assertion
+testInputUnavailable = withRuntimePair $ \target peer -> do
+  patternValue <- expectRight (compileDevicePattern "*")
+  let rules = [InputRule patternValue Nothing [RepeatInfo 37 410]]
+  mockDone <- runMock $ do
+    reader <- newFrameReader
+    (manager, _, _) <- handshake reader peer
+    sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
+    receiveSequenceCompletion reader peer manager (Opcode 2)
+    closeTransport peer
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (\_ -> pure ())){riverInputRules = rules})
+  assertEqual "WM usable without input manager" (Right RiverEnded) =<< runRiverSession session
+  assertEqual "requested policy unavailable" (InputUnavailable rules) =<< readRiverInputSnapshot session
+  expectMockSuccess mockDone

@@ -174,7 +174,8 @@ firstRepeat seen (x : xs)
 policyRuntimeHandlers :: (Eq i, Show i, LayoutClass l) => Policy i l -> RiverRuntimeHandlers
 policyRuntimeHandlers policy =
   RiverRuntimeHandlers
-    { riverExternalIngress = Just (externalLifecycle (policyIngress policy))
+    { riverInputRules = []
+    , riverExternalIngress = Just (externalLifecycle (policyIngress policy))
     , riverProtocolHandlers =
         RiverWindowManagerHandlers
           { handleRiverWindowManagerEvent = \_ _ -> pure ()

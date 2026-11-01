@@ -19,6 +19,7 @@ import Seki.Run.ConfigTest qualified as ConfigTest
 import Seki.Run.ExternalTest qualified as ExternalTest
 import Seki.Run.IPCBoundaryTest qualified as IPCBoundaryTest
 import Seki.Run.IPCTest qualified as IPCTest
+import Seki.Run.InputTest qualified as RuntimeInputTest
 import Seki.Run.InventoryTest qualified as InventoryTest
 import Seki.Run.LatencyPureTest qualified as LatencyPureTest
 import Seki.Run.LatencyTest qualified as LatencyTest
@@ -49,4 +50,56 @@ import Seki.Wire.TransportTest qualified as TransportTest
 import Test.Tasty (defaultMain, testGroup)
 
 main :: IO ()
-main = defaultMain (testGroup "seki" [InputTest.tests, IPCBoundaryTest.tests, IPCTest.tests, ExternalTest.tests, LatencyPureTest.tests, LatencyWorkloadTest.tests, LatencyTest.tests, ReconcileTest.tests, ReconcileTraceTest.tests, SceneTest.tests, GeometryTest.tests, StackSetTest.tests, StateTest.tests, LayoutTest.tests, ManageHookTest.tests, PointerOpTest.tests, FullLayoutTest.tests, TallTest.tests, ActionTest.tests, CoreEventTest.tests, RestoreTest.tests, CodecTest.tests, ArgumentsTest.tests, TransportTest.tests, DriverTest.tests, BufferTest.tests, ObjectTableTest.tests, RequestTest.tests, EventTest.tests, ConnectionTest.tests, DispatchTest.tests, RegistryTest.tests, StartupTest.tests, RiverTest.tests, RuntimeTest.tests, SequenceTest.tests, PhaseTest.tests, InventoryTest.tests, ConfigTest.tests, PolicyTest.tests, RestartTest.tests, SessionsTest.tests, ScannerTest.tests, GeneratorTest.tests, LayerSurfaceFixtureTest.tests, ProbeFixtureTest.tests])
+main =
+  defaultMain
+    ( testGroup
+        "seki"
+        [ InputTest.tests
+        , IPCBoundaryTest.tests
+        , IPCTest.tests
+        , ExternalTest.tests
+        , LatencyPureTest.tests
+        , LatencyWorkloadTest.tests
+        , LatencyTest.tests
+        , ReconcileTest.tests
+        , ReconcileTraceTest.tests
+        , SceneTest.tests
+        , GeometryTest.tests
+        , StackSetTest.tests
+        , StateTest.tests
+        , LayoutTest.tests
+        , ManageHookTest.tests
+        , PointerOpTest.tests
+        , FullLayoutTest.tests
+        , TallTest.tests
+        , ActionTest.tests
+        , CoreEventTest.tests
+        , RestoreTest.tests
+        , CodecTest.tests
+        , ArgumentsTest.tests
+        , TransportTest.tests
+        , DriverTest.tests
+        , BufferTest.tests
+        , ObjectTableTest.tests
+        , RequestTest.tests
+        , EventTest.tests
+        , ConnectionTest.tests
+        , DispatchTest.tests
+        , RegistryTest.tests
+        , StartupTest.tests
+        , RiverTest.tests
+        , RuntimeTest.tests
+        , SequenceTest.tests
+        , PhaseTest.tests
+        , RuntimeInputTest.tests
+        , InventoryTest.tests
+        , ConfigTest.tests
+        , PolicyTest.tests
+        , RestartTest.tests
+        , SessionsTest.tests
+        , ScannerTest.tests
+        , GeneratorTest.tests
+        , LayerSurfaceFixtureTest.tests
+        , ProbeFixtureTest.tests
+        ]
+    )
