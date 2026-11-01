@@ -2,11 +2,11 @@
 
 module Seki.Integration.ScratchpadRestore (scratchpadRestoreScenarios) where
 
-import Control.Concurrent (forkIO, killThread)
+import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Exception (bracket, finally)
-import Control.Monad (forM_, void)
+import Control.Monad (forM_, void, when)
 import Data.IORef
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
@@ -24,6 +24,7 @@ import Seki.Internal.Core.State
 import Seki.Run.Config (policyConfigOf)
 import Seki.Run.External
 import Seki.Run.IPC (withIPCAt)
+import Seki.Run.Inventory (RiverSize (..), RiverWindowState (..), riverInventoryWindows)
 import Seki.Run.Policy
 import Seki.Run.Runtime
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
@@ -36,9 +37,9 @@ import System.Process (shell)
 type PadPolicy = Policy String StdLayouts
 
 scratchpadRestoreScenarios :: [(String, IO ())]
-scratchpadRestoreScenarios = [("m3-scratchpad-restart", restorePads RestartPads), ("m3-scratchpad-config-restore", restorePads ChangedDefinitions), ("m3-scratchpad-restore-missing-float", restorePads MissingFloatCopy)]
+scratchpadRestoreScenarios = [("m3-scratchpad-restart", restorePads RestartPads), ("m3-scratchpad-config-restore", restorePads ChangedDefinitions), ("m3-scratchpad-restore-missing-float", restorePads MissingFloatCopy), ("m3-scratchpad-sink-restart", restorePads SunkPad)]
 
-data RestoreMode = RestartPads | ChangedDefinitions | MissingFloatCopy deriving (Eq)
+data RestoreMode = RestartPads | ChangedDefinitions | MissingFloatCopy | SunkPad deriving (Eq)
 
 box :: OutputRect
 box = either (error . show) OutputRect (mkSize 500 360 >>= mkRect (Point 80 60))
@@ -88,6 +89,7 @@ restorePads mode = withNestedRiver 2 $ \nested -> do
         RestartPads -> "lane7"
         ChangedDefinitions -> "lane10"
         MissingFloatCopy -> "restore-missing-float"
+        SunkPad -> "sink-restart"
       config =
         (policyConfigOf def)
           { policyScratchpads = definitions
@@ -99,17 +101,24 @@ restorePads mode = withNestedRiver 2 $ \nested -> do
           }
       stopChildren = readIORef children >>= mapM_ stopManagedProcess
   ( withKeyboard (riverEnvironment nested) $ withProbe (riverSocket nested) $ \probe -> do
-      (saved, ordinary) <- withManager nested config $ \policy _ ended -> do
+      (saved, ordinary, baseline) <- withManager nested config $ \policy session0 ended -> do
         ordinary <- openWindow probe Green
         apply policy (toggleScratchpad "term")
         void (awaitOwner policy "term")
         apply policy (toggleScratchpad "term" >> toggleScratchpad "other")
-        void (awaitOwner policy "other")
+        owner <- awaitOwner policy "other"
+        baseline <- stablePadDimensions session0 "other"
+        when (mode == SunkPad) $ do
+          case owner of
+            ShownPad w _ -> apply policy (sink w)
+            _ -> failIntegration "expected shown pad before sink"
+          void (settlePadDimensions session0 "other" (/= baseline))
+        announce ("SCRATCHPAD_RESTORE_BASELINE_DIMS " <> show baseline)
         capture nested (label <> "-before")
         apply policy restart
         requireRuntimeExit ended >>= assertEqual "scratchpad restart stop handshake" (Right RiverStopped)
         saved <- readRestoreState policy
-        pure (saved, ordinary)
+        pure (saved, ordinary, baseline)
       assertEqual "two actual initial launches" 2 =<< readIORef launches
       if changed
         then do
@@ -136,6 +145,20 @@ restorePads mode = withNestedRiver 2 $ \nested -> do
             capture nested (label <> "-definition-output-removed")
           else do
             assertEqual "shown/hidden identifiers and geometry survive reconnect" (savedScratchpads saved) (savedScratchpads restored)
+            when (mode == MissingFloatCopy) $ do
+              actual <- settlePadDimensions session "other" (== baseline)
+              assertEqual "missing float copy preserves actual pad dimensions" baseline actual
+            when (mode == SunkPad) $ do
+              st <- readPolicyState policy
+              case (Map.lookup "other" (coreScratchpads st), coreWorkspaces st) of
+                (Just (ShownPad w _), AttachedState ss _) -> assertEqual "sunk pad stays tiled after restart" Nothing (Map.lookup w (W.floating ss))
+                _ -> failIntegration "missing shown pad after sink restart"
+              apply policy (toggleScratchpad "other" >> toggleScratchpad "other")
+              void (awaitOwner policy "other")
+              actual <- settlePadDimensions session "other" (== baseline)
+              announce ("SCRATCHPAD_SINK_RESHOW_DIMS " <> show actual)
+              assertEqual "re-shown sunk pad reapplies its actual configured size" baseline actual
+              capture nested (label <> "-reshown")
             apply policy (toggleScratchpad "term")
             void (awaitOwner policy "term")
             capture nested (label <> "-hidden-returned")
@@ -150,3 +173,29 @@ restorePads mode = withNestedRiver 2 $ \nested -> do
         void (waitUntil "restart terminals closed" assertionTimeoutMicroseconds (liveWindows . liveInventoryOf <$> readRiverInventory session) ((<= 1) . Map.size))
     )
     `finally` stopChildren
+
+padDimensions :: RiverSession -> String -> IO [Maybe RiverSize]
+padDimensions session name = do
+  inventory <- readRiverInventory session
+  pure [riverWindowDimensions window | window <- riverInventoryWindows inventory, riverWindowAppId window == Just (Text.pack ("seki-pad-" <> name))]
+
+settlePadDimensions :: RiverSession -> String -> ([Maybe RiverSize] -> Bool) -> IO [Maybe RiverSize]
+settlePadDimensions session name matches = go (100 :: Int)
+ where
+  go remaining = do
+    actual <- padDimensions session name
+    if matches actual || remaining <= 0 then pure actual else threadDelay 50000 >> go (remaining - 1)
+
+stablePadDimensions :: RiverSession -> String -> IO [Maybe RiverSize]
+stablePadDimensions session name = go (0 :: Int) [] (200 :: Int)
+ where
+  go same previous remaining = do
+    actual <- padDimensions session name
+    let mapped = case actual of [Just (RiverSize width height)] -> width > 0 && height > 0; _ -> False
+        stable = if mapped && actual == previous then same + 1 else 0
+    if stable >= 10
+      then pure actual
+      else
+        if remaining <= 0
+          then failIntegration ("pad dimensions never stabilized: " <> show actual)
+          else threadDelay 50000 >> go stable actual (remaining - 1)

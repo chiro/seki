@@ -160,9 +160,16 @@ restoreCore inventory saved fresh = (normalizeCore restoredPads, walkNotes ++ ma
     Just w
       | w `Set.notMember` seen && Map.notMember name (coreScratchpads st) ->
           let geom = maybe ClientSized id (floatGeom savedGeom)
-              released = setFloat w geom (overWorkspaces (manageWindow id w) st)
+              reinserted = overWorkspaces (manageWindow id w) st
+              released = setFloat w geom reinserted
               hasWorkspace = w `Set.member` restoredWindows
-              shown = if hasWorkspace then setFloat w geom st else released
+              shownBase = if hasWorkspace then st else reinserted
+              shown = case (floatGeom savedGeom, hasWorkspace) of
+                (Just valid@(FloatAt _), _) -> setFloat w valid shownBase
+                (_, True) -> st
+                (_, False) -> case lookup key (savedFloats saved) of
+                  Just fallback -> setFloat w (maybe ClientSized id (floatGeom fallback)) shownBase
+                  Nothing -> shownBase
               previous = prior >>= (`Map.lookup` liveWindows inventory)
               next = case Map.lookup name (coreScratchpadDefinitions fresh) of
                 Nothing -> if isHidden then released else shown
