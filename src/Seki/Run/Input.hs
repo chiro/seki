@@ -456,7 +456,7 @@ bindLibinput wayland globals state managerRef enabled apply failed =
                     writeIORef enabled False
                     inventory <- readIORef state
                     mapM_ (retireFacet connection failed . Just . inputLibinput) (Map.elems (inputDevices inventory))
-                    modifyIORef' state (\i -> i{inputDevices = fmap (\d -> d{inputLibinput = emptyFacet FacetUnavailable}) (inputDevices i)})
+                    modifyIORef' state (\i -> i{inputDevices = fmap (\d -> publishFacet d (emptyFacet FacetUnavailable)) (inputDevices i)})
                     submitRequest connection L.riverLibinputConfigV1Interface manager L.encodeRiverLibinputConfigV1Destroy >>= result
                     apply
                   _ -> pure ()

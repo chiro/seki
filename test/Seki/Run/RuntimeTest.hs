@@ -109,7 +109,9 @@ tests =
     , testCase "libinput custom curves success rejection removal v1/v2" (mapM_ (\v -> mapM_ (testCustomLibinput v) [0, 1, 2, 3, 4]) [1, 2])
     , testCase "XKB retains two distinct keyboards with empty rules" testTwoXkbKeyboards
     , testCase "XKB synthetic v1/v2/v3 batching, feedback and scrolllock gate" (mapM_ testXkbConfig [1, 2, 3])
-    , testCase "libinput full synthetic peer surface and acknowledgements v1/v2" (mapM_ (\v -> mapM_ (testLibinput v) [0, 1, 2]) [1, 2])
+    , testCase "libinput full synthetic peer surface and acknowledgements v1/v2" (mapM_ (\v -> mapM_ (testLibinput False v) [0, 1, 2]) [1, 2])
+    , testCase "finished libinput manager clears values v1" (testLibinput True 1 0)
+    , testCase "finished libinput manager clears values v2" (testLibinput True 2 0)
     , testCase "requested generic rules report unavailable without optional global" testInputUnavailable
     , testCase "v1 transport callbacks only ready their captured cohort" testInputCohort
     , testCase "generic input v1 uses a creation sync and v2 uses done" (testInput 1 >> testInput 2)
@@ -1203,7 +1205,6 @@ testInput version = withRuntimePair $ \target peer -> do
       , encodedFrame device (Opcode 2) (putString "fixture")
       , encodedFrame manager (Opcode 2) (pure ())
       ]
-    -- A manage round trip proves metadata alone has not emitted a setter.
     receiveSequenceCompletion reader peer manager (Opcode 2)
     case barrier of
       Just cb -> sendFrames peer [callbackDoneFrame cb 2]
@@ -1277,8 +1278,8 @@ testInputUnavailable = withRuntimePair $ \target peer -> do
   assertEqual "requested policy unavailable" (InputUnavailable rules) =<< readRiverInputSnapshot session
   expectMockSuccess mockDone
 
-testLibinput :: Word32 -> Int -> Assertion
-testLibinput version offset = withRuntimePair $ \target peer -> do
+testLibinput :: Bool -> Word32 -> Int -> Assertion
+testLibinput finishManager version offset = withRuntimePair $ \target peer -> do
   patternValue <- expectRight (compileDevicePattern "*")
   let settings = [SendEvents EventsDisabled, Tap True, TapButtonMap LeftMiddleRight, Drag True, DragLock DragLockSticky, ThreeFingerDrag FourFingerDragEnabled, CalibrationMatrix [1, 0, 0, 0, 1, 0], Acceleration (AccelerationProfile AccelAdaptive), AccelSpeed 0.25, NaturalScroll True, LeftHanded True, ClickMethod ClickFinger, ClickfingerButtonMap LeftMiddleRight, MiddleEmulation True, ScrollMethod ScrollOnButton, ScrollButton 274, ScrollButtonLock True, DisableWhileTyping True, DisableWhileTrackpoint True, Rotation 90]
   mockDone <- runMock $ flip onException (closeTransport peer) $ do
@@ -1365,6 +1366,16 @@ testLibinput version offset = withRuntimePair $ \target peer -> do
     if version == 2 then sendFrames peer [encodedFrame device (Opcode 55) (pure ())] else pure ()
     sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
     receiveSequenceCompletion reader peer manager (Opcode 2)
+    if finishManager
+      then do
+        sendFrames peer [encodedFrame manager (Opcode 3) (pure ())]
+        receiveSequenceCompletion reader peer manager (Opcode 4)
+        sendFrames peer [encodedFrame libinput (Opcode 0) (pure ())]
+        receiveExpectedRequest reader peer device (Opcode 0) (pure ())
+        receiveExpectedRequest reader peer libinput (Opcode 1) (pure ())
+        sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
+        receiveSequenceCompletion reader peer manager (Opcode 2)
+      else pure ()
     wakeCount >>= \count -> assertBool "input changes request owner publication" (count > 0)
     closeTransport peer
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (\_ -> pure ())){riverInputRules = [InputRule patternValue Nothing settings]})
@@ -1373,10 +1384,16 @@ testLibinput version offset = withRuntimePair $ \target peer -> do
   readRiverInputSnapshot session >>= \case
     InputUnavailable _ -> assertFailure "missing inventory"
     InputAvailable inventory -> case Map.elems (InputState.inputDevices inventory) of
-      [device] -> do
-        assertEqual "all result acknowledgements retained" [case (index + offset) `mod` 3 of { 0 -> InputState.SettingApplied; 1 -> InputState.SettingUnsupported; _ -> InputState.SettingRejectedInvalid } | index <- [0 .. 19]] (map InputState.settingOutcome (Map.elems (InputState.inputResults device)))
-        assertEqual "feedback separate from desired" (Just (Tap False)) (Map.lookup TapKey (InputState.inputCurrent device))
-        assertEqual "defaults separate from current" (Just (Tap True)) (Map.lookup TapKey (InputState.inputDefaults device))
+      [device]
+        | finishManager -> do
+            assertEqual "finished libinput facet is unavailable" FacetUnavailable (facetLifecycle (InputState.inputLibinput device))
+            assertEqual "finished libinput current is unknown" Nothing (Map.lookup TapKey (InputState.inputCurrent device))
+            assertEqual "finished libinput defaults are unknown" Nothing (Map.lookup TapKey (InputState.inputDefaults device))
+            assertBool "finished settings report unavailable" (all ((== InputState.SettingUnavailable) . InputState.settingOutcome) (Map.elems (InputState.inputResults device)))
+        | otherwise -> do
+            assertEqual "all result acknowledgements retained" [case (index + offset) `mod` 3 of { 0 -> InputState.SettingApplied; 1 -> InputState.SettingUnsupported; _ -> InputState.SettingRejectedInvalid } | index <- [0 .. 19]] (map InputState.settingOutcome (Map.elems (InputState.inputResults device)))
+            assertEqual "feedback separate from desired" (Just (Tap False)) (Map.lookup TapKey (InputState.inputCurrent device))
+            assertEqual "defaults separate from current" (Just (Tap True)) (Map.lookup TapKey (InputState.inputDefaults device))
       _ -> assertFailure "unexpected canonical devices"
 
 receiveLibinputRequest :: FrameReader -> Transport -> ObjectId -> Opcode -> SekiArguments.ArgumentEncoder () () -> IO ObjectId
