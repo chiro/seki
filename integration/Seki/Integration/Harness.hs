@@ -450,7 +450,8 @@ integrationConfig ::
   PolicyConfig String Full
 integrationConfig probeMode executable footConfigPath probeSocketPath clientEnvironment terminalProcess =
   PolicyConfig
-    { policyInputRules = []
+    { policyScratchpads = []
+    , policyInputRules = []
     , policyLayout = Full
     , policyTags = ["1"]
     , policyBindings = [(functionKeyBinding 0xffbe, spawn "integration-terminal"), (functionKeyBinding 0xffbf, kill)]

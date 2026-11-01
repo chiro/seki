@@ -42,6 +42,9 @@ module Seki (
   sink,
   toggleFullscreen,
   restart,
+  Scratchpad (..),
+  toggleScratchpad,
+  resetScratchpad,
   ManageHook,
   Query,
   appId,
@@ -86,6 +89,7 @@ import Seki.Internal.Config (Action, Bindings, BorderColor (..), BorderConfig (.
 import Seki.Internal.Core.Action qualified as Core
 import Seki.Internal.Core.ManageHook (Query, appId, composeAll, idHook, isDialog, title, (-->), (=?))
 import Seki.Internal.Core.ManageHook qualified as Core
+import Seki.Internal.Core.Scratchpad.Types (Scratchpad (..))
 import Seki.Layout.Full
 import Seki.Layout.Tall
 import Seki.Run.Config (runConfig)
@@ -161,3 +165,11 @@ replaces itself with that executable, and restores the state there.
 -}
 restart :: Action l ()
 restart = Core.restart
+
+-- | Open, hide or bring a named pad. Unresolved launches coalesce.
+toggleScratchpad :: String -> Action l ()
+toggleScratchpad = Core.toggleScratchpad
+
+-- | Clear an unresolved attempt after operator cleanup; no process is killed.
+resetScratchpad :: String -> Action l ()
+resetScratchpad = Core.resetScratchpad

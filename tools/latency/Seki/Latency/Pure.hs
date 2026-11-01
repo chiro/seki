@@ -147,6 +147,8 @@ pointerOp (PointerOp i s w k (OutputRect r) (SizeBounds a b c d) moved) = many i
 command :: String -> Word64
 command = many (fromIntegral . fromEnum)
 intent :: Intent -> Word64
+intent (LaunchScratchpad name generation cmd) = mix (fromInteger generation) (mix (command name) (command cmd))
+intent (ScratchpadNotice message) = command message
 intent (Spawn cmd) = mix 1 (command cmd)
 intent (CloseWindow w) = mix 2 (window w)
 intent ReclaimFocus = 3

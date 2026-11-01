@@ -69,6 +69,11 @@ tests =
         parseCLI ["spawn", "echo hello world"] @?= Right (Spawn "echo hello world")
         parseCLI ["layout", "next"] @?= Right (Layout Next)
         mapM_ (\args -> assertBool "usage error" (either (const True) (const False) (parseCLI args))) [[], ["layout", "bogus"], ["spawn", "  "], ["snapshot", "extra"]]
+    , testCase "scratchpad toggle/reset share CLI and JSON schema" $ do
+        parseCLI ["scratchpad", "term"] @?= Right (Scratchpad "term")
+        parseCLI ["scratchpad-reset", "term"] @?= Right (ScratchpadReset "term")
+        decodeRequest "{\"version\":1,\"id\":\"pad-1\",\"op\":\"scratchpad\",\"name\":\"term\"}" @?= Right (Request "pad-1" (Scratchpad "term"))
+        decodeRequest "{\"version\":1,\"id\":\"pad-2\",\"op\":\"scratchpad-reset\",\"name\":\"term\"}" @?= Right (Request "pad-2" (ScratchpadReset "term"))
     , testCase "typed command schema" $
         decodeRequest "{\"version\":1,\"id\":\"a\",\"op\":\"workspace\",\"tag\":\"3\"}" @?= Right (Request "a" (Workspace "3"))
     , testCase "only framing and JSON errors close request connections" $ do
@@ -97,7 +102,8 @@ tests =
         st <- either (assertFailure . show) pure (newCoreState Full ["3", "1"])
         projectSnapshot "test-session" id ["3", "1"] 7 st (RiverRuntimeSnapshot emptyRiverInventory (InputUnavailable []) [])
           @?= object
-            [ "session" .= ("test-session" :: Text.Text)
+            [ "scratchpads" .= ([] :: [Value])
+            , "session" .= ("test-session" :: Text.Text)
             , "revision" .= (7 :: Int)
             , "outputs" .= ([] :: [Value])
             , "workspaces"

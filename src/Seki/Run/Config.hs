@@ -56,7 +56,8 @@ prepareConfig = newPolicy . policyConfigOf
 policyConfigOf :: Config l -> PolicyConfig String l
 policyConfigOf config =
   PolicyConfig
-    { policyInputRules = inputRules config
+    { policyScratchpads = scratchpads config
+    , policyInputRules = inputRules config
     , policyLayout = layoutHook config
     , policyTags = workspaces config
     , policyBindings = [(lower binding, action) | (binding, action) <- keys config config]

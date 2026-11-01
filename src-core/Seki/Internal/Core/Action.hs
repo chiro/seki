@@ -20,12 +20,18 @@ module Seki.Internal.Core.Action (
   sink,
   toggleFullscreen,
   restart,
+  toggleScratchpad,
+  resetScratchpad,
+  scratchpadTimeout,
+  scratchpadIntents,
 ) where
 
 import Control.Monad (ap)
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Seki.Internal.Core.Layout (LayoutClass, Message, SomeMessage (..), messageCurrentLayout)
+import Seki.Internal.Core.Scratchpad (resetPad, timeoutPad, togglePad)
+import Seki.Internal.Core.Scratchpad.Types (ScratchpadEffect (..))
 import Seki.Internal.Core.StackSet (FloatGeom (..), StackSet (..), WindowId, member, peek)
 import Seki.Internal.Core.StackSet qualified as StackSet
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..), overWorkspaces)
@@ -34,6 +40,8 @@ import Seki.Internal.Core.State (CoreState (..), Workspaces (..), overWorkspaces
 data Intent
   = -- | Launch a shell command.
     Spawn String
+  | LaunchScratchpad String Integer String
+  | ScratchpadNotice String
   | -- | Ask river to close the window.
     CloseWindow WindowId
   | ReclaimFocus
@@ -138,3 +146,22 @@ stacks, focus, layouts, floats, fullscreen windows, and the spawned-once set.
 -}
 restart :: Action i l ()
 restart = record (const [Restart])
+
+-- | Toggle a named pad; unresolved attempts coalesce until a match or reset.
+toggleScratchpad :: (Eq i) => String -> Action i l ()
+toggleScratchpad name = record (const [ReclaimFocus]) >> padAction (togglePad name)
+
+-- | Permit another launch after operator cleanup. Does not terminate processes.
+resetScratchpad :: String -> Action i l ()
+resetScratchpad name = padAction (resetPad name)
+
+scratchpadTimeout :: String -> Integer -> Action i l ()
+scratchpadTimeout name generation = padAction (timeoutPad name generation)
+
+padAction :: (CoreState i l -> (CoreState i l, [ScratchpadEffect])) -> Action i l ()
+padAction f = Action $ \st -> let (next, effects) = f st in ((), next, scratchpadIntents effects)
+
+scratchpadIntents :: [ScratchpadEffect] -> [Intent]
+scratchpadIntents = map $ \effect -> case effect of
+  LaunchPad name generation command -> LaunchScratchpad name generation command
+  PadNotice message -> ScratchpadNotice message

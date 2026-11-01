@@ -5,6 +5,7 @@ Coordinates are signed, rectangles are half-open, and construction reports
 -}
 module Seki.Core.Geometry (
   Point (..),
+  OutputRect (..),
   Size,
   sizeWidth,
   sizeHeight,

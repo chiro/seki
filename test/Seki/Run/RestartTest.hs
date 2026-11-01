@@ -100,6 +100,7 @@ sample =
     [(WindowKey (Text.pack "c68415ce"), SavedFloatAt 1 2 3 4)]
     Set.empty
     (Set.fromList ["foot"])
+    []
 
 testStateFileRoundTrip :: Assertion
 testStateFileRoundTrip = withSystemTempDirectory "seki-restart" $ \dir -> do

@@ -329,7 +329,8 @@ riverId = ObjectTable.objectId . riverWindowObject
 m2Config :: PolicyConfig String Tall
 m2Config =
   PolicyConfig
-    { policyInputRules = []
+    { policyScratchpads = []
+    , policyInputRules = []
     , policyLayout = Tall 1 (1 / 10) (1 / 2)
     , policyTags = ["1", "2", "3"]
     , policyBindings = []
