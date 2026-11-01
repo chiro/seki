@@ -5,7 +5,7 @@ set -euo pipefail
 output=${1:?private output directory required}
 mkdir -p "$output"
 cc -shared -fPIC -Wall -Wextra -Werror "$(dirname "$0")/backend.c" -o "$output/backend.so" \
-  $(pkg-config --cflags --libs wlroots-0.20 wayland-server xkbcommon) -ldl
+  $(pkg-config --cflags --libs wlroots-0.20 wayland-server xkbcommon pixman-1) -ldl
 cc -Wall -Wextra -Werror "$(dirname "$0")/keymap.c" -o "$output/keymap" $(pkg-config --cflags --libs xkbcommon)
 "$output/keymap" > "$output/two-layouts.xkb"
 printf '%s\n' 'not an XKB keymap' > "$output/invalid.xkb"

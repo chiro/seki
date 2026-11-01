@@ -41,6 +41,7 @@
             pkgs.glib
             pkgs.stdenv.cc
             pkgs.pkg-config
+            pkgs.pixman
             pkgs.wlroots_0_20
             pkgs.wayland
             pkgs.libxkbcommon
