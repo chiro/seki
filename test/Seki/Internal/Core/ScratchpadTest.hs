@@ -46,6 +46,11 @@ act :: Action String Full () -> CoreEvent String Full
 act = RunAction
 ssOf :: CoreState i l -> W.StackSet i l
 ssOf st = case coreWorkspaces st of AttachedState ss _ -> ss; _ -> error "not attached"
+padFloat :: CoreState i l -> Maybe W.FloatGeom
+padFloat st = M.lookup pad $ case coreWorkspaces st of
+  AttachedState ss _ -> W.floating ss
+  HeadlessState h -> headlessFloating h
+
 inv :: LiveInventory
 inv = LiveInventory (M.fromList [(WindowKey "ordinary", ordinary), (WindowKey "stable-pad", pad), (WindowKey "extra", extra)]) (M.fromList [(OutputKey 10, W.OutputId 1), (OutputKey 20, W.OutputId 2)])
 
@@ -141,6 +146,50 @@ tests =
             restored = fst (restoreCore inv saved initial)
         slot restored @?= slot shown
         M.lookup pad (W.floating (ssOf restored)) @?= Just (W.FloatAt box)
+    , testCase "sunk pad restores tiled and re-shows at configured geometry" $ do
+        let sunk = fst (run [act (sink pad)] shown)
+            saved = saveCore inv sunk
+            restored = fst (restoreCore inv saved initial)
+            headless = fst (restoreCore inv{liveOutputs = M.empty} saved initial)
+            reshown = fst (run [act (toggleScratchpad "term"), act (toggleScratchpad "term")] restored)
+        padFloat restored @?= Nothing
+        padFloat headless @?= Nothing
+        padFloat reshown @?= Just (W.FloatAt box)
+        slot restored @?= slot sunk
+    , testCase "generated client-sized pad keeps its floating intent on restore" $ do
+        let clientSized = fst (run [act (sink pad), act (float pad)] shown)
+            saved = saveCore inv clientSized
+            renamed = initial{coreWorkspaces = coreWorkspaces (either (error . show) id (newCoreState Full ["new"]))}
+        mapM_ (\(inventory, fresh) -> padFloat (fst (restoreCore inventory saved fresh)) @?= Just W.ClientSized) [(inventory, fresh) | inventory <- [inv, inv{liveOutputs = M.empty}], fresh <- [initial, renamed]]
+    , testCase "invalid pad box retains valid generic float geometry" $ do
+        let saved = (saveCore inv shown){savedScratchpads = [SavedScratchpad "term" (WindowKey "stable-pad") False (SavedFloatAt 0 0 (-1) 100) Nothing]}
+        mapM_
+          ( \inventory -> do
+              let (restored, notes) = restoreCore inventory saved initial
+              padFloat restored @?= Just (W.FloatAt box)
+              assertBool "invalid pad box is diagnosed" (FloatBoxInvalid (WindowKey "stable-pad") `elem` notes)
+          )
+          [inv, inv{liveOutputs = M.empty}]
+    , testCase "client-sized pad marker retains an explicit generic float box" $ do
+        let saved = (saveCore inv shown){savedScratchpads = [SavedScratchpad "term" (WindowKey "stable-pad") False SavedClientSized Nothing]}
+        padFloat (fst (restoreCore inv saved initial)) @?= Just (W.FloatAt box)
+    , testCase "sunk restore keeps configured re-show geometry after workspace replacement" $ do
+        let sunk = fst (run [act (sink pad)] shown)
+            saved = saveCore inv sunk
+            workspaces = coreWorkspaces (either (error . show) id (newCoreState Full ["new"]))
+            fresh = initial{coreWorkspaces = workspaces}
+            restored = fst (restoreCore inv saved fresh)
+            attachedAgain = fst (run [OutputCreated (W.OutputId 1)] restored)
+            reshown = fst (run [act (toggleScratchpad "term"), act (toggleScratchpad "term")] attachedAgain)
+        padFloat restored @?= Nothing
+        padFloat reshown @?= Just (W.FloatAt box)
+        let fallbackBox = either (error . show) OutputRect (mkSize 320 240 >>= mkRect (Point 10 15))
+            copied = saved{savedFloats = [(WindowKey "stable-pad", SavedFloatAt 10 15 320 240)]}
+            explicit = copied{savedScratchpads = [SavedScratchpad "term" (WindowKey "stable-pad") False (SavedFloatAt 30 20 500 400) Nothing]}
+            invalid = copied{savedScratchpads = [SavedScratchpad "term" (WindowKey "stable-pad") False (SavedFloatAt 0 0 (-1) 100) Nothing]}
+        padFloat (fst (restoreCore inv copied fresh)) @?= Just (W.FloatAt fallbackBox)
+        padFloat (fst (restoreCore inv explicit fresh)) @?= Just (W.FloatAt box)
+        padFloat (fst (restoreCore inv invalid fresh)) @?= Just (W.FloatAt fallbackBox)
     , testCase "unresolved launches are not restored" $ do
         let pending = fst (run [act (toggleScratchpad "term")] attached)
             restored = fst (restoreCore inv (saveCore inv pending) initial)

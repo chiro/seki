@@ -69,11 +69,12 @@ entry. Existing IPC v1 operations and receipt/error contracts remain intact.
 Restart schema v2 saves owned windows by river identifier, their visibility,
 float geometry and eligible prior focus. It accepts v1 files with no pad
 ownership. Changing a query or command does not rematch an owned restored
-identifier. Saved valid geometry survives configuration changes. Restore uses the
-box stored with the pad even if the ordinary float list is incomplete or
-disagrees. Removing a
-definition releases its hidden surviving window to an ordinary user workspace
-as a float; missing outputs use the existing workspace fallback. Closed or
+identifier. Saved valid geometry survives configuration changes. A valid
+explicit box stored with the pad wins over an absent or conflicting ordinary
+float copy. Otherwise restore keeps the ordinary float state, including
+a pad deliberately sunk into tiling; showing it again reapplies the configured
+box. Removing a definition releases its hidden surviving window to an ordinary
+user workspace as a float; missing outputs use the existing workspace fallback. Closed or
 unidentified windows cannot restore ownership. A removed definition never
 leaves an inaccessible hidden window behind.
 

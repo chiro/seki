@@ -554,3 +554,9 @@ list is empty while the scratchpad records still contain valid boxes. It checks
 shown and hidden ownership, geometry, launch counts, and ordinary keyboard input
 after a real reconnect. Its captures use a separate prefix from the normal
 restart case.
+
+`m3-scratchpad-sink-restart` sinks a shown pad through the public action,
+reconnects, then hides and shows it again. Its actual river size must return to
+the configured size recorded before the sink. The case also checks that the pad
+remains tiled immediately after restore; a client-sized float is a different
+intent and has separate pure restore coverage.
