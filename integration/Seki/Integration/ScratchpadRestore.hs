@@ -36,7 +36,9 @@ import System.Process (shell)
 type PadPolicy = Policy String StdLayouts
 
 scratchpadRestoreScenarios :: [(String, IO ())]
-scratchpadRestoreScenarios = [("m3-scratchpad-restart", restorePads False), ("m3-scratchpad-config-restore", restorePads True)]
+scratchpadRestoreScenarios = [("m3-scratchpad-restart", restorePads RestartPads), ("m3-scratchpad-config-restore", restorePads ChangedDefinitions), ("m3-scratchpad-restore-missing-float", restorePads MissingFloatCopy)]
+
+data RestoreMode = RestartPads | ChangedDefinitions | MissingFloatCopy deriving (Eq)
 
 box :: OutputRect
 box = either (error . show) OutputRect (mkSize 500 360 >>= mkRect (Point 80 60))
@@ -77,11 +79,16 @@ capture nested label = do
   outputs <- outputNames (riverSocket nested)
   forM_ outputs $ \(_, name) -> saveOutputCapture (riverSocket nested) name (directory </> label <> "-" <> Text.unpack name <> ".png")
 
-restorePads :: Bool -> IO ()
-restorePads changed = withNestedRiver 2 $ \nested -> do
+restorePads :: RestoreMode -> IO ()
+restorePads mode = withNestedRiver 2 $ \nested -> do
   children <- newIORef []
   launches <- newIORef (0 :: Int)
-  let config =
+  let changed = mode == ChangedDefinitions
+      label = case mode of
+        RestartPads -> "lane7"
+        ChangedDefinitions -> "lane10"
+        MissingFloatCopy -> "restore-missing-float"
+      config =
         (policyConfigOf def)
           { policyScratchpads = definitions
           , policyCheckRestart = pure (Right ())
@@ -98,7 +105,7 @@ restorePads changed = withNestedRiver 2 $ \nested -> do
         void (awaitOwner policy "term")
         apply policy (toggleScratchpad "term" >> toggleScratchpad "other")
         void (awaitOwner policy "other")
-        capture nested (if changed then "lane10-before" else "lane7-before")
+        capture nested (label <> "-before")
         apply policy restart
         requireRuntimeExit ended >>= assertEqual "scratchpad restart stop handshake" (Right RiverStopped)
         saved <- readRestoreState policy
@@ -111,7 +118,9 @@ restorePads changed = withNestedRiver 2 $ \nested -> do
             (_, output) : _ -> void (runProcessCapture (riverEnvironment nested) "wlr-randr" ["--output", Text.unpack output, "--off"])
             _ -> failIntegration "no output to remove"
         else pure ()
-      let next = config{policyRestore = Just saved, policyScratchpads = if changed then drop 1 definitions else definitions}
+      let restoreSaved = if mode == MissingFloatCopy then saved{savedFloats = []} else saved
+          next = config{policyRestore = Just restoreSaved, policyScratchpads = if changed then drop 1 definitions else definitions}
+      announce ("SCRATCHPAD_RESTORE_FLOATS_INPUT " <> show (savedFloats restoreSaved))
       withManager nested next $ \policy session _ -> do
         void (awaitOwner policy "other")
         restored <- readRestoreState policy
@@ -124,12 +133,12 @@ restorePads changed = withNestedRiver 2 $ \nested -> do
             let firstKey = [key | SavedScratchpad "term" key _ _ _ <- savedScratchpads saved]
                 ordinaryKeys = concatMap (maybe [] W.integrate . savedStack) (savedWorkspaces restored)
             assertEqual "removed hidden survivor released into user workspace" True (all (`elem` ordinaryKeys) firstKey)
-            capture nested "lane10-definition-output-removed"
+            capture nested (label <> "-definition-output-removed")
           else do
             assertEqual "shown/hidden identifiers and geometry survive reconnect" (savedScratchpads saved) (savedScratchpads restored)
             apply policy (toggleScratchpad "term")
             void (awaitOwner policy "term")
-            capture nested "lane7-hidden-returned"
+            capture nested (label <> "-hidden-returned")
             apply policy (toggleScratchpad "term" >> toggleScratchpad "other")
             void (waitUntil "real keyboard restored to ordinary window" assertionTimeoutMicroseconds (keyboardSnapshot probe) ((== Just ordinary) . keyboardOwner))
             before <- Map.findWithDefault 0 ordinary . pressedKeys <$> keyboardSnapshot probe

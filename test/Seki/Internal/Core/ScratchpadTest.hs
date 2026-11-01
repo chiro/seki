@@ -126,6 +126,21 @@ tests =
         M.null (coreScratchpads restored) @?= True
         let withOutput = fst (run [OutputCreated (W.OutputId 9)] restored)
         W.member pad (ssOf withOutput) @?= True
+    , testCase "shown restore recovers geometry without redundant floats" $ do
+        let saved = (saveCore inv shown){savedFloats = []}
+            restored = fst (restoreCore inv saved initial)
+            headless = fst (restoreCore inv{liveOutputs = M.empty} saved initial)
+        decodeRestoreState (encodeRestoreState saved) @?= Right saved
+        slot restored @?= slot shown
+        M.lookup pad (W.floating (ssOf restored)) @?= Just (W.FloatAt box)
+        case coreWorkspaces headless of
+          HeadlessState h -> M.lookup pad (headlessFloating h) @?= Just (W.FloatAt box)
+          _ -> assertFailure "missing outputs should restore headless"
+    , testCase "shown restore uses its own geometry over a conflicting float copy" $ do
+        let saved = (saveCore inv shown){savedFloats = [(WindowKey "stable-pad", SavedClientSized)]}
+            restored = fst (restoreCore inv saved initial)
+        slot restored @?= slot shown
+        M.lookup pad (W.floating (ssOf restored)) @?= Just (W.FloatAt box)
     , testCase "unresolved launches are not restored" $ do
         let pending = fst (run [act (toggleScratchpad "term")] attached)
             restored = fst (restoreCore inv (saveCore inv pending) initial)
