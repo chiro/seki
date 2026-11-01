@@ -43,3 +43,4 @@ m3-input-keymap-missing=passed
 m3-input-perf=passed
 m3-input-worker-lifecycle=passed
 m3-input-output-mapping=passed
+m3-input-preload-boundary=passed

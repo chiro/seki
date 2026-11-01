@@ -14,6 +14,7 @@ module Seki.Integration.Harness (
   withPrivateDbus,
   renderManagedProcessLogs,
   managedProcessPid,
+  assertNoProcessPreload,
   stopManagedProcess,
   riverArguments,
   waitForRiverInit,
@@ -200,6 +201,13 @@ data ManagedProcess = ManagedProcess
 
 managedProcessPid :: ManagedProcess -> IO (Maybe Int)
 managedProcessPid process = fmap fromIntegral <$> getPid (managedProcessHandle process)
+
+assertNoProcessPreload :: String -> ManagedProcess -> IO ()
+assertNoProcessPreload label process = do
+  pid <- managedProcessPid process >>= maybe (failIntegration (label <> " PID missing")) pure
+  environment <- ByteString.readFile ("/proc/" <> show pid <> "/environ")
+  assertEqual (label <> " has no inherited preload") [] (filter (ByteString8.isPrefixOf "LD_PRELOAD=") (ByteString.split 0 environment))
+  announce (label <> " exec environment has no LD_PRELOAD")
 
 data ProbeSize = ProbeSize
   { probeRows :: Int
@@ -1135,6 +1143,8 @@ receiveDisplayNames connection = do
   let entries = map breakEntry (lines (ByteString8.unpack payload))
       waylandDisplay = lookup "WAYLAND_DISPLAY" entries
       xDisplay = lookup "DISPLAY" entries >>= nonEmpty
+  assertEqual "spawned river init has no inherited preload" (Just "") (lookup "LD_PRELOAD" entries)
+  announce "spawned river init exec environment has no LD_PRELOAD"
   case waylandDisplay >>= nonEmpty of
     Nothing -> failIntegration ("river init helper did not report WAYLAND_DISPLAY: " <> show payload)
     Just display -> pure (DisplayNames display xDisplay)
@@ -1158,10 +1168,11 @@ riverInitHelper :: FilePath -> IO ()
 riverInitHelper socketPath = do
   waylandDisplay <- requireEnvironment "WAYLAND_DISPLAY"
   xDisplay <- lookupEnv "DISPLAY"
+  preload <- lookupEnv "LD_PRELOAD"
   bracket (socket AF_UNIX Stream defaultProtocol) close $ \connection -> do
     connect connection (SockAddrUnix socketPath)
     SocketByteString.sendAll connection . ByteString8.pack $
-      "WAYLAND_DISPLAY=" <> waylandDisplay <> "\nDISPLAY=" <> maybe "" id xDisplay <> "\n"
+      "WAYLAND_DISPLAY=" <> waylandDisplay <> "\nDISPLAY=" <> maybe "" id xDisplay <> "\nLD_PRELOAD=" <> maybe "" id preload <> "\n"
 
 terminalProbe :: TerminalProbeMode -> FilePath -> IO ()
 terminalProbe probeMode socketPath = do
@@ -1582,6 +1593,7 @@ isIsolatedVariable name =
            , "SDL_IM_MODULE"
            , "XDG_RUNTIME_DIR"
            , "XDG_CONFIG_HOME"
+           , "LD_PRELOAD"
            , "WLR_BACKENDS"
            , "WLR_HEADLESS_OUTPUTS"
            ]

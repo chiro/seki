@@ -11,6 +11,12 @@
 #include <wlr/backend.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/interfaces/wlr_pointer.h>
+/* The init command may use a host shell with a different libc. Consume the
+ * compositor-only preload before any fork/exec; clients receive no backend DSO. */
+__attribute__((constructor)) static void consume_preload(void) {
+ if (unsetenv("LD_PRELOAD") != 0) abort();
+ fprintf(stderr,"fixture backend preload consumed before compositor startup\n");
+}
 static struct wlr_backend *backend;
 static struct wl_event_source *timer;
 static struct wl_event_source *cycle_timer;

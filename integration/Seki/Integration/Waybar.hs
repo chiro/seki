@@ -73,6 +73,7 @@ waybarFixture inputMode fixture probe = do
     setTitle probe redWindow "before"
     bracket (startManagedProcess "real Waybar" dbusEnvironment (proc executable ["--config", config, "--style", style])) stopManagedProcess $ \bar -> do
       before <- waitFrame "Waybar text rendered" white `onException` (renderManagedProcessLogs bar >>= announce)
+      assertNoProcessPreload "actual Waybar" bar
       saveCapture fixture "waybar-initial"
       if inputMode
         then do

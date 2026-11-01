@@ -538,3 +538,12 @@ layout-to-subscriber receipts with a 50 ms p99 ceiling. Its bounded process budg
 is 30 seconds because the source emits at 10 ms intervals; ordinary assertions
 retain their 10-second budget. The full suite budget is 240 seconds to include
 the added input cases.
+
+The backend consumes `LD_PRELOAD` in its startup constructor, before river can
+fork/exec its init command. The init handshake reports and checks an empty preload;
+`m3-input-preload-boundary` also starts the actual seki executable and inspects its
+exec environment. The Waybar case checks the rendered Waybar process's environment.
+Client fixture environments strip inherited preload variables. The held-loader
+probe explicitly selects only `hold.so` and asserts that separate scope. These
+checks prevent a Nix-built backend from leaking dependencies into a host `/bin/sh`
+or unrelated clients; no libc path override or longer init timeout is used.

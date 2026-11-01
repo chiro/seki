@@ -151,3 +151,34 @@ item budget and each settings collection 4096 bytes, with counts and truncation.
 The pattern is its escaped source form. This diagnostic never claims a matched
 device or an applied setting. Status logs omit unchanged current values, so a
 layout feedback stream does not duplicate terminal setting-result log entries.
+
+Setting names and values in `requested`, `defaults`, and `current` are:
+
+| Setting | JSON value |
+| --- | --- |
+| `repeat_info` | `{rate, delay}` integer rate and delay |
+| `scroll_factor`, `accel_speed` | finite number |
+| `map_output` | null to clear, or `{name, truncated}` |
+| `map_rectangle` | null to clear, or `[x, y, width, height]` |
+| `send_events` | `events_enabled`, `events_disabled`, `events_disabled_on_external_mouse` |
+| `tap`, `drag`, `natural_scroll`, `left_handed`, `middle_emulation`, `scroll_button_lock`, `disable_while_typing`, `disable_while_trackpoint` | boolean |
+| `tap_button_map`, `clickfinger_button_map` | `left_right_middle` or `left_middle_right` |
+| `drag_lock` | `drag_lock_disabled`, `drag_lock_timeout`, `drag_lock_sticky` |
+| `three_finger_drag` | `three_finger_drag_disabled`, `three_finger_drag_enabled`, `four_finger_drag_enabled` |
+| `calibration_matrix` | six numbers in protocol order |
+| `acceleration` | `accel_none`, `accel_flat`, `accel_adaptive`, `accel_custom`, or an array of custom curve summaries |
+| `click_method` | `click_none`, `click_button_areas`, `click_finger` |
+| `scroll_method` | `scroll_none`, `scroll_two_finger`, `scroll_edge`, `scroll_on_button` |
+| `scroll_button` | unsigned button code |
+| `rotation` | unsigned degrees, below 360 |
+| `keymap` | `{path, truncated}`; never file contents |
+| `active_layout` | `{index}` or `{name, truncated}` |
+| `caps_lock`, `num_lock`, `scroll_lock` | boolean |
+
+A custom curve summary is `{type, step, point_count, points, truncated}`. Type is
+`curve_fallback`, `curve_motion`, or `curve_scroll`. At most three curves and eight
+preview points per curve are serialized. Valid requested curves contain at most
+64 points; point_count always describes the complete input. Text values above
+use a 128-character cap and explicit flags. A defensive nonfinite numeric input
+is null, including a null matrix/curve component; public validation rejects it
+before connection. Null clear requests differ from absent unknown current values.

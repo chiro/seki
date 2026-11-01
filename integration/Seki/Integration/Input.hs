@@ -39,7 +39,7 @@ import System.Process (proc)
 import System.Timeout (timeout)
 
 inputScenarios :: [(String, IO ())]
-inputScenarios = [("m3-input-v1", inputNative True False), ("m3-input-v2", inputNative False False), ("m3-input-optional-absent", missing), ("m3-input-waybar", inputNative False True), ("m3-input-curve-maximum", nativeCurve), ("m3-input-keymap-invalid", keymapFailure True), ("m3-input-keymap-missing", keymapFailure False), ("m3-input-perf", inputPerf), ("m3-input-worker-lifecycle", workerLifecycle), ("m3-input-output-mapping", outputMapping)]
+inputScenarios = [("m3-input-v1", inputNative True False), ("m3-input-v2", inputNative False False), ("m3-input-optional-absent", missing), ("m3-input-waybar", inputNative False True), ("m3-input-curve-maximum", nativeCurve), ("m3-input-keymap-invalid", keymapFailure True), ("m3-input-keymap-missing", keymapFailure False), ("m3-input-perf", inputPerf), ("m3-input-worker-lifecycle", workerLifecycle), ("m3-input-output-mapping", outputMapping), ("m3-input-preload-boundary", preloadBoundary)]
 
 inputNative :: Bool -> Bool -> IO ()
 inputNative v1 bar = do
@@ -138,6 +138,9 @@ inputPerf = withSystemTempDirectory "seki-input-perf" $ \directory -> do
 
 inputWorkerMain :: FilePath -> IO ()
 inputWorkerMain path = do
+  preload <- lookupEnv "LD_PRELOAD"
+  assertEqual "worker probe explicitly preloads only hold.so" (Just (takeDirectory path </> "hold.so")) preload
+  announce "worker probe preload is explicitly scoped to hold.so"
   patternValue <- either (fail . show) pure (compileDevicePattern "*keyboard")
   runConfig [] def{inputRules = [InputRule patternValue (Just Keyboard) [Keymap path]]} >>= either (fail . show) pure
 
@@ -194,3 +197,15 @@ outputMapping = do
     _ <- runProcessCapture (mEnvironment fixture) "wlr-randr" ["--output", "HEADLESS-1", "--on", "--custom-mode", "800x600"]
     _ <- waitUntil "readded named output mapping resubmitted" assertionTimeoutMicroseconds (readRiverInputSnapshot (mSession fixture)) (result SettingSent)
     saveCapture fixture "mapping-resubmitted"
+
+preloadBoundary :: IO ()
+preloadBoundary = do
+  backend <- getEnv "SEKI_INPUT_BACKEND"
+  seki <- getEnv "SEKI_EXECUTABLE"
+  cli <- getEnv "SEKICTL_EXECUTABLE"
+  withNestedRiverEnvironment [("LD_PRELOAD", backend)] 1 $ \river ->
+    bracket (startManagedProcess "actual seki" (riverEnvironment river) (proc seki [])) stopManagedProcess $ \manager -> do
+      _ <- waitUntil "actual seki IPC ready" assertionTimeoutMicroseconds (doesFileExist (riverRuntimeDirectory river </> "seki" </> "ipc.sock")) id
+      _ <- runProcessCapture (riverEnvironment river) cli ["snapshot"]
+      assertNoProcessPreload "actual seki" manager
+      stopManagedProcess (riverProcess river)

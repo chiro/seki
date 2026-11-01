@@ -264,7 +264,6 @@ executable seki
 executable seki-reference-config
   import:         warnings
   hs-source-dirs: test-public
-  ghc-options: -Werror
   main-is:        ReferenceConfigMain.hs
   other-modules:  PortedConfig
   ghc-options:    -Werror
