@@ -5,6 +5,7 @@ Receipts go to the supplied directory. Temporary projects stay outside the check
 """
 
 import hashlib
+import argparse
 import json
 import os
 from pathlib import Path
@@ -33,8 +34,12 @@ def archive_receipt(archive, source):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("output", type=Path)
+    parser.add_argument("--delivery", type=Path)
+    args = parser.parse_args()
     source = Path(__file__).resolve().parent.parent
-    output = Path(sys.argv[1]).resolve()
+    output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="seki-bootstrap-") as temporary:
         root = Path(temporary)
@@ -74,8 +79,25 @@ def main():
             provenance[tool] = str(Path(shutil.which(tool)).resolve())
         assert all(provenance[tool].startswith("/nix/store/") for tool in ["ghc", "ghc-pkg", "cabal", "pkg-config", "cc"]), "bootstrap requires the provisioned Nix toolchain"
         (output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
-        run("sdist.log", ["cabal", "sdist", "--output-directory=" + str(root / "sdist")], source)
-        archive, = (root / "sdist").glob("*.tar.gz")
+        if args.delivery:
+            delivery = args.delivery.resolve(strict=True)
+            assert str(delivery).startswith("/nix/store/"), "delivery must be installed in Nix store"
+            archive = (delivery / "share/seki/source.tar.gz").resolve(strict=True)
+            default = (delivery / "bin/seki-default").resolve(strict=True)
+            assert str(archive).startswith("/nix/store/")
+            assert str(default).startswith("/nix/store/")
+            assert not default.is_relative_to(source)
+            (output / "delivery.json").write_text(json.dumps({
+                "delivery": str(delivery), "archive": str(archive), "default": str(default),
+                "default-sha256": hashlib.sha256(default.read_bytes()).hexdigest(),
+            }, indent=2) + "\n")
+            with (output / "default-check.log").open("w") as log:
+                subprocess.run([default, "--check"], cwd=root, env=env, stdout=log,
+                               stderr=subprocess.STDOUT, check=True, timeout=10)
+            run("default-ldd.txt", ["ldd", str(default)])
+        else:
+            run("sdist.log", ["cabal", "sdist", "--output-directory=" + str(root / "sdist")], source)
+            archive, = (root / "sdist").glob("*.tar.gz")
         receipt = archive_receipt(archive, source)
         (output / "archive.json").write_text(json.dumps(receipt, indent=2) + "\n")
         shutil.copyfile(archive, output / archive.name)
@@ -83,8 +105,12 @@ def main():
         assert not any(empty.values()), "Cabal state populated before external build"
         (output / "empty-before.json").write_text(json.dumps(empty, indent=2) + "\n")
         project = root / "user"
+        checker = root / "check-config.py"
+        with tarfile.open(archive) as package:
+            member, = [m for m in package.getmembers() if m.name.endswith("/test-public/check-config.py")]
+            checker.write_bytes(package.extractfile(member).read())
         try:
-            run("public-check.log", [sys.executable, str(source / "test-public/check-config.py"), str(archive), str(project), "--provisioned"])
+            run("public-check.log", [sys.executable, str(checker), str(archive), str(project), "--provisioned"])
         finally:
             for name in ["cabal.project", "check-candidates.cabal", "build-receipt.json", "dist-newstyle/cache/plan.json"]:
                 path = project / name
