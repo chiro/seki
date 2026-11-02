@@ -66,14 +66,14 @@ def main():
 
         provenance = {"source-head": run("head.txt", ["git", "rev-parse", "HEAD"], source).strip(),
                       "environment": {k: env.get(k) for k in ["PATH", "GHC_PACKAGE_PATH", "NIX_GHC", "NIX_GHCPKG", "NIX_CFLAGS_COMPILE", "NIX_LDFLAGS", "HOME", "CABAL_CONFIG", "CABAL_DIR", "GHC_ENVIRONMENT"]}}
-        for name, args in {
+        for name, command_args in {
             "ghc": ["ghc", "--info"], "cabal": ["cabal", "--version"],
             "package-dbs": ["ghc-pkg", "list"], "packages": ["ghc-pkg", "dump"],
             "pkg-config": ["pkg-config", "--modversion", "wayland-client", "xkbcommon"],
             "c-flags": ["pkg-config", "--cflags", "--libs", "wayland-client", "xkbcommon"],
             "cc": ["cc", "--version"],
         }.items():
-            run(name + ".txt", args)
+            run(name + ".txt", command_args)
         run("native-prefixes.txt", ["pkg-config", "--variable=prefix", "wayland-client", "xkbcommon"])
         for tool in ["ghc", "ghc-pkg", "cabal", "pkg-config", "cc"]:
             provenance[tool] = str(Path(shutil.which(tool)).resolve())
