@@ -47,7 +47,7 @@ data SekiArgs = Run | Restore FilePath | Check
 parseSekiArgs :: [String] -> Either String SekiArgs
 parseSekiArgs = \case
   [] -> Right Run
-  ["--restore", file] -> Right (Restore file)
+  ["--restore", file] | file /= "--check" -> Right (Restore file)
   ["--check"] -> Right Check
   args -> Left ("usage: seki [--restore FILE | --check], got " <> show args)
 
