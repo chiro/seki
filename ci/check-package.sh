@@ -29,7 +29,7 @@ cabal_modules() {
 cabal_files() {
   awk '
     /^[^ ]/ { field = $1 }
-    /^  [^ ]/ && (field == "extra-source-files:" || field == "extra-doc-files:") {
+    /^  [^ ]/ && (field == "extra-source-files:" || field == "extra-doc-files:" || field == "data-files:") {
       print $1
     }
   ' seki.cabal
