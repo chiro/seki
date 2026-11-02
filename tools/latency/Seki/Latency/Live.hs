@@ -143,7 +143,7 @@ runWM socket directory = do
       , policyStartupHook = pure ()
       , policyPointerBindings = []
       , policyRestore = Nothing
-      , policyCheckRestart = pure (Right ())
+      , policyCheckRestart = const (pure (Right ()))
       , policyLog = \_ -> pure ()
       , policyLaunch = \_ -> fail "unexpected spawn"
       }

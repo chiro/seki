@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Seki.Integration.M3 (m3Scenarios, ipcScenarios) where
+module Seki.Integration.M3 (m3Scenarios, ipcScenarios, recompileScenarios) where
 
 import Control.Concurrent (forkFinally, forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
@@ -10,23 +10,25 @@ import Data.Aeson (eitherDecodeStrict', withObject, (.:))
 import Data.Aeson.Types (parseEither)
 import Data.ByteString qualified as BS
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
-import Data.List (isInfixOf, nub, sort)
+import Data.List (isInfixOf, isPrefixOf, isSuffixOf, nub, sort)
 import Data.Text qualified as Text
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Conc (threadStatus)
 import Network.Socket
 import Network.Socket.ByteString (recv, sendAll)
 import Seki.Fixture.LayerSurface qualified as Layer
-import Seki.Fixture.Probe (Color (..), openWindow, outputNames, setTitle, withProbe)
+import Seki.Fixture.Probe (Color (..), KeyboardSnapshot (..), keyboardSnapshot, openWindow, outputNames, setTitle, withProbe)
 import Seki.Integration.Fixture
 import Seki.Integration.Harness
 import Seki.Integration.IPCPerf (ipcPerfScenarios)
 import Seki.Integration.Waybar (waybarScenarios)
 import Seki.Internal.Config (def)
 import Seki.Internal.Core.Action (restart, spawn, windows)
+import Seki.Internal.Core.Layout (description)
 import Seki.Internal.Core.StackSet qualified as SS
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
 import Seki.Run.Config (policyConfigOf)
+import Seki.Run.ConfigBuild (BuildContext (..), Resources (..))
 import Seki.Run.External
 import Seki.Run.IPC (withIPCAt)
 import Seki.Run.Inventory (riverInventoryOutputs)
@@ -34,9 +36,10 @@ import Seki.Run.Policy
 import Seki.Run.Runtime
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
 import Seki.Wire.Transport (ConnectionTarget (..))
-import System.Directory (doesFileExist, getCurrentDirectory)
+import System.Directory (createDirectory, doesFileExist, getCurrentDirectory, listDirectory)
 import System.Environment (getEnv, lookupEnv)
 import System.FilePath ((</>))
+import System.Posix.Files (setFileMode)
 import System.Process (proc)
 import System.Timeout (timeout)
 
@@ -127,7 +130,7 @@ externalWake = do
 sessionIsolation :: IO ()
 sessionIsolation = withNestedRiver 1 $ \river -> do
   launched <- newIORef []
-  let config = (policyConfigOf def){policyLaunch = \marker -> modifyIORef' launched (<> [marker]), policyCheckRestart = pure (Right ())}
+  let config = (policyConfigOf def){policyLaunch = \marker -> modifyIORef' launched (<> [marker]), policyCheckRestart = const (pure (Right ()))}
       open policy = openRiverSessionAt (UnixSocketPath (riverSocket river)) defaultObjectLimit (policyRuntimeHandlers policy) >>= requireRight "session"
       run session = do
         done <- newEmptyMVar
@@ -434,3 +437,56 @@ ipcLimits = do
         assertEqual "oversized projection cannot drop application reply" True ("\"revision\"" `BS.isInfixOf` applied && "ack-id" `BS.isInfixOf` applied)
         readIORef launched >>= assertEqual "spawn intent ran once" ["large-snapshot-marker"]
       announce "M3_IPC_LIMITS oversized snapshot/subscription explicit; independent application reply preserved"
+
+recompileScenarios :: [(String, IO ())]
+recompileScenarios = [("m3-recompile", recompileResponsive)]
+
+recompileResponsive :: IO ()
+recompileResponsive = withFixture (policyConfigOf def) "m3-recompile" 1 $ \fixture probe -> do
+  root <- maybe (failIntegration "missing private runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
+  cli <- getEnv "SEKICTL_EXECUTABLE"
+  launcher <- getEnv "SEKI_LAUNCHER_EXECUTABLE"
+  let directory = root </> "build-proof"
+      wrapper = directory </> "compiler"
+      started = directory </> "started"
+      release = directory </> "release"
+      profile = directory </> "profile-sentinel"
+      environment = mEnvironment fixture
+      layoutDescription =
+        readPolicyState (mPolicy fixture) >>= \st -> case coreWorkspaces st of
+          AttachedState ss _ -> pure (description (SS.layout (SS.workspace (SS.current ss))))
+          HeadlessState _ -> failIntegration "held-build fixture lost its output"
+  createDirectory directory
+  mapM_ (\name -> writeFile (directory </> name) "") ["Main.hs", "seki-user.cabal", "cabal.project"]
+  writeFile profile "old target"
+  writeFile wrapper ("#!/bin/sh\necho started >> '" <> started <> "'\nwhile [ ! -f '" <> release <> "' ]; do sleep 0.02; done\necho deliberate-compile-error\nexit 1\n")
+  setFileMode wrapper 0o700
+  configureBuild (mPolicy fixture) (BuildContext (Resources "/unused" "/unused" "/unused" wrapper directory) directory directory)
+  withIPCAt (root </> "seki" </> "ipc.sock") (mPolicy fixture) $ do
+    _ <- openWindow probe Red
+    _ <- openWindow probe Green
+    receipt <- runProcessCapture environment launcher ["--recompile"]
+    assertEqual "launcher receives applied request receipt" True ("\"revision\"" `BS.isInfixOf` receipt)
+    void (waitUntil "compiler is held" assertionTimeoutMicroseconds (doesFileExist started) id)
+    forM_ [1 .. 8 :: Int] $ \_ -> do
+      _ <- runProcessCapture environment cli ["recompile"]
+      before <- keyboardOwner <$> keyboardSnapshot probe
+      beforeLayout <- layoutDescription
+      runInputDriver environment ["-M", "logo", "-k", "j", "-k", "space", "-m", "logo"]
+      void (waitUntil "real focus changes while compiler held" assertionTimeoutMicroseconds (keyboardOwner <$> keyboardSnapshot probe) (/= before))
+      void (waitUntil "real layout changes while compiler held" assertionTimeoutMicroseconds layoutDescription (/= beforeLayout))
+    _ <- runProcessCapture environment cli ["workspace", "2"]
+    void (waitUntil "workspace command during held build" assertionTimeoutMicroseconds (readPolicyState (mPolicy fixture)) (\st -> case coreWorkspaces st of AttachedState ss _ -> SS.currentTag ss == "2"; _ -> False))
+    doesFileExist release >>= assertEqual "input completed before compiler release" False
+    BS.readFile started >>= assertEqual "one active compiler under duplicate requests" "started\n"
+    _ <- runProcessCapture environment cli ["workspace", "1"]
+    saveCapture fixture "build-responsive"
+    writeFile release ""
+    void (waitUntil "queued rebuild also fails" assertionTimeoutMicroseconds (policyBuildStatus (mPolicy fixture)) (isInfixOf "failed" . show))
+    BS.readFile started >>= assertEqual "only one queued compiler" "started\nstarted\n"
+    readFile profile >>= assertEqual "failure preserved target" "old target"
+    names <- listDirectory directory
+    assertEqual "full logs retained" True (any (\name -> "build" `isPrefixOf` name && ".log" `isSuffixOf` name) names)
+    _ <- runProcessCapture environment cli ["workspace", "3"]
+    void (waitUntil "input and broker survive failed build" assertionTimeoutMicroseconds (readPolicyState (mPolicy fixture)) (\st -> case coreWorkspaces st of AttachedState ss _ -> SS.currentTag ss == "3"; _ -> False))
+    saveCapture fixture "build-error"

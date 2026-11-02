@@ -200,3 +200,38 @@ preview points per curve are serialized. Valid requested curves contain at most
 use a 128-character cap and explicit flags. A defensive nonfinite numeric input
 is null, including a null matrix/curve component; public validation rejects it
 before connection. Null clear requests differ from absent unknown current values.
+
+`{"version":1,"id":"build","op":"recompile"}` requests a build in an
+installed session. `sekictl recompile` and the installed `seki --recompile` send
+this request to the existing owner in the runtime directory. They do not open a
+Wayland connection. A session without installed build resources refuses the IPC
+request; its configured restart action retains direct M2 handover semantics.
+Installed sessions route that action through the same build lifecycle.
+
+The applied revision receipt acknowledges reduction of the request, not build,
+validation, activation, or a displayed frame. The additive `build` snapshot field
+is null for direct runtimes. Installed sessions report state, session epoch,
+generation, queued generation where applicable, error and full disk log path.
+States include idle, building, failed, validated and unchanged. A validated image
+has passed its own `--check`; this does not acknowledge activation. A fresh
+managed session and its new IPC session identity establish successful runtime
+initialization. Trusted user code and hooks are not sandboxed, and there is no
+supervisor promise for arbitrary user initialization crashes.
+
+One compiler runs per session. Requests during that build collapse into one
+queued rebuild and invalidate the earlier result. Further requests do not grow
+the queue. The worker copies Cabal's resolved executable before validation;
+Cabal cannot overwrite the selected copy. An image byte-identical to the running
+executable does not restart. Compiler output stays on disk, with at most 8 KiB of
+diagnostics retained for a failure. Compilation has no arbitrary deadline;
+list-bin and candidate checks retain their bounded execution/output limits.
+
+Build/check failure leaves the profile and running session intact. Successful
+validation precedes stop; successful state serialization precedes profile
+promotion. The validated target binds the canonical installed profile, including
+when the old session is the shipped default fallback. Immediate exec failure
+rolls the profile back before reconnecting
+with the old in-memory configuration and saved state. Reconnection recreates
+IPC, input adapters and build ownership. Restore uses the existing workspace,
+layout and scratchpad fallbacks, retaining accessible surviving windows and
+spawnOnce history. This contract does not cover an arbitrary crash after exec.
