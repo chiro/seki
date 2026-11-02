@@ -57,6 +57,7 @@ jobs:
 
       - name: Record pinned component versions
         run: |
+          set -euo pipefail
           mkdir -p artifacts/integration
           nix eval --no-write-lock-file --json .#integrationVersions.x86_64-linux \
             | tee artifacts/integration/component-versions.json
@@ -94,6 +95,7 @@ jobs:
 
       - name: Provision locked dependencies and prove fresh Cabal build
         run: |
+          set -euo pipefail
           mkdir -p artifacts/bootstrap
           cp flake.lock artifacts/bootstrap/
           nix develop --no-write-lock-file --profile "$RUNNER_TEMP/seki-bootstrap-profile" .#ci \
@@ -134,6 +136,7 @@ jobs:
 
       - name: Build and root installed delivery
         run: |
+          set -euo pipefail
           mkdir -p artifacts/installed-delivery
           cp flake.lock artifacts/installed-delivery/
           nix build --no-write-lock-file .#config-delivery \
@@ -142,6 +145,7 @@ jobs:
 
       - name: Prove installed archive and dependencies without development shell
         run: |
+          set -euo pipefail
           env -i PATH=/usr/bin:/bin HOME="$RUNNER_TEMP" \
             "$RUNNER_TEMP/seki-config-delivery/bin/seki-config-env" \
             python3 ci/check-bootstrap.py "$PWD/artifacts/installed-delivery" \
