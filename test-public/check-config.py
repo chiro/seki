@@ -93,7 +93,7 @@ with tempfile.TemporaryDirectory(prefix="sk-check-", dir="/tmp") as root:
                 env["WAYLAND_DISPLAY"] = discovery
             for name, (_, error) in candidates.items():
                 run(name, ["--check"], 1 if error else 0, error)
-        for args in [["--check", "--restore", str(restore)], ["--restore", str(restore), "--check"], ["--check", "--check"], ["--check", "extra"], ["--restore"], ["--recompile"]]:
+        for args in [["--check", "--restore", str(restore)], ["--restore", str(restore), "--check"], ["--check", "--check"], ["--check", "extra"], ["--restore"], ["--restore", "--check"], ["--recompile"]]:
             run("poison", args, 1, "ConfigUsageError")
         # A real connection is the sentinel's positive control. Malformed input
         # must not reach it, while ordinary runtime must attempt discovery.
