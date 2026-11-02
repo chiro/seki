@@ -318,5 +318,6 @@ for the public API, matching precedence and restart limits.
 
 User configuration startup and validation use the installed `seki` launcher; see
 [User configurations](docs/user-configuration.md). Direct development runtime
-uses `cabal run exe:seki-default`. Asynchronous configuration activation remains
-unfinished M3-06 work.
+uses `cabal run exe:seki-default`. Installed sessions rebuild asynchronously through
+`seki --recompile` or the configured restart action. Build and validation failures
+leave the running configuration active.
