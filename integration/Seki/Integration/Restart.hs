@@ -24,7 +24,7 @@ import Seki.Internal.Core.StackSet qualified as SS
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Config (policyConfigOf, runSessions)
 import Seki.Run.Policy (PolicyConfig (..))
-import Seki.Run.Restart (Launch (..), checkRestart)
+import Seki.Run.Restart (Launch (..), checkRestartTarget)
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Transport (ConnectionTarget (UnixSocketPath))
 import System.Directory (createDirectoryIfMissing, getSymbolicLinkTarget, listDirectory)
@@ -152,7 +152,7 @@ restartFallback = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-r
           , launchStateDir = Right (riverRuntimeDirectory nested </> "seki")
           , launchExec = \path args env -> executeFile path False args (Just env)
           }
-      config = fallbackConfig{policyCheckRestart = checkRestart launch}
+      config = fallbackConfig{policyCheckRestart = checkRestartTarget launch}
   result <- newEmptyMVar
   void (forkIO (runSessions launch (const config) Nothing >>= putMVar result))
   flip onException (tryReadMVar result >>= announce . ("m2-restart-fallback sessions: " <>) . show) $ do

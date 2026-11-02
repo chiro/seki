@@ -36,9 +36,26 @@ and attempt `seki-default`. `--check` fails without starting fallback. A recorde
 `seki --restore FILE` invocation executes the existing profile with exactly
 `--restore FILE` and does not generate, compile, or check anything.
 
-This initial-startup command does not implement asynchronous session recompile,
-activation acknowledgement or session rollback. Those remain subsequent M3-06
-units. Do not use a second launcher invocation to change a running session.
+Run `seki --recompile`, `sekictl recompile`, or the configured restart action
+(default Mod-q) to rebuild a running installed session. The CLI sends a request
+to the existing IPC owner in its runtime directory. Focus and layout actions
+continue while the session builds and checks a private candidate. One build runs
+at a time, with one queued rebuild. Further requests coalesce and invalidate the
+earlier result. Failed builds leave the process and profile in place. An unchanged
+checked image also keeps the current session.
+
+IPC snapshots report build state, error, and log path. The command receipt means
+the owner applied the request, not that compilation or activation finished. A
+changed valid candidate uses the existing stop/finished handover. State is saved
+before the profile changes. Immediate exec failure rolls back the profile and
+reconnects with the old in-memory configuration and saved window state. A fresh
+managed IPC session identifies the new image. See [IPC](ipc.md) for the status
+contract. Configuration and hooks are trusted code; checking does not provide
+recovery from arbitrary crashes after exec.
+
+Direct development runtimes without `SEKI_CONFIG_ARCHIVE` retain M2's recorded
+target restart behavior. Their IPC owner refuses recompile requests. Do not use
+a second launcher invocation to change a running session.
 
 For direct development runtime use `cabal run exe:seki-default`; public user
 programs continue to call `Seki.seki config`. The direct launcher requires explicit

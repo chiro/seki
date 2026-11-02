@@ -93,7 +93,7 @@ restorePads mode = withNestedRiver 2 $ \nested -> do
       config =
         (policyConfigOf def)
           { policyScratchpads = definitions
-          , policyCheckRestart = pure (Right ())
+          , policyCheckRestart = const (pure (Right ()))
           , policyLaunch = \cmd -> do
               modifyIORef' launches (+ 1)
               child <- startManagedProcess "scratchpad restart terminal" (riverEnvironment nested) (shell cmd)

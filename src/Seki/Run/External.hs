@@ -9,6 +9,7 @@ module Seki.Run.External (
   externalLifecycle,
   submitExternal,
   drainExternal,
+  sealExternal,
   bindExternalWake,
   wakeExternalPending,
   closeExternal,
@@ -83,3 +84,9 @@ drainExternal (ExternalIngress state) = modifyMVar state $ \current -> case curr
     let (batch, rest) = Seq.splitAt 32 pending
      in pure (Accepting notify rest, Drain (toList batch) (not (Seq.null rest)))
   _ -> pure (current, Drain [] False)
+
+-- Seal only at an empty boundary, so accepted inputs cannot be discarded by stop.
+sealExternal :: ExternalIngress a -> IO Bool
+sealExternal (ExternalIngress state) = modifyMVar state $ \current -> case current of
+  Accepting _ pending | Seq.null pending -> pure (Closed, True)
+  _ -> pure (current, False)
