@@ -15,12 +15,48 @@
       ghc = haskellPackages.ghc;
       cabal = toolchainPkgs.cabal-install;
       sekiPackage = haskellPackages.callCabal2nix "seki" ./. { };
+      configCompiler = haskellPackages.ghcWithPackages (p: with p; [
+        aeson binary bytestring containers deepseq directory filepath network
+        process stm text transformers unix QuickCheck tasty tasty-hunit
+        tasty-quickcheck temporary xeno
+      ]);
+      configArchive = toolchainPkgs.runCommand "seki-config-source" {
+        nativeBuildInputs = [ cabal ];
+        src = toolchainPkgs.lib.cleanSource ./.;
+      } ''
+        export HOME="$TMPDIR/home"
+        mkdir -p "$HOME" "$out"
+        cd "$src"
+        cabal sdist --builddir="$TMPDIR/dist" --output-directory="$out"
+      '';
+      configEnvironment = toolchainPkgs.writeShellApplication {
+        name = "seki-config-env";
+        runtimeInputs = [
+          configCompiler cabal toolchainPkgs.pkg-config toolchainPkgs.stdenv.cc
+          toolchainPkgs.python3 toolchainPkgs.coreutils
+        ];
+        text = ''
+          export PKG_CONFIG_PATH="${toolchainPkgs.lib.makeSearchPath "lib/pkgconfig" [
+            toolchainPkgs.wayland.dev toolchainPkgs.libxkbcommon.dev
+          ]}"
+          export GHC_ENVIRONMENT=-
+          exec "$@"
+        '';
+      };
+      configDelivery = toolchainPkgs.runCommand "seki-config-delivery" { } ''
+        mkdir -p "$out/bin" "$out/share/seki"
+        ln -s ${configEnvironment}/bin/seki-config-env "$out/bin/seki-config-env"
+        ln -s ${sekiPackage}/bin/seki "$out/bin/seki-default"
+        ln -s ${configArchive}/seki-0.1.0.0.tar.gz "$out/share/seki/source.tar.gz"
+      '';
       fcitx5WithMozc = pkgs.qt6Packages.fcitx5-with-addons.override {
         addons = [ pkgs.fcitx5-mozc ];
       };
       version = package: package.version or "unknown";
     in
     {
+      packages.${system}.config-delivery = configDelivery;
+
       devShells.${system} = {
         unit = haskellPackages.shellFor {
           packages = _: [ sekiPackage ];
