@@ -99,6 +99,15 @@ import System.IO (hPutStrLn, stderr)
 
 {- | Validate the configuration, then run until river disconnects. The command
 line is empty, or @--restore FILE@ when a restart started this process.
+
+With exactly @--check@, validate this configuration using the runtime policy
+guards and exit successfully without starting a session. This allocates policy
+state but does not discover Wayland, consume restore files, run hooks or start
+subprocesses or IPC. Usage and policy failures print the current error and
+exit with status 1; a successful check exits with status 0.
+
+This checks policy values, not all Haskell code. User code is trusted; IO before
+this call and unsafe evaluation are not sandboxed. There is no checker timeout.
 -}
 seki :: (LayoutClass l) => Config l -> IO ()
 seki config = getArgs >>= (`runConfig` config) >>= either failWith pure
