@@ -34,7 +34,7 @@ tests =
     [ testCase "no arguments start fresh" $ parseSekiArgs [] @?= Right Run
     , testCase "--restore names the state file" $ parseSekiArgs ["--restore", "/run/seki/x.state"] @?= Right (Restore "/run/seki/x.state")
     , testCase "--check selects candidate validation" $ parseSekiArgs ["--check"] @?= Right Check
-    , testCase "any other arguments are a usage error" $ mapM_ (either (const (pure ())) (assertFailure . show) . parseSekiArgs) [["--restore"], ["-v"], ["--restore", "a", "b"], ["--check", "--restore", "a"], ["--restore", "a", "--check"], ["--check", "--check"], ["--check", "extra"]]
+    , testCase "any other arguments are a usage error" $ mapM_ (either (const (pure ())) (assertFailure . show) . parseSekiArgs) [["--restore"], ["--restore", "--check"], ["-v"], ["--restore", "a", "b"], ["--check", "--restore", "a"], ["--restore", "a", "--check"], ["--check", "--check"], ["--check", "extra"]]
     , testCase "a failed exec reconnects on the socket path and restores in the same process" testFallback
     , testCase "unavailable at startup retries on the socket path" testUnavailableRetry
     , testCase "a state file of an unknown version starts fresh and is deleted" testUnknownVersion
