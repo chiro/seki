@@ -43,10 +43,21 @@
           exec "$@"
         '';
       };
+      configLauncher = toolchainPkgs.writeShellScriptBin "seki" ''
+        unset SEKI_CONFIG_CABAL_CONFIG
+        export SEKI_CONFIG_ARCHIVE=${configArchive}/seki-0.1.0.0.tar.gz
+        export SEKI_CONFIG_GHC=${configCompiler}/bin/ghc
+        export SEKI_CONFIG_CABAL=${cabal}/bin/cabal
+        export SEKI_CONFIG_ENV=${configEnvironment}/bin/seki-config-env
+        export SEKI_CONFIG_TEMPLATES=${./examples/config}
+        export SEKI_CONFIG_DEFAULT=${sekiPackage}/bin/seki-default
+        exec ${sekiPackage}/bin/seki "$@"
+      '';
       configDelivery = toolchainPkgs.runCommand "seki-config-delivery" { } ''
         mkdir -p "$out/bin" "$out/share/seki"
         ln -s ${configEnvironment}/bin/seki-config-env "$out/bin/seki-config-env"
-        ln -s ${sekiPackage}/bin/seki "$out/bin/seki-default"
+        ln -s ${sekiPackage}/bin/seki-default "$out/bin/seki-default"
+        ln -s ${configLauncher}/bin/seki "$out/bin/seki"
         ln -s ${configArchive}/seki-0.1.0.0.tar.gz "$out/share/seki/source.tar.gz"
       '';
       fcitx5WithMozc = pkgs.qt6Packages.fcitx5-with-addons.override {
