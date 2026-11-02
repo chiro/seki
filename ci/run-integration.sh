@@ -53,7 +53,7 @@ if ((build_status != 0)); then
 fi
 
 integration_executable=$(cabal list-bin seki-integration "$@" 2>>"$raw_log")
-seki_executable=$(cabal list-bin seki "$@" 2>>"$raw_log")
+seki_executable=$(cabal list-bin seki-default "$@" 2>>"$raw_log")
 reference_config_executable=$(cabal list-bin seki-reference-config "$@" 2>>"$raw_log")
 sekictl_executable=$(cabal list-bin sekictl "$@" 2>>"$raw_log")
 

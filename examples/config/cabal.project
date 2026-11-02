@@ -1,0 +1,11 @@
+packages: . @ARCHIVE@
+with-compiler: @COMPILER@
+active-repositories: :none
+write-ghc-environment-files: never
+optimization: 2
+shared: true
+library-vanilla: false
+executable-dynamic: true
+package *
+  shared: true
+  library-vanilla: false

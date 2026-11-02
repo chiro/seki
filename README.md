@@ -60,7 +60,8 @@ the current error and exit 1. Check mode evaluates the runtime policy guards and
 allocates policy state, but does not run hooks, spawn commands, open Wayland or
 IPC, or read restore files. It does not build the program or validate all Haskell
 code. User code is trusted, and arbitrary evaluation can fail or never terminate.
-The checker has no timeout; a future build launcher must impose its own bound.
+The direct runtime checker has no timeout. The installed launcher bounds its
+check subprocess as described in [User configurations](docs/user-configuration.md).
 Normal startup accepts no arguments; restart accepts exactly `--restore FILE`.
 These modes cannot be combined with `--check`.
 
@@ -314,3 +315,8 @@ results. The Waybar example displays named keyboards independently.
 Named terminal scratchpads can hide outside workspace navigation and return on
 the current output. See [scratchpad configuration and recovery](docs/scratchpads.md)
 for the public API, matching precedence and restart limits.
+
+User configuration startup and validation use the installed `seki` launcher; see
+[User configurations](docs/user-configuration.md). Direct development runtime
+uses `cabal run exe:seki-default`. Asynchronous configuration activation remains
+unfinished M3-06 work.

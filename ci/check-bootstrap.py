@@ -4,6 +4,7 @@ Run inside `nix develop --no-write-lock-file .#ci`.
 Receipts go to the supplied directory. Temporary projects stay outside the checkout.
 """
 
+import importlib.util
 import hashlib
 import argparse
 import json
@@ -123,6 +124,12 @@ def main():
         for path in binaries:
             if "/build/" in path:
                 run(Path(path).name + "-ldd.txt", ["ldd", path])
+        if args.delivery:
+            spec = importlib.util.spec_from_file_location("product", source / "ci/check-product.py")
+            product = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(product)
+            product.prove(delivery / "bin/seki", output / "product", env, archive, True)
+            assert (output / "product/PASS").is_file()
         (output / "PASS").write_text("Provisioned external build and unchanged offline repeat; eight CLI candidates and sentinel controls passed.\n")
 
 
