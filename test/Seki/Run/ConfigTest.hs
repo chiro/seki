@@ -31,7 +31,13 @@ tests :: TestTree
 tests =
   testGroup
     "configuration"
-    [ testCase "input rules lower and validate before connecting" $ do
+    [ testCase "check accepts the supplied valid policy without evaluating hooks" $
+        runConfig ["--check"] def{workspaces = ["custom"], startupHook = error "startup evaluated", manageHook = error "manage evaluated"} >>= assertEqual "check" (Right ())
+    , testCase "check rejects the supplied policy rather than checking defaults" $
+        runConfig ["--check"] def{workspaces = ["same", "same"]} >>= \case
+          Left ConfigPolicyError{} -> pure ()
+          other -> assertFailure (show other)
+    , testCase "input rules lower and validate before connecting" $ do
         patternValue <- either (fail . show) pure (compileDevicePattern (Text.pack "*"))
         let rules = [InputRule patternValue Nothing [RepeatInfo 37 410]]
         policy <- prepareConfig def{inputRules = rules} >>= either (assertFailure . show) pure

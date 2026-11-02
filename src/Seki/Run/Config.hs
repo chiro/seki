@@ -36,19 +36,20 @@ import System.IO (hPutStrLn, stderr)
 data ConfigRunError
   = ConfigPolicyError (PolicyError String)
   | ConfigRuntimeError RiverRuntimeError
-  | -- | The command line was not empty or @--restore FILE@.
+  | -- | The command line did not select exactly one supported mode.
     ConfigUsageError String
   deriving (Eq, Show)
 
-newtype SekiArgs = SekiArgs {argsRestore :: Maybe FilePath}
+data SekiArgs = Run | Restore FilePath | Check
   deriving (Eq, Show)
 
--- | @seki@ or @seki --restore FILE@; anything else is a usage error.
+-- | Exactly one of fresh startup, restore, or candidate validation.
 parseSekiArgs :: [String] -> Either String SekiArgs
 parseSekiArgs = \case
-  [] -> Right (SekiArgs Nothing)
-  ["--restore", file] -> Right (SekiArgs (Just file))
-  args -> Left ("usage: seki [--restore FILE], got " <> show args)
+  [] -> Right Run
+  ["--restore", file] -> Right (Restore file)
+  ["--check"] -> Right Check
+  args -> Left ("usage: seki [--restore FILE | --check], got " <> show args)
 
 prepareConfig :: Config l -> IO (Either (PolicyError String) (Policy String l))
 prepareConfig = newPolicy . policyConfigOf
@@ -86,22 +87,24 @@ opKind = \case
   ResizeWindow -> Resize (Corner RightEdge BottomEdge)
 
 {- | Run seki from its command line. Children an earlier image left behind are
-reaped first, and a state file named by @--restore@ is read and deleted; one
-that cannot be used is logged, and seki starts fresh.
+reaped first in runtime modes. A state file named by @--restore@ is read and
+deleted; one that cannot be used is logged, and seki starts fresh. @--check@ instead uses
+'prepareConfig' and returns before any runtime effects.
 -}
 runConfig :: (LayoutClass l) => [String] -> Config l -> IO (Either ConfigRunError ())
 runConfig args config = case parseSekiArgs args of
   Left usage -> pure (Left (ConfigUsageError usage))
+  Right Check -> prepareConfig config >>= pure . either (Left . ConfigPolicyError) (const (Right ()))
   Right parsed -> do
     reapInheritedChildren
     launch <- discoverLaunch
     let base = (policyConfigOf config){policyCheckRestart = checkRestart launch}
-    restore <- case argsRestore parsed of
-      Nothing -> pure Nothing
-      Just file ->
+    restore <- case parsed of
+      Restore file ->
         loadRestoreFile file >>= \case
           Left e -> policyLog base ("restore: " <> describeLoadError e) >> pure Nothing
           Right saved -> pure (Just saved)
+      _ -> pure Nothing
     runSessions launch (const base) restore
 
 {- | Run sessions until one ends without a restart. Only a 'RestoreState'

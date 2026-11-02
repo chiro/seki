@@ -53,7 +53,18 @@ these goals:
 - **The core is pure.** `StackSet`, the layout algebra (`|||`, `Mirror`, layout modifiers), and `ManageHook` are based on xmonad, with its semantics and QuickCheck properties retained where applicable. Layouts and actions are pure. Policy owns mutable state and launches effects; the runtime owns connection IO.
 - **Workspaces use xmonad-style semantics.** They form a shared pool across outputs, with `greedyView` as the default. River itself has no workspace abstraction, so seki implements this policy in the window manager.
 
-A configuration program imports `Seki` and runs `seki def`. The current API supports these overrides.
+A configuration program imports `Seki` and runs `seki def`. Invoke that compiled
+program with exactly `--check` to check its actual configuration without a
+compositor. A successful policy check exits 0. Invalid policy or arguments print
+the current error and exit 1. Check mode evaluates the runtime policy guards and
+allocates policy state, but does not run hooks, spawn commands, open Wayland or
+IPC, or read restore files. It does not build the program or validate all Haskell
+code. User code is trusted, and arbitrary evaluation can fail or never terminate.
+The checker has no timeout; a future build launcher must impose its own bound.
+Normal startup accepts no arguments; restart accepts exactly `--restore FILE`.
+These modes cannot be combined with `--check`.
+
+The current API supports these overrides.
 
 ```haskell
 import Seki
