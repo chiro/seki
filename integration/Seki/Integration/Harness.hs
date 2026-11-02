@@ -460,7 +460,7 @@ integrationConfig probeMode executable footConfigPath probeSocketPath clientEnvi
     , policyStartupHook = pure ()
     , policyPointerBindings = []
     , policyRestore = Nothing
-    , policyCheckRestart = pure (Right ())
+    , policyCheckRestart = const (pure (Right ()))
     , policyLog = announce
     , policyLaunch = \_ -> do
         process <-

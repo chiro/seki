@@ -9,7 +9,8 @@ import Control.Concurrent.STM
 import Control.DeepSeq (force)
 import Control.Exception (IOException, bracket, bracketOnError, evaluate, finally, mask, onException, try)
 import Control.Monad (forever, unless, when)
-import Data.Aeson (Value, object, (.=))
+import Data.Aeson (Value (..), object, toJSON, (.=))
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as BS
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Map.Strict qualified as Map
@@ -24,7 +25,7 @@ import Seki.Internal.Core.Layout qualified as Layout
 import Seki.Internal.Core.StackSet qualified as StackSet
 import Seki.Run.External
 import Seki.Run.IPCSchema
-import Seki.Run.Policy (ExternalInput (..), Policy, closePolicyIngress, observePolicy, policyExternalProducer, policyScratchpadNames, policyTagsOf)
+import Seki.Run.Policy (ExternalInput (..), Policy, closePolicyIngress, observePolicy, policyBuildStatus, policyCanBuild, policyExternalProducer, policyScratchpadNames, policyTagsOf)
 import Seki.Run.Snapshot (projectSnapshot)
 import System.Directory (removeFile)
 import System.Environment (getEnv)
@@ -107,7 +108,10 @@ withIPCAt path policy body =
     clients <- newMVar Map.empty
     healthy <- newTVarIO True
     observePolicy policy $ \revision st runtime -> do
-      snapshot <- evaluate (force (projectSnapshot session Text.pack (policyTagsOf policy) revision st runtime))
+      build <- policyBuildStatus policy
+      let base = projectSnapshot session Text.pack (policyTagsOf policy) revision st runtime
+          combined = case base of Object fields -> Object (KeyMap.insert "build" (toJSON build) fields); other -> other
+      snapshot <- evaluate (force combined)
       atomically (writeTVar latest (Just (revision, snapshot)))
     broker <-
       forkFinally
@@ -167,7 +171,8 @@ withIPCAt path policy body =
               sendSnapshot ident (revision, snapshot)
               stream ended ident revision
             _ -> do
-              case command op of
+              canBuild <- policyCanBuild policy
+              case if op == Recompile && not canBuild then Left "recompile unavailable: no installed build context" else command op of
                 Left message -> sendValue (failure ident "invalid_command" message)
                 Right action -> do
                   result <- newEmptyTMVarIO
@@ -221,6 +226,7 @@ withIPCAt path policy body =
       sent <- timeout 5000000 (sendAll client line)
       when (sent == Nothing) (fail "IPC client write timeout")
   command = \case
+    Recompile -> Right Action.restart
     Scratchpad name | Text.unpack name `elem` policyScratchpadNames policy -> Right (Action.toggleScratchpad (Text.unpack name))
     Scratchpad _ -> Left "unknown scratchpad"
     ScratchpadReset name | Text.unpack name `elem` policyScratchpadNames policy -> Right (Action.resetScratchpad (Text.unpack name))

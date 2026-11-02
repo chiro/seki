@@ -27,6 +27,12 @@ module Seki.Run.Policy (
   newPolicy,
   ExternalInput (..),
   policyExternalProducer,
+  configureBuild,
+  configureBuildFailure,
+  recordPolicyRecoveryFailure,
+  policyBuildStatus,
+  policyValidatedTarget,
+  policyCanBuild,
   observePolicy,
   closePolicyIngress,
   policyTagsOf,
@@ -65,13 +71,15 @@ import Seki.Internal.Core.State (CoreState (..), WorkspaceTagError, Workspaces (
 import Seki.Internal.Input (InputRule (..), SettingError, validateInputSetting)
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
+import Seki.Run.BuildSession
+import Seki.Run.ConfigBuild (BuildContext, ValidatedTarget)
 import Seki.Run.External
 import Seki.Run.InputSnapshot (inputStatusValue)
 import Seki.Run.Inventory (RiverDimensionsHint (..), RiverInventory, RiverOutputState (..), RiverRectangle (..), RiverWindowState (..), lookupRiverOutput, lookupRiverWindow, riverInventoryOutputs, riverInventoryWindows, riverOutputRectangle)
 import Seki.Run.Phase (ManageM, RenderM, closeWindow)
 import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Reconcile (ReconcileState, emptyReconcileState, reconcileManage, reconcileRender, reconciledBoxes, reconciledOps)
-import Seki.Run.Restart (RestartRefusal, describeRefusal)
+import Seki.Run.Restart (RestartRefusal, RestartTarget (..), describeRefusal)
 import Seki.Run.River (RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (ManageOutcome (..), PointerBindingEvent (..), RenderOutcome, RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
 import Seki.Run.ScratchpadTimer
@@ -97,8 +105,8 @@ data PolicyConfig i l = PolicyConfig
   , policyPointerBindings :: [(RiverPointerBinding, OpKind)]
   , policyRestore :: Maybe (RestoreState i)
   -- ^ Applied once, at the first manage sequence, when the inventory first holds every identifier.
-  , policyCheckRestart :: IO (Either RestartRefusal ())
-  -- ^ Runs while a manage sequence that restarts is prepared; 'Right' ends the sequence with @stop@.
+  , policyCheckRestart :: RestartTarget -> IO (Either RestartRefusal ())
+  -- ^ Preflight the selected target before considering stop; accepted ingress must also drain.
   , policyLog :: String -> IO ()
   }
 
@@ -123,10 +131,13 @@ data DrainView = DrainView
   -- ^ The op river runs, not the op the core wants.
   }
 
-data ExternalInput i l = ExternalInput (Action i l ()) (Maybe (TMVar Integer))
+data ExternalInput i l = ExternalInput (Action i l ()) (Maybe (TMVar Integer)) | ExternalBuild BuildEvent
 
 closePolicyIngress :: Policy i l -> IO ()
-closePolicyIngress policy = closeScratchpadTimer (policyScratchpadTimer policy) >> closeExternal (externalLifecycle (policyIngress policy))
+closePolicyIngress policy = do
+  closeExternal (externalLifecycle (policyIngress policy))
+  readIORef (policyBuild policy) >>= mapM_ closeBuildSession
+  closeScratchpadTimer (policyScratchpadTimer policy)
 
 policyScratchpadNames :: Policy i l -> [String]
 policyScratchpadNames = map scratchpadName . policyScratchpads . policyConfig
@@ -140,8 +151,27 @@ observePolicy policy = writeIORef (policyObserver policy)
 policyExternalProducer :: Policy i l -> ExternalProducer (ExternalInput i l)
 policyExternalProducer = externalProducer . policyIngress
 
+configureBuild :: Policy i l -> BuildContext -> IO ()
+configureBuild policy context = newBuildSession context >>= writeIORef (policyBuild policy) . Just
+
+configureBuildFailure :: Policy i l -> String -> IO ()
+configureBuildFailure policy message = newUnavailableBuildSession message >>= writeIORef (policyBuild policy) . Just
+
+recordPolicyRecoveryFailure :: Policy i l -> String -> IO ()
+recordPolicyRecoveryFailure policy message = readIORef (policyBuild policy) >>= mapM_ (\session -> recordRecoveryFailure session message)
+
+policyCanBuild :: Policy i l -> IO Bool
+policyCanBuild policy = isJust <$> readIORef (policyBuild policy)
+
+policyBuildStatus :: Policy i l -> IO (Maybe Value)
+policyBuildStatus policy = readIORef (policyBuild policy) >>= traverse buildStatus
+
+policyValidatedTarget :: Policy i l -> IO (Maybe ValidatedTarget)
+policyValidatedTarget policy = readIORef (policyBuild policy) >>= maybe (pure Nothing) readyTarget
+
 data Policy i l = Policy
-  { policyScratchpadTimer :: ScratchpadTimer
+  { policyBuild :: IORef (Maybe BuildSession)
+  , policyScratchpadTimer :: ScratchpadTimer
   , policyLastInput :: IORef (Maybe Value)
   , policyRevision :: IORef Integer
   , policyObserver :: IORef (Integer -> CoreState i l -> RiverRuntimeSnapshot -> IO ())
@@ -174,7 +204,7 @@ newPolicy config
       Left e -> pure (Left (PolicyTagError e))
       Right st -> case firstRepeat [] (map fst (policyBindings config)) of
         Just binding -> pure (Left (PolicyBindingConflict binding))
-        Nothing -> Right <$> (Policy <$> newScratchpadTimer <*> newIORef Nothing <*> newIORef 0 <*> newIORef (\_ _ _ -> pure ()) <*> newExternalIngress <*> pure config <*> newIORef st{coreScratchpadDefinitions = Map.fromList [(scratchpadName p, (scratchpadCommand p, FloatAt (scratchpadGeometry p))) | p <- policyScratchpads config]} <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)) <*> newIORef (policyRestore config) <*> newIORef (LiveInventory Map.empty Map.empty))
+        Nothing -> Right <$> (Policy <$> newIORef Nothing <*> newScratchpadTimer <*> newIORef Nothing <*> newIORef 0 <*> newIORef (\_ _ _ -> pure ()) <*> newExternalIngress <*> pure config <*> newIORef st{coreScratchpadDefinitions = Map.fromList [(scratchpadName p, (scratchpadCommand p, FloatAt (scratchpadGeometry p))) | p <- policyScratchpads config]} <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)) <*> newIORef (policyRestore config) <*> newIORef (LiveInventory Map.empty Map.empty))
  where
   -- River excludes capslock and numlock bits from its modifier enum.
   invalidModifiers = invalidBits . riverKeyBindingModifiers
@@ -236,7 +266,7 @@ policyRuntimeHandlers policy =
     , prepareRiverRenderPlan = prepareRenderPlan policy
     }
  where
-  ingressLifecycle = let lifecycle = externalLifecycle (policyIngress policy) in lifecycle{closeExternal = closeScratchpadTimer (policyScratchpadTimer policy) >> closeExternal lifecycle}
+  ingressLifecycle = let lifecycle = externalLifecycle (policyIngress policy) in lifecycle{closeExternal = closePolicyIngress policy}
   bindings = policyBindings (policyConfig policy)
   pointerBindings = policyPointerBindings (policyConfig policy)
   startOp origin kind seat window view =
@@ -268,11 +298,21 @@ prepareManagePlan policy snapshot = do
   let view = DrainView inventory (shownBox before previous) (`Map.lookup` reconciledOps previous)
   events <- map ($ view) . reverse <$> atomicModifyIORef' (policyQueue policy) ([],)
   external <- drainedInputs <$> drainExternal (policyIngress policy)
+  _ <-
+    mapM
+      ( \case
+          ExternalBuild event -> readIORef (policyBuild policy) >>= maybe (pure False) (\session -> completeBuild session (submitExternal (policyExternalProducer policy) . ExternalBuild) event)
+          _ -> pure False
+      )
+      external
   let externalEvent (ExternalInput action _) = RunAction action
+      externalEvent (ExternalBuild _) = RunAction (pure ())
       (st, intents) = drainCoreWithScratchpads (policyScratchpads (policyConfig policy)) (policyManageHook (policyConfig policy)) (events <> map externalEvent external) before
   writeIORef (policyState policy) st
   writeIORef (policyDrainedInventory policy) (liveInventoryOf inventory)
   let effects = interpretIntents intents
+  buildSession <- readIORef (policyBuild policy)
+  when (planRestart effects) $ mapM_ (\session -> requestBuild session (submitExternal (policyExternalProducer policy) . ExternalBuild)) buildSession
   mapM_ (policyLaunch (policyConfig policy)) (planLaunch effects)
   mapM_ (policyLog (policyConfig policy)) (planNotices effects)
   mapM_
@@ -284,7 +324,7 @@ prepareManagePlan policy snapshot = do
   revision <- atomicModifyIORef' (policyRevision policy) (\n -> (n + 1, n + 1))
   observer <- readIORef (policyObserver policy)
   observer revision st snapshot
-  mapM_ (\(ExternalInput _ receipt) -> mapM_ (\cell -> void (atomically (tryPutTMVar cell revision))) receipt) external
+  mapM_ (\case ExternalInput _ receipt -> mapM_ (\cell -> void (atomically (tryPutTMVar cell revision))) receipt; ExternalBuild _ -> pure ()) external
   let scene =
         planScene
           (policySceneStyle (policyConfig policy))
@@ -295,12 +335,15 @@ prepareManagePlan policy snapshot = do
   writeIORef (policyScene policy) scene
   let (next, plan) = reconcileManage reclaim scene snapshot previous
   writeIORef (policyReconcile policy) next
+  target <- policyValidatedTarget policy
   outcome <-
-    if planRestart effects
+    if isJust target || (planRestart effects && not (isJust buildSession))
       then
-        policyCheckRestart (policyConfig policy) >>= \case
+        policyCheckRestart (policyConfig policy) (maybe RecordedTarget CheckedTarget target) >>= \case
           Left refusal -> policyLog (policyConfig policy) ("restart refused: " <> describeRefusal refusal) >> pure KeepManaging
-          Right () -> pure StopManaging
+          Right () -> do
+            sealed <- if isJust target then sealExternal (policyIngress policy) else pure True
+            pure (if sealed then StopManaging else KeepManaging)
       else pure KeepManaging
   pure $ do
     mapM_ closeWindow (mapMaybe liveWindow (planClose effects))

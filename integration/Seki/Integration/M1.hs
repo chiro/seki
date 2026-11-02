@@ -307,7 +307,7 @@ m1Config =
     , policyStartupHook = pure ()
     , policyPointerBindings = []
     , policyRestore = Nothing
-    , policyCheckRestart = pure (Right ())
+    , policyCheckRestart = const (pure (Right ()))
     , policyLog = announce
     , policyLaunch = \_ -> failIntegration "unexpected spawn in M1 policy"
     }

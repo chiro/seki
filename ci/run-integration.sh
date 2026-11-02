@@ -55,10 +55,12 @@ fi
 integration_executable=$(cabal list-bin seki-integration "$@" 2>>"$raw_log")
 seki_executable=$(cabal list-bin seki-default "$@" 2>>"$raw_log")
 reference_config_executable=$(cabal list-bin seki-reference-config "$@" 2>>"$raw_log")
+launcher_executable=$(cabal list-bin seki "$@" 2>>"$raw_log")
 sekictl_executable=$(cabal list-bin sekictl "$@" 2>>"$raw_log")
 
 set +e
 SEKI_RUN_INTEGRATION=1 \
+  SEKI_LAUNCHER_EXECUTABLE="$launcher_executable" \
   SEKICTL_EXECUTABLE="$sekictl_executable" \
   SEKI_EXECUTABLE="$seki_executable" \
   SEKI_REFERENCE_CONFIG_EXECUTABLE="$reference_config_executable" \

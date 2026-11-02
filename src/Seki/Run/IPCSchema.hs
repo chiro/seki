@@ -25,7 +25,7 @@ import Data.Text qualified as Text
 data RequestError = RequestError {errorRequestId :: Text, errorMessage :: String, errorClosesConnection :: Bool} deriving (Eq, Show)
 
 data Request = Request {requestId :: Text, requestOperation :: Operation} deriving (Eq, Show)
-data Operation = Snapshot | Subscribe | Scratchpad Text | ScratchpadReset Text | Workspace Text | Spawn Text | Layout LayoutOp deriving (Eq, Show)
+data Operation = Snapshot | Subscribe | Recompile | Scratchpad Text | ScratchpadReset Text | Workspace Text | Spawn Text | Layout LayoutOp deriving (Eq, Show)
 data LayoutOp = Next | Shrink | Expand | IncMaster | DecMaster deriving (Eq, Show, Enum, Bounded)
 
 maxLineBytes :: Int
@@ -41,6 +41,7 @@ instance FromJSON Request where
     operation <- case op of
       "snapshot" -> pure Snapshot
       "subscribe" -> pure Subscribe
+      "recompile" -> pure Recompile
       "scratchpad" -> Scratchpad <$> o .: "name"
       "scratchpad-reset" -> ScratchpadReset <$> o .: "name"
       "workspace" -> Workspace <$> o .: "tag"
@@ -71,12 +72,13 @@ encodeLine value
   bytes = BL.take (fromIntegral maxLineBytes + 1) (encode value)
 
 cliUsage :: String
-cliUsage = "usage: sekictl snapshot | subscribe | scratchpad NAME | scratchpad-reset NAME | workspace TAG | spawn COMMAND | layout {next|shrink|expand|inc-master|dec-master}"
+cliUsage = "usage: sekictl snapshot | subscribe | recompile | scratchpad NAME | scratchpad-reset NAME | workspace TAG | spawn COMMAND | layout {next|shrink|expand|inc-master|dec-master}"
 
 parseCLI :: [String] -> Either String Operation
 parseCLI args = case args of
   ["snapshot"] -> Right Snapshot
   ["subscribe"] -> Right Subscribe
+  ["recompile"] -> Right Recompile
   ["scratchpad", name] -> Right (Scratchpad (Text.pack name))
   ["scratchpad-reset", name] -> Right (ScratchpadReset (Text.pack name))
   ["workspace", tag] -> Right (Workspace (Text.pack tag))
@@ -90,6 +92,7 @@ instance ToJSON Request where
     fields = case operation of
       Snapshot -> ["op" .= ("snapshot" :: Text)]
       Subscribe -> ["op" .= ("subscribe" :: Text)]
+      Recompile -> ["op" .= ("recompile" :: Text)]
       Scratchpad name -> ["op" .= ("scratchpad" :: Text), "name" .= name]
       ScratchpadReset name -> ["op" .= ("scratchpad-reset" :: Text), "name" .= name]
       Workspace tag -> ["op" .= ("workspace" :: Text), "tag" .= tag]

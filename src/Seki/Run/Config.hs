@@ -15,6 +15,7 @@ module Seki.Run.Config (
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (IOException, finally, try)
+import Control.Monad (void)
 import System.Directory (removeFile)
 
 import Seki.Internal.Config (BorderConfig (..), Button (..), Config (..), KeyBinding (..), Keysym (..), Mods (..), PointerAction (..), PointerBinding (..))
@@ -23,10 +24,11 @@ import Seki.Internal.Core.PointerOp (HEdge (..), OpKind (..), ResizeEdges (..), 
 import Seki.Internal.Core.Restore (RestoreState)
 import Seki.Internal.Core.Scene (SceneStyle (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Run.ConfigBuild (installedContext, validatedProfile)
 import Seki.Run.IPC (withIPC)
 import Seki.Run.Pointer (RiverPointerBinding (..))
-import Seki.Run.Policy (Policy, PolicyConfig (..), PolicyError, launchDetached, newPolicy, policyRuntimeHandlers, readRestoreState)
-import Seki.Run.Restart (Launch (..), RestartRefusal (..), checkRestart, describeLoadError, discoverLaunch, execRestart, loadRestoreFile, reapInheritedChildren, writeRestoreFile)
+import Seki.Run.Policy (Policy, PolicyConfig (..), PolicyError, configureBuild, configureBuildFailure, launchDetached, newPolicy, policyRuntimeHandlers, policyValidatedTarget, readRestoreState, recordPolicyRecoveryFailure)
+import Seki.Run.Restart (Launch (..), RestartRefusal (..), checkRestartTarget, describeLoadError, discoverLaunch, execRestart, execValidatedRestart, loadRestoreFile, reapInheritedChildren, writeRestoreFile)
 import Seki.Run.Runtime (RiverExit (..), RiverRuntimeError (..), closeRiverSession, openRiverSessionAt, runRiverSession)
 import Seki.Run.Startup (WaylandStartupError (..))
 import Seki.Run.Xkb (RiverKeyBinding (..))
@@ -68,8 +70,8 @@ policyConfigOf config =
     , policyStartupHook = startupHook config
     , policyPointerBindings = [(lowerPointer binding, opKind action) | (binding, action) <- pointerBindings config config]
     , policyRestore = Nothing
-    , policyCheckRestart = pure (Left TargetUnrecorded)
-    , policyLog = hPutStrLn stderr . ("seki: " <>)
+    , policyCheckRestart = const (pure (Left TargetUnrecorded))
+    , policyLog = \message -> void (try @IOException (hPutStrLn stderr ("seki: " <> message)))
     }
  where
   style = borders config
@@ -98,7 +100,7 @@ runConfig args config = case parseSekiArgs args of
   Right parsed -> do
     reapInheritedChildren
     launch <- discoverLaunch
-    let base = (policyConfigOf config){policyCheckRestart = checkRestart launch}
+    let base = (policyConfigOf config){policyCheckRestart = checkRestartTarget launch}
     restore <- case parsed of
       Restore file ->
         loadRestoreFile file >>= \case
@@ -116,15 +118,21 @@ that binds while another still holds window management with
 @unavailable@, which a crash restart can race, so that is retried briefly.
 -}
 runSessions :: (LayoutClass l) => Launch -> (Maybe (RestoreState String) -> PolicyConfig String l) -> Maybe (RestoreState String) -> IO (Either ConfigRunError ())
-runSessions launch configFor = pass (launchFirstTarget launch) unavailableRetries
+runSessions launch configFor = pass (launchFirstTarget launch) unavailableRetries Nothing
  where
-  logLine = policyLog (configFor Nothing)
-  pass target retries restore = case target of
+  logLine message = void (try @IOException (policyLog (configFor Nothing) message))
+  pass target retries previousFailure restore = case target of
     Left e -> pure (Left (ConfigRuntimeError (RiverRuntimeStartupError (WaylandConnectionDiscoveryError e))))
     Right connection ->
       newPolicy (configFor restore){policyRestore = restore} >>= \case
         Left e -> pure (Left (ConfigPolicyError e))
-        Right policy ->
+        Right policy -> do
+          context <- try @IOException installedContext
+          case context of
+            Right (Just buildContext) -> configureBuild policy buildContext
+            Left err -> configureBuildFailure policy ("build context unavailable: " <> show err)
+            _ -> pure ()
+          mapM_ (recordPolicyRecoveryFailure policy) previousFailure
           openRiverSessionAt connection defaultObjectLimit (policyRuntimeHandlers policy) >>= \case
             Left e -> pure (Left (ConfigRuntimeError e))
             Right session ->
@@ -133,22 +141,24 @@ runSessions launch configFor = pass (launchFirstTarget launch) unavailableRetrie
                   | retries > 0 -> do
                       logLine "window management unavailable, retrying"
                       threadDelay 100000
-                      pass (launchReconnectTarget launch) (retries - 1) restore
+                      pass (launchReconnectTarget launch) (retries - 1) previousFailure restore
                 Left e -> pure (Left (ConfigRuntimeError e))
                 Right RiverEnded -> pure (Right ())
                 Right RiverStopped -> do
                   saved <- readRestoreState policy
-                  handOver saved
-                  pass (launchReconnectTarget launch) unavailableRetries (Just saved)
-  handOver saved = case launchStateDir launch of
-    Left refusal -> logLine ("restart: no state directory (" <> show refusal <> "); restoring in this process")
+                  candidate <- policyValidatedTarget policy
+                  failure <- handOver candidate saved
+                  pass (launchReconnectTarget launch) unavailableRetries failure (Just saved)
+  handOver candidate saved = case launchStateDir launch of
+    Left refusal -> reportFailure ("restart: no state directory (" <> show refusal <> "); restoring in this process")
     Right dir ->
       writeRestoreFile dir saved >>= \case
-        Left e -> logLine ("restart: cannot write the state (" <> show e <> "); restoring in this process")
+        Left e -> reportFailure ("restart: cannot write the state (" <> show e <> "); restoring in this process")
         Right file -> do
-          failure <- execRestart launch file
+          failure <- maybe (execRestart launch file) (\target -> execValidatedRestart launch target file) candidate
           _ <- try @IOException (removeFile file)
-          logLine ("restart: exec of " <> either show id (launchTarget launch) <> " failed (" <> show failure <> "); restoring in this process")
+          reportFailure ("restart: exec of " <> maybe (either show id (launchTarget launch)) validatedProfile candidate <> " failed (" <> show failure <> "); restoring in this process")
+  reportFailure message = logLine message >> pure (Just message)
 
 unavailableRetries :: Int
 unavailableRetries = 10

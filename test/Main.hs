@@ -16,6 +16,7 @@ import Seki.Internal.Core.StateTest qualified as StateTest
 import Seki.Internal.InputTest qualified as InputTest
 import Seki.Internal.Layout.FullTest qualified as FullLayoutTest
 import Seki.Internal.Layout.TallTest qualified as TallTest
+import Seki.Run.BuildSessionTest qualified as BuildSessionTest
 import Seki.Run.ConfigTest qualified as ConfigTest
 import Seki.Run.ExternalTest qualified as ExternalTest
 import Seki.Run.IPCBoundaryTest qualified as IPCBoundaryTest
@@ -56,7 +57,8 @@ main =
   defaultMain
     ( testGroup
         "seki"
-        [ ScratchpadTimerTest.tests
+        [ BuildSessionTest.tests
+        , ScratchpadTimerTest.tests
         , ScratchpadTest.tests
         , InputTest.tests
         , IPCBoundaryTest.tests
