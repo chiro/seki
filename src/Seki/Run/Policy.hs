@@ -57,7 +57,7 @@ import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, mapMaybe)
 import Data.Word (Word32)
-import Seki.Internal.Core.Action (Action, Intent (..), scratchpadTimeout)
+import Seki.Internal.Core.Action (Action, Intent (..))
 import Seki.Internal.Core.Event (CoreEvent (..), drainCoreWithScratchpads)
 import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), Rect, mkRect, mkSize, rectX, rectY, translate)
 import Seki.Internal.Core.Layout (LayoutClass)
@@ -82,7 +82,6 @@ import Seki.Run.Reconcile (ReconcileState, emptyReconcileState, reconcileManage,
 import Seki.Run.Restart (RestartRefusal, RestartTarget (..), describeRefusal)
 import Seki.Run.River (RiverWindowManagerHandlers (..))
 import Seki.Run.Runtime (ManageOutcome (..), PointerBindingEvent (..), RenderOutcome, RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
-import Seki.Run.ScratchpadTimer
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable (Object, objectId)
 import Seki.Wire.Types (mkObjectId, objectIdValue)
@@ -137,7 +136,6 @@ closePolicyIngress :: Policy i l -> IO ()
 closePolicyIngress policy = do
   closeExternal (externalLifecycle (policyIngress policy))
   readIORef (policyBuild policy) >>= mapM_ closeBuildSession
-  closeScratchpadTimer (policyScratchpadTimer policy)
 
 policyScratchpadNames :: Policy i l -> [String]
 policyScratchpadNames = map scratchpadName . policyScratchpads . policyConfig
@@ -171,7 +169,6 @@ policyValidatedTarget policy = readIORef (policyBuild policy) >>= maybe (pure No
 
 data Policy i l = Policy
   { policyBuild :: IORef (Maybe BuildSession)
-  , policyScratchpadTimer :: ScratchpadTimer
   , policyLastInput :: IORef (Maybe Value)
   , policyRevision :: IORef Integer
   , policyObserver :: IORef (Integer -> CoreState i l -> RiverRuntimeSnapshot -> IO ())
@@ -204,7 +201,7 @@ newPolicy config
       Left e -> pure (Left (PolicyTagError e))
       Right st -> case firstRepeat [] (map fst (policyBindings config)) of
         Just binding -> pure (Left (PolicyBindingConflict binding))
-        Nothing -> Right <$> (Policy <$> newIORef Nothing <*> newScratchpadTimer <*> newIORef Nothing <*> newIORef 0 <*> newIORef (\_ _ _ -> pure ()) <*> newExternalIngress <*> pure config <*> newIORef st{coreScratchpadDefinitions = Map.fromList [(scratchpadName p, (scratchpadCommand p, FloatAt (scratchpadGeometry p))) | p <- policyScratchpads config]} <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)) <*> newIORef (policyRestore config) <*> newIORef (LiveInventory Map.empty Map.empty))
+        Nothing -> Right <$> (Policy <$> newIORef Nothing <*> newIORef Nothing <*> newIORef 0 <*> newIORef (\_ _ _ -> pure ()) <*> newExternalIngress <*> pure config <*> newIORef st{coreScratchpadDefinitions = Map.fromList [(scratchpadName p, (scratchpadCommand p, FloatAt (scratchpadGeometry p))) | p <- policyScratchpads config]} <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)) <*> newIORef (policyRestore config) <*> newIORef (LiveInventory Map.empty Map.empty))
  where
   -- River excludes capslock and numlock bits from its modifier enum.
   invalidModifiers = invalidBits . riverKeyBindingModifiers
@@ -315,12 +312,7 @@ prepareManagePlan policy snapshot = do
   when (planRestart effects) $ mapM_ (\session -> requestBuild session (submitExternal (policyExternalProducer policy) . ExternalBuild)) buildSession
   mapM_ (policyLaunch (policyConfig policy)) (planLaunch effects)
   mapM_ (policyLog (policyConfig policy)) (planNotices effects)
-  mapM_
-    ( \(name, generation, command) -> do
-        policyLaunch (policyConfig policy) command
-        scheduleScratchpad (policyScratchpadTimer policy) (\key token -> submitExternal (policyExternalProducer policy) (ExternalInput (scratchpadTimeout key token) Nothing)) name generation
-    )
-    (planPads effects)
+  mapM_ (\(_, _, command) -> policyLaunch (policyConfig policy) command) (planPads effects)
   revision <- atomicModifyIORef' (policyRevision policy) (\n -> (n + 1, n + 1))
   observer <- readIORef (policyObserver policy)
   observer revision st snapshot

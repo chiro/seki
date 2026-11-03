@@ -33,7 +33,6 @@ import Seki.Run.ReconcileTraceTest qualified as ReconcileTraceTest
 import Seki.Run.RestartTest qualified as RestartTest
 import Seki.Run.RiverTest qualified as RiverTest
 import Seki.Run.RuntimeTest qualified as RuntimeTest
-import Seki.Run.ScratchpadTimerTest qualified as ScratchpadTimerTest
 import Seki.Run.SequenceTest qualified as SequenceTest
 import Seki.Run.SessionsTest qualified as SessionsTest
 import Seki.Run.StartupTest qualified as StartupTest
@@ -58,7 +57,6 @@ main =
     ( testGroup
         "seki"
         [ BuildSessionTest.tests
-        , ScratchpadTimerTest.tests
         , ScratchpadTest.tests
         , InputTest.tests
         , IPCBoundaryTest.tests

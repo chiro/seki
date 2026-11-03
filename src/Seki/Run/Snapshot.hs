@@ -38,7 +38,6 @@ projectSnapshot session label tags revision st runtime =
  where
   status slot = case slot of
     LaunchPending _ -> "pending" :: Text
-    LaunchTimedOut _ -> "timed-out-latched"
     HiddenPad _ _ -> "hidden"
     ShownPad _ _ -> "shown"
   inventory = riverRuntimeInventory runtime

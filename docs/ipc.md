@@ -48,6 +48,11 @@ Each workspace has `tag`, `occupied`, `visible`, `focused`, and `layout`.
 unsupported in this version. Output wire IDs are session-local. They are not
 persistent output names or window identities.
 
+The `scratchpads` array contains `name` and `state` for each owned or pending
+scratchpad. States are `pending`, `shown`, and `hidden`. An unresolved launch
+stays `pending` until a matching window arrives or `scratchpad-reset` clears it.
+An absent name has no entry.
+
 Subscribe delivers an initial snapshot, then updated immutable projections.
 A subscriber can have one replaceable pending snapshot. Intermediate revisions
 may be skipped. Each command connection processes one request and its reply

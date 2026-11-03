@@ -46,11 +46,10 @@ Later title or app-ID changes never rematch a managed window. Launch PIDs
 are not used to identify windows.
 
 The first absent toggle launches the shell command. Further toggles while
-pending coalesce. After ten seconds without a matching window the attempt
-is reported as `timed-out-latched` in the IPC snapshot and logs. This is a
-status deadline, not an application startup latency promise. It never
-launches again merely because a command is slow or the shell exited. A late
-first matching new window can still resolve the latch.
+pending coalesce. An unresolved attempt stays `pending` until a matching
+window arrives or you explicitly reset it. It never launches again merely
+because a command is slow or the shell exited. A late first matching new
+window can still resolve the pending attempt.
 
 After cleaning up the old command yourself, deliberately run
 `sekictl scratchpad-reset term` or the typed `resetScratchpad "term"` action.
@@ -63,8 +62,8 @@ its existing detached semantics, including its stderr failure reporting.
 IPC command receipts identify the reducer's applied revision. A successful
 toggle receipt can mean the launch is now pending; it does not mean the
 application mapped or a frame displayed. Snapshot states are `pending`,
-`timed-out-latched`, `shown` and `hidden`; an absent name has no lifecycle
-entry. Existing IPC v1 operations and receipt/error contracts remain intact.
+`shown` and `hidden`; an absent name has no lifecycle entry. Existing IPC v1
+operations and receipt/error contracts remain intact.
 
 Restart schema v2 saves owned windows by river identifier, their visibility,
 float geometry and eligible prior focus. It accepts v1 files with no pad
@@ -78,7 +77,7 @@ user workspace as a float; missing outputs use the existing workspace fallback. 
 unidentified windows cannot restore ownership. A removed definition never
 leaves an inaccessible hidden window behind.
 
-Pending and timed-out attempts are not persisted as processes or windows.
+Pending attempts are not persisted as processes or windows.
 After WM restart an unmatched definition is absent and can launch again.
 There is no exactly-once external-process guarantee across restart or manual
 reset. Use a query that uniquely names the intended window and account for
