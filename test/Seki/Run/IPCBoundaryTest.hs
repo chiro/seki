@@ -109,18 +109,24 @@ tests =
             try @IOException (withIPC (const (pure ())) policy (modifyIORef' calls (+ 1) >> ioError (userError "WM body failed")))
         assertBool "body exception propagates" (either (const True) (const False) result)
         readIORef calls >>= assertEqual "body ran only once" 1
-    , testCase "unfilled command receipt stops the broker within its deadline" $ temporary $ \path -> do
+    , testCase "a timed-out receipt leaves later commands available" $ temporary $ \path -> do
         policy <- fresh
+        notified <- newEmptyMVar
         case riverExternalIngress (policyRuntimeHandlers policy) of
           Nothing -> assertFailure "missing ingress"
-          Just ingress -> External.bindExternalWake ingress (pure True) >>= assertBool "bound"
+          Just ingress -> External.bindExternalWake ingress (putMVar notified () >> pure True) >>= assertBool "bound"
         withIPCAt path policy $ bracket (openClient path) close $ \client -> do
-          sendAll client "{\"version\":1,\"id\":\"held\",\"op\":\"spawn\",\"command\":\"unused\"}\n"
+          sendAll client "{\"version\":1,\"id\":\"held\",\"op\":\"layout\",\"action\":\"next\"}\n"
+          timeout 1000000 (takeMVar notified) >>= assertEqual "first command admitted" (Just ())
           reply <- lineWithin 8000000 client
           assertBool "no false failure claim for potentially applied command" ("application is unknown" `BS.isInfixOf` reply)
-          sendAll client "{\"version\":1,\"id\":\"next\",\"op\":\"spawn\",\"command\":\"unused\"}\n"
+          let manage = prepareRiverManagePlan (policyRuntimeHandlers policy) (RiverRuntimeSnapshot emptyRiverInventory (InputUnavailable []) [])
+          _ <- manage
+          sendAll client "{\"version\":1,\"id\":\"next\",\"op\":\"layout\",\"action\":\"next\"}\n"
+          timeout 1000000 (takeMVar notified) >>= assertEqual "later command admitted after timeout" (Just ())
+          _ <- manage
           next <- line client
-          assertBool "later commands see unavailable broker" ("unavailable" `BS.isInfixOf` next)
+          assertBool "later command receives its applied revision" ("\"result\"" `BS.isInfixOf` next && "\"revision\"" `BS.isInfixOf` next)
     , testCase "semantic request error preserves the next request" $ temporary $ \path -> do
         policy <- fresh
         withIPCAt path policy $ do
