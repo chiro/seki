@@ -20,7 +20,6 @@ data Scratchpad = Scratchpad
 
 data ScratchpadState
   = LaunchPending Integer
-  | LaunchTimedOut Integer
   | HiddenPad WindowId FloatGeom
   | ShownPad WindowId (Maybe WindowId)
   deriving (Eq, Show)

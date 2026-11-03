@@ -45,7 +45,7 @@ type PadFixture = Fixture StdLayouts
 scratchpadScenarios :: [(String, IO ())]
 scratchpadScenarios =
   [ ("m3-scratchpad-lifecycle", withPad "m3-scratchpad-lifecycle" 2 lifecycle)
-  , ("m3-scratchpad-timeout", withPad "m3-scratchpad-timeout" 1 timeoutRecovery)
+  , ("m3-scratchpad-reset", withPad "m3-scratchpad-reset" 1 resetRecovery)
   , ("m3-scratchpad-pending", withPad "m3-scratchpad-pending" 1 pending)
   , ("m3-scratchpad-focus", withPad "m3-scratchpad-focus" 1 focusInput)
   , ("m3-scratchpad-bring", withPad "m3-scratchpad-bring" 2 bring)
@@ -67,7 +67,7 @@ withPad name outputs action = do
   let command = "foot --app-id=seki-scratchpad /bin/sh -c 'printf \"SEKI NAMED SCRATCHPAD\\nLifecycle: open / hide / show / bring\\nIdentity stays with this terminal.\\nType here after show.\\n\"; exec cat'"
       config =
         (policyConfigOf def)
-          { policyScratchpads = [Scratchpad "term" (if name == "m3-scratchpad-timeout" then "true" else (if name == "m3-scratchpad-pending" then "sleep 1; " else "") <> command) (appId =? "seki-scratchpad") padBox]
+          { policyScratchpads = [Scratchpad "term" (if name == "m3-scratchpad-reset" then "true" else (if name == "m3-scratchpad-pending" then "sleep 1; " else "") <> command) (appId =? "seki-scratchpad") padBox]
           , policyLaunch = \cmd -> do
               modifyIORef' launches (+ 1)
               envValue <- readIORef environment
@@ -305,12 +305,13 @@ togglePerformance fixture probe ordinary launches = do
   readIORef launches >>= assertEqual "existing toggles never relaunch" 1
   saveCapture fixture "performance-final-content"
 
-timeoutRecovery :: PadFixture -> Probe -> ProbeWindow -> IORef Int -> IO ()
-timeoutRecovery fixture probe _ launches = do
+resetRecovery :: PadFixture -> Probe -> ProbeWindow -> IORef Int -> IO ()
+resetRecovery fixture probe _ launches = do
   void (apply fixture (toggleScratchpad "term"))
-  void (waitUntil "real session timer reports latched timeout" 12000000 (stateOf fixture) (\s -> case s of Just LaunchTimedOut{} -> True; _ -> False))
+  stateOf fixture >>= assertEqual "unmatched launch stays pending" (Just (LaunchPending 1))
   forM_ [1 .. 20 :: Int] $ \_ -> void (apply fixture (toggleScratchpad "term"))
-  readIORef launches >>= assertEqual "timeout never relaunches automatically" 1
+  readIORef launches >>= assertEqual "pending toggles never relaunch" 1
+  stateOf fixture >>= assertEqual "repeated toggles keep the pending attempt" (Just (LaunchPending 1))
   cli <- getEnv "SEKICTL_EXECUTABLE"
   response <- runProcessCapture (mEnvironment fixture) cli ["scratchpad-reset", "term"]
   announce ("SCRATCHPAD_RESET_APPLIED " <> show response)
@@ -319,4 +320,4 @@ timeoutRecovery fixture probe _ launches = do
   readIORef launches >>= assertEqual "manual reset deliberately permits new attempt" 2
   _ <- openWindowWith probe (windowSpec Red){specAppId = CustomAppId "seki-scratchpad"}
   void (waitShown fixture)
-  saveCapture fixture "timeout-reset-late-match"
+  saveCapture fixture "pending-reset-late-match"

@@ -172,7 +172,6 @@ library seki-wire
     Seki.Run.Phase
     Seki.Run.Pointer
     Seki.Run.Policy
-    Seki.Run.ScratchpadTimer
     Seki.Run.Reconcile
     Seki.Run.Restart
     Seki.Run.River
@@ -347,7 +346,6 @@ test-suite seki-test
     Seki.Run.ConfigTest
     Seki.Run.PhaseTest
     Seki.Run.PolicyTest
-    Seki.Run.ScratchpadTimerTest
     Seki.Run.ReconcileTest
     Seki.Run.ReconcileTraceTest
     Seki.Run.RestartTest

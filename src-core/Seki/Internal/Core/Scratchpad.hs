@@ -1,7 +1,6 @@
 module Seki.Internal.Core.Scratchpad (
   togglePad,
   resetPad,
-  timeoutPad,
   managePad,
   closePad,
   ownedWindow,
@@ -52,7 +51,6 @@ togglePad name st = case Map.lookup name (coreScratchpadDefinitions st) of
       let generation = coreScratchpadGeneration st + 1
        in (putPad name (LaunchPending generation) st{coreScratchpadGeneration = generation}, [LaunchPad name generation command])
     Just LaunchPending{} -> (st, [])
-    Just LaunchTimedOut{} -> (st, [])
     Just (HiddenPad w geom) -> (showPad name w geom st, [])
     Just (ShownPad w prior) -> case coreWorkspaces st of
       AttachedState ss _
@@ -72,15 +70,9 @@ togglePad name st = case Map.lookup name (coreScratchpadDefinitions st) of
 resetPad :: String -> CoreState i l -> (CoreState i l, [ScratchpadEffect])
 resetPad name st = case Map.lookup name (coreScratchpads st) of
   Just LaunchPending{} -> reset
-  Just LaunchTimedOut{} -> reset
   _ -> (st, [])
  where
   reset = (st{coreScratchpads = Map.delete name (coreScratchpads st)}, [PadNotice ("scratchpad reset: " <> name <> "; operator is responsible for cleaning up the previous detached command; reset cannot prove it has exited")])
-
-timeoutPad :: String -> Integer -> CoreState i l -> (CoreState i l, [ScratchpadEffect])
-timeoutPad name generation st = case Map.lookup name (coreScratchpads st) of
-  Just (LaunchPending current) | current == generation -> (putPad name (LaunchTimedOut generation) st, [PadNotice ("scratchpad timed out and remains latched: " <> name <> "; late matches remain eligible; clean up before scratchpad-reset")])
-  _ -> (st, [])
 
 managePad :: [Scratchpad] -> ManageHook i l -> WindowId -> WindowProps -> CoreState i l -> (CoreState i l, [ScratchpadEffect])
 managePad definitions hook w props st

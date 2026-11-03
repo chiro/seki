@@ -67,16 +67,25 @@ tests =
         let (st, effects) = run (replicate 100 (act (toggleScratchpad "term"))) attached
         slot st @?= Just (LaunchPending 1)
         length [() | LaunchScratchpad{} <- effects] @?= 1
-    , testCase "timeout latches, repeats do not launch, late map resolves" $ do
-        let (st, effects) = run [act (toggleScratchpad "term"), act (scratchpadTimeout "term" 1), act (toggleScratchpad "term")] attached
-        slot st @?= Just (LaunchTimedOut 1)
+    , testCase "pending repeats do not launch, late map resolves" $ do
+        let (st, effects) = run [act (toggleScratchpad "term"), act (toggleScratchpad "term")] attached
+        slot st @?= Just (LaunchPending 1)
         length [() | LaunchScratchpad{} <- effects] @?= 1
         slot (fst (run [WindowCreated pad props] st)) @?= Just (ShownPad pad (Just ordinary))
-    , testCase "reset explicitly permits a fresh generation; stale deadline ignored" $ do
-        let (st, effects) = run [act (toggleScratchpad "term"), act (resetScratchpad "term"), act (toggleScratchpad "term"), act (scratchpadTimeout "term" 1)] attached
+    , testCase "reset explicitly permits a fresh generation" $ do
+        let (st, effects) = run [act (toggleScratchpad "term"), act (resetScratchpad "term"), act (toggleScratchpad "term")] attached
         slot st @?= Just (LaunchPending 2)
         length [() | LaunchScratchpad{} <- effects] @?= 2
         assertBool "reset warns" (any (\e -> case e of ScratchpadNotice _ -> True; _ -> False) effects)
+    , testCase "reset preserves owned shown and hidden windows" $ do
+        let hidden = fst (run [act (toggleScratchpad "term")] shown)
+        mapM_
+          ( \owned -> do
+              let (st, effects) = run [act (resetScratchpad "term")] owned
+              st @?= owned
+              effects @?= []
+          )
+          [shown, hidden]
     , testCase "hide detaches pad and restores prior eligible focus" $ do
         let (st, _) = run [act (toggleScratchpad "term")] shown
         slot st @?= Just (HiddenPad pad (W.FloatAt box))
@@ -111,9 +120,9 @@ tests =
         let (st, effects) = run [WindowClosed pad, act (toggleScratchpad "term")] hidden
         slot st @?= Just (LaunchPending 1)
         length [() | LaunchScratchpad{} <- effects] @?= 1
-    , testCase "independent pads retain separate pending latches" $ do
-        let (st, effects) = run [act (toggleScratchpad "term"), act (toggleScratchpad "other"), act (scratchpadTimeout "term" 1)] attached
-        slot st @?= Just (LaunchTimedOut 1)
+    , testCase "reset clears only the named pending pad" $ do
+        let (st, effects) = run [act (toggleScratchpad "term"), act (toggleScratchpad "other"), act (resetScratchpad "term")] attached
+        slot st @?= Nothing
         M.lookup "other" (coreScratchpads st) @?= Just (LaunchPending 2)
         length [() | LaunchScratchpad{} <- effects] @?= 2
     , testCase "v2 hidden identity roundtrip does not rematch title" $ do
@@ -194,6 +203,9 @@ tests =
         let pending = fst (run [act (toggleScratchpad "term")] attached)
             restored = fst (restoreCore inv (saveCore inv pending) initial)
         M.null (coreScratchpads restored) @?= True
+        let (relaunched, effects) = run [act (toggleScratchpad "term")] restored
+        assertBool "fresh launch is pending" (case slot relaunched of Just LaunchPending{} -> True; _ -> False)
+        length [() | LaunchScratchpad{} <- effects] @?= 1
     , testCase "v1 migration accepts exact old schema" $ do
         let old = "seki-restore 1\nRestoreState {savedWorkspaces = [], savedFloats = [], savedFullscreen = fromList [], savedSpawnedOnce = fromList []}"
         fmap savedScratchpads (decodeRestoreState old :: Either RestoreError (RestoreState String)) @?= Right []
@@ -214,10 +226,6 @@ tests =
     , testCase "malformed v2 and malformed v1 are rejected" $ do
         (decodeRestoreState "seki-restore 2\nnot-state" :: Either RestoreError (RestoreState String)) @?= Left RestoreUnreadable
         (decodeRestoreState "seki-restore 1\nnot-state" :: Either RestoreError (RestoreState String)) @?= Left RestoreUnreadable
-    , testCase "automatic timeout updates status without reclaiming input" $ do
-        let pending = fst (run [act (toggleScratchpad "term")] attached)
-            (_, effects) = run [act (scratchpadTimeout "term" 1)] pending
-        assertBool "no automatic focus claim" (ReclaimFocus `notElem` effects)
     , testCase "public insertion cannot expose an owned hidden identity" $ do
         let (st, _) = run [act (toggleScratchpad "term" >> windows (W.insertUp pad))] shown
         slot st @?= Just (HiddenPad pad (W.FloatAt box))

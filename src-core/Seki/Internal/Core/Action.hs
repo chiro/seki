@@ -22,7 +22,6 @@ module Seki.Internal.Core.Action (
   restart,
   toggleScratchpad,
   resetScratchpad,
-  scratchpadTimeout,
   scratchpadIntents,
 ) where
 
@@ -30,7 +29,7 @@ import Control.Monad (ap)
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Seki.Internal.Core.Layout (LayoutClass, Message, SomeMessage (..), messageCurrentLayout)
-import Seki.Internal.Core.Scratchpad (resetPad, timeoutPad, togglePad)
+import Seki.Internal.Core.Scratchpad (resetPad, togglePad)
 import Seki.Internal.Core.Scratchpad.Types (ScratchpadEffect (..))
 import Seki.Internal.Core.StackSet (FloatGeom (..), StackSet (..), WindowId, member, peek)
 import Seki.Internal.Core.StackSet qualified as StackSet
@@ -154,9 +153,6 @@ toggleScratchpad name = record (const [ReclaimFocus]) >> padAction (togglePad na
 -- | Permit another launch after operator cleanup. Does not terminate processes.
 resetScratchpad :: String -> Action i l ()
 resetScratchpad name = padAction (resetPad name)
-
-scratchpadTimeout :: String -> Integer -> Action i l ()
-scratchpadTimeout name generation = padAction (timeoutPad name generation)
 
 padAction :: (CoreState i l -> (CoreState i l, [ScratchpadEffect])) -> Action i l ()
 padAction f = Action $ \st -> let (next, effects) = f st in ((), next, scratchpadIntents effects)

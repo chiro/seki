@@ -560,3 +560,6 @@ reconnects, then hides and shows it again. Its actual river size must return to
 the configured size recorded before the sink. The case also checks that the pad
 remains tiled immediately after restore; a client-sized float is a different
 intent and has separate pure restore coverage.
+
+`m3-scratchpad-reset` checks pending launch coalescing, explicit reset, and a
+late matching window. It has no launch deadline or timer wait.
