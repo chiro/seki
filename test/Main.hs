@@ -26,6 +26,7 @@ import Seki.Run.InventoryTest qualified as InventoryTest
 import Seki.Run.LatencyPureTest qualified as LatencyPureTest
 import Seki.Run.LatencyTest qualified as LatencyTest
 import Seki.Run.LatencyWorkloadTest qualified as LatencyWorkloadTest
+import Seki.Run.ManageWakeTest qualified as ManageWakeTest
 import Seki.Run.PhaseTest qualified as PhaseTest
 import Seki.Run.PolicyTest qualified as PolicyTest
 import Seki.Run.ReconcileTest qualified as ReconcileTest
@@ -92,6 +93,7 @@ main =
         , RegistryTest.tests
         , StartupTest.tests
         , RiverTest.tests
+        , ManageWakeTest.tests
         , RuntimeTest.tests
         , SequenceTest.tests
         , PhaseTest.tests

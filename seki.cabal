@@ -168,6 +168,7 @@ library seki-wire
     Seki.Run.XkbConfig
     Seki.Run.LayerShell
     Seki.Run.Latency
+    Seki.Run.ManageWake
     Seki.Run.Config
     Seki.Run.Phase
     Seki.Run.Pointer
@@ -352,6 +353,7 @@ test-suite seki-test
     Seki.Run.SessionsTest
     Seki.Run.RiverTest
     Seki.Run.RuntimeTest
+    Seki.Run.ManageWakeTest
     Seki.Run.SequenceTest
     Seki.Run.StartupTest
     Seki.Wire.ArgumentsTest

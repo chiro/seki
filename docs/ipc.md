@@ -59,25 +59,29 @@ may be skipped. Each command connection processes one request and its reply
 before reading the next request. Application replies use per-command result
 cells and bounded socket writes; snapshot replacement cannot replace a reply.
 
-The session broker can hold 256 waiting commands plus one command awaiting its
-application receipt. It submits to the separate session ingress, which holds
-256 inputs and drains at most 32 per manage sequence. These are separate bounds,
-not a combined 256-command limit. At most 32 connections are active, each with
-at most one command in flight. A disconnected command handler awaiting its
-receipt keeps its connection slot until it finishes or the session stops.
+The session ingress is the sole command queue. It holds at most 256 inputs,
+shared with other external producers, and drains at most 32 per manage sequence.
+A full ingress returns `overloaded`; a closed ingress returns `unavailable`.
+At most 32 connections are active, each processing one command at a time.
+Commands from different connections submit independently. A disconnected command
+handler awaiting its receipt keeps its connection slot until it finishes or the
+session stops.
 Slow clients cannot block policy dispatch. Client reads time out after 60 seconds
-and writes after 5 seconds. The broker waits at most 5 seconds for an admitted
-command's application receipt. If no receipt arrives, it reports `unavailable`
-with application unknown and stops admitting commands for that session. Other
-queued requests receive `unavailable`; commands are never automatically replayed.
-A timeout does not undo a command that may apply later.
+and writes after 5 seconds. Each command waits at most 5 seconds after admission
+for its application receipt. If no receipt arrives, that request receives
+`unavailable` with application unknown. Later commands on the same connection
+and other connections remain available. A timeout does not undo a command that
+may apply later, and commands are never automatically replayed.
 Oversized snapshots produce an explicit `snapshot_too_large` error instead of a
 partial snapshot. Titles, output names, and layout descriptions are limited to 1024 Unicode characters with
 explicit truncation indicators. Escaped JSON byte size still obeys the line limit.
 
-The session owns admitted work and wake submission. A client disconnect, timeout,
-or failed write abandons its replies, and cannot cancel the wake owner. Session
-stop closes external ingress before producer cleanup.
+The runtime owns one wake worker. Ingress callbacks signal it without waiting
+for transport, and repeated signals coalesce into one pending flag. A client
+disconnect, timeout, or failed write abandons its replies without cancelling
+admitted work or the wake worker. Normal stop closes ingress and waits for any
+in-flight wake before sending `stop` or `destroy`. Session abort closes ingress,
+cancels and joins the wake worker, then closes the Wayland connection.
 
 Subscribers reconnect after EOF, with a delay, and issue a new subscribe request.
 The initial revision belongs to the new session. A disconnect before a command

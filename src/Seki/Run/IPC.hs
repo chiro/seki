@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Seki.Run.IPC (withIPC, withIPCAt, ipcPath) where
+module Seki.Run.IPC (withIPC, withIPCAt, ipcPath, CommandResult (..), submitCommand) where
 
 import Control.Concurrent (forkFinally, killThread)
 import Control.Concurrent.MVar (modifyMVar, modifyMVar_, newMVar)
@@ -104,34 +104,13 @@ withIPCAt path policy body =
     tick <- getMonotonicTimeNSec
     let session = Text.pack (show pid <> "-" <> show tick)
     latest <- newTVarIO Nothing
-    jobs <- newTBQueueIO 256
     clients <- newMVar Map.empty
-    healthy <- newTVarIO True
     observePolicy policy $ \revision st runtime -> do
       build <- policyBuildStatus policy
       let base = projectSnapshot session Text.pack (policyTagsOf policy) revision st runtime
           combined = case base of Object fields -> Object (KeyMap.insert "build" (toJSON build) fields); other -> other
       snapshot <- evaluate (force combined)
       atomically (writeTVar latest (Just (revision, snapshot)))
-    broker <-
-      forkFinally
-        ( forever $ do
-            (action, result) <- atomically (readTBQueue jobs)
-            receipt <- newEmptyTMVarIO
-            admitted <- submitExternal (policyExternalProducer policy) (ExternalInput action (Just receipt))
-            answer <- case admitted of
-              Accepted -> do
-                received <- timeout 5000000 (atomically (takeTMVar receipt))
-                case received of
-                  Just revision -> pure (Right revision)
-                  Nothing -> do
-                    atomically (putTMVar result (Left "command receipt timed out; application is unknown"))
-                    fail "IPC command broker receipt timed out"
-              Full -> pure (Left "command queue is full")
-              IngressClosed -> pure (Left "session ingress is closed")
-            atomically (putTMVar result answer)
-        )
-        (\_ -> atomically (writeTVar healthy False))
     let acceptLoop = forever $ mask $ \unmask ->
           bracketOnError (accept listener) (close . fst) $ \(client, _) -> do
             closeOnExec client
@@ -140,7 +119,7 @@ withIPCAt path policy body =
                 then close client >> pure active
                 else do
                   gate <- newEmptyTMVarIO
-                  tid <- forkFinally (atomically (takeTMVar gate) >> unmask (serve client latest jobs healthy session)) $ \_ -> do
+                  tid <- forkFinally (atomically (takeTMVar gate) >> unmask (serve client latest session)) $ \_ -> do
                     close client
                     modifyMVar_ clients (pure . Map.filter (/= client))
                   atomically (putTMVar gate ())
@@ -151,11 +130,10 @@ withIPCAt path policy body =
           killThread accepter
           active <- modifyMVar clients (\m -> pure (Map.empty, Map.toList m))
           mapM_ (\(tid, client) -> close client >> killThread tid) active
-          killThread broker
           observePolicy policy (\_ _ _ -> pure ())
     restore body `finally` cleanup
  where
-  serve client latest jobs healthy session = readRequests BS.empty
+  serve client latest session = readRequests BS.empty
    where
     readRequests pending = case BS.elemIndex 10 pending of
       Just n -> do
@@ -175,23 +153,12 @@ withIPCAt path policy body =
               case if op == Recompile && not canBuild then Left "recompile unavailable: no installed build context" else command op of
                 Left message -> sendValue (failure ident "invalid_command" message)
                 Right action -> do
-                  result <- newEmptyTMVarIO
-                  queued <- atomically $ do
-                    full <- isFullTBQueue jobs
-                    alive <- readTVar healthy
-                    if not alive
-                      then pure (Left ("unavailable", "session command broker stopped"))
-                      else
-                        if full
-                          then pure (Left ("overloaded", "command queue is full"))
-                          else writeTBQueue jobs (action, result) >> pure (Right ())
-                  case queued of
-                    Left (code, message) -> sendValue (failure ident code message)
-                    Right () -> do
-                      answer <- atomically (takeTMVar result `orElse` (readTVar healthy >>= check . not >> pure (Left "session command broker stopped")))
-                      case answer of
-                        Left message -> sendValue (failure ident "unavailable" message)
-                        Right revision -> sendValue (reply ident (object ["session" .= session, "revision" .= revision]))
+                  answer <- submitCommand (policyExternalProducer policy) action
+                  case answer of
+                    CommandOverloaded -> sendValue (failure ident "overloaded" "command queue is full")
+                    CommandClosed -> sendValue (failure ident "unavailable" "session ingress is closed")
+                    CommandTimedOut -> sendValue (failure ident "unavailable" "command receipt timed out; application is unknown")
+                    CommandApplied revision -> sendValue (reply ident (object ["session" .= session, "revision" .= revision]))
               readRequests (BS.drop 1 rest)
       Nothing
         | BS.length pending > maxLineBytes -> pure ()
@@ -240,6 +207,18 @@ withIPCAt path policy body =
       IncMaster -> Action.sendMessage (Layout.IncMasterN 1)
       DecMaster -> Action.sendMessage (Layout.IncMasterN (-1))
     _ -> Left "unknown workspace"
+
+-- | Admission and application are separate outcomes for one command handler.
+data CommandResult = CommandOverloaded | CommandClosed | CommandTimedOut | CommandApplied Integer
+  deriving (Eq, Show)
+
+submitCommand :: ExternalProducer (ExternalInput i l) -> Action.Action i l () -> IO CommandResult
+submitCommand producer action = do
+  receipt <- newEmptyTMVarIO
+  submitExternal producer (ExternalInput action (Just receipt)) >>= \case
+    Full -> pure CommandOverloaded
+    IngressClosed -> pure CommandClosed
+    Accepted -> maybe CommandTimedOut CommandApplied <$> timeout 5000000 (atomically (takeTMVar receipt))
 
 reply :: Text.Text -> Value -> Value
 reply ident result = object ["version" .= (1 :: Int), "id" .= ident, "result" .= result]
