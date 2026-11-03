@@ -8,3 +8,6 @@ b25919ad9bb60e4fd1937d9bb69729dca726d16bd9e32472e7434afabfe39fa1  protocol/river
 41a446653f788fabb404cab3168c0bd667c1ff4b54f1f0bb1e18810a1f47d73f  protocol/wayland-protocols/ext-image-copy-capture-v1.xml
 6b2ffb3a07d679d1c4170263adfefb9a7c37dd34ed3db5180bf58cb8ff8fbd0b  protocol/wayland-protocols/ext-foreign-toplevel-list-v1.xml
 3ff6d540be0bc5228195bf072bde42117ea17945a5c2061add5d3cf97d6bb524  protocol/wlr-protocols/wlr-virtual-pointer-unstable-v1.xml
+122ada3beb5d4cb5984fe122f7886c2a048e261852a50e8d2e6926e3958bb98b  protocol/river/river-input-management-v1.xml
+b548aac4c9c19c61146c50ce589e05c26e476cc0c6053227f72d197dc70b0108  protocol/river/river-libinput-config-v1.xml
+00007b35168e912fcd5620cefb74f90790cd357b4754fe07c6981e77a2c3a613  protocol/river/river-xkb-config-v1.xml

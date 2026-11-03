@@ -14,9 +14,29 @@ maintainer:          chiro
 category:            System
 build-type:          Simple
 tested-with:         GHC ==9.10.3
+data-files:
+  examples/config/Main.hs
+  examples/config/seki-user.cabal
+  examples/config/cabal.project
 extra-source-files:
+  test-public/check-config.py
+  ci/test-launcher.py
+  ci/check-product.py
+  ci/check-bootstrap.py
+  ci/test-bootstrap.py
+  ci/check-package.sh
+  ci/check-phase-types.sh
+  ci/run-integration.sh
+  ci/expected-integration-manifest.txt
+  integration/input/backend.c
+  integration/input/keymap.c
+  integration/input/hold.c
+  integration/input/build.sh
+  integration/input/guard.py
+  integration/input/subscriber.py
   integration/ipc-stream.py
   examples/waybar/seki.py
+  examples/waybar/test_seki.py
   examples/waybar/config.jsonc
   tools/latency/run.py
   tools/latency/test_report.py
@@ -24,6 +44,9 @@ extra-source-files:
   fourmolu.yaml
   protocol/SHA256SUMS
   protocol/SOURCES.md
+  protocol/river/river-input-management-v1.xml
+  protocol/river/river-libinput-config-v1.xml
+  protocol/river/river-xkb-config-v1.xml
   protocol/river/river-layer-shell-v1.xml
   protocol/river/river-window-management-v1.xml
   protocol/river/river-xkb-bindings-v1.xml
@@ -35,6 +58,10 @@ extra-source-files:
   protocol/wayland/wayland.xml
   protocol/wlr-protocols/wlr-virtual-pointer-unstable-v1.xml
 extra-doc-files:
+  docs/user-configuration.md
+  docs/bootstrap-proof.md
+  docs/scratchpads.md
+  docs/input.md
   README.md
   THIRD_PARTY_NOTICES.md
   docs/ipc.md
@@ -67,6 +94,7 @@ library
   hs-source-dirs:  src-public
   exposed-modules:
     Seki
+    Seki.Input
     Seki.Core.Geometry
     Seki.Core.Layout
     Seki.Core.StackSet
@@ -83,6 +111,7 @@ library seki-core
   hs-source-dirs:  src-core
   exposed-modules:
     Seki.Internal.Config
+    Seki.Internal.Input
     Seki.Internal.Core.Action
     Seki.Internal.Core.Event
     Seki.Internal.Core.Geometry
@@ -90,13 +119,18 @@ library seki-core
     Seki.Internal.Core.ManageHook
     Seki.Internal.Core.PointerOp
     Seki.Internal.Core.Restore
+    Seki.Internal.Core.Restore.Types
+    Seki.Internal.Core.Restore.Legacy
     Seki.Internal.Core.StackSet
     Seki.Internal.Core.State
+    Seki.Internal.Core.Scratchpad
+    Seki.Internal.Core.Scratchpad.Types
     Seki.Internal.Core.Scene
     Seki.Internal.Layout.Full
     Seki.Internal.Layout.Tall
   build-depends:
     base >=4.20 && <4.21,
+    bytestring >=0.12.2 && <0.13,
     containers >=0.7 && <0.8,
     text >=2.1.3 && <2.2,
     transformers >=0.6.1 && <0.7
@@ -109,24 +143,36 @@ library seki-wire
     src-generated
   include-dirs:    cbits
   includes:        seki_wayland_transport.h
-  c-sources:       cbits/seki_wayland_transport.c
+  c-sources:       cbits/seki_wayland_transport.c cbits/seki_keymap.c
   cc-options:      -Wall -Wextra -Wpedantic
   exposed-modules:
+    Seki.Protocol.RiverInputManagementV1
+    Seki.Protocol.RiverLibinputConfigV1
+    Seki.Protocol.RiverXkbConfigV1
     Seki.Protocol.RiverLayerShellV1
     Seki.Protocol.RiverWindowManagementV1
     Seki.Protocol.RiverXkbBindingsV1
     Seki.Protocol.Wayland
     Seki.Run.External
+    Seki.Run.ConfigBuild
+    Seki.Run.BuildSession
     Seki.Run.IPC
+    Seki.Run.IPCClient
     Seki.Run.IPCSchema
+    Seki.Run.InputSnapshot
     Seki.Run.Snapshot
     Seki.Run.Inventory
+    Seki.Run.Input
+    Seki.Run.Libinput
+    Seki.Run.Keymap
+    Seki.Run.XkbConfig
     Seki.Run.LayerShell
     Seki.Run.Latency
     Seki.Run.Config
     Seki.Run.Phase
     Seki.Run.Pointer
     Seki.Run.Policy
+    Seki.Run.ScratchpadTimer
     Seki.Run.Reconcile
     Seki.Run.Restart
     Seki.Run.River
@@ -232,13 +278,23 @@ executable seki-layer-surface-fixture
     seki:seki-wire,
     unix >=2.8.7 && <2.9
 
+executable seki-default
+  import: warnings
+  hs-source-dirs: tools/seki-default/app
+  main-is: Main.hs
+  build-depends: base >=4.20 && <4.21, seki
+
 executable seki
-  import:         warnings
+  import: warnings
   hs-source-dirs: tools/seki/app
-  main-is:        Main.hs
+  main-is: Main.hs
+  ghc-options: -threaded
   build-depends:
+    seki:seki-wire,
     base >=4.20 && <4.21,
-    seki
+    directory >=1.3.8 && <1.4,
+    filepath >=1.5.4 && <1.6,
+    unix >=2.8.7 && <2.9
 
 executable seki-reference-config
   import:         warnings
@@ -258,7 +314,9 @@ test-suite seki-test
   other-modules:
     Seki.Fixture.LayerSurfaceTest
     Seki.Fixture.ProbeTest
+    Seki.Internal.InputTest
     Seki.Internal.Core.ActionTest
+    Seki.Internal.Core.ScratchpadTest
     Seki.Internal.Core.EventTest
     Seki.Internal.Core.GeometryGen
     Seki.Internal.Core.GeometryTest
@@ -278,15 +336,18 @@ test-suite seki-test
     Seki.Run.IPCBoundaryTest
     Seki.Run.ExternalTest
     Seki.Run.InventoryTest
+    Seki.Run.InputTest
     Seki.Run.LatencyTest
     Seki.Run.LatencyPureTest
     Seki.Run.LatencyWorkloadTest
     Seki.Latency.Pure
     Seki.Latency.Workload
     Seki.Run.MockRiver
+    Seki.Run.BuildSessionTest
     Seki.Run.ConfigTest
     Seki.Run.PhaseTest
     Seki.Run.PolicyTest
+    Seki.Run.ScratchpadTimerTest
     Seki.Run.ReconcileTest
     Seki.Run.ReconcileTraceTest
     Seki.Run.RestartTest
@@ -334,6 +395,7 @@ test-suite seki-public
   import:         warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: test-public
+  ghc-options: -Werror
   main-is:        Main.hs
   other-modules:  ConfigMain PortedConfig
   build-depends:
@@ -345,17 +407,20 @@ test-suite seki-integration
   type:           exitcode-stdio-1.0
   hs-source-dirs: integration
   main-is:        Main.hs
-  build-tool-depends: seki:seki, seki:seki-reference-config, seki:sekictl
+  build-tool-depends: seki:seki, seki:seki-default, seki:seki-reference-config, seki:sekictl
   other-modules:
     Seki.Integration.Fixture
     Seki.Integration.Harness
     Seki.Integration.M1
     Seki.Integration.M2
     Seki.Integration.M3
+    Seki.Integration.Input
     Seki.Integration.IPCPerf
     Seki.Integration.Waybar
     Seki.Integration.Reference
     Seki.Integration.Restart
+    Seki.Integration.Scratchpad
+    Seki.Integration.ScratchpadRestore
   build-depends:
     containers >=0.7 && <0.8,
     seki:layer-surface-fixture,
@@ -366,6 +431,7 @@ test-suite seki-integration
     filepath >=1.5.4 && <1.6,
     network >=3.1.4 && <3.3,
     process >=1.6.26 && <1.7,
+    stm >=2.5 && <2.6,
     seki:seki-wire,
     seki:seki-core,
     temporary >=1.3 && <1.4,
@@ -408,7 +474,4 @@ executable sekictl
   main-is:        Main.hs
   build-depends:
     base >=4.20 && <4.21,
-    aeson >=2.2 && <2.3,
-    bytestring >=0.12.2 && <0.13,
-    network >=3.1.4 && <3.3,
     seki:seki-wire

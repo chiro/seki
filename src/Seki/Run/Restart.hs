@@ -15,28 +15,32 @@ module Seki.Run.Restart (
   discoverLaunch,
   targetFromArgv0,
   checkRestart,
+  RestartTarget (..),
+  checkRestartTarget,
   writeRestoreFile,
   RestoreLoadError (..),
   describeLoadError,
   loadRestoreFile,
   execRestart,
+  execValidatedRestart,
   reapInheritedChildren,
 ) where
 
-import Control.Exception (IOException, bracket, try)
+import Control.Exception (IOException, bracket, mask, onException, try)
 import Control.Monad (unless)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as Char8
 import Data.Void (Void, absurd)
 import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Internal.Core.Restore (RestoreError (..), RestoreState, decodeRestoreState, encodeRestoreState)
+import Seki.Run.ConfigBuild (ValidatedTarget, atomicLink, validatedPath, validatedProfile)
 import Seki.Wire.Transport (ConnectionDiscoveryError, ConnectionTarget, discoverConnectionTarget, resolveConnectionTarget)
 import System.Directory (createDirectoryIfMissing, findExecutable, getCurrentDirectory, removeFile, renameFile)
 import System.Environment (getEnvironment, getExecutablePath, lookupEnv)
 import System.FilePath (isAbsolute, normalise, (</>))
 import System.IO (hFlush, stderr, stdout)
 import System.IO.Error (isDoesNotExistError)
-import System.Posix.Files (fileAccess, getFileStatus, isRegularFile, setFileMode)
+import System.Posix.Files (fileAccess, getFileStatus, isRegularFile, readSymbolicLink, setFileMode)
 import System.Posix.IO (OpenFileFlags (..), OpenMode (WriteOnly), closeFd, defaultFileFlags, openFd)
 import System.Posix.IO.ByteString (fdWrite)
 import System.Posix.Process (executeFile, getAnyProcessStatus, getProcessID)
@@ -120,6 +124,12 @@ targetFromArgv0 cwd search argv0
  where
   absolute path = normalise (if isAbsolute path then path else cwd </> path)
 
+data RestartTarget = RecordedTarget | CheckedTarget ValidatedTarget deriving (Eq, Show)
+
+checkRestartTarget :: Launch -> RestartTarget -> IO (Either RestartRefusal ())
+checkRestartTarget launch RecordedTarget = checkRestart launch
+checkRestartTarget launch (CheckedTarget target) = checkRestart launch{launchTarget = Right (validatedPath target)}
+
 {- | Before @stop@: the target, following symlinks, is a regular file seki may
 execute, a socket path to reconnect to exists, and so does a state directory.
 -}
@@ -192,11 +202,15 @@ the exec failed, which 'Void' makes a type fact.
 execRestart :: Launch -> FilePath -> IO IOException
 execRestart launch file = case launchTarget launch of
   Left refusal -> pure (userError (describeRefusal refusal))
-  Right target -> do
-    env <- filter ((/= "WAYLAND_SOCKET") . fst) <$> getEnvironment
-    hFlush stdout
-    hFlush stderr
-    either id absurd <$> try (launchExec launch target ["--restore", file] env)
+  Right target ->
+    either id absurd
+      <$> try @IOException
+        ( do
+            env <- filter ((/= "WAYLAND_SOCKET") . fst) <$> getEnvironment
+            hFlush stdout
+            hFlush stderr
+            launchExec launch target ["--restore", file] env
+        )
 
 {- | Reap children the previous process image left behind: launch shells that
 exited after its last reap. Runs before seki starts anything of its own.
@@ -207,3 +221,23 @@ reapInheritedChildren =
     Right (Just _) -> reapInheritedChildren
     Right Nothing -> pure ()
     Left (_ :: IOException) -> pure ()
+
+-- Promotion follows successful serialization; immediate exec refusal rolls back
+-- before Config reconnects with the old in-memory configuration.
+execValidatedRestart :: Launch -> ValidatedTarget -> FilePath -> IO IOException
+execValidatedRestart launch target file = mask $ \restore -> do
+  let profile = validatedProfile target
+  previous <- try @IOException (readSymbolicLink profile)
+  case previous of
+    Left err | not (isDoesNotExistError err) -> pure err
+    _ -> do
+      let rollback = case previous of
+            Right old -> atomicLink old profile
+            Left _ -> removeFile profile
+      promoted <- try @IOException (atomicLink (validatedPath target) profile)
+      case promoted of
+        Left err -> pure err
+        Right () -> do
+          failure <- restore (execRestart launch{launchTarget = Right profile} file) `onException` rollback
+          rolledBack <- try @IOException rollback
+          pure (either (\err -> userError (show failure <> "; profile rollback failed: " <> show err)) (const failure) rolledBack)

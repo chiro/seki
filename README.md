@@ -53,7 +53,19 @@ these goals:
 - **The core is pure.** `StackSet`, the layout algebra (`|||`, `Mirror`, layout modifiers), and `ManageHook` are based on xmonad, with its semantics and QuickCheck properties retained where applicable. Layouts and actions are pure. Policy owns mutable state and launches effects; the runtime owns connection IO.
 - **Workspaces use xmonad-style semantics.** They form a shared pool across outputs, with `greedyView` as the default. River itself has no workspace abstraction, so seki implements this policy in the window manager.
 
-A configuration program imports `Seki` and runs `seki def`. The current API supports these overrides.
+A configuration program imports `Seki` and runs `seki def`. Invoke that compiled
+program with exactly `--check` to check its actual configuration without a
+compositor. A successful policy check exits 0. Invalid policy or arguments print
+the current error and exit 1. Check mode evaluates the runtime policy guards and
+allocates policy state, but does not run hooks, spawn commands, open Wayland or
+IPC, or read restore files. It does not build the program or validate all Haskell
+code. User code is trusted, and arbitrary evaluation can fail or never terminate.
+The direct runtime checker has no timeout. The installed launcher bounds its
+check subprocess as described in [User configurations](docs/user-configuration.md).
+Normal startup accepts no arguments; restart accepts exactly `--restore FILE`.
+These modes cannot be combined with `--check`.
+
+The current API supports these overrides.
 
 ```haskell
 import Seki
@@ -294,3 +306,18 @@ MIT. See [`LICENSE`](LICENSE).
 
 Vendored protocol definitions retain their upstream MIT notices; see
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+Input devices can be configured with ordered `inputRules` in `Config`. Patterns
+and settings are validated before connecting. See [input configuration](docs/input.md)
+for a public-only example and [IPC](docs/ipc.md) for per-device layout and setting
+results. The Waybar example displays named keyboards independently.
+
+Named terminal scratchpads can hide outside workspace navigation and return on
+the current output. See [scratchpad configuration and recovery](docs/scratchpads.md)
+for the public API, matching precedence and restart limits.
+
+User configuration startup and validation use the installed `seki` launcher; see
+[User configurations](docs/user-configuration.md). Direct development runtime
+uses `cabal run exe:seki-default`. Installed sessions rebuild asynchronously through
+`seki --recompile` or the configured restart action. Build and validation failures
+leave the running configuration active.

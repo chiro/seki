@@ -16,7 +16,7 @@ import Seki.Run.External qualified as External
 import Seki.Run.IPC (withIPC, withIPCAt)
 import Seki.Run.Inventory (emptyRiverInventory)
 import Seki.Run.Policy (newPolicy, policyRuntimeHandlers)
-import Seki.Run.Runtime (RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
+import Seki.Run.Runtime (RiverInputSnapshot (..), RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
 import System.Directory (doesPathExist, getSymbolicLinkTarget, removeFile)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.FilePath (takeDirectory, (</>))
@@ -124,7 +124,7 @@ tests =
     , testCase "semantic request error preserves the next request" $ temporary $ \path -> do
         policy <- fresh
         withIPCAt path policy $ do
-          _ <- prepareRiverManagePlan (policyRuntimeHandlers policy) (RiverRuntimeSnapshot emptyRiverInventory [])
+          _ <- prepareRiverManagePlan (policyRuntimeHandlers policy) (RiverRuntimeSnapshot emptyRiverInventory (InputUnavailable []) [])
           bracket (openClient path) close $ \client -> do
             sendAll client "{\"version\":1,\"id\":\"bad\",\"op\":\"layout\",\"action\":\"bogus\"}\n{\"version\":1,\"id\":\"next\",\"op\":\"snapshot\"}\n"
             first <- line client
@@ -134,7 +134,7 @@ tests =
     , testCase "subscriber input is not mistaken for EOF" $ temporary $ \path -> do
         policy <- fresh
         withIPCAt path policy $ do
-          let manage = prepareRiverManagePlan (policyRuntimeHandlers policy) (RiverRuntimeSnapshot emptyRiverInventory [])
+          let manage = prepareRiverManagePlan (policyRuntimeHandlers policy) (RiverRuntimeSnapshot emptyRiverInventory (InputUnavailable []) [])
           _ <- manage
           bracket (openClient path) close $ \client -> do
             sendAll client "{\"version\":1,\"id\":\"sub\",\"op\":\"subscribe\"}\n"

@@ -57,6 +57,7 @@ jobs:
 
       - name: Record pinned component versions
         run: |
+          set -euo pipefail
           mkdir -p artifacts/integration
           nix eval --no-write-lock-file --json .#integrationVersions.x86_64-linux \
             | tee artifacts/integration/component-versions.json
@@ -70,5 +71,99 @@ jobs:
         with:
           name: real-river-integration
           path: artifacts/integration
+          if-no-files-found: warn
+          retention-days: 14
+
+  bootstrap:
+    name: Provisioned public configuration bootstrap
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31.10.6
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Check archive provenance controls
+        run: python3 ci/test-bootstrap.py
+
+      - name: Provision locked dependencies and prove fresh Cabal build
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/bootstrap
+          cp flake.lock artifacts/bootstrap/
+          nix develop --no-write-lock-file --profile "$RUNNER_TEMP/seki-bootstrap-profile" .#ci \
+            --command python3 ci/check-bootstrap.py "$PWD/artifacts/bootstrap" \
+            2>&1 | tee artifacts/bootstrap/provision.log
+
+      - name: Record provisioned Nix closure
+        if: always()
+        run: |
+          nix --version > artifacts/bootstrap/nix-version.txt
+          nix-store --query --requisites "$RUNNER_TEMP/seki-bootstrap-profile" \
+            > artifacts/bootstrap/nix-closure.txt
+
+      - name: Preserve bootstrap evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: provisioned-public-bootstrap
+          path: artifacts/bootstrap
+          if-no-files-found: warn
+          retention-days: 14
+
+  installed-delivery:
+    name: Installed configuration delivery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31.10.6
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build and root installed delivery
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/installed-delivery
+          cp flake.lock artifacts/installed-delivery/
+          nix build --no-write-lock-file .#config-delivery \
+            --out-link "$RUNNER_TEMP/seki-config-delivery" \
+            2>&1 | tee artifacts/installed-delivery/provision.log
+
+      - name: Prove installed archive and dependencies without development shell
+        run: |
+          set -euo pipefail
+          env -i PATH=/usr/bin:/bin HOME="$RUNNER_TEMP" \
+            "$RUNNER_TEMP/seki-config-delivery/bin/seki-config-env" \
+            python3 ci/check-bootstrap.py "$PWD/artifacts/installed-delivery" \
+            --delivery "$RUNNER_TEMP/seki-config-delivery" \
+            2>&1 | tee artifacts/installed-delivery/check.log
+
+      - name: Record installed closure
+        if: always()
+        run: |
+          nix --version > artifacts/installed-delivery/nix-version.txt
+          nix-store --query --requisites "$RUNNER_TEMP/seki-config-delivery" \
+            > artifacts/installed-delivery/nix-closure.txt
+
+      - name: Preserve installed delivery evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: installed-configuration-delivery
+          path: artifacts/installed-delivery
           if-no-files-found: warn
           retention-days: 14

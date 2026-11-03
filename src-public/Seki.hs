@@ -3,6 +3,7 @@
 -- | Configure and run seki with pure actions and layouts.
 module Seki (
   seki,
+  module Seki.Input,
   (.|.),
   Config (..),
   BorderConfig (..),
@@ -41,6 +42,9 @@ module Seki (
   sink,
   toggleFullscreen,
   restart,
+  Scratchpad (..),
+  toggleScratchpad,
+  resetScratchpad,
   ManageHook,
   Query,
   appId,
@@ -80,10 +84,12 @@ import Data.Bits ((.|.))
 import Seki.Core.Geometry
 import Seki.Core.Layout
 import Seki.Core.StackSet (OutputId, Stack (..), StackSet, WindowId, focusDown, focusMaster, focusUp, greedyView, peek, shift, shiftMaster, shiftWin, swapDown, swapMaster, swapUp, view)
+import Seki.Input
 import Seki.Internal.Config (Action, Bindings, BorderColor (..), BorderConfig (..), Button (..), Config (..), KeyBinding (..), Keysym (..), ManageHook, Mods (..), PointerAction (..), PointerBinding (..), PointerBindings, StdLayouts, additionalKeys, def, defaultKeys, defaultManageHook, defaultPointerBindings, removeKeys, pattern Button1, pattern Button2, pattern Button3, pattern Control, pattern Mod1, pattern Mod3, pattern Mod4, pattern Mod5, pattern Shift)
 import Seki.Internal.Core.Action qualified as Core
 import Seki.Internal.Core.ManageHook (Query, appId, composeAll, idHook, isDialog, title, (-->), (=?))
 import Seki.Internal.Core.ManageHook qualified as Core
+import Seki.Internal.Core.Scratchpad.Types (Scratchpad (..))
 import Seki.Layout.Full
 import Seki.Layout.Tall
 import Seki.Run.Config (runConfig)
@@ -93,6 +99,15 @@ import System.IO (hPutStrLn, stderr)
 
 {- | Validate the configuration, then run until river disconnects. The command
 line is empty, or @--restore FILE@ when a restart started this process.
+
+With exactly @--check@, validate this configuration using the runtime policy
+guards and exit successfully without starting a session. This allocates policy
+state but does not discover Wayland, consume restore files, run hooks or start
+subprocesses or IPC. Usage and policy failures print the current error and
+exit with status 1; a successful check exits with status 0.
+
+This checks policy values, not all Haskell code. User code is trusted; IO before
+this call and unsafe evaluation are not sandboxed. There is no checker timeout.
 -}
 seki :: (LayoutClass l) => Config l -> IO ()
 seki config = getArgs >>= (`runConfig` config) >>= either failWith pure
@@ -159,3 +174,11 @@ replaces itself with that executable, and restores the state there.
 -}
 restart :: Action l ()
 restart = Core.restart
+
+-- | Open, hide or bring a named pad. Unresolved launches coalesce.
+toggleScratchpad :: String -> Action l ()
+toggleScratchpad = Core.toggleScratchpad
+
+-- | Clear an unresolved attempt after operator cleanup; no process is killed.
+resetScratchpad :: String -> Action l ()
+resetScratchpad = Core.resetScratchpad

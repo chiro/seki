@@ -68,6 +68,7 @@ import Seki.Run.Policy (
  )
 import Seki.Run.Runtime (
   RiverExit (..),
+  RiverInputSnapshot (..),
   RiverRuntimeHandlers (..),
   RiverRuntimeSnapshot (..),
   openRiverSessionAt,
@@ -120,7 +121,7 @@ data Drain = Drain
 testConfigErrors :: Assertion
 testConfigErrors = do
   let binding = keyBinding 0x61
-      config tags bindings = PolicyConfig Full tags bindings defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ())
+      config tags bindings = PolicyConfig [] [] Full tags bindings defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (const (pure (Right ()))) (\_ -> pure ())
   let invalidWidth = defaultSceneStyle{sceneBorderWidth = -1}
       invalidColor = defaultSceneStyle{sceneFocusedColor = BorderColor 2 0 0 1}
   assertError (PolicyInvalidSceneStyle invalidWidth) =<< newPolicy (config [1] []){policySceneStyle = invalidWidth}
@@ -463,7 +464,7 @@ runPolicyWith ::
 runPolicyWith hook startup target mockDone bindings = do
   launches <- newIORef []
   drains <- newIORef []
-  policy <- expectRight =<< newPolicy (PolicyConfig Full [1, 2, 3] bindings defaultSceneStyle (record launches) hook startup [] Nothing (pure (Right ())) (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig [] [] Full [1, 2, 3] bindings defaultSceneStyle (record launches) hook startup [] Nothing (const (pure (Right ()))) (\_ -> pure ()))
   let handlers = policyRuntimeHandlers policy
       observed =
         handlers
@@ -570,11 +571,11 @@ lastMaybe xs = Just (last xs)
 testExternalManage :: Assertion
 testExternalManage = do
   launches <- newIORef []
-  let config = PolicyConfig Full [1 :: Int] [] defaultSceneStyle (\marker -> modifyIORef' launches (<> [marker])) idHook (pure ()) [] Nothing (pure (Right ())) (\_ -> pure ())
+  let config = PolicyConfig [] [] Full [1 :: Int] [] defaultSceneStyle (\marker -> modifyIORef' launches (<> [marker])) idHook (pure ()) [] Nothing (const (pure (Right ()))) (\_ -> pure ())
   policy <- expectRight =<< newPolicy config
   let handlers = policyRuntimeHandlers policy
       producer = policyExternalProducer policy
-      snapshot = RiverRuntimeSnapshot emptyRiverInventory []
+      snapshot = RiverRuntimeSnapshot emptyRiverInventory (InputUnavailable []) []
   case riverExternalIngress handlers of
     Nothing -> assertFailure "missing ingress"
     Just lifecycle -> External.bindExternalWake lifecycle (pure True) >>= assertBool "bound"

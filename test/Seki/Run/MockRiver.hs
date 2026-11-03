@@ -5,6 +5,7 @@
 module Seki.Run.MockRiver (
   FrameReader,
   newFrameReader,
+  recordInputWakes,
   receiveFrame,
   receiveStartupRequests,
   decodeNewId,
@@ -44,7 +45,7 @@ import Control.Exception (SomeException, bracket, onException, try)
 import Control.Monad (void)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import Data.Word (Word32)
 import Network.Socket (Family (AF_UNIX), Socket, SocketType (Stream), close, defaultProtocol, socketPair, withFdSocket)
@@ -78,22 +79,29 @@ import System.Posix.IO (closeFd, dup)
 import System.Posix.Types (Fd (..))
 import Test.Tasty.HUnit (Assertion, assertEqual, assertFailure)
 
-newtype FrameReader = FrameReader (IORef ByteString)
+data FrameReader = FrameReader (IORef ByteString) (IORef (Maybe ObjectId)) (IORef Int)
 
 newFrameReader :: IO FrameReader
-newFrameReader = FrameReader <$> newIORef ByteString.empty
+newFrameReader = FrameReader <$> newIORef ByteString.empty <*> newIORef Nothing <*> newIORef 0
 
 receiveFrame :: FrameReader -> Transport -> IO RawFrame
-receiveFrame (FrameReader buffered) peer = do
+recordInputWakes :: FrameReader -> ObjectId -> IO (IO Int)
+recordInputWakes (FrameReader _ manager count) object = writeIORef manager (Just object) >> pure (readIORef count)
+receiveFrame reader@(FrameReader buffered manager count) peer = do
   bytes <- readIORef buffered
   case decodeFrame bytes of
-    Right (DecodedFrame frame suffix) -> writeIORef buffered suffix >> pure frame
+    Right (DecodedFrame frame suffix) -> do
+      writeIORef buffered suffix
+      inputManager <- readIORef manager
+      if Just (rawFrameSender frame) == inputManager && rawFrameOpcode frame == Opcode 3 && ByteString.null (rawFramePayload frame)
+        then modifyIORef' count (+ 1) >> receiveFrame reader peer
+        else pure frame
     Right (NeedMoreBytes needed) -> do
       receiveChunk peer (max 8 needed) >>= \case
         Right (Just chunk)
           | null (receivedFds chunk) -> do
               writeIORef buffered (bytes <> receivedBytes chunk)
-              receiveFrame (FrameReader buffered) peer
+              receiveFrame reader peer
           | otherwise -> assertFailure "unexpected descriptors"
         _ -> assertFailure "unexpected mock receive result"
     Left errorValue -> assertFailure ("unexpected frame error: " <> show errorValue)

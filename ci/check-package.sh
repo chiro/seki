@@ -29,7 +29,7 @@ cabal_modules() {
 cabal_files() {
   awk '
     /^[^ ]/ { field = $1 }
-    /^  [^ ]/ && (field == "extra-source-files:" || field == "extra-doc-files:") {
+    /^  [^ ]/ && (field == "extra-source-files:" || field == "extra-doc-files:" || field == "data-files:") {
       print $1
     }
   ' seki.cabal
@@ -51,7 +51,7 @@ while read -r file; do
 done < <(cabal_files)
 
 cabal haddock all "$@" >/dev/null
-index=$(find dist-newstyle/build -path '*/seki-0.1.0.0/doc/html/seki/index.html' -not -path '*/l/*' -newer "$tarball" -printf '%T@ %p\n' | sort -rn | head -n 1 | cut -d' ' -f2-)
+index=$(find dist-newstyle/build \( -path '*/seki-0.1.0.0/doc/html/seki/index.html' -o -path '*/seki-0.1.0.0/opt/doc/html/seki/index.html' \) -not -path '*/l/*' -newer "$tarball" -printf '%T@ %p\n' | sort -rn | head -n 1 | cut -d' ' -f2-)
 if [ -z "$index" ]; then
   fail "public Haddock index was not regenerated"
 else

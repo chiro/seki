@@ -35,7 +35,7 @@ tests =
         let st = finalCore h
          in forAll (inventoryOf st) $ \inv -> let s = saveCore inv st in decodeRestoreState (encodeRestoreState s) === Right s
     , testCase "an encoding starts with the version header" $
-        takeWhile (/= '\n') (encodeRestoreState emptyState) @?= "seki-restore 1"
+        takeWhile (/= '\n') (encodeRestoreState emptyState) @?= "seki-restore 2"
     , testCase "an unknown version is refused by name" $
         decodeInt ("seki-restore 99\n" <> dropWhile (/= 'R') (encodeRestoreState emptyState)) @?= Left (RestoreUnknownVersion "99")
     , testCase "a file without the header is unreadable" $
@@ -54,7 +54,7 @@ tests =
     , testCase "an invalid float box lets the client pick its size" testInvalidFloatBox
     ]
  where
-  emptyState = RestoreState [] [] Set.empty Set.empty :: RestoreState Int
+  emptyState = RestoreState [] [] Set.empty Set.empty [] :: RestoreState Int
   decodeInt = decodeRestoreState :: String -> Either RestoreError (RestoreState Int)
 
 finalCore :: EventHistory -> CoreState Int DefaultLayout
@@ -160,7 +160,7 @@ liveInventories =
 
 -- | Any saved state, including keys and tags no live session would produce.
 restoreStates :: Gen (RestoreState Int)
-restoreStates = RestoreState <$> listOf workspace <*> listOf ((,) <$> key <*> saved) <*> (Set.fromList <$> listOf key) <*> (Set.fromList <$> listOf command)
+restoreStates = RestoreState <$> listOf workspace <*> listOf ((,) <$> key <*> saved) <*> (Set.fromList <$> listOf key) <*> (Set.fromList <$> listOf command) <*> pure []
  where
   workspace =
     SavedWorkspace
@@ -193,7 +193,7 @@ workspaceAt :: Int -> Maybe OutputKey -> [String] -> SavedWorkspace Int
 workspaceAt t o ks = SavedWorkspace t o (show defaultLayout) (case map (WindowKey . Text.pack) ks of [] -> Nothing; k : rest -> Just (Stack k [] rest))
 
 savedOf :: [SavedWorkspace Int] -> RestoreState Int
-savedOf ws = RestoreState ws [] Set.empty Set.empty
+savedOf ws = RestoreState ws [] Set.empty Set.empty []
 
 windowsOf :: [(String, Int)] -> Map.Map WindowKey WindowId
 windowsOf ws = Map.fromList [(WindowKey (Text.pack k), WindowId (fromIntegral w)) | (k, w) <- ws]

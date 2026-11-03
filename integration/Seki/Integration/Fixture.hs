@@ -4,6 +4,7 @@
 module Seki.Integration.Fixture (
   NestedRiver (..),
   withNestedRiver,
+  withNestedRiverEnvironment,
   Fixture (..),
   Box (..),
   Paint (..),
@@ -11,6 +12,7 @@ module Seki.Integration.Fixture (
   WindowRequest (..),
   withFixture,
   withFixtureUsing,
+  withInputFixture,
   saveCapture,
   saveOutputCapture,
   withHeldLogo,
@@ -94,7 +96,10 @@ data NestedRiver = NestedRiver
   }
 
 withNestedRiver :: Int -> (NestedRiver -> IO a) -> IO a
-withNestedRiver outputCount action = do
+withNestedRiver = withNestedRiverEnvironment []
+
+withNestedRiverEnvironment :: [(String, String)] -> Int -> (NestedRiver -> IO a) -> IO a
+withNestedRiverEnvironment extra outputCount action = do
   requireExecutables ["river", "wtype", "wlr-randr"]
   executable <- getExecutablePath
   host <- getEnvironment
@@ -104,7 +109,7 @@ withNestedRiver outputCount action = do
         initSocket = directory </> "init.sock"
     createPrivateDirectory runtime
     createPrivateDirectory config
-    let riverEnv = fixtureEnvironment host runtime config <> [("WLR_BACKENDS", "headless"), ("WLR_HEADLESS_OUTPUTS", show outputCount)]
+    let riverEnv = extra <> filter (\(key, _) -> key `notElem` map fst extra) (fixtureEnvironment host runtime config <> [("WLR_BACKENDS", "headless"), ("WLR_HEADLESS_OUTPUTS", show outputCount)])
     withUnixListener initSocket $ \listener ->
       bracket (startManagedProcess "river" riverEnv (proc "river" (riverArguments False executable initSocket))) stopManagedProcess $ \river -> do
         names <- waitForRiverInit listener river
@@ -120,8 +125,15 @@ withFixture :: (LayoutClass l) => PolicyConfig String l -> String -> Int -> (Fix
 withFixture = withFixtureUsing id
 
 withFixtureUsing :: (LayoutClass l) => (RiverRuntimeHandlers -> RiverRuntimeHandlers) -> PolicyConfig String l -> String -> Int -> (Fixture l -> Probe -> IO ()) -> IO ()
-withFixtureUsing transform policyConfig name outputCount action =
-  withNestedRiver outputCount $ \(NestedRiver socketPath environment _ river) -> do
+withFixtureUsing = withFixtureEnvironment []
+
+withInputFixture :: (LayoutClass l) => [(String, String)] -> PolicyConfig String l -> String -> Int -> (Fixture l -> Probe -> IO ()) -> IO ()
+withInputFixture extra = withFixtureEnvironment extra id
+
+withFixtureEnvironment :: (LayoutClass l) => [(String, String)] -> (RiverRuntimeHandlers -> RiverRuntimeHandlers) -> PolicyConfig String l -> String -> Int -> (Fixture l -> Probe -> IO ()) -> IO ()
+withFixtureEnvironment extra transform policyConfig name outputCount action =
+  withNestedRiverEnvironment extra outputCount $ \(NestedRiver socketPath environment _ river) -> do
+    if lookup "SEKI_FIXTURE_INITIAL" extra == Just "1" then threadDelay 400000 else pure ()
     policy <- newPolicy policyConfig >>= requireRight "production policy"
     requests <- newIORef Map.empty
     session <- openRiverSessionAt (UnixSocketPath socketPath) defaultObjectLimit (transform (recordWindowRequests requests (policyRuntimeHandlers policy))) >>= requireRight "runtime"
@@ -142,7 +154,7 @@ withFixtureUsing transform policyConfig name outputCount action =
         let outputs = firstOutput : filter (/= firstOutput) (map snd namesByGlobal)
         forM_ (zip [0 :: Int ..] outputs) $ \(index, output) -> void (runProcessCapture environment "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "800x600", "--pos", show (index * 800) <> ",0", "--scale", "1", "--transform", "normal"])
         let fixture = Fixture socketPath dispatcher environment session policy outputs name requests
-        bracket (startManagedProcess "virtual keyboard lifetime" environment (proc "wtype" ["-s", "60000"])) stopManagedProcess $ \keeper ->
+        bracket (startManagedProcess "virtual keyboard lifetime" environment (proc "wtype" ["-s", if lookup "SEKI_FIXTURE_LONG_KEYBOARD" extra == Just "1" then "180000" else "60000"])) stopManagedProcess $ \keeper ->
           withProbe
             socketPath
             ( \probe ->

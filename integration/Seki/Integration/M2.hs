@@ -329,7 +329,9 @@ riverId = ObjectTable.objectId . riverWindowObject
 m2Config :: PolicyConfig String Tall
 m2Config =
   PolicyConfig
-    { policyLayout = Tall 1 (1 / 10) (1 / 2)
+    { policyScratchpads = []
+    , policyInputRules = []
+    , policyLayout = Tall 1 (1 / 10) (1 / 2)
     , policyTags = ["1", "2", "3"]
     , policyBindings = []
     , policySceneStyle = SceneStyle 2 (BorderColor maxBound 0 maxBound maxBound) (BorderColor 0x40404040 0x40404040 0x40404040 maxBound)
@@ -337,7 +339,7 @@ m2Config =
     , policyStartupHook = pure ()
     , policyPointerBindings = []
     , policyRestore = Nothing
-    , policyCheckRestart = pure (Right ())
+    , policyCheckRestart = const (pure (Right ()))
     , policyLog = announce
     , policyLaunch = \_ -> failIntegration "unexpected spawn in M2 policy"
     }

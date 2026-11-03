@@ -58,6 +58,7 @@ import Data.Map.Strict qualified as Map
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Seki.Internal.Core.PointerOp (OpId, OpInput (..), OpOrigin (..), OpRequest (..), PointerOp (..), SeatId, firstOpId, nextOpId, opBox)
+import Seki.Internal.Core.Scratchpad.Types (ScratchpadState (..))
 import Seki.Internal.Core.StackSet (
   FloatGeom (..),
   OutputId (..),
@@ -76,7 +77,11 @@ import Seki.Internal.Core.StackSet qualified as StackSet
 
 -- | Everything the core reduces events into.
 data CoreState i l = CoreState
-  { coreWorkspaces :: Workspaces i l
+  { coreScratchpadDefinitions :: Map String (String, FloatGeom)
+  , coreScratchpads :: Map String ScratchpadState
+  , coreScratchpadGeneration :: Integer
+  , coreScratchpadWarnings :: Set String
+  , coreWorkspaces :: Workspaces i l
   , coreSpawnedOnce :: Set String
   -- ^ The commands 'Seki.Internal.Core.Action.spawnOnce' has launched.
   , coreRaiseOrder :: [WindowId]
@@ -125,7 +130,7 @@ newCoreState l tags@(t : ts) = case firstRepeat [] tags of
 
 -- | A core state over these workspaces with nothing else recorded yet.
 fromWorkspaces :: Workspaces i l -> CoreState i l
-fromWorkspaces ws = CoreState ws Set.empty [] Set.empty Nothing firstOpId
+fromWorkspaces ws = CoreState Map.empty Map.empty 0 Set.empty ws Set.empty [] Set.empty Nothing firstOpId
 
 -- | Change the workspaces and keep the rest of the core state.
 overWorkspaces :: (Workspaces i l -> Workspaces i l) -> CoreState i l -> CoreState i l
@@ -259,7 +264,25 @@ workspace, and end an op whose window no longer allows it. Normalizing twice
 changes nothing more.
 -}
 normalizeCore :: CoreState i l -> CoreState i l
-normalizeCore = syncPointerOp . syncFullscreen . syncRaiseOrder
+normalizeCore = syncPointerOp . syncFullscreen . syncRaiseOrder . syncScratchpads
+
+{- | Hidden owners stay outside public StackSet operations. Deleting a shown
+owner hides it; a retained float box wins, otherwise its definition supplies it.
+-}
+syncScratchpads :: CoreState i l -> CoreState i l
+syncScratchpads st
+  | Map.null (coreScratchpads st) = st
+  | otherwise = (overWorkspaces (\ws -> foldl' (flip unmanageWindow) ws hiddenPads) st){coreScratchpads = slots}
+ where
+  slots = Map.mapWithKey sync (coreScratchpads st)
+  hiddenPads = [w | HiddenPad w _ <- Map.elems slots]
+  (present, floats) = case coreWorkspaces st of
+    AttachedState ss _ -> ((`member` ss), floating ss)
+    HeadlessState h -> (\w -> any ((w `elem`) . StackSet.integrate' . stack) (headlessCurrent h : headlessHidden h), headlessFloating h)
+  sync name slot@(ShownPad w _)
+    | not (present w) = HiddenPad w (Map.findWithDefault (maybe ClientSized snd (Map.lookup name (coreScratchpadDefinitions st))) w floats)
+    | otherwise = slot
+  sync _ slot = slot
 
 {- | Keep the op only while its window is managed on an attached StackSet, not
 fullscreen, and floating or not yet moved. So a close, a sink after a move, or

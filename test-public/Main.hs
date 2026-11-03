@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Main (main) where
 
 import ConfigMain (customConfig, fullConfig, mediaConfig, raiseVolume, tolerantConfig)
@@ -9,6 +11,14 @@ import System.Exit (exitFailure)
 
 main :: IO ()
 main = do
+  check "default input rules are empty" (null (inputRules def))
+  case compileDevicePattern "*keyboard*" of
+    Left err -> failWith (show err)
+    Right patternValue -> do
+      let config = def{inputRules = [InputRule patternValue (Just Keyboard) [RepeatInfo 37 410]]}
+      check "public input rule construction" (length (inputRules config) == 1)
+      check "public invalid setting is explicit" (validateInputSetting (AccelSpeed (0 / 0)) == Left InvalidAccelSpeed)
+  check "public invalid matcher is explicit" (compileDevicePattern "bad\\q" == Left (InvalidPatternEscape (Just 'q')))
   check "negative size is rejected" (either Just (const Nothing) (mkSize (-1) 0) == Just (NegativeSize (-1) 0))
   case mkSize 1001 10 >>= mkRect (Point (-1920) 0) of
     Left err -> failWith (show err)

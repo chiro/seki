@@ -24,7 +24,7 @@ This command:
 
 1. builds `seki-integration`;
 2. explicitly enables the real-compositor scenarios;
-3. applies a 120-second suite timeout;
+3. applies a 480-second suite timeout;
 4. requires the exact completion manifest; and
 5. writes `manifest.txt` and a log limited to the last 1 MiB beneath
    `artifacts/integration/`.
@@ -495,3 +495,68 @@ binary; the release shell uses its pinned Waybar by default.
 
 Pinned Nix execution, physical input, and operator review remain separate gates.
 JSON escaping tests alone do not pass the visual gate.
+
+### Private input family
+
+The release runner builds `integration/input/backend.c` and its keymap generator
+in a private temporary directory, then injects the resulting DSO only into each
+child river. The pinned CI shell supplies river's actual wlroots 0.20 SDK,
+Wayland, libxkbcommon, C compiler and pkg-config. The source distribution ships
+these inputs; no developer artifact directory is required. Pre/postflight guards
+reject overlapping headless rivers and never kill a process they do not own.
+Every fixture retains its existing bounded managed-process cleanup.
+
+`m3-input-v1` and `m3-input-v2` use three child-compositor synthetic devices,
+including two keyboards with different reported layouts. They load a generated
+US/Japanese keymap through Config.inputRules, observe repeat submission and layout
+feedback, retain unavailable tap on non-libinput input, replace generations after
+removal, and prove a fixed US binding while the current keyboard layout is Japanese.
+V1 is capped negotiation on river 0.5.0, not execution of river 0.4.5.
+`m3-input-optional-absent` hides only the optional input globals while core WM
+continues. `m3-input-waybar` runs actual Waybar with private D-Bus and checks pixel
+changes from native per-device layout changes. `m3-input-keymap-invalid` and
+`m3-input-keymap-missing` distinguish compositor compilation rejection from local
+load failure without stopping core WM. `m3-input-curve-maximum` sends 64 Double
+points to a real transient libinput config object without attaching a device.
+Its success proves native config acceptance, not physical acceleration behavior.
+
+These cases complement the registered unit/mock setter, barrier, stale callback,
+immutable FD, shutdown and resource tests. They do not establish physical tap,
+scroll, acceleration, unplug behavior, or operator acceptance. Those require the
+separately approved hardware lanes. Set SEKI_CAPTURE_VIDEO=1 only for a focused
+Waybar case to capture 30 seconds of native frames; compilation and performance
+runs must remain serial with fixtures.
+
+`m3-input-worker-lifecycle` starts a separate private runtime with a test-only
+loader interposer. It confirms the stopped loader inherits only fd 3, receives a
+normal workspace application reply while the loader is held, reaps work on device
+replacement, and reaps a fresh held helper when river ends. It never signals an
+unrelated process. `m3-input-output-mapping` disables/re-enables a private headless
+output and checks unavailable then resubmitted mapping. It claims submission,
+not applied pointer coordinates. `m3-input-perf` retains 1000 contiguous native
+layout-to-subscriber receipts with a 50 ms p99 ceiling. Its bounded process budget
+is 30 seconds because the source emits at 10 ms intervals; ordinary assertions
+retain their 10-second budget. The full suite has a 480-second outer limit for the input cases and five
+1,000-toggle scratchpad trials. Individual assertion and latency budgets stay
+fixed.
+
+The backend consumes `LD_PRELOAD` in its startup constructor, before river can
+fork/exec its init command. The init handshake reports and checks an empty preload;
+`m3-input-preload-boundary` also starts the actual seki executable and inspects its
+exec environment. The Waybar case checks the rendered Waybar process's environment.
+Client fixture environments strip inherited preload variables. The held-loader
+probe explicitly selects only `hold.so` and asserts that separate scope. These
+checks prevent a Nix-built backend from leaking dependencies into a host `/bin/sh`
+or unrelated clients; no libc path override or longer init timeout is used.
+
+`m3-scratchpad-restore-missing-float` restores a v2 state whose ordinary float
+list is empty while the scratchpad records still contain valid boxes. It checks
+shown and hidden ownership, geometry, launch counts, and ordinary keyboard input
+after a real reconnect. Its captures use a separate prefix from the normal
+restart case.
+
+`m3-scratchpad-sink-restart` sinks a shown pad through the public action,
+reconnects, then hides and shows it again. Its actual river size must return to
+the configured size recorded before the sink. The case also checks that the pad
+remains tiled immediately after restore; a client-sized float is a different
+intent and has separate pure restore coverage.

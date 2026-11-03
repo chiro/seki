@@ -374,16 +374,61 @@ socket path and restores. `seki --restore <file>` reads the file, deletes it,
 and applies it at the first manage sequence. The automated build below
 belongs to M3.
 
-- Location: `~/.config/seki/` is a cabal project (Main.hs + seki.cabal). A skeleton is generated automatically on first run.
-- Startup: launch the WM binary from river's `~/.config/river/init` (a shell script). If the user configuration is unbuilt or fails to build, attempt to start the **default WM binary** shipped with the library as a fallback.
-- Restart (the mod-q equivalent) flow:
-  1. Run `cabal build` in a subprocess (the current WM keeps running throughout)
-  2. Failure → the old binary continues; the error is sent to the bar over IPC and written in full to a log file
-  3. Success → serialize the state from 3.7 (identifier→tag / floating / stack order / layout state / submap) to a file → request stop → receive finished → exec the new binary
-  4. The new process reads the state file and matches it against the post-reconnect window enumeration using the version 4 identifiers from 3.7
-  - During the handover gap river keeps the session and windows alive. Surviving windows recover their WM-owned state by identifier; newly created windows use initial-placement rules, and entries for windows closed during the gap are discarded.
-- CLI: `seki --recompile`, `--check` (type-check the configuration only), `--restore <file>` (specify a state file).
-- Experimenting with a switch to a different WM implementation (river's WM hot-swap) works through the same stop/exec path.
+M3's installed `seki` command uses `$XDG_CONFIG_HOME/seki/`, or
+`~/.config/seki/` when that variable is unset. It generates missing `Main.hs`,
+`seki-user.cabal`, and `cabal.project` files without overwriting existing files.
+The generated executable uses the threaded RTS without a default `-N` setting.
+The installed launcher, shipped default runtime, and compiled user image are
+separate executables.
+
+At startup, the launcher builds the project, copies Cabal's resolved executable
+to a unique candidate, and runs that exact copy with `--check`. Only success
+selects the candidate through the stable user-state `profile` symlink. Initial
+build or validation failure attempts the shipped default runtime. `--restore`
+execs the selected profile directly, without rebuilding or invoking the launcher
+again.
+
+In an installed session, the configured restart action and `seki --recompile`
+request an asynchronous build. The CLI addresses the existing IPC owner in its
+runtime directory. One build runs at a time; requests during it collapse into
+one queued rebuild and invalidate its result. A byte-identical checked image
+does not restart. A direct runtime without installed build resources retains
+M2's recorded-target restart behavior.
+
+A failed build or candidate check leaves the process, profile, and windows in
+place. IPC reports the failure and full disk log path, with bounded diagnostic
+text. A current validated replacement uses this handover:
+
+1. Check the candidate, reconnect path, and runtime state location while managing.
+2. Drain accepted external commands, stop after the manage sequence, and wait for
+   `finished` before destroying the old connection.
+3. Serialize the window state, then atomically select the validated candidate
+   through the canonical profile immediately before exec with `--restore FILE`.
+4. Restore against the new window enumeration. A fresh managed IPC session
+   identifies the running image; a request receipt acknowledges only reduction
+   of the request.
+
+State-write failure leaves the profile untouched and reconnects with the old
+in-memory configuration. Immediate exec failure restores the previous profile
+link, or removes the new link when no previous profile existed, then reconnects
+with fresh policy, IPC, input adapters, and build ownership. User configuration
+and hooks are trusted code. Candidate checking does not sandbox their IO or
+provide a supervisor for arbitrary crashes after exec.
+
+Surviving windows whose workspace tag disappeared use the new manage hook; the
+default rules place them on the current workspace. An unreadable saved layout
+uses the configured layout for that workspace. A removed hidden scratchpad
+becomes an ordinary visible floating window using its saved geometry; a removed
+shown scratchpad remains an ordinary window. Invalid saved float geometry falls
+back to client sizing. Spawn-once history crosses the handover, so the same
+command does not relaunch on subsequent images. Windows closed during the gap
+are discarded, and newly created windows use normal placement rules.
+
+`seki --check` builds artifacts and validates the exact candidate without opening
+Wayland or running startup/manage hooks. `seki --recompile` sends the build
+request to the running owner. `seki --restore FILE` starts the selected image
+with saved state. Switching to another WM implementation uses the existing M2
+stop/exec mechanism.
 
 ### 5.3 Bar Integration and External IPC
 

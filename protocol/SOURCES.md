@@ -41,6 +41,23 @@ integration environment runs.
 The GitHub repository at <https://github.com/riverwm/river> is an upstream
 mirror and can be used when Codeberg is unavailable.
 
+## river input protocols
+
+- Files: `river/river-input-management-v1.xml`,
+  `river/river-libinput-config-v1.xml`, `river/river-xkb-config-v1.xml`
+- Upstream: <https://codeberg.org/river/river>
+- Tag: `v0.5.0`
+- Commit: `cc4a291b2b9375fe3d5fe5a64b6f510b463f888b`
+- Source: <https://codeberg.org/river/river/src/tag/v0.5.0/protocol>
+- License: MIT; full notices are preserved unchanged in each XML.
+
+These three files differ from v0.4.5. Input management and libinput add
+version-2 `done` events. XKB adds version-2 `done` and version-3 scrolllock
+requests/events. All v1 request/event opcodes, argument signatures and enum
+values are preserved. The new bindings permit v1 negotiation; they do not
+raise the runtime minimum above river 0.4.5. The existing river bindings above
+retain their v0.4.5 source pin. Arrays remain opaque in generated bindings.
+
 ## wayland-protocols
 
 - Files:

@@ -9,18 +9,20 @@ module Seki.Internal.Core.Event (
   CoreEvent (..),
   stepCore,
   drainCore,
+  drainCoreWithScratchpads,
 ) where
 
 import Control.Monad (mfilter)
 import Data.Bifunctor (first)
-import Data.Monoid (Endo (..))
 import Data.Set qualified as Set
-import Seki.Internal.Core.Action (Action, Intent, runAction)
-import Seki.Internal.Core.ManageHook (ManageHook, WindowProps, runQuery)
+import Seki.Internal.Core.Action (Action, Intent, runAction, scratchpadIntents)
+import Seki.Internal.Core.ManageHook (ManageHook, WindowProps)
 import Seki.Internal.Core.PointerOp (OpId, OpRequest, SeatId)
 import Seki.Internal.Core.PointerOp qualified as PointerOp
+import Seki.Internal.Core.Scratchpad (closePad, managePad)
+import Seki.Internal.Core.Scratchpad.Types (Scratchpad)
 import Seki.Internal.Core.StackSet (OutputId, WindowId)
-import Seki.Internal.Core.State (CoreState (..), addOutput, applyOpInput, focusWindowIn, manageWindow, normalizeCore, overWorkspaces, removeOutput, startPointerOp, unmanageWindow)
+import Seki.Internal.Core.State (CoreState (..), addOutput, applyOpInput, focusWindowIn, normalizeCore, overWorkspaces, removeOutput, startPointerOp)
 
 -- | A change river reported, or a key binding's action.
 data CoreEvent i l
@@ -46,12 +48,15 @@ event ends by raising a focused float, dropping fullscreen windows that no
 longer focus their workspace, and ending an op whose window no longer allows it.
 -}
 stepCore :: (Eq i) => ManageHook i l -> CoreEvent i l -> CoreState i l -> (CoreState i l, [Intent])
-stepCore hook event = first normalizeCore . reduce hook event
+stepCore = stepCoreWithScratchpads []
 
-reduce :: (Eq i) => ManageHook i l -> CoreEvent i l -> CoreState i l -> (CoreState i l, [Intent])
-reduce hook event st = case event of
-  WindowCreated w props -> (overWorkspaces (manageWindow (appEndo (runQuery hook w props)) w) st, [])
-  WindowClosed w -> (overWorkspaces (unmanageWindow w) st, [])
+stepCoreWithScratchpads :: (Eq i) => [Scratchpad] -> ManageHook i l -> CoreEvent i l -> CoreState i l -> (CoreState i l, [Intent])
+stepCoreWithScratchpads definitions hook event = first normalizeCore . reduce definitions hook event
+
+reduce :: (Eq i) => [Scratchpad] -> ManageHook i l -> CoreEvent i l -> CoreState i l -> (CoreState i l, [Intent])
+reduce definitions hook event st = case event of
+  WindowCreated w props -> let (next, effects) = managePad definitions hook w props st in (next, scratchpadIntents effects)
+  WindowClosed w -> (closePad w st, [])
   OutputCreated o -> (overWorkspaces (addOutput o) st, [])
   OutputRemoved o -> (overWorkspaces (removeOutput o) st, [])
   WindowInteraction w -> (overWorkspaces (focusWindowIn w) st, [])
@@ -64,6 +69,10 @@ reduce hook event st = case event of
 
 -- | Apply events in arrival order, concatenating their intents in order.
 drainCore :: (Eq i) => ManageHook i l -> [CoreEvent i l] -> CoreState i l -> (CoreState i l, [Intent])
-drainCore hook events st0 = foldl' step (st0, []) events
+drainCore = drainCoreWithScratchpads []
+
+-- | Configured matching and ordinary management share the same reducer.
+drainCoreWithScratchpads :: (Eq i) => [Scratchpad] -> ManageHook i l -> [CoreEvent i l] -> CoreState i l -> (CoreState i l, [Intent])
+drainCoreWithScratchpads definitions hook events st0 = foldl' step (st0, []) events
  where
-  step (st, intents) event = let (st', new) = stepCore hook event st in (st', intents ++ new)
+  step (st, intents) event = let (next, effects) = stepCoreWithScratchpads definitions hook event st in (next, intents ++ effects)

@@ -111,3 +111,127 @@ messages are capped at 1024 characters. Workspace tags are identities and are
 never truncated. A configuration whose full workspace projection exceeds the
 line limit receives `snapshot_too_large`, including on subscription. Each such
 error retains the subscription's request ID.
+
+### Input devices (M3-03)
+
+`input.availability` is `available` or `unavailable`. Absence of optional input
+protocols does not stop window management. `requested_rule_count` accompanies
+unavailability. An available inventory has a session object (`pid`, monotonic
+`token`, process `unique`) and `devices`: `{items, count, truncated}`. Count is the
+complete live inventory size; items are a deterministic generation-ordered prefix
+whose encoded values consume at most 24000 bytes. No removal history is retained.
+Device identity combines this session and a monotonic `generation`. `wire_id` is
+an ephemeral diagnostic and can be reused; never use it as a stable identity.
+
+Each device has nullable `name`, `type`, lifecycle (`discovering`, `ready`,
+`removed`), libinput availability and an `xkb` object. Names are capped at 128
+characters with `name_truncated`. Defaults and current values are arrays of
+`{setting, value}`; an absent setting is unknown, never an assumed default.
+Generic input management has no default/current feedback. XKB has no defaults.
+Results are `{setting, requested, revision, status}`. Status is one of `pending`,
+`loading`, `compiling`, `awaiting`, `applied`, `rejected_invalid`, `sent`,
+`observed`, `unavailable`, `unsupported`, `invalid`, `removed`.
+Only libinput success acknowledgements mean applied. Generic requests remain
+sent. XKB layout/lock requests become observed only after matching feedback.
+Keymap compilation success permits assignment; assignment remains sent. Local
+load errors are unavailable; compositor compilation errors are rejected_invalid.
+No keymap contents are serialized. Paths and selectors have explicit truncation flags and are capped at 128
+characters. Custom curves include movement type, step, point_count, at most eight
+points and an explicit truncated flag; matrix values are finite or null.
+Diagnostics use the same bounded collection shape, capped at 1024 encoded bytes,
+with at most 32 retained facet messages, each projected as a 128-character
+`message` and explicit `truncated` flag. Nonfinite numbers are null.
+
+`xkb` is null when input management is unavailable; otherwise it is a bounded
+collection (8000 encoded item bytes) of `{identity, name, state}` for keyboards.
+State holds availability, nullable layout_index/layout_name, caps_lock, num_lock,
+and scroll_lock. Unknown locks are null, including scroll lock before protocol
+v3. Layout names are capped at 128 characters with `layout_name_truncated`; keyboard
+summary names have `name_truncated`. Separate keyboards retain separate
+states; this is not an active-global-keyboard indicator. The shipped Waybar helper
+sorts by name then identity and displays every retained device as `name: layout`,
+using `?` for unknown values and an ellipsis when the collection is truncated.
+Tiling layout remains the workspace's `layout` field.
+
+Input changes wake the runtime owner and are projected with the same immutable
+inventory as the window snapshot. Workers never read input maps or send Wayland
+requests. Unchanged input does not trigger another wake. Input changes are logged
+as bounded structured JSON with session/device/setting identities and device names
+(capped at 128 characters, with `name_truncated`). JSON and Pango
+escaping are separate; the Waybar helper escapes the combined display string and
+never interpolates device or layout data into a shell command. Older snapshots
+with absent or null xkb remain accepted.
+
+When input protocols are unavailable, `requested_rules` contains bounded rule
+summaries (`name_pattern`, nullable `type`, bounded `settings`). Each requested
+setting explicitly includes `setting`, `requested`, and status `unavailable`. The rule collection has an 8000-byte
+item budget and each settings collection 4096 bytes, with counts and truncation.
+The pattern is its escaped source form. This diagnostic never claims a matched
+device or an applied setting. Status logs omit unchanged current values, so a
+layout feedback stream does not duplicate terminal setting-result log entries.
+
+Setting names and values in `requested`, `defaults`, and `current` are:
+
+| Setting | JSON value |
+| --- | --- |
+| `repeat_info` | `{rate, delay}` integer rate and delay |
+| `scroll_factor`, `accel_speed` | finite number |
+| `map_output` | null to clear, or `{name, truncated}` |
+| `map_rectangle` | null to clear, or `[x, y, width, height]` |
+| `send_events` | `events_enabled`, `events_disabled`, `events_disabled_on_external_mouse` |
+| `tap`, `drag`, `natural_scroll`, `left_handed`, `middle_emulation`, `scroll_button_lock`, `disable_while_typing`, `disable_while_trackpoint` | boolean |
+| `tap_button_map`, `clickfinger_button_map` | `left_right_middle` or `left_middle_right` |
+| `drag_lock` | `drag_lock_disabled`, `drag_lock_timeout`, `drag_lock_sticky` |
+| `three_finger_drag` | `three_finger_drag_disabled`, `three_finger_drag_enabled`, `four_finger_drag_enabled` |
+| `calibration_matrix` | six numbers in protocol order |
+| `acceleration` | `accel_none`, `accel_flat`, `accel_adaptive`, `accel_custom`, or an array of custom curve summaries |
+| `click_method` | `click_none`, `click_button_areas`, `click_finger` |
+| `scroll_method` | `scroll_none`, `scroll_two_finger`, `scroll_edge`, `scroll_on_button` |
+| `scroll_button` | unsigned button code |
+| `rotation` | unsigned degrees, below 360 |
+| `keymap` | `{path, truncated}`; never file contents |
+| `active_layout` | `{index}` or `{name, truncated}` |
+| `caps_lock`, `num_lock`, `scroll_lock` | boolean |
+
+A custom curve summary is `{type, step, point_count, points, truncated}`. Type is
+`curve_fallback`, `curve_motion`, or `curve_scroll`. At most three curves and eight
+preview points per curve are serialized. Valid requested curves contain at most
+64 points; point_count always describes the complete input. Text values above
+use a 128-character cap and explicit flags. A defensive nonfinite numeric input
+is null, including a null matrix/curve component; public validation rejects it
+before connection. Null clear requests differ from absent unknown current values.
+
+`{"version":1,"id":"build","op":"recompile"}` requests a build in an
+installed session. `sekictl recompile` and the installed `seki --recompile` send
+this request to the existing owner in the runtime directory. They do not open a
+Wayland connection. A session without installed build resources refuses the IPC
+request; its configured restart action retains direct M2 handover semantics.
+Installed sessions route that action through the same build lifecycle.
+
+The applied revision receipt acknowledges reduction of the request, not build,
+validation, activation, or a displayed frame. The additive `build` snapshot field
+is null for direct runtimes. Installed sessions report state, session epoch,
+generation, queued generation where applicable, error and full disk log path.
+States include idle, building, failed, validated and unchanged. A validated image
+has passed its own `--check`; this does not acknowledge activation. A fresh
+managed session and its new IPC session identity establish successful runtime
+initialization. Trusted user code and hooks are not sandboxed, and there is no
+supervisor promise for arbitrary user initialization crashes.
+
+One compiler runs per session. Requests during that build collapse into one
+queued rebuild and invalidate the earlier result. Further requests do not grow
+the queue. The worker copies Cabal's resolved executable before validation;
+Cabal cannot overwrite the selected copy. An image byte-identical to the running
+executable does not restart. Compiler output stays on disk, with at most 8 KiB of
+diagnostics retained for a failure. Compilation has no arbitrary deadline;
+list-bin and candidate checks retain their bounded execution/output limits.
+
+Build/check failure leaves the profile and running session intact. Successful
+validation precedes stop; successful state serialization precedes profile
+promotion. The validated target binds the canonical installed profile, including
+when the old session is the shipped default fallback. Immediate exec failure
+rolls the profile back before reconnecting
+with the old in-memory configuration and saved state. Reconnection recreates
+IPC, input adapters and build ownership. Restore uses the existing workspace,
+layout and scratchpad fallbacks, retaining accessible surviving windows and
+spawnOnce history. This contract does not cover an arbitrary crash after exec.

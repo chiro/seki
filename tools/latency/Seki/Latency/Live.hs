@@ -129,7 +129,9 @@ runWM socket directory = do
   config :: PolicyConfig String Tall
   config =
     PolicyConfig
-      { policyLayout = Tall 1 (1 / 10) (1 / 2)
+      { policyScratchpads = []
+      , policyInputRules = []
+      , policyLayout = Tall 1 (1 / 10) (1 / 2)
       , policyTags = ["1", "2"]
       , policyBindings =
           zipWith
@@ -141,7 +143,7 @@ runWM socket directory = do
       , policyStartupHook = pure ()
       , policyPointerBindings = []
       , policyRestore = Nothing
-      , policyCheckRestart = pure (Right ())
+      , policyCheckRestart = const (pure (Right ()))
       , policyLog = \_ -> pure ()
       , policyLaunch = \_ -> fail "unexpected spawn"
       }

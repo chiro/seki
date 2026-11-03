@@ -4,7 +4,9 @@
 module Seki.Run.SessionsTest (tests) where
 
 import Control.Exception (bracket, onException, throwIO)
+import Control.Monad (when)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
+import Data.List (isPrefixOf)
 import Data.Text (Text)
 import Seki.Internal.Config (Config (..), def)
 import Seki.Internal.Core.Action (restart)
@@ -31,10 +33,12 @@ tests :: TestTree
 tests =
   testGroup
     "restart sessions"
-    [ testCase "no arguments start fresh" $ parseSekiArgs [] @?= Right (SekiArgs Nothing)
-    , testCase "--restore names the state file" $ parseSekiArgs ["--restore", "/run/seki/x.state"] @?= Right (SekiArgs (Just "/run/seki/x.state"))
-    , testCase "any other arguments are a usage error" $ mapM_ (either (const (pure ())) (assertFailure . show) . parseSekiArgs) [["--restore"], ["-v"], ["--restore", "a", "b"]]
+    [ testCase "no arguments start fresh" $ parseSekiArgs [] @?= Right Run
+    , testCase "--restore names the state file" $ parseSekiArgs ["--restore", "/run/seki/x.state"] @?= Right (Restore "/run/seki/x.state")
+    , testCase "--check selects candidate validation" $ parseSekiArgs ["--check"] @?= Right Check
+    , testCase "any other arguments are a usage error" $ mapM_ (either (const (pure ())) (assertFailure . show) . parseSekiArgs) [["--restore"], ["--restore", "--check"], ["-v"], ["--restore", "a", "b"], ["--check", "--restore", "a"], ["--restore", "a", "--check"], ["--check", "--check"], ["--check", "extra"]]
     , testCase "a failed exec reconnects on the socket path and restores in the same process" testFallback
+    , testCase "failed exec reconnects when diagnostic logging fails" (fallbackSession True)
     , testCase "unavailable at startup retries on the socket path" testUnavailableRetry
     , testCase "a state file of an unknown version starts fresh and is deleted" testUnknownVersion
     ]
@@ -62,13 +66,16 @@ windows to workspace 2, so only a restored window is proposed a tile there.
 -}
 sessionConfig :: IORef [String] -> Maybe a -> PolicyConfig String Full
 sessionConfig logged restored =
-  PolicyConfig Full ["1", "2"] [] defaultSceneStyle (\_ -> pure ()) hook restart [] Nothing check (\line -> modifyIORef' logged (line :))
+  PolicyConfig [] [] Full ["1", "2"] [] defaultSceneStyle (\_ -> pure ()) hook restart [] Nothing check (\line -> modifyIORef' logged (line :))
  where
   hook = maybe idHook (const (doShift "2")) restored
-  check = pure (maybe (Right ()) (const (Left TargetUnrecorded)) restored)
+  check = const (pure (maybe (Right ()) (const (Left TargetUnrecorded)) restored))
 
 testFallback :: Assertion
-testFallback = withSystemTempDirectory "seki-sessions" $ \dir -> do
+testFallback = fallbackSession False
+
+fallbackSession :: Bool -> Assertion
+fallbackSession brokenLog = withSystemTempDirectory "seki-sessions" $ \dir -> do
   (first, firstPeer) <- openRuntimePair
   (second, secondPeer) <- openRuntimePair
   logged <- newIORef []
@@ -100,7 +107,13 @@ testFallback = withSystemTempDirectory "seki-sessions" $ \dir -> do
           , launchStateDir = Right (dir </> "seki")
           , launchExec = \path args _ -> modifyIORef' execs ((path, args) :) >> throwIO (userError "exec refused in tests")
           }
-  result <- runSessions launch (sessionConfig logged) Nothing
+  let configFor restored =
+        (sessionConfig logged restored)
+          { policyLog = \line -> do
+              modifyIORef' logged (line :)
+              when (brokenLog && "restart: exec of " `isPrefixOf` line) (throwIO (userError "diagnostic logging unavailable"))
+          }
+  result <- runSessions launch configFor Nothing
   expectMockSuccess firstDone
   expectMockSuccess secondDone
   result @?= Right ()

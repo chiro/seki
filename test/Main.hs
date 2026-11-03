@@ -10,14 +10,18 @@ import Seki.Internal.Core.ManageHookTest qualified as ManageHookTest
 import Seki.Internal.Core.PointerOpTest qualified as PointerOpTest
 import Seki.Internal.Core.RestoreTest qualified as RestoreTest
 import Seki.Internal.Core.SceneTest qualified as SceneTest
+import Seki.Internal.Core.ScratchpadTest qualified as ScratchpadTest
 import Seki.Internal.Core.StackSetTest qualified as StackSetTest
 import Seki.Internal.Core.StateTest qualified as StateTest
+import Seki.Internal.InputTest qualified as InputTest
 import Seki.Internal.Layout.FullTest qualified as FullLayoutTest
 import Seki.Internal.Layout.TallTest qualified as TallTest
+import Seki.Run.BuildSessionTest qualified as BuildSessionTest
 import Seki.Run.ConfigTest qualified as ConfigTest
 import Seki.Run.ExternalTest qualified as ExternalTest
 import Seki.Run.IPCBoundaryTest qualified as IPCBoundaryTest
 import Seki.Run.IPCTest qualified as IPCTest
+import Seki.Run.InputTest qualified as RuntimeInputTest
 import Seki.Run.InventoryTest qualified as InventoryTest
 import Seki.Run.LatencyPureTest qualified as LatencyPureTest
 import Seki.Run.LatencyTest qualified as LatencyTest
@@ -29,6 +33,7 @@ import Seki.Run.ReconcileTraceTest qualified as ReconcileTraceTest
 import Seki.Run.RestartTest qualified as RestartTest
 import Seki.Run.RiverTest qualified as RiverTest
 import Seki.Run.RuntimeTest qualified as RuntimeTest
+import Seki.Run.ScratchpadTimerTest qualified as ScratchpadTimerTest
 import Seki.Run.SequenceTest qualified as SequenceTest
 import Seki.Run.SessionsTest qualified as SessionsTest
 import Seki.Run.StartupTest qualified as StartupTest
@@ -48,4 +53,59 @@ import Seki.Wire.TransportTest qualified as TransportTest
 import Test.Tasty (defaultMain, testGroup)
 
 main :: IO ()
-main = defaultMain (testGroup "seki" [IPCBoundaryTest.tests, IPCTest.tests, ExternalTest.tests, LatencyPureTest.tests, LatencyWorkloadTest.tests, LatencyTest.tests, ReconcileTest.tests, ReconcileTraceTest.tests, SceneTest.tests, GeometryTest.tests, StackSetTest.tests, StateTest.tests, LayoutTest.tests, ManageHookTest.tests, PointerOpTest.tests, FullLayoutTest.tests, TallTest.tests, ActionTest.tests, CoreEventTest.tests, RestoreTest.tests, CodecTest.tests, ArgumentsTest.tests, TransportTest.tests, DriverTest.tests, BufferTest.tests, ObjectTableTest.tests, RequestTest.tests, EventTest.tests, ConnectionTest.tests, DispatchTest.tests, RegistryTest.tests, StartupTest.tests, RiverTest.tests, RuntimeTest.tests, SequenceTest.tests, PhaseTest.tests, InventoryTest.tests, ConfigTest.tests, PolicyTest.tests, RestartTest.tests, SessionsTest.tests, ScannerTest.tests, GeneratorTest.tests, LayerSurfaceFixtureTest.tests, ProbeFixtureTest.tests])
+main =
+  defaultMain
+    ( testGroup
+        "seki"
+        [ BuildSessionTest.tests
+        , ScratchpadTimerTest.tests
+        , ScratchpadTest.tests
+        , InputTest.tests
+        , IPCBoundaryTest.tests
+        , IPCTest.tests
+        , ExternalTest.tests
+        , LatencyPureTest.tests
+        , LatencyWorkloadTest.tests
+        , LatencyTest.tests
+        , ReconcileTest.tests
+        , ReconcileTraceTest.tests
+        , SceneTest.tests
+        , GeometryTest.tests
+        , StackSetTest.tests
+        , StateTest.tests
+        , LayoutTest.tests
+        , ManageHookTest.tests
+        , PointerOpTest.tests
+        , FullLayoutTest.tests
+        , TallTest.tests
+        , ActionTest.tests
+        , CoreEventTest.tests
+        , RestoreTest.tests
+        , CodecTest.tests
+        , ArgumentsTest.tests
+        , TransportTest.tests
+        , DriverTest.tests
+        , BufferTest.tests
+        , ObjectTableTest.tests
+        , RequestTest.tests
+        , EventTest.tests
+        , ConnectionTest.tests
+        , DispatchTest.tests
+        , RegistryTest.tests
+        , StartupTest.tests
+        , RiverTest.tests
+        , RuntimeTest.tests
+        , SequenceTest.tests
+        , PhaseTest.tests
+        , RuntimeInputTest.tests
+        , InventoryTest.tests
+        , ConfigTest.tests
+        , PolicyTest.tests
+        , RestartTest.tests
+        , SessionsTest.tests
+        , ScannerTest.tests
+        , GeneratorTest.tests
+        , LayerSurfaceFixtureTest.tests
+        , ProbeFixtureTest.tests
+        ]
+    )

@@ -12,8 +12,9 @@ instance LayoutClass CustomLayout where
 customConfig :: Config CustomLayout
 customConfig =
   def
-    { layoutHook = CustomLayout Full
-    , keys = \config -> (KeyBinding (modMask config .|. Shift) (Keysym 0xffbe), windows focusDown >> kill >> spawn "true") : (KeyBinding (modMask config) (Keysym 0x66), withFocused float) : (KeyBinding (modMask config .|. Shift) (Keysym 0x74), withFocused sink) : (KeyBinding (modMask config .|. Shift) (Keysym 0x66), withFocused toggleFullscreen) : defaultKeys config
+    { scratchpads = [Scratchpad "term" "foot -a seki-pad" (appId =? "seki-pad") padBox]
+    , layoutHook = CustomLayout Full
+    , keys = \config -> (KeyBinding (modMask config .|. Shift) (Keysym 0xffbe), windows focusDown >> kill >> spawn "true" >> toggleScratchpad "term" >> resetScratchpad "term") : (KeyBinding (modMask config) (Keysym 0x66), withFocused float) : (KeyBinding (modMask config .|. Shift) (Keysym 0x74), withFocused sink) : (KeyBinding (modMask config .|. Shift) (Keysym 0x66), withFocused toggleFullscreen) : defaultKeys config
     , manageHook = idHook
     , startupHook = spawnOnce "true"
     , pointerBindings = \config -> (PointerBinding (modMask config .|. Shift) Button1, ResizeWindow) : defaultPointerBindings config
@@ -48,3 +49,6 @@ tolerantConfig = def{layoutHook = tolerant (layoutHook def), keys = defaultKeys,
 
 configuredMain :: IO ()
 configuredMain = seki customConfig
+
+padBox :: OutputRect
+padBox = either (error . show) OutputRect (mkSize 640 480 >>= mkRect (Point 80 60))

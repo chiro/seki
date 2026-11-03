@@ -43,6 +43,8 @@ Copyright © 2025 Isaac Freund (river-xkb-bindings-v1)
 
 Copyright © 2025 Isaac Freund (river-layer-shell-v1)
 
+Copyright © 2025 Isaac Freund (river-input-management-v1, river-libinput-config-v1, river-xkb-config-v1)
+
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in
 the Software without restriction, including without limitation the rights to
@@ -215,3 +217,15 @@ FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+## Private input integration fixture
+
+`integration/input/backend.c` and `keymap.c` are original seki test code under
+this repository's MIT license. The backend uses the public unstable wlroots 0.20
+API; it creates objects only in a private child river and opens no physical input
+or kernel uinput devices. It is not a physical libinput fixture. The generated
+US/Japanese keymap is test data produced at runtime by libxkbcommon using the
+closure's xkeyboard-config data; no upstream keymap text or header is vendored.
+The locked nixpkgs river 0.5.0 derivation explicitly uses `wlroots_0_20`:
+https://github.com/NixOS/nixpkgs/blob/55bfb4d7437bd4e09ab7cba58a43bd68eb310044/pkgs/by-name/ri/river/package.nix.
+The fixture compiles through pkg-config against that same SDK in the CI shell.
