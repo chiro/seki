@@ -3,7 +3,9 @@
 
 module Seki.Run.RuntimeTest (tests) where
 
-import Control.Exception (ErrorCall (..), onException, throwIO, try)
+import Control.Concurrent (forkFinally, killThread, threadDelay)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar)
+import Control.Exception (ErrorCall (..), IOException, finally, onException, throwIO, try)
 import Control.Monad (forM_)
 import Data.Binary.Get qualified as Get
 import Data.ByteString qualified as BS
@@ -11,7 +13,9 @@ import Data.ByteString.Lazy qualified as Lazy
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Map.Strict qualified as Map
 import Data.Word (Word32)
+import Foreign.C.Error (Errno (..), eAGAIN, eWOULDBLOCK)
 import GHC.Clock (getMonotonicTimeNSec)
+import GHC.IO.Exception (IOException (..))
 import Seki.Internal.Core.Geometry (GeometryError (..), Point (..), mkRect, mkSize)
 import Seki.Internal.Input
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
@@ -31,6 +35,7 @@ import Seki.Run.LayerShell (RiverLayerShellBootstrapError (..))
 import Seki.Run.Libinput
 import Seki.Run.MockRiver (
   FrameReader,
+  awaitInputWake,
   callbackDoneFrame,
   decodeNewId,
   encodedFrame,
@@ -73,6 +78,7 @@ import Seki.Run.Runtime (
   RiverRuntimeHandlers (..),
   RiverRuntimeSnapshot (..),
   RiverSeatBindings (..),
+  RiverSession,
   closeRiverSession,
   openRiverSessionAt,
   readRiverInputSnapshot,
@@ -94,11 +100,13 @@ import Seki.Run.Xkb (RiverKeyBinding (..), RiverXkbBootstrapError (..))
 import Seki.Run.XkbConfig
 import Seki.Wire.Arguments (fixedFromRaw, putArray, putFixed, putInt, putNewId, putObject, putString, putUint)
 import Seki.Wire.Arguments qualified as SekiArguments
-import Seki.Wire.Connection (ConnectionError (..), dispatchNextEvent)
+import Seki.Wire.Connection (ConnectionError (..), dispatchNextEvent, eventRoute, registerEventRoute)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit, makeObjectLimit, objectId)
 import Seki.Wire.Connection.Registry (RegistryError (..), globalNameFromWord)
-import Seki.Wire.Transport (OwnedFd, ReceivedChunk (..), Transport, closeTransport, receiveChunk)
+import Seki.Wire.Transport (ConnectionTarget (..), OwnedFd, ReceivedChunk (..), Transport, closeTransport, receiveChunk)
 import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..))
+import System.Posix.IO.ByteString (fdWrite)
+import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertEqual, assertFailure, testCase)
 
@@ -106,7 +114,10 @@ tests :: TestTree
 tests =
   testGroup
     "river runtime"
-    [ testCase "finished optional input manager remains unavailable with core live" testInputFinished
+    [ testCase "callback cancellation closes a blocked runtime sender before connection state" testBlockedCallbackCancellation
+    , testCase "abort joins a wake blocked on a full real socket" testBlockedWakeAbort
+    , testCase "failed runtime bind leaves the other owner's ingress open" testIngressBindFailure
+    , testCase "finished optional input manager remains unavailable with core live" testInputFinished
     , testCase "libinput custom curves success rejection removal v1/v2" (mapM_ (\v -> mapM_ (testCustomLibinput v) [0, 1, 2, 3, 4]) [1, 2])
     , testCase "retired libinput requests do not exhaust admission" (mapM_ (testRetiredLibinputRequests False) [255, 256, 512] >> testRetiredLibinputRequests True 256)
     , testCase "XKB retains two distinct keyboards with empty rules" testTwoXkbKeyboards
@@ -142,6 +153,96 @@ tests =
     , testCase "closes startup when the layer-shell bind fails" testLayerShellBindFailure
     , testCase "promotes live registry failures from the event loop" testLiveRegistryFailure
     ]
+
+testBlockedWakeAbort :: Assertion
+testBlockedWakeAbort = withRuntimePair $ \target peer -> do
+  queue <- External.newExternalIngress
+  booted <- newEmptyMVar
+  mockDone <- runMock $ do
+    reader <- newFrameReader
+    manager <- bootManager reader peer
+    putMVar booted manager
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (const (pure ()))){riverExternalIngress = Just (External.externalLifecycle queue)})
+  flip finally (closeRiverSession session) $ do
+    _ <- takeMVar booted
+    expectMockSuccess mockDone
+    fillRuntimeSocket target
+    External.submitExternal (External.externalProducer queue) () >>= assertEqual "admission does not wait for the full socket" External.Accepted
+    awaitRuntimeWakeBlocked session
+    timeout 2000000 (closeRiverSession session) >>= assertEqual "abort cancels and joins before connection close" (Just ())
+    External.submitExternal (External.externalProducer queue) () >>= assertEqual "retained producer closed" External.IngressClosed
+    timeout 2000000 (closeRiverSession session) >>= assertEqual "repeated close joins safely" (Just ())
+
+testBlockedCallbackCancellation :: Assertion
+testBlockedCallbackCancellation = withRuntimePair $ \target peer -> do
+  queue <- External.newExternalIngress
+  planEntered <- newEmptyMVar
+  releasePlan <- newEmptyMVar
+  mockDone <- runMock $ do
+    reader <- newFrameReader
+    manager <- bootManager reader peer
+    sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
+  let handlers =
+        (runtimeHandlers (const (pure ())))
+          { riverExternalIngress = Just (External.externalLifecycle queue)
+          , prepareRiverManagePlan = \_ -> putMVar planEntered () >> takeMVar releasePlan >> pure (pure KeepManaging)
+          }
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
+  ownerDone <- newEmptyMVar
+  owner <- forkFinally (runRiverSession session) (putMVar ownerDone)
+  let cleanup = do
+        closeRiverSession session
+        timeout 2000000 (readMVar ownerDone) >>= maybe (assertFailure "runtime owner leaked after cleanup") (const (pure ()))
+  flip finally cleanup $ do
+    timeout 2000000 (takeMVar planEntered) >>= assertEqual "callback entered before sender blocks" (Just ())
+    expectMockSuccess mockDone
+    fillRuntimeSocket target
+    External.submitExternal (External.externalProducer queue) () >>= assertEqual "wake admitted while callback runs" External.Accepted
+    awaitRuntimeWakeBlocked session
+    cancelled <- newEmptyMVar
+    _ <- forkFinally (killThread owner) (putMVar cancelled)
+    timeout 2000000 (readMVar ownerDone) >>= maybe (assertFailure "callback cancellation waited for blocked sender") (const (pure ()))
+    timeout 2000000 (takeMVar cancelled) >>= maybe (assertFailure "canceller did not join") (either (assertFailure . show) pure)
+    External.submitExternal (External.externalProducer queue) () >>= assertEqual "cancelled session closed admission" External.IngressClosed
+
+fillRuntimeSocket :: ConnectionTarget -> IO ()
+fillRuntimeSocket target = timeout 2000000 (fill 4096 >> fill 1) >>= maybe (assertFailure "socket did not fill") pure
+ where
+  fill size = case target of
+    InheritedSocket fd -> do
+      result <- try @IOException (fdWrite fd (BS.replicate size 0))
+      case result of
+        Right _ -> fill size
+        Left e | fmap Errno (ioe_errno e) `elem` [Just eAGAIN, Just eWOULDBLOCK] -> pure ()
+        Left e -> throwIO e
+    _ -> assertFailure "expected inherited runtime socket"
+
+awaitRuntimeWakeBlocked :: RiverSession -> IO ()
+awaitRuntimeWakeBlocked session = timeout 2000000 awaitBlocked >>= maybe (assertFailure "wake sender never held the connection lock") pure
+ where
+  connection = waylandConnection (riverWaylandSession session)
+  manager = riverWindowManager session
+  probe = registerEventRoute connection River.riverWindowManagerV1Interface manager (eventRoute River.decodeRiverWindowManagerV1Event (\_ _ -> pure ()))
+  awaitBlocked =
+    timeout 10000 probe >>= \case
+      Nothing -> pure ()
+      Just _ -> threadDelay 1000 >> awaitBlocked
+
+testIngressBindFailure :: Assertion
+testIngressBindFailure = withRuntimePair $ \target peer -> do
+  queue <- External.newExternalIngress
+  External.bindExternalWake (External.externalLifecycle queue) (pure True) >>= assertBool "another owner bound ingress"
+  mockDone <- runMock $ do
+    reader <- newFrameReader
+    _ <- bootManager reader peer
+    expectClosed peer
+  result <- openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (const (pure ()))){riverExternalIngress = Just (External.externalLifecycle queue)})
+  case result of
+    Left errorValue -> assertEqual "bind refused" RiverRuntimeIngressAlreadyBound errorValue
+    Right session -> closeRiverSession session >> assertFailure "bound another owner's ingress"
+  expectMockSuccess mockDone
+  External.submitExternal (External.externalProducer queue) () >>= assertEqual "failed startup did not close another owner" External.Accepted
+  External.closeExternal (External.externalLifecycle queue)
 
 testOwnedRuntime :: Assertion
 testOwnedRuntime =
@@ -1097,12 +1198,22 @@ as usual, and a second stop request from the plan is not sent.
 testStopLifecycle :: Assertion
 testStopLifecycle =
   withRuntimePair $ \target peer -> do
+    queue <- External.newExternalIngress
     mockDone <- runMock $ flip onException (closeTransport peer) $ do
       reader <- newFrameReader
       managerId <- bootManager reader peer
+      receiveSequenceCompletion reader peer managerId (Opcode 3)
       sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
-      receiveSequenceCompletion reader peer managerId (Opcode 2)
-      receiveExpectedRequest reader peer managerId (Opcode 0) (pure ())
+      let untilOpcode expected = do
+            frame <- receiveFrame reader peer
+            assertEqual "manager sender" managerId (rawFrameSender frame)
+            if rawFrameOpcode frame == Opcode 3
+              then untilOpcode expected
+              else assertEqual "manager request before stop" expected (rawFrameOpcode frame)
+      untilOpcode (Opcode 2)
+      untilOpcode (Opcode 0)
+      External.submitExternal (External.externalProducer queue) () >>= assertEqual "stop closes admission" External.IngressClosed
+      External.wakeExternalPending (External.externalLifecycle queue)
       sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
       receiveSequenceCompletion reader peer managerId (Opcode 4)
       sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
@@ -1111,8 +1222,19 @@ testStopLifecycle =
       receiveSequenceCompletion reader peer managerId (Opcode 4)
       sendFrames peer [encodedFrame managerId (Opcode 1) (pure ())]
       receiveExpectedRequest reader peer managerId (Opcode 1) (pure ())
+      External.wakeExternalPending (External.externalLifecycle queue)
       expectClosed peer
-    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (runtimeHandlers (const (pure ()))){prepareRiverManagePlan = \_ -> pure (pure StopManaging)}
+    let handlers =
+          (runtimeHandlers (const (pure ())))
+            { riverExternalIngress = Just (External.externalLifecycle queue)
+            , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome True))
+            , prepareRiverManagePlan = \_ -> do
+                External.wakeExternalPending (External.externalLifecycle queue)
+                _ <- External.drainExternal queue
+                pure (pure StopManaging)
+            }
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
+    External.submitExternal (External.externalProducer queue) () >>= assertEqual "initial input" External.Accepted
     result <- runRiverSession session
     expectMockSuccess mockDone
     assertEqual "a requested finish ends the session as stopped" (Right RiverStopped) result
@@ -1226,6 +1348,7 @@ testInput version = withRuntimePair $ \target peer -> do
     receiveExpectedRequest reader peer pointer (Opcode 5) (putInt (-10) >> putInt 20 >> putInt 100 >> putInt 200)
     sendFrames peer [encodedFrame pointer (Opcode 0) (pure ())]
     receiveExpectedRequest reader peer pointer (Opcode 0) (pure ())
+    awaitInputWake reader peer
     wakeCount >>= \count -> assertBool "input changes request owner publication" (count > 0)
     closeTransport peer
   let handlers = (runtimeHandlers (\_ -> pure ())){riverInputRules = [InputRule patternValue Nothing [RepeatInfo 37 410, ScrollFactor 1.5, MapOutput Nothing, MapRectangle (Just (InputRectangle (-10) 20 100 200))]]}
@@ -1259,6 +1382,7 @@ testInputCohort = withRuntimePair $ \target peer -> do
     receiveSequenceCompletion reader peer manager (Opcode 2)
     sendFrames peer [callbackDoneFrame callbackB 3]
     receiveExpectedRequest reader peer b (Opcode 2) (putInt 37 >> putInt 410)
+    awaitInputWake reader peer
     wakeCount >>= \count -> assertBool "input changes request owner publication" (count > 0)
     closeTransport peer
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (\_ -> pure ())){riverInputRules = [InputRule patternValue Nothing [RepeatInfo 37 410]]})
@@ -1378,6 +1502,7 @@ testLibinput finishManager version offset = withRuntimePair $ \target peer -> do
         sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
         receiveSequenceCompletion reader peer manager (Opcode 2)
       else pure ()
+    awaitInputWake reader peer
     wakeCount >>= \count -> assertBool "input changes request owner publication" (count > 0)
     closeTransport peer
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (\_ -> pure ())){riverInputRules = [InputRule patternValue Nothing settings]})
@@ -1471,6 +1596,7 @@ testCustomLibinput version outcome = withRuntimePair $ \target peer -> do
           else receiveExpectedRequest reader peer config (Opcode 0) (pure ())
     sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
     receiveSequenceCompletion reader peer manager (Opcode 2)
+    awaitInputWake reader peer
     wakeCount >>= \count -> assertBool "input changes request owner publication" (count > 0)
     closeTransport peer
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (\_ -> pure ())){riverInputRules = [InputRule patternValue Nothing settings]})
@@ -1520,6 +1646,7 @@ testXkbConfig version = withRuntimePair $ \target peer -> do
     if version >= 2 then sendFrames peer [encodedFrame keyboard (Opcode 7) (pure ())] else pure ()
     sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
     receiveSequenceCompletion reader peer manager (Opcode 2)
+    awaitInputWake reader peer
     wakeCount >>= \count -> assertBool "input changes request owner publication" (count > 0)
     closeTransport peer
   let settings = [ActiveLayout (LayoutByName "Japanese"), CapsLock True, NumLock False, ScrollLock True]
@@ -1555,6 +1682,7 @@ testTwoXkbKeyboards = withRuntimePair $ \target peer -> do
     second <- receiveFrame reader peer >>= decodeNewId
     sendFrames peer [callbackDoneFrame first 2, callbackDoneFrame second 3, encodedFrame manager (Opcode 2) (pure ())]
     receiveSequenceCompletion reader peer manager (Opcode 2)
+    awaitInputWake reader peer
     wakeCount >>= \count -> assertBool "input changes request owner publication" (count > 0)
     closeTransport peer
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (runtimeHandlers (\_ -> pure ()))
