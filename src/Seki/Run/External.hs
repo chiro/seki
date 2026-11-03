@@ -58,8 +58,9 @@ externalLifecycle (ExternalIngress state) = ExternalLifecycle bind wake close
 
 {- | Accepted means queued, not applied. Session closure discards pending inputs.
 Cancelling a caller waiting for the ingress lock preserves admitted work. Failure
-or cancellation inside the caller-owned notify closes ingress. Session producers
-must outlive clients; client cleanup must never cancel a notify owner.
+or cancellation inside notify closes ingress. The runtime binds a nonblocking
+signal here and owns transport wake submission in its session worker, so client
+cleanup cannot cancel the transport owner.
 -}
 submitExternal :: ExternalProducer a -> a -> IO Admission
 submitExternal (ExternalProducer (ExternalIngress state)) input = do

@@ -640,8 +640,8 @@ runEventInvocation connection (EventInvocation result action) = do
     Right () -> pure (Right result)
     Left exception -> do
       let errorValue = ConnectionUnexpectedError (displayException exception)
-      markConnectionFailed connection errorValue
       closeConnectionResources connection
+      markConnectionFailed connection errorValue
       rethrowOrReturn exception
 
 data SubmissionOutcome value
