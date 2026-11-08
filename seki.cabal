@@ -19,11 +19,7 @@ data-files:
   examples/config/seki-user.cabal
   examples/config/cabal.project
 extra-source-files:
-  test-public/check-config.py
-  ci/test-launcher.py
   ci/check-product.py
-  ci/check-bootstrap.py
-  ci/test-bootstrap.py
   ci/check-package.sh
   ci/check-phase-types.sh
   ci/run-integration.sh
@@ -59,7 +55,6 @@ extra-source-files:
   protocol/wlr-protocols/wlr-virtual-pointer-unstable-v1.xml
 extra-doc-files:
   docs/user-configuration.md
-  docs/bootstrap-proof.md
   docs/scratchpads.md
   docs/input.md
   README.md

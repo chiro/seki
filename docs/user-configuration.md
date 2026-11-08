@@ -64,3 +64,11 @@ The installed Nix wrapper supplies these immutable paths. The launcher supplies 
 directory. Direct developer runs can explicitly select an absolute
 `SEKI_CONFIG_CABAL_CONFIG`; the installed wrapper clears this override. Developer
 cached Cabal environments are separate evidence from the installed provisioned path.
+
+The `Installed configuration smoke` CI job builds `.#config-delivery` and runs
+`ci/check-product.py` against it without a development shell. The script uses the
+installed `seki` from a fresh home and state directory. It builds the shipped
+skeleton offline, repeats the unchanged build, checks a valid and an invalid
+configuration, checks the compiler, state, and restore failure paths, and starts
+both the default runtime fallback and the built configuration against a sentinel
+Wayland socket.
