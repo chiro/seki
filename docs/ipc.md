@@ -221,7 +221,7 @@ The applied revision receipt acknowledges reduction of the request, not build,
 validation, activation, or a displayed frame. The additive `build` snapshot field
 is null for direct runtimes. Installed sessions report state, session epoch,
 generation, queued generation where applicable, error and full disk log path.
-States include idle, building, failed, validated and unchanged. A validated image
+States include idle, building, failed and validated. A validated image
 has passed its own `--check`; this does not acknowledge activation. A fresh
 managed session and its new IPC session identity establish successful runtime
 initialization. Trusted user code and hooks are not sandboxed, and there is no
@@ -230,10 +230,10 @@ supervisor promise for arbitrary user initialization crashes.
 One compiler runs per session. Requests during that build collapse into one
 queued rebuild and invalidate the earlier result. Further requests do not grow
 the queue. The worker copies Cabal's resolved executable before validation;
-Cabal cannot overwrite the selected copy. An image byte-identical to the running
-executable does not restart. Compiler output stays on disk, with at most 8 KiB of
-diagnostics retained for a failure. Compilation has no arbitrary deadline;
-list-bin and candidate checks retain their bounded execution/output limits.
+Cabal cannot overwrite the selected copy. Compiler output stays on disk, with
+at most 8 KiB of diagnostics retained for a failure. Compilation has no
+arbitrary deadline; list-bin and candidate checks retain their bounded
+execution/output limits.
 
 Build/check failure leaves the profile and running session intact. Successful
 validation precedes stop; successful state serialization precedes profile

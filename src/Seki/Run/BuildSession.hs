@@ -40,7 +40,6 @@ data BuildState
   | BuildRunning BuildEpoch BuildGeneration (Maybe BuildGeneration) (Maybe FilePath)
   | BuildFailed BuildEpoch BuildGeneration String (Maybe FilePath)
   | BuildReady BuildEpoch BuildGeneration ValidatedTarget
-  | BuildUnchanged BuildEpoch BuildGeneration ValidatedTarget
   | BuildClosed
   deriving (Eq, Show)
 
@@ -48,7 +47,6 @@ data BuildEvent
   = BuildRequested
   | BuildCompleted BuildEpoch BuildGeneration (Either (String, Maybe FilePath) ValidatedTarget)
   | BuildLog BuildEpoch BuildGeneration FilePath
-  | BuildSameImage BuildEpoch BuildGeneration ValidatedTarget
   deriving (Eq, Show)
 data BuildEffect = StartBuild BuildEpoch BuildGeneration | ActivateBuild | NoBuildEffect deriving (Eq, Show)
 
@@ -64,11 +62,6 @@ transitionBuild state event = case (state, event) of
           Right target -> (BuildReady epoch generation target, ActivateBuild)
   (BuildRunning epoch generation queued _, BuildLog e g path)
     | epoch == e && generation == g -> (BuildRunning epoch generation queued (Just path), NoBuildEffect)
-  (BuildRunning epoch generation queued _, BuildSameImage e g target)
-    | epoch == e && generation == g -> case queued of
-        Just next -> (BuildRunning epoch next Nothing Nothing, StartBuild epoch next)
-        Nothing -> (BuildUnchanged epoch generation target, NoBuildEffect)
-  (BuildUnchanged epoch generation _, BuildRequested) -> start epoch (generation + 1)
   (BuildIdle epoch, BuildRequested) -> start epoch 1
   (BuildFailed epoch generation _ _, BuildRequested) -> start epoch (generation + 1)
   (BuildReady epoch generation _, BuildRequested) -> start epoch (generation + 1)
@@ -134,10 +127,7 @@ startWorker (BuildSession context _ slot) send epoch generation = modifyMVar_ sl
             Left err -> do
               tailBytes <- maybe (pure BS.empty) diagnosticTail path
               pure (BuildCompleted epoch generation (Left (show err <> "\n" <> map (toEnum . fromEnum) (BS.unpack tailBytes), path)))
-            Right target -> do
-              current <- getExecutablePath
-              same <- either (const False) id <$> try @IOException (sameImage current (validatedPath target))
-              pure (if same then BuildSameImage epoch generation target else BuildCompleted epoch generation (Right target))
+            Right target -> pure (BuildCompleted epoch generation (Right target))
           deliver event
       )
         `finally` putMVar done ()
@@ -171,20 +161,9 @@ buildStatus (BuildSession _ state _) = do
       BuildRunning epoch generation queued logPath -> pure (object ["log_path" .= logPath, "state" .= ("building" :: String), "epoch" .= epoch, "generation" .= generation, "queued" .= queued])
       BuildFailed epoch generation message logPath -> pure (value "failed" epoch generation (Just (take 8192 message)) logPath)
       BuildReady epoch generation target -> pure (value "validated" epoch generation Nothing (Just (validatedLog target)))
-      BuildUnchanged epoch generation target -> pure (value "unchanged" epoch generation Nothing (Just (validatedLog target)))
       BuildClosed -> pure (object ["state" .= ("closed" :: String)])
   value :: String -> BuildEpoch -> BuildGeneration -> Maybe String -> Maybe FilePath -> Value
   value status epoch generation message logPath = object ["state" .= status, "epoch" .= epoch, "generation" .= generation, "error" .= fmap Text.pack message, "log_path" .= logPath]
-
-sameImage :: FilePath -> FilePath -> IO Bool
-sameImage first second = withBinaryFile first ReadMode $ \a -> withBinaryFile second ReadMode $ \b -> do
-  x <- hFileSize a
-  y <- hFileSize b
-  let loop = do
-        left <- BS.hGet a 65536
-        right <- BS.hGet b 65536
-        if left /= right then pure False else if BS.null left then pure True else loop
-  if x /= y then pure False else loop
 
 diagnosticTail :: FilePath -> IO BS.ByteString
 diagnosticTail path =

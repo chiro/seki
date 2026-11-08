@@ -41,8 +41,7 @@ Run `seki --recompile`, `sekictl recompile`, or the configured restart action
 to the existing IPC owner in its runtime directory. Focus and layout actions
 continue while the session builds and checks a private candidate. One build runs
 at a time, with one queued rebuild. Further requests coalesce and invalidate the
-earlier result. Failed builds leave the process and profile in place. An unchanged
-checked image also keeps the current session.
+earlier result. Failed builds leave the process and profile in place.
 
 IPC snapshots report build state, error, and log path. The command receipt means
 the owner applied the request, not that compilation or activation finished. A
