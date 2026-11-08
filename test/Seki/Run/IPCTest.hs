@@ -113,9 +113,7 @@ tests =
             , "focused_title" .= Null
             , "focused_title_truncated" .= False
             , "keyboard_available" .= False
-            , "urgent" .= Null
             , "input" .= object ["availability" .= ("unavailable" :: Text.Text), "requested_rule_count" .= (0 :: Int), "requested_rules" .= object ["items" .= ([] :: [Value]), "count" .= (0 :: Int), "truncated" .= False], "devices" .= object ["items" .= ([] :: [Value]), "count" .= (0 :: Int), "truncated" .= False]]
             , "xkb" .= Null
-            , "submap" .= Null
             ]
     ]
