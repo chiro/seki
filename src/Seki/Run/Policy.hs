@@ -81,7 +81,7 @@ import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Reconcile (ReconcileState, emptyReconcileState, reconcileManage, reconcileRender, reconciledBoxes, reconciledOps)
 import Seki.Run.Restart (RestartRefusal, RestartTarget (..), describeRefusal)
 import Seki.Run.River (RiverWindowManagerHandlers (..))
-import Seki.Run.Runtime (ManageOutcome (..), PointerBindingEvent (..), RenderOutcome, RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
+import Seki.Run.Runtime (ManageOutcome (..), PointerBindingEvent (..), RenderOutcome, RiverInputSnapshot, RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable (Object, objectId)
 import Seki.Wire.Types (mkObjectId, objectIdValue)
@@ -166,7 +166,7 @@ policyValidatedTarget policy = readIORef (policyBuild policy) >>= maybe (pure No
 
 data Policy i l = Policy
   { policyBuild :: IORef (Maybe BuildSession)
-  , policyLastInput :: IORef (Maybe Value)
+  , policyLastInput :: IORef (Maybe RiverInputSnapshot)
   , policyRevision :: IORef Integer
   , policyObserver :: IORef (Integer -> CoreState i l -> RiverRuntimeSnapshot -> IO ())
   , policyIngress :: ExternalIngress (ExternalInput i l)
@@ -276,9 +276,9 @@ running.
 -}
 prepareManagePlan :: (Eq i, Show i, LayoutClass l) => Policy i l -> RiverRuntimeSnapshot -> IO (ManageM ManageOutcome)
 prepareManagePlan policy snapshot = do
-  let input = inputStatusValue (riverRuntimeInput snapshot)
+  let input = riverRuntimeInput snapshot
   previousInput <- atomicModifyIORef' (policyLastInput policy) (\old -> (Just input, old))
-  when (not (null (policyInputRules (policyConfig policy))) && previousInput /= Just input) (policyLog (policyConfig policy) ("input: " <> Lazy.unpack (encode input)))
+  when (not (null (policyInputRules (policyConfig policy))) && previousInput /= Just input) (policyLog (policyConfig policy) ("input: " <> Lazy.unpack (encode (inputStatusValue input))))
   current <- readIORef (policyState policy)
   pending <- atomicModifyIORef' (policyPendingRestore policy) (Nothing,)
   before <- case pending of
