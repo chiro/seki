@@ -155,12 +155,9 @@ workerLifecycle = do
         root = riverRuntimeDirectory river
     bracket (startManagedProcess "held keymap runtime" environment (proc executable ["--input-worker", keymap])) stopManagedProcess $ \runtime -> do
       pid <- managedProcessPid runtime >>= maybe (failIntegration "worker runtime PID missing") pure
-      let children = "/proc/" <> show pid <> "/task/" <> show pid <> "/children"
-          held = do
-            found <- try @IOException (readFile children)
-            case found of
-              Left _ -> pure []
-              Right values -> pure (words values)
+      let held = do
+            tasks <- either (const []) id <$> try @IOException (listDirectory ("/proc/" <> show pid <> "/task"))
+            concat <$> mapM (\task -> either (const []) words <$> try @IOException (readFile ("/proc/" <> show pid <> "/task/" <> task <> "/children"))) tasks
           stopped child = do
             status <- try @IOException (readFile ("/proc/" <> child <> "/status"))
             pure (either (const False) (isInfixOf "T (stopped)") status)

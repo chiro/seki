@@ -407,6 +407,7 @@ test-suite seki-integration
   type:           exitcode-stdio-1.0
   hs-source-dirs: integration
   main-is:        Main.hs
+  ghc-options:    -threaded
   build-tool-depends: seki:seki, seki:seki-default, seki:seki-reference-config, seki:sekictl
   other-modules:
     Seki.Integration.Fixture
