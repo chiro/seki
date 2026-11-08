@@ -160,7 +160,6 @@ outcomeName v = case v of
   SettingObserved -> "observed"
   SettingUnavailable -> "unavailable"
   SettingUnsupported -> "unsupported"
-  SettingInvalid _ -> "invalid"
   SettingRemoved -> "removed"
 
 keyName :: SettingKey -> Text
