@@ -146,9 +146,7 @@ facetName v = case v of
 outcomeName :: SettingOutcome -> Text
 outcomeName v = case v of
   SettingPending -> "pending"
-  SettingLoading -> "loading"
-  SettingCompiling -> "compiling"
-  SettingAwaiting -> "awaiting"
+  SettingInFlight -> "pending"
   SettingApplied -> "applied"
   SettingRejectedInvalid -> "rejected_invalid"
   SettingSent -> "sent"

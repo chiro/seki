@@ -49,6 +49,18 @@ tests =
         changed <- rulesFor [Keymap "/changed.xkb"]
         let (retry, _) = planInput changed Map.empty again
         assertEqual "changed path is admitted" [SettingPending] [settingOutcome r | d <- Map.elems (inputDevices retry), r <- Map.elems (inputResults d)]
+    , testCase "replanning keeps an in-flight keymap in flight" $ do
+        generic <- object 2
+        (table, _) <- either (assertFailure . show) pure (newObjectTable defaultObjectLimit Wayland.wlDisplayInterface)
+        (_, keyboard) <- either (assertFailure . show) pure (allocateClientObject X.riverXkbKeyboardV1Interface 3 table)
+        rules <- rulesFor [Keymap "/keymap.xkb"]
+        let gen = InputGeneration 0
+            base = updateInput gen Input.RiverInputDeviceV1Done (metadata gen (discoverInput generic emptyInputInventory))
+            ready = base{inputDevices = Map.adjust (\d -> d{inputXkb = (emptyXkbFacet FacetReady){xkbObject = Just keyboard, xkbGeneration = Just (FacetGeneration 0)}}) gen (inputDevices base)}
+            (planned, _) = planInput rules Map.empty ready
+            loading = planned{inputDevices = Map.adjust (\d -> d{inputResults = fmap (\r -> r{settingOutcome = SettingInFlight}) (inputResults d)}) gen (inputDevices planned)}
+            (again, _) = planInput rules Map.empty loading
+        assertEqual "an in-flight load is not offered again" loading again
     , testCase "XKB batches layout names/index and locks independently" $ do
         let initial = emptyXkbFacet FacetDiscovering
             staged = stageXkb (X.RiverXkbKeyboardV1Layout 1 (Just "Japanese")) (stageXkb X.RiverXkbKeyboardV1CapslockEnabled initial)
@@ -152,7 +164,7 @@ tests =
         (table, _) <- either (assertFailure . show) pure (newObjectTable defaultObjectLimit Wayland.wlDisplayInterface)
         (_, lib) <- either (assertFailure . show) pure (allocateClientObject L.riverLibinputDeviceV1Interface 2 table)
         let gen = InputGeneration 0
-            old = SettingResult (Tap True) 0 Nothing (Just (objectId lib)) SettingAwaiting
+            old = SettingResult (Tap True) 0 Nothing (Just (objectId lib)) SettingInFlight
             current = old{settingDesired = Tap False, settingRevision = 1}
             base = metadata gen (discoverInput generic emptyInputInventory)
             ready = updateInput gen Input.RiverInputDeviceV1Done base
