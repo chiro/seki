@@ -5,8 +5,10 @@ module Seki.Integration.Restart (restartScenarios) where
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryReadMVar)
-import Control.Exception (bracket, onException)
-import Control.Monad (forM_, unless, void)
+import Control.Exception (SomeException, bracket, onException, try)
+import Control.Monad (forM_, unless, void, (>=>))
+import Data.Aeson (eitherDecodeStrict', withObject, (.:))
+import Data.Aeson.Types (parseEither)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.List (isInfixOf)
@@ -62,7 +64,7 @@ restartProcess = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-re
         [(_, output)] <- waitUntil "seki shows the output" assertionTimeoutMicroseconds (outputNames socket) ((== 1) . length)
         void (runProcessCapture environment "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "800x600", "--pos", "0,0", "--scale", "1", "--transform", "normal"])
         withKeyboard environment . withProbe socket $ \probe -> do
-          key ["2"]
+          _ <- waitUntil "seki's bindings switch to workspace 2" assertionTimeoutMicroseconds (key ["2"] >> focusedWorkspace environment) (== Just "2")
           covering <- openWindow probe Blue
           requestFullscreen probe covering
           workspace2 <- settled socket output
@@ -96,6 +98,21 @@ restartProcess = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-re
           sameImage "workspace 1 shows again" socket output workspace1
     )
       `onException` (renderManagedProcessLogs seki >>= announce)
+
+{- | The focused workspace in the running seki's IPC snapshot. The first key
+can arrive before seki has bound its keys, so the scenario repeats it until
+seki reports the switch; both workspaces are empty, so the output cannot show it.
+-}
+focusedWorkspace :: [(String, String)] -> IO (Maybe Text)
+focusedWorkspace environment = do
+  cli <- lookupEnv "SEKICTL_EXECUTABLE" >>= maybe (failIntegration "SEKICTL_EXECUTABLE is unset; run through ci/run-integration.sh") pure
+  reply <- try @SomeException (runProcessCapture environment cli ["snapshot"])
+  pure $ either (const Nothing) (either (const Nothing) id . (eitherDecodeStrict' >=> parseEither focused)) reply
+ where
+  focused = withObject "reply" $ \o -> do
+    workspaces <- o .: "result" >>= (.: "snapshot") >>= (.: "workspaces")
+    tags <- mapM (\w -> (,) <$> w .: "focused" <*> w .: "tag") workspaces
+    pure (lookup True tags)
 
 -- | Capture until two captures 300 ms apart agree.
 settled :: FilePath -> Text -> IO Image
