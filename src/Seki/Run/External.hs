@@ -8,6 +8,7 @@ module Seki.Run.External (
   externalProducer,
   externalLifecycle,
   submitExternal,
+  signalExternal,
   drainExternal,
   sealExternal,
   bindExternalWake,
@@ -42,19 +43,21 @@ externalProducer :: ExternalIngress a -> ExternalProducer a
 externalProducer = ExternalProducer
 
 externalLifecycle :: ExternalIngress a -> ExternalLifecycle
-externalLifecycle (ExternalIngress state) = ExternalLifecycle bind wake close
+externalLifecycle (ExternalIngress state) = ExternalLifecycle bind (notifyWhen (not . Seq.null) state) close
  where
   bind notify = modifyMVar state $ \current -> case current of
     Dormant -> pure (Accepting notify Seq.empty, True)
     _ -> pure (current, False)
   close = modifyMVar state (const (pure (Closed, ())))
-  wake = do
-    result <- modifyMVarMasked state $ \current -> case current of
-      Accepting notify pending | not (Seq.null pending) -> do
-        sent <- try @SomeException notify
-        pure (case sent of Right True -> current; _ -> Closed, () <$ sent)
-      _ -> pure (current, Right ())
-    either throwIO pure result
+
+notifyWhen :: (Seq a -> Bool) -> MVar (IngressState a) -> IO ()
+notifyWhen due state = do
+  result <- modifyMVarMasked state $ \current -> case current of
+    Accepting notify pending | due pending -> do
+      sent <- try @SomeException notify
+      pure (case sent of Right True -> current; _ -> Closed, () <$ sent)
+    _ -> pure (current, Right ())
+  either throwIO pure result
 
 {- | Accepted means queued, not applied. Session closure discards pending inputs.
 Cancelling a caller waiting for the ingress lock preserves admitted work. Failure
@@ -78,6 +81,10 @@ submitExternal (ExternalProducer (ExternalIngress state)) input = do
             )
       | otherwise -> pure (Accepting notify (pending |> input), Right Accepted)
     _ -> pure (current, Right IngressClosed)
+
+-- | Wake the bound owner for a result kept outside the queue, whatever the queue holds.
+signalExternal :: ExternalProducer a -> IO ()
+signalExternal (ExternalProducer (ExternalIngress state)) = notifyWhen (const True) state
 
 drainExternal :: ExternalIngress a -> IO (Drain a)
 drainExternal (ExternalIngress state) = modifyMVar state $ \current -> case current of

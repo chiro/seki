@@ -32,6 +32,24 @@ tests =
         readIORef wakes >>= assertEqual "coalesced admission plus leftover wakes" 8
         submitExternal producer 257 >>= assertEqual "enqueue after final drain" Accepted
         readIORef wakes >>= assertEqual "final drain rearmed" 9
+    , testCase "signal wakes the bound owner without queueing input" $ do
+        queue <- newExternalIngress
+        wakes <- newIORef (0 :: Int)
+        let lifecycle = externalLifecycle queue
+            producer = externalProducer queue
+        signalExternal producer
+        bindExternalWake lifecycle (modifyIORef' wakes (+ 1) >> pure True) >>= assertBool "bound"
+        readIORef wakes >>= assertEqual "unbound signal is dropped" 0
+        signalExternal producer
+        readIORef wakes >>= assertEqual "empty queue still wakes" 1
+        drainExternal queue >>= assertEqual "nothing queued" (Drain [] False)
+        mapM_ (submitExternal producer) [1 .. 256 :: Int]
+        submitExternal producer 257 >>= assertEqual "queue is full" Full
+        signalExternal producer
+        readIORef wakes >>= assertEqual "full queue still wakes" 3
+        closeExternal lifecycle
+        signalExternal producer
+        readIORef wakes >>= assertEqual "closed ingress does not wake" 3
     , testCase "close and fresh session isolate retained producer" $ do
         old <- newExternalIngress
         let producer = externalProducer old
