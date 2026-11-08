@@ -1,6 +1,6 @@
-"""Exercise the installed product command; caller supplies declared build resources.
+"""Exercise the installed launcher from a config-delivery output with fresh state.
 
-The output directory is a new external generated project, never a checkout.
+Usage: seki-config-env python3 ci/check-product.py DELIVERY
 """
 import hashlib
 import json
@@ -9,7 +9,7 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
-import time
+import tempfile
 
 
 def prove(command, root, env, archive, provisioned=False):
@@ -141,11 +141,12 @@ def prove(command, root, env, archive, provisioned=False):
             finally:
                 process.kill()
                 process.communicate(timeout=10)
-        (root / "product-receipt.json").write_text(json.dumps({"archive": str(archive), "plan": plan,
-            "list-bin": str(binary), "warm-binary": before, "selected": str(selected),
-            "selected-sha256": fingerprint(selected)[0], "command": str(command)}, indent=2))
-        (root / "PASS").write_text("Real product build/check, exact archive, warm repeat, negative policy/compiler/state controls, direct restore, default connection attempt and stable profile startup passed.\n")
 
 
 if __name__ == "__main__":
-    prove(Path(sys.argv[1]), Path(sys.argv[2]), os.environ, Path(sys.argv[3]).resolve(), "--provisioned" in sys.argv[4:])
+    delivery = Path(sys.argv[1]).resolve(strict=True)
+    with tempfile.TemporaryDirectory(prefix="seki-smoke-") as temporary:
+        home = Path(temporary) / "home"
+        home.mkdir()
+        env = dict(os.environ, HOME=str(home), CABAL_DIR=str(home / ".cabal"), GHC_ENVIRONMENT="-")
+        prove(delivery / "bin/seki", Path(temporary) / "product", env, (delivery / "share/seki/source.tar.gz").resolve(strict=True), True)
