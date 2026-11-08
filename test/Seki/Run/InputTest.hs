@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Seki.Run.InputTest (tests) where
@@ -17,9 +18,12 @@ import Seki.Run.Keymap
 import Seki.Run.Libinput
 import Seki.Run.XkbConfig
 import Seki.Wire.Connection.ObjectTable
-import Seki.Wire.Transport (closeOwnedFd, withOwnedFd)
+import Seki.Wire.Transport (OwnedFd, closeOwnedFd, withOwnedFd)
 import System.Directory (removeFile)
+import System.FilePath ((</>))
 import System.IO (hClose, hPutStr, openTempFile)
+import System.IO.Temp (withSystemTempDirectory)
+import System.Posix.Files (createNamedPipe, fileSize, getFdStatus)
 import System.Posix.IO.ByteString (fdRead, fdWrite)
 import System.Timeout (timeout)
 import Test.Tasty (TestTree, testGroup)
@@ -104,6 +108,21 @@ tests =
             closeKeymapWorker worker
             assertEqual "closed admission" False =<< enqueueKeymap worker () path
             assertBool "closed completions empty" . null =<< drainKeymaps worker
+    , testCase "keymap loader keeps a final NUL and accepts exactly 4 MiB" $
+        withSystemTempDirectory "seki-keymap" $ \directory -> do
+          let path = directory </> "keymap.xkb"
+              limit = BS.replicate (4 * 1024 * 1024) 65
+          BS.writeFile path "xkb_keymap {};\0"
+          loadKeymapOnce path >>= snapshotOf >>= assertEqual "one terminating NUL" (Just "xkb_keymap {};\0")
+          BS.writeFile path limit
+          loadKeymapOnce path >>= snapshotOf >>= assertEqual "limit-sized file and its NUL" (Just (limit <> "\0"))
+    , testCase "keymap loader rejects a FIFO, a code point above U+10FFFF and a truncated sequence" $
+        withSystemTempDirectory "seki-keymap" $ \directory -> do
+          let path = directory </> "keymap.xkb"
+              fifo = directory </> "keymap.fifo"
+          createNamedPipe fifo 0o600
+          loadKeymapOnce fifo >>= assertRejected "FIFO"
+          mapM_ (\bytes -> BS.writeFile path bytes >> loadKeymapOnce path >>= assertRejected (show bytes)) [BS.pack [0xf4, 0x90, 0x80, 0x80], BS.pack [65, 0xe3, 0x81]]
     , testCase "libinput native float/double payloads reject malformed lengths and values" $ do
         assertEqual "six native floats" (Right [1, 0, 0, 0, 1, 0]) (decodeFloats (encodeFloats [1, 0, 0, 0, 1, 0]))
         assertEqual "one native double" (Right 0.25) (decodeDouble (encodeDoubles [0.25]))
@@ -217,3 +236,28 @@ tests =
   rulesFor settings = do
     patternValue <- either (assertFailure . show) pure (compileDevicePattern "*")
     pure [InputRule patternValue Nothing settings]
+
+loadKeymapOnce :: FilePath -> IO (Maybe OwnedFd)
+loadKeymapOnce path = bracket newKeymapWorker closeKeymapWorker $ \worker -> do
+  _ <- bindExternalWake (keymapWake worker) (pure True)
+  enqueueKeymap worker () path >>= assertBool "admitted"
+  let await =
+        drainKeymaps worker >>= \case
+          [] -> threadDelay 1000 >> await
+          [((), fd)] -> pure fd
+          _ -> assertFailure "more than one result"
+  timeout 3000000 await >>= maybe (assertFailure "keymap load hung") pure
+
+snapshotOf :: Maybe OwnedFd -> IO (Maybe BS.ByteString)
+snapshotOf = traverse $ \fd -> do
+  let readExactly raw remaining
+        | remaining <= 0 = pure []
+        | otherwise = fdRead raw (fromIntegral remaining) >>= \chunk -> (chunk :) <$> readExactly raw (remaining - BS.length chunk)
+  bytes <- withOwnedFd fd (\raw -> getFdStatus raw >>= fmap BS.concat . readExactly raw . fromIntegral . fileSize)
+  _ <- closeOwnedFd fd
+  either (assertFailure . show) pure bytes
+
+assertRejected :: String -> Maybe OwnedFd -> IO ()
+assertRejected label = \case
+  Nothing -> pure ()
+  Just fd -> closeOwnedFd fd >> assertFailure (label <> " was accepted")
