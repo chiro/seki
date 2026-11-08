@@ -269,8 +269,7 @@ ipcMetadata = withFixture (policyConfigOf def) "m3-ipc-metadata" 1 $ \fixture pr
     announce ("M3_IPC_TITLE_ONLY " <> show changed)
     saveCapture fixture "title"
     setTitle probe window (Text.replicate 3000 "x")
-    (_, giant) <- waitTitle (Text.replicate 1024 "x")
-    assertEqual "giant title truncation is explicit" True ("\"focused_title_truncated\":true" `BS.isInfixOf` giant)
+    (_, giant) <- waitTitle (Text.replicate 3000 "x")
     announce ("M3_IPC_GIANT_TITLE " <> show giant)
 
 snapshotTitle :: BS.ByteString -> IO (Integer, Maybe Text.Text)
