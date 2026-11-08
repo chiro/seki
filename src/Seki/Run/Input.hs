@@ -18,7 +18,6 @@ module Seki.Run.Input (
   inputSessionAvailable,
   bindInputNotify,
   refreshInputOutputs,
-  inputCompletionWake,
   drainInputCompletions,
   closeInputSession,
   SettingOutcome (..),
@@ -45,7 +44,6 @@ import Seki.Protocol.RiverInputManagementV1 qualified as Input
 import Seki.Protocol.RiverLibinputConfigV1 qualified as L
 import Seki.Protocol.RiverXkbConfigV1 qualified as X
 import Seki.Protocol.Wayland qualified as Wayland
-import Seki.Run.External (ExternalLifecycle)
 import Seki.Run.Keymap
 import Seki.Run.Libinput
 import Seki.Run.Startup
@@ -216,17 +214,15 @@ data InputSession = InputSession
   , inputNotify :: IORef (IO ())
   , inputOutputs :: IORef (Map Text ObjectId)
   , inputApply :: IO ()
-  , inputWorker :: KeymapWorker (InputIdentity, Object X.RiverXkbKeyboardV1, SettingResult)
+  , inputKeymaps :: KeymapLoads (InputIdentity, Object X.RiverXkbKeyboardV1, SettingResult)
   , inputDrain :: IO ()
   }
 
 bindInputNotify :: InputSession -> IO () -> IO ()
 bindInputNotify session = writeIORef (inputNotify session)
 
-inputCompletionWake :: InputSession -> ExternalLifecycle
-inputCompletionWake = keymapWake . inputWorker
 closeInputSession :: InputSession -> IO ()
-closeInputSession session = writeIORef (inputNotify session) (pure ()) >> closeKeymapWorker (inputWorker session)
+closeInputSession session = writeIORef (inputNotify session) (pure ()) >> closeKeymapLoads (inputKeymaps session)
 drainInputCompletions :: InputSession -> IO ()
 drainInputCompletions = inputDrain
 
@@ -257,16 +253,15 @@ openInputSession rules wayland failed = do
         xkbManager <- newIORef Nothing
         keymapObjects <- newIORef Map.empty
         keymapOutstanding <- newIORef (0 :: Int)
-        worker <- newKeymapWorker
+        keymaps <- newKeymapLoads
         restore
           ( do
-              let session = InputSession available state notify outputs apply worker drain
+              let session = InputSession available state notify outputs apply keymaps drain
                   apply = do
                     inventory <- readIORef state
                     targets <- readIORef outputs
                     let (next, requests) = planInput rules targets inventory
                     writeIORef state next
-                    cancelKeymaps worker (\token -> not (any (matchesToken token) (Map.elems (inputDevices next))))
                     mapM_ send requests
                     mapM_ sendXkb (Map.elems (inputDevices next))
                     mapM_ (sendLibinput libManager state connection apply failed) (Map.elems (inputDevices next))
@@ -286,7 +281,7 @@ openInputSession rules wayland failed = do
                     mapM_ retireKeymap objects
                   drain =
                     bracket
-                      (drainKeymaps worker)
+                      (drainKeymaps keymaps)
                       (mapM_ (mapM_ (void . closeOwnedFd) . snd))
                       ( mapM_
                           ( \(token@(_, keyboard, _), snapshot) -> do
@@ -327,8 +322,9 @@ openInputSession rules wayland failed = do
                       , Keymap path <- settingDesired desired = do
                           count <- readIORef keymapOutstanding
                           when (count < 32) $ do
-                            accepted <- enqueueKeymap worker (inputIdentity device, object, desired) path
-                            when accepted (modifyIORef' keymapOutstanding (+ 1) >> setKeymapOutcome (inputIdentity device, object, desired) SettingLoading)
+                            startKeymapLoad keymaps (readIORef notify >>= id) (inputIdentity device, object, desired) path
+                            modifyIORef' keymapOutstanding (+ 1)
+                            setKeymapOutcome (inputIdentity device, object, desired) SettingLoading
                     sendOne object (key, desired)
                       | maybe True ((== SettingSent) . settingOutcome) (Map.lookup KeymapKey (inputResults device))
                       , settingOutcome desired == SettingPending
@@ -387,7 +383,6 @@ openInputSession rules wayland failed = do
                     apply
                     case event of
                       Input.RiverInputDeviceV1Removed -> do
-                        cancelKeymaps worker (\(InputIdentity _ gen, _, _) -> gen `elem` identities)
                         mapM_ (\gen -> retireFacet connection failed (inputLibinput <$> Map.lookup gen (inputDevices inventory))) identities
                         submitRequest connection Input.riverInputDeviceV1Interface object Input.encodeRiverInputDeviceV1Destroy >>= result
                         modifyIORef' state (\i -> i{inputDevices = foldr Map.delete (inputDevices i) identities})
@@ -418,13 +413,13 @@ openInputSession rules wayland failed = do
                       )
               bound <- bindGlobalWithRoute connection (waylandRegistry wayland) global route
               case bound of
-                Left e -> closeKeymapWorker worker >> pure (Left e)
+                Left e -> closeKeymapLoads keymaps >> pure (Left e)
                 Right _ -> do
                   bindLibinput wayland globals state libManager libEnabled apply failed
                   bindXkb wayland globals state xkbEnabled xkbManager retireKeymaps apply failed
                   pure (Right (Just session))
           )
-          `onException` closeKeymapWorker worker
+          `onException` closeKeymapLoads keymaps
 
 retireFacet :: Connection -> (ConnectionError -> IO ()) -> Maybe LibinputFacet -> IO ()
 retireFacet connection failed facet = case facet >>= facetObject of

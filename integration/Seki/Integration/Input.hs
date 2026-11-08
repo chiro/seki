@@ -150,33 +150,25 @@ workerLifecycle = do
   executable <- getExecutablePath
   cli <- getEnv "SEKICTL_EXECUTABLE"
   withNestedRiverEnvironment [("LD_PRELOAD", backend)] 1 $ \river -> do
-    let environment = ("LD_PRELOAD", takeDirectory backend </> "hold.so") : riverEnvironment river
+    let root = riverRuntimeDirectory river
+        held = root </> "keymap-held"
+        environment = ("LD_PRELOAD", takeDirectory backend </> "hold.so") : ("SEKI_KEYMAP_HELD", held) : ("SEKI_KEYMAP_RELEASE", root </> "keymap-release") : riverEnvironment river
         keymap = takeDirectory backend </> "two-layouts.xkb"
-        root = riverRuntimeDirectory river
+        holds = either (const 0) (length . lines) <$> try @IOException (readFile held)
     bracket (startManagedProcess "held keymap runtime" environment (proc executable ["--input-worker", keymap])) stopManagedProcess $ \runtime -> do
-      pid <- managedProcessPid runtime >>= maybe (failIntegration "worker runtime PID missing") pure
-      let held = do
-            tasks <- either (const []) id <$> try @IOException (listDirectory ("/proc/" <> show pid <> "/task"))
-            concat <$> mapM (\task -> either (const []) words <$> try @IOException (readFile ("/proc/" <> show pid <> "/task/" <> task <> "/children"))) tasks
-          stopped child = do
-            status <- try @IOException (readFile ("/proc/" <> child <> "/status"))
-            pure (either (const False) (isInfixOf "T (stopped)") status)
-      first <- waitUntil "first keymap helper admitted" assertionTimeoutMicroseconds held (not . null)
-      old <- case first of child : _ -> pure child; _ -> failIntegration "no held child"
-      _ <- waitUntil "helper held before file read" assertionTimeoutMicroseconds (stopped old) id
-      descriptors <- listDirectory ("/proc/" <> old <> "/fd")
-      assertEqual "syscall helper inherits only completion fd" ["3"] descriptors
-      _ <- waitUntil "IPC live while loader held" assertionTimeoutMicroseconds (doesFileExist (root </> "seki" </> "ipc.sock")) id
+      pid <- managedProcessPid runtime >>= maybe (failIntegration "held keymap runtime PID missing") pure
+      let exited = do
+            status <- try @IOException (readFile ("/proc/" <> show pid <> "/status"))
+            pure (either (const True) (isInfixOf "State:\tZ") status)
+      _ <- waitUntil "first keymap load held in open" assertionTimeoutMicroseconds holds (>= 1)
+      _ <- waitUntil "IPC live while a keymap load is held" assertionTimeoutMicroseconds (doesFileExist (root </> "seki" </> "ipc.sock")) id
       reply <- runProcessCapture (riverEnvironment river) cli ["workspace", "3"]
-      value <- requireRight "held-worker reply JSON" (eitherDecodeStrict' reply)
-      revision <- requireRight "held-worker applied revision" (parseEither (withObject "reply" (\o -> o .: "result" >>= withObject "result" (.: "revision"))) value)
-      assertEqual "normal command acknowledged while loader held" True (revision > (0 :: Integer))
-      _ <- waitUntil "removed-generation held helper reaped" assertionTimeoutMicroseconds (doesDirectoryExist ("/proc/" <> old)) not
-      fresh <- waitUntil "replacement generation admits new helper" assertionTimeoutMicroseconds held (not . null)
-      current <- case fresh of child : _ -> pure child; _ -> failIntegration "no fresh helper"
-      _ <- waitUntil "replacement helper held" assertionTimeoutMicroseconds (stopped current) id
+      value <- requireRight "held-load reply JSON" (eitherDecodeStrict' reply)
+      revision <- requireRight "held-load applied revision" (parseEither (withObject "reply" (\o -> o .: "result" >>= withObject "result" (.: "revision"))) value)
+      assertEqual "normal command acknowledged while a load is held" True (revision > (0 :: Integer))
+      _ <- waitUntil "replacement generation loads while the first load is held" assertionTimeoutMicroseconds holds (>= 2)
       stopManagedProcess (riverProcess river)
-      _ <- waitUntil "session shutdown reaps held helper" assertionTimeoutMicroseconds (doesDirectoryExist ("/proc/" <> current)) not
+      _ <- waitUntil "runtime exits with keymap loads still held" assertionTimeoutMicroseconds exited id
       pure ()
 
 outputMapping :: IO ()

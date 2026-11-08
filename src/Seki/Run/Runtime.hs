@@ -43,7 +43,7 @@ import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Protocol.Wayland qualified as Wayland
 import Seki.Run.External (ExternalLifecycle, bindExternalWake, closeExternal, wakeExternalPending)
-import Seki.Run.Input (InputInventory, InputSession, bindInputNotify, closeInputSession, drainInputCompletions, inputCompletionWake, inputSessionAvailable, openInputSession, readInputInventory, refreshInputOutputs)
+import Seki.Run.Input (InputInventory, InputSession, bindInputNotify, closeInputSession, drainInputCompletions, inputSessionAvailable, openInputSession, readInputInventory, refreshInputOutputs)
 import Seki.Run.Inventory (
   RiverInventory,
   RiverInventoryError (..),
@@ -328,11 +328,7 @@ openRiverSessionWith openWayland runtimeHandlers
                   writeIORef xkbGlobalState (Just xkbBindings)
                   writeIORef layerShellGlobalState (Just layerShell)
                   bound <- maybe (pure True) bindOwned (riverExternalIngress runtimeHandlers)
-                  inputBound <-
-                    if bound
-                      then readIORef inputSession >>= maybe (pure True) (bindOwned . inputCompletionWake)
-                      else pure False
-                  if not inputBound
+                  if not bound
                     then abort >> pure (Left RiverRuntimeIngressAlreadyBound)
                     else do
                       readIORef inputSession >>= mapM_ (\session -> bindInputNotify session (void (signalManageWake wake)))
@@ -425,7 +421,7 @@ runRiverSession session = do
 closeRiverSession :: RiverSession -> IO ()
 closeRiverSession session = do
   mapM_ closeExternal (riverExternalLifecycle session)
-  readIORef (riverInputSession session) >>= mapM_ (\input -> closeExternal (inputCompletionWake input) >> bindInputNotify input (pure ()))
+  readIORef (riverInputSession session) >>= mapM_ (\input -> bindInputNotify input (pure ()))
   abortManageWake (riverManageWake session)
   readIORef (riverInputSession session) >>= mapM_ closeInputSession
   closeWaylandSession (riverWaylandSession session)
@@ -468,7 +464,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState managerState xkbGl
  where
   quiesceWakes = do
     mapM_ closeExternal (riverExternalIngress runtimeHandlers)
-    readIORef inputSession >>= mapM_ (\session -> closeExternal (inputCompletionWake session) >> bindInputNotify session (pure ()))
+    readIORef inputSession >>= mapM_ (\session -> bindInputNotify session (pure ()))
     readIORef manageWake >>= mapM_ quiesceManageWake
   handleManagerEvent manager event = case event of
     River.RiverWindowManagerV1ManageStart ->
