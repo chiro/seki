@@ -25,7 +25,7 @@ import Seki.Internal.Core.Layout qualified as Layout
 import Seki.Internal.Core.StackSet qualified as StackSet
 import Seki.Run.External
 import Seki.Run.IPCSchema
-import Seki.Run.Policy (ExternalInput (..), Policy, closePolicyIngress, observePolicy, policyBuildStatus, policyCanBuild, policyExternalProducer, policyScratchpadNames, policyTagsOf)
+import Seki.Run.Policy (ExternalInput (..), Policy, observePolicy, policyBuildStatus, policyCanBuild, policyIngress, policyScratchpadNames, policyTagsOf)
 import Seki.Run.Snapshot (projectSnapshot)
 import System.Directory (removeFile)
 import System.Environment (getEnv)
@@ -126,7 +126,6 @@ withIPCAt path policy body =
                   pure (Map.insert tid client active)
     accepter <- forkFinally acceptLoop (const (pure ()))
     let cleanup = do
-          closePolicyIngress policy
           killThread accepter
           active <- modifyMVar clients (\m -> pure (Map.empty, Map.toList m))
           mapM_ (\(tid, client) -> close client >> killThread tid) active
@@ -153,7 +152,7 @@ withIPCAt path policy body =
               case if op == Recompile && not canBuild then Left "recompile unavailable: no installed build context" else command op of
                 Left message -> sendValue (failure ident "invalid_command" message)
                 Right action -> do
-                  answer <- submitCommand (policyExternalProducer policy) action
+                  answer <- submitCommand (policyIngress policy) action
                   case answer of
                     CommandOverloaded -> sendValue (failure ident "overloaded" "command queue is full")
                     CommandClosed -> sendValue (failure ident "unavailable" "session ingress is closed")
@@ -212,10 +211,10 @@ withIPCAt path policy body =
 data CommandResult = CommandOverloaded | CommandClosed | CommandTimedOut | CommandApplied Integer
   deriving (Eq, Show)
 
-submitCommand :: ExternalProducer (ExternalInput i l) -> Action.Action i l () -> IO CommandResult
-submitCommand producer action = do
+submitCommand :: ExternalIngress (ExternalInput i l) -> Action.Action i l () -> IO CommandResult
+submitCommand ingress action = do
   receipt <- newEmptyTMVarIO
-  submitExternal producer (ExternalInput action (Just receipt)) >>= \case
+  submitExternal ingress (ExternalInput action (Just receipt)) >>= \case
     Full -> pure CommandOverloaded
     IngressClosed -> pure CommandClosed
     Accepted -> maybe CommandTimedOut CommandApplied <$> timeout 5000000 (atomically (takeTMVar receipt))

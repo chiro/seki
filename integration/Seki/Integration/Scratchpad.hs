@@ -101,7 +101,7 @@ withPad name outputs action = do
 apply :: PadFixture -> Action String StdLayouts () -> IO Integer
 apply fixture action = do
   receipt <- newEmptyTMVarIO
-  submitExternal (policyExternalProducer (mPolicy fixture)) (ExternalInput action (Just receipt)) >>= assertEqual "scratchpad bounded admission" Accepted
+  submitExternal (policyIngress (mPolicy fixture)) (ExternalInput action (Just receipt)) >>= assertEqual "scratchpad bounded admission" Accepted
   atomically (takeTMVar receipt)
 
 stateOf :: PadFixture -> IO (Maybe ScratchpadState)

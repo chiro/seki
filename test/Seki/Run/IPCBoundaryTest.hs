@@ -3,7 +3,8 @@
 module Seki.Run.IPCBoundaryTest (tests) where
 
 import Control.Concurrent (forkFinally, killThread, threadDelay)
-import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar, tryPutMVar)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, readMVar, takeMVar)
+import Control.Concurrent.STM (atomically, takeTMVar, tryTakeTMVar)
 import Control.Exception (IOException, bracket, finally, try)
 import Control.Monad (replicateM, replicateM_, void)
 import Data.ByteString qualified as BS
@@ -16,7 +17,7 @@ import Seki.Run.External qualified as External
 import Seki.Run.IPC (withIPC, withIPCAt)
 import Seki.Run.Inventory (emptyRiverInventory)
 import Seki.Run.ManageWake
-import Seki.Run.Policy (ExternalInput (..), newPolicy, policyExternalProducer, policyRuntimeHandlers)
+import Seki.Run.Policy (ExternalInput (..), Policy, newPolicy, policyIngress, policyRuntimeHandlers)
 import Seki.Run.Runtime (RiverInputSnapshot (..), RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
 import System.Directory (doesPathExist, getSymbolicLinkTarget, removeFile)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
@@ -112,37 +113,34 @@ tests =
         readIORef calls >>= assertEqual "body ran only once" 1
     , testCase "a timed-out receipt leaves later commands available" $ temporary $ \path -> do
         policy <- fresh
-        notified <- newEmptyMVar
-        case riverExternalIngress (policyRuntimeHandlers policy) of
-          Nothing -> assertFailure "missing ingress"
-          Just ingress -> External.bindExternalWake ingress (putMVar notified () >> pure True) >>= assertBool "bound"
+        (clearWake, awaitWake) <- wakeOf policy
         withIPCAt path policy $ bracket (openClient path) close $ \client -> do
+          clearWake
           sendAll client "{\"version\":1,\"id\":\"held\",\"op\":\"layout\",\"action\":\"next\"}\n"
-          timeout 1000000 (takeMVar notified) >>= assertEqual "first command admitted" (Just ())
+          awaitWake >>= assertEqual "first command admitted" (Just ())
           reply <- lineWithin 8000000 client
           assertBool "no false failure claim for potentially applied command" ("application is unknown" `BS.isInfixOf` reply)
           let manage = prepareRiverManagePlan (policyRuntimeHandlers policy) (RiverRuntimeSnapshot emptyRiverInventory (InputUnavailable []) [])
           _ <- manage
+          clearWake
           sendAll client "{\"version\":1,\"id\":\"next\",\"op\":\"layout\",\"action\":\"next\"}\n"
-          timeout 1000000 (takeMVar notified) >>= assertEqual "later command admitted after timeout" (Just ())
+          awaitWake >>= assertEqual "later command admitted after timeout" (Just ())
           _ <- manage
           next <- line client
           assertBool "later command receives its applied revision" ("\"result\"" `BS.isInfixOf` next && "\"revision\"" `BS.isInfixOf` next)
           bracket (openClient path) close $ \other -> do
+            clearWake
             sendAll other "{\"version\":1,\"id\":\"other\",\"op\":\"layout\",\"action\":\"next\"}\n"
-            timeout 1000000 (takeMVar notified) >>= assertEqual "another client remains available" (Just ())
+            awaitWake >>= assertEqual "another client remains available" (Just ())
             _ <- manage
             line other >>= assertBool "other client receives its applied revision" . BS.isInfixOf "\"revision\""
     , testCase "IPC overload uses the sole 256-input ingress bound" $ temporary $ \path -> do
         policy <- fresh
-        notified <- newEmptyMVar
-        case riverExternalIngress (policyRuntimeHandlers policy) of
-          Nothing -> assertFailure "missing ingress"
-          Just ingress -> External.bindExternalWake ingress (putMVar notified () >> pure True) >>= assertBool "bound"
-        let producer = policyExternalProducer policy
+        (clearWake, awaitWake) <- wakeOf policy
+        let producer = policyIngress policy
             manage = prepareRiverManagePlan (policyRuntimeHandlers policy) (RiverRuntimeSnapshot emptyRiverInventory (InputUnavailable []) [])
         replicateM 256 (External.submitExternal producer (ExternalInput (pure ()) Nothing)) >>= assertEqual "256 inputs accepted" (replicate 256 External.Accepted)
-        takeMVar notified
+        awaitWake >>= assertEqual "admission woke the owner" (Just ())
         withIPCAt path policy $ bracket (openClient path) close $ \client -> do
           let request = "{\"version\":1,\"id\":\"bound\",\"op\":\"layout\",\"action\":\"next\"}\n"
           sendAll client request
@@ -150,34 +148,31 @@ tests =
           _ <- manage
           External.submitExternal producer (ExternalInput (pure ()) Nothing) >>= assertEqual "one batch restores admission" External.Accepted
           replicateM_ 8 manage
+          clearWake
           sendAll client request
-          timeout 1000000 (takeMVar notified) >>= assertEqual "IPC command admitted after drains" (Just ())
+          awaitWake >>= assertEqual "IPC command admitted after drains" (Just ())
           _ <- manage
           line client >>= assertBool "capacity returns after bounded drains" . BS.isInfixOf "\"revision\""
     , testCase "disconnect behind a blocked runtime wake leaves later clients available" $ temporary $ \path -> do
         policy <- fresh
         entered <- newEmptyMVar
         release <- newEmptyMVar
-        admitted <- newEmptyMVar
+        handle <- maybe (assertFailure "missing ingress") pure (riverExternalIngress (policyRuntimeHandlers policy))
         bracket
-          (newManageWake (putMVar entered () >> readMVar release >> pure (Right ())) (assertFailure . show))
+          (newManageWake (External.ingressWake handle) (putMVar entered () >> readMVar release >> pure (Right ())) (assertFailure . show))
           abortManageWake
           ( \wake -> do
-              case riverExternalIngress (policyRuntimeHandlers policy) of
-                Nothing -> assertFailure "missing ingress"
-                Just ingress -> External.bindExternalWake ingress (signalManageWake wake <* void (tryPutMVar admitted ())) >>= assertBool "bound"
               startManageWake wake
               withIPCAt path policy $ do
                 bracket (openClient path) close $ \client -> do
                   sendAll client "{\"version\":1,\"id\":\"gone\",\"op\":\"layout\",\"action\":\"next\"}\n"
-                  timeout 1000000 (takeMVar entered) >>= assertEqual "runtime sender blocked" (Just ())
-                  timeout 1000000 (takeMVar admitted) >>= assertEqual "admission completed independently" (Just ())
+                  timeout 1000000 (takeMVar entered) >>= assertEqual "admission reached the blocked runtime sender" (Just ())
                 putMVar release ()
                 let manage = prepareRiverManagePlan (policyRuntimeHandlers policy) (RiverRuntimeSnapshot emptyRiverInventory (InputUnavailable []) [])
                 _ <- manage
                 bracket (openClient path) close $ \client -> do
                   sendAll client "{\"version\":1,\"id\":\"later\",\"op\":\"layout\",\"action\":\"next\"}\n"
-                  timeout 1000000 (takeMVar admitted) >>= assertEqual "later client admitted" (Just ())
+                  timeout 1000000 (takeMVar entered) >>= assertEqual "later client admitted" (Just ())
                   _ <- manage
                   line client >>= assertBool "later client receives application receipt" . BS.isInfixOf "\"revision\""
           )
@@ -252,3 +247,8 @@ withRuntime :: Maybe FilePath -> IO a -> IO a
 withRuntime value action = bracket (lookupEnv "XDG_RUNTIME_DIR") restore $ \_ -> restore value >> action
  where
   restore = maybe (unsetEnv "XDG_RUNTIME_DIR") (setEnv "XDG_RUNTIME_DIR")
+
+wakeOf :: Policy String l -> IO (IO (), IO (Maybe ()))
+wakeOf policy = do
+  let slot = External.ingressWake (External.ingressHandle (policyIngress policy))
+  pure (void (atomically (tryTakeTMVar slot)), timeout 1000000 (atomically (takeTMVar slot)))

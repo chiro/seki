@@ -1,100 +1,80 @@
 module Seki.Run.External (
   ExternalIngress,
-  ExternalProducer,
-  ExternalLifecycle,
+  IngressHandle,
   Admission (..),
-  Drain (..),
   newExternalIngress,
-  externalProducer,
-  externalLifecycle,
+  ingressHandle,
+  ingressWake,
   submitExternal,
   signalExternal,
   drainExternal,
   sealExternal,
-  bindExternalWake,
-  wakeExternalPending,
-  closeExternal,
+  closeIngress,
 ) where
 
-import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVarMasked, newMVar)
-import Control.Exception (SomeException, throwIO, try)
+import Control.Concurrent.STM
+import Control.Monad (unless, void, when)
 import Data.Foldable (toList)
 import Data.Sequence (Seq, (|>))
 import Data.Sequence qualified as Seq
 
-newtype ExternalIngress a = ExternalIngress (MVar (IngressState a))
-newtype ExternalProducer a = ExternalProducer (ExternalIngress a)
+{- | A bounded FIFO of external inputs for one session. Every operation is one
+STM transaction, so a cancelled caller either completed its operation or left
+the queue unchanged.
+-}
+data ExternalIngress a = ExternalIngress (TVar (Seq a)) IngressHandle
 
-data IngressState a = Dormant | Accepting (IO Bool) (Seq a) | Closed
+-- | What the runtime needs without knowing the input type: admission and the wake slot.
+data IngressHandle = IngressHandle (TVar Bool) (TMVar ())
 
 data Admission = Accepted | Full | IngressClosed deriving (Eq, Show)
-data Drain a = Drain {drainedInputs :: [a], drainHasMore :: Bool} deriving (Eq, Show)
-
-data ExternalLifecycle = ExternalLifecycle
-  { bindExternalWake :: IO Bool -> IO Bool
-  , wakeExternalPending :: IO ()
-  , closeExternal :: IO ()
-  }
 
 newExternalIngress :: IO (ExternalIngress a)
-newExternalIngress = ExternalIngress <$> newMVar Dormant
+newExternalIngress = ExternalIngress <$> newTVarIO Seq.empty <*> (IngressHandle <$> newTVarIO True <*> newEmptyTMVarIO)
 
-externalProducer :: ExternalIngress a -> ExternalProducer a
-externalProducer = ExternalProducer
+ingressHandle :: ExternalIngress a -> IngressHandle
+ingressHandle (ExternalIngress _ handle) = handle
 
-externalLifecycle :: ExternalIngress a -> ExternalLifecycle
-externalLifecycle (ExternalIngress state) = ExternalLifecycle bind (notifyWhen (not . Seq.null) state) close
- where
-  bind notify = modifyMVar state $ \current -> case current of
-    Dormant -> pure (Accepting notify Seq.empty, True)
-    _ -> pure (current, False)
-  close = modifyMVar state (const (pure (Closed, ())))
+-- | Holds at most one token; the runtime's wake worker takes it and asks river for a manage sequence.
+ingressWake :: IngressHandle -> TMVar ()
+ingressWake (IngressHandle _ wake) = wake
 
-notifyWhen :: (Seq a -> Bool) -> MVar (IngressState a) -> IO ()
-notifyWhen due state = do
-  result <- modifyMVarMasked state $ \current -> case current of
-    Accepting notify pending | due pending -> do
-      sent <- try @SomeException notify
-      pure (case sent of Right True -> current; _ -> Closed, () <$ sent)
-    _ -> pure (current, Right ())
-  either throwIO pure result
+-- | Accepted means queued, not applied. Closing the ingress discards pending inputs.
+submitExternal :: ExternalIngress a -> a -> IO Admission
+submitExternal (ExternalIngress queue (IngressHandle open wake)) input = atomically $ do
+  accepting <- readTVar open
+  pending <- readTVar queue
+  if not accepting
+    then pure IngressClosed
+    else
+      if Seq.length pending >= 256
+        then pure Full
+        else writeTVar queue (pending |> input) >> void (tryPutTMVar wake ()) >> pure Accepted
 
-{- | Accepted means queued, not applied. Session closure discards pending inputs.
-Cancelling a caller waiting for the ingress lock preserves admitted work. Failure
-or cancellation inside notify closes ingress. The runtime binds a nonblocking
-signal here and owns transport wake submission in its session worker, so client
-cleanup cannot cancel the transport owner.
--}
-submitExternal :: ExternalProducer a -> a -> IO Admission
-submitExternal (ExternalProducer (ExternalIngress state)) input = do
-  result <- modifyMVarMasked state admit
-  either throwIO pure result
- where
-  admit current = case current of
-    Accepting notify pending
-      | Seq.length pending >= 256 -> pure (current, Right Full)
-      | Seq.null pending -> do
-          sent <- try @SomeException notify
-          pure
-            ( case sent of Right True -> Accepting notify (Seq.singleton input); _ -> Closed
-            , (\ok -> if ok then Accepted else IngressClosed) <$> sent
-            )
-      | otherwise -> pure (Accepting notify (pending |> input), Right Accepted)
-    _ -> pure (current, Right IngressClosed)
+-- | Wake the owner for a result kept outside the queue, whatever the queue holds.
+signalExternal :: ExternalIngress a -> IO ()
+signalExternal (ExternalIngress _ (IngressHandle open wake)) = atomically $ do
+  accepting <- readTVar open
+  when accepting (void (tryPutTMVar wake ()))
 
--- | Wake the bound owner for a result kept outside the queue, whatever the queue holds.
-signalExternal :: ExternalProducer a -> IO ()
-signalExternal (ExternalProducer (ExternalIngress state)) = notifyWhen (const True) state
+-- | Take at most 32 inputs, and keep the owner awake while more remain.
+drainExternal :: ExternalIngress a -> IO [a]
+drainExternal (ExternalIngress queue (IngressHandle open wake)) = atomically $ do
+  accepting <- readTVar open
+  if not accepting
+    then pure []
+    else do
+      (batch, rest) <- Seq.splitAt 32 <$> readTVar queue
+      writeTVar queue rest
+      unless (Seq.null rest) (void (tryPutTMVar wake ()))
+      pure (toList batch)
 
-drainExternal :: ExternalIngress a -> IO (Drain a)
-drainExternal (ExternalIngress state) = modifyMVar state $ \current -> case current of
-  Accepting notify pending ->
-    let (batch, rest) = Seq.splitAt 32 pending
-     in pure (Accepting notify rest, Drain (toList batch) (not (Seq.null rest)))
-  _ -> pure (current, Drain [] False)
-
--- Seal only at an empty boundary, so accepted inputs cannot be discarded by stop.
+-- | Close only at an empty boundary, so stopping cannot discard accepted inputs.
 sealExternal :: ExternalIngress a -> IO Bool
-sealExternal (ExternalIngress state) = modifyMVar state $ \current -> case current of
-  Accepting _ pending | Seq.null pending -> pure (Closed, True)
-  _ -> pure (current, False)
+sealExternal (ExternalIngress queue (IngressHandle open _)) = atomically $ do
+  accepting <- readTVar open
+  pending <- readTVar queue
+  if accepting && Seq.null pending then writeTVar open False >> pure True else pure False
+
+closeIngress :: IngressHandle -> IO ()
+closeIngress (IngressHandle open _) = atomically (writeTVar open False)

@@ -27,11 +27,12 @@ data ManageWake = ManageWake
   , wakeCancelled :: MVar Bool
   }
 
--- | The worker cannot send until startup has installed its ownership cleanup.
-newManageWake :: IO (Either ConnectionError ()) -> (ConnectionError -> IO ()) -> IO ManageWake
-newManageWake send failed = mask_ $ do
+{- | The worker cannot send until startup has installed its ownership cleanup.
+It takes tokens from @pending@, which an ingress may also fill directly.
+-}
+newManageWake :: TMVar () -> IO (Either ConnectionError ()) -> (ConnectionError -> IO ()) -> IO ManageWake
+newManageWake pending send failed = mask_ $ do
   phase <- newTVarIO Starting
-  pending <- newEmptyTMVarIO
   done <- newEmptyMVar
   cancelled <- newMVar False
   let next =

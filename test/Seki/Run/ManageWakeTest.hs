@@ -2,7 +2,7 @@ module Seki.Run.ManageWakeTest (tests) where
 
 import Control.Concurrent (forkFinally, killThread, yield)
 import Control.Concurrent.MVar
-import Control.Concurrent.STM (atomically, tryPutTMVar)
+import Control.Concurrent.STM (atomically, newEmptyTMVarIO, tryPutTMVar)
 import Control.Exception (finally, throwIO)
 import Control.Monad (replicateM_, void)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
@@ -25,7 +25,7 @@ tests =
     "runtime manage wake"
     [ testCase "startup gate retains a signal without sending" $ do
         sent <- newEmptyMVar
-        wake <- newManageWake (putMVar sent () >> pure (Right ())) unexpected
+        wake <- newEmptyTMVarIO >>= \pending -> newManageWake pending (putMVar sent () >> pure (Right ())) unexpected
         flip finally (abortManageWake wake) $ do
           void (signalManageWake wake)
           tryReadMVar sent >>= assertEqual "no send before ownership is installed" Nothing
@@ -33,7 +33,7 @@ tests =
           within "startup signal sent" (takeMVar sent)
           quiesceManageWake wake
     , testCase "abort joins a worker before its startup gate opens" $ do
-        wake <- newManageWake (assertFailure "send before startup" >> pure (Right ())) unexpected
+        wake <- newEmptyTMVarIO >>= \pending -> newManageWake pending (assertFailure "send before startup" >> pure (Right ())) unexpected
         void (signalManageWake wake)
         within "abort before start" (abortManageWake wake)
         startManageWake wake
@@ -48,7 +48,7 @@ tests =
               putMVar entered ()
               takeMVar release
               pure (Right ())
-        wake <- newManageWake send unexpected
+        wake <- newEmptyTMVarIO >>= \pending -> newManageWake pending send unexpected
         flip finally (abortManageWake wake) $ do
           startManageWake wake
           void (signalManageWake wake)
@@ -66,7 +66,7 @@ tests =
         release <- newEmptyMVar
         count <- newIORef (0 :: Int)
         errors <- newIORef []
-        wake <- newManageWake (atomicModifyIORef' count (\n -> (n + 1, ())) >> putMVar entered () >> takeMVar release >> pure (Right ())) (\e -> atomicModifyIORef' errors (\es -> (e : es, ())))
+        wake <- newEmptyTMVarIO >>= \pending -> newManageWake pending (atomicModifyIORef' count (\n -> (n + 1, ())) >> putMVar entered () >> takeMVar release >> pure (Right ())) (\e -> atomicModifyIORef' errors (\es -> (e : es, ())))
         flip finally (abortManageWake wake) $ do
           startManageWake wake
           void (signalManageWake wake)
@@ -83,7 +83,7 @@ tests =
         entered <- newEmptyMVar
         release <- newEmptyMVar
         errors <- newIORef []
-        wake <- newManageWake (putMVar entered () >> takeMVar release >> pure (Right ())) (\e -> atomicModifyIORef' errors (\es -> (e : es, ())))
+        wake <- newEmptyTMVarIO >>= \pending -> newManageWake pending (putMVar entered () >> takeMVar release >> pure (Right ())) (\e -> atomicModifyIORef' errors (\es -> (e : es, ())))
         startManageWake wake
         void (signalManageWake wake)
         within "send entered" (takeMVar entered)
@@ -95,21 +95,20 @@ tests =
         entered <- newEmptyMVar
         release <- newEmptyMVar
         queue <- External.newExternalIngress
-        wake <- newManageWake (void (tryPutMVar entered ()) >> readMVar release >> pure (Right ())) unexpected
-        flip finally (External.closeExternal (External.externalLifecycle queue) >> abortManageWake wake) $ do
-          External.bindExternalWake (External.externalLifecycle queue) (signalManageWake wake) >>= assertBool "bound ingress"
+        wake <- newManageWake (External.ingressWake (External.ingressHandle queue)) (void (tryPutMVar entered ()) >> readMVar release >> pure (Right ())) unexpected
+        flip finally (External.closeIngress (External.ingressHandle queue) >> abortManageWake wake) $ do
           startManageWake wake
           abandoned <- newEmptyMVar
-          handler <- forkFinally (submitCommand (External.externalProducer queue) (Action.spawn "first")) (putMVar abandoned)
+          handler <- forkFinally (submitCommand queue (Action.spawn "first")) (putMVar abandoned)
           within "wake blocked after first admission" (takeMVar entered)
           killThread handler
           within "first handler cancelled" (takeMVar abandoned) >>= assertBool "cancellation reached handler" . either (const True) (const False)
           answer <- newEmptyMVar
-          _ <- forkFinally (submitCommand (External.externalProducer queue) (Action.spawn "second")) (putMVar answer)
+          _ <- forkFinally (submitCommand queue (Action.spawn "second")) (putMVar answer)
           let collect count inputs
                 | length inputs == count = pure inputs
                 | otherwise = do
-                    batch <- External.drainedInputs <$> External.drainExternal queue
+                    batch <- External.drainExternal queue
                     yield
                     collect count (inputs <> batch)
               apply revision (ExternalInput action receipt) = do
@@ -123,7 +122,7 @@ tests =
           within "second command applied" (takeMVar answer) >>= either (assertFailure . show) (assertEqual "later receipt succeeds" (CommandApplied 2))
           putMVar release ()
           later <- newEmptyMVar
-          _ <- forkFinally (submitCommand (External.externalProducer queue) (Action.spawn "third")) (putMVar later)
+          _ <- forkFinally (submitCommand queue (Action.spawn "third")) (putMVar later)
           [input] <- within "fresh command admitted" (collect 1 [])
           _ <- apply 3 input
           within "fresh receipt" (takeMVar later) >>= either (assertFailure . show) (assertEqual "continued service" (CommandApplied 3))
@@ -136,16 +135,15 @@ tests =
   failureCase send expected = do
     queue <- External.newExternalIngress
     failed <- newEmptyMVar
-    wake <- newManageWake send (\e -> External.closeExternal (External.externalLifecycle queue) >> putMVar failed e)
+    wake <- newManageWake (External.ingressWake (External.ingressHandle queue)) send (\e -> External.closeIngress (External.ingressHandle queue) >> putMVar failed e)
     flip finally (abortManageWake wake) $ do
-      External.bindExternalWake (External.externalLifecycle queue) (signalManageWake wake) >>= assertBool "bound ingress"
       startManageWake wake
-      External.submitExternal (External.externalProducer queue) () >>= assertEqual "initial admission" External.Accepted
+      External.submitExternal queue () >>= assertEqual "initial admission" External.Accepted
       actual <- within "failure observed" (takeMVar failed)
       case (expected, actual) of
         (ConnectionUnexpectedError prefix, ConnectionUnexpectedError message) -> assertBool "runtime exception retained" (prefix `isPrefixOf` message)
         _ -> assertEqual "runtime error" expected actual
-      External.submitExternal (External.externalProducer queue) () >>= assertEqual "failure closed admission" External.IngressClosed
+      External.submitExternal queue () >>= assertEqual "failure closed admission" External.IngressClosed
       quiesceManageWake wake
 
 within :: String -> IO a -> IO a

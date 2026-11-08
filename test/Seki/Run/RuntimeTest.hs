@@ -116,7 +116,6 @@ tests =
     "river runtime"
     [ testCase "callback cancellation closes a blocked runtime sender before connection state" testBlockedCallbackCancellation
     , testCase "abort joins a wake blocked on a full real socket" testBlockedWakeAbort
-    , testCase "failed runtime bind leaves the other owner's ingress open" testIngressBindFailure
     , testCase "finished optional input manager remains unavailable with core live" testInputFinished
     , testCase "libinput custom curves success rejection removal v1/v2" (mapM_ (\v -> mapM_ (testCustomLibinput v) [0, 1, 2, 3, 4]) [1, 2])
     , testCase "retired libinput requests do not exhaust admission" (mapM_ (testRetiredLibinputRequests False) [255, 256, 512] >> testRetiredLibinputRequests True 256)
@@ -162,15 +161,15 @@ testBlockedWakeAbort = withRuntimePair $ \target peer -> do
     reader <- newFrameReader
     manager <- bootManager reader peer
     putMVar booted manager
-  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (const (pure ()))){riverExternalIngress = Just (External.externalLifecycle queue)})
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (const (pure ()))){riverExternalIngress = Just (External.ingressHandle queue)})
   flip finally (closeRiverSession session) $ do
     _ <- takeMVar booted
     expectMockSuccess mockDone
     fillRuntimeSocket target
-    External.submitExternal (External.externalProducer queue) () >>= assertEqual "admission does not wait for the full socket" External.Accepted
+    External.submitExternal queue () >>= assertEqual "admission does not wait for the full socket" External.Accepted
     awaitRuntimeWakeBlocked session
     timeout 2000000 (closeRiverSession session) >>= assertEqual "abort cancels and joins before connection close" (Just ())
-    External.submitExternal (External.externalProducer queue) () >>= assertEqual "retained producer closed" External.IngressClosed
+    External.submitExternal queue () >>= assertEqual "retained producer closed" External.IngressClosed
     timeout 2000000 (closeRiverSession session) >>= assertEqual "repeated close joins safely" (Just ())
 
 testBlockedCallbackCancellation :: Assertion
@@ -184,7 +183,7 @@ testBlockedCallbackCancellation = withRuntimePair $ \target peer -> do
     sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
   let handlers =
         (runtimeHandlers (const (pure ())))
-          { riverExternalIngress = Just (External.externalLifecycle queue)
+          { riverExternalIngress = Just (External.ingressHandle queue)
           , prepareRiverManagePlan = \_ -> putMVar planEntered () >> takeMVar releasePlan >> pure (pure KeepManaging)
           }
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
@@ -197,13 +196,13 @@ testBlockedCallbackCancellation = withRuntimePair $ \target peer -> do
     timeout 2000000 (takeMVar planEntered) >>= assertEqual "callback entered before sender blocks" (Just ())
     expectMockSuccess mockDone
     fillRuntimeSocket target
-    External.submitExternal (External.externalProducer queue) () >>= assertEqual "wake admitted while callback runs" External.Accepted
+    External.submitExternal queue () >>= assertEqual "wake admitted while callback runs" External.Accepted
     awaitRuntimeWakeBlocked session
     cancelled <- newEmptyMVar
     _ <- forkFinally (killThread owner) (putMVar cancelled)
     timeout 2000000 (readMVar ownerDone) >>= maybe (assertFailure "callback cancellation waited for blocked sender") (const (pure ()))
     timeout 2000000 (takeMVar cancelled) >>= maybe (assertFailure "canceller did not join") (either (assertFailure . show) pure)
-    External.submitExternal (External.externalProducer queue) () >>= assertEqual "cancelled session closed admission" External.IngressClosed
+    External.submitExternal queue () >>= assertEqual "cancelled session closed admission" External.IngressClosed
 
 fillRuntimeSocket :: ConnectionTarget -> IO ()
 fillRuntimeSocket target = timeout 2000000 (fill 4096 >> fill 1) >>= maybe (assertFailure "socket did not fill") pure
@@ -227,22 +226,6 @@ awaitRuntimeWakeBlocked session = timeout 2000000 awaitBlocked >>= maybe (assert
     timeout 10000 probe >>= \case
       Nothing -> pure ()
       Just _ -> threadDelay 1000 >> awaitBlocked
-
-testIngressBindFailure :: Assertion
-testIngressBindFailure = withRuntimePair $ \target peer -> do
-  queue <- External.newExternalIngress
-  External.bindExternalWake (External.externalLifecycle queue) (pure True) >>= assertBool "another owner bound ingress"
-  mockDone <- runMock $ do
-    reader <- newFrameReader
-    _ <- bootManager reader peer
-    expectClosed peer
-  result <- openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (const (pure ()))){riverExternalIngress = Just (External.externalLifecycle queue)})
-  case result of
-    Left errorValue -> assertEqual "bind refused" RiverRuntimeIngressAlreadyBound errorValue
-    Right session -> closeRiverSession session >> assertFailure "bound another owner's ingress"
-  expectMockSuccess mockDone
-  External.submitExternal (External.externalProducer queue) () >>= assertEqual "failed startup did not close another owner" External.Accepted
-  External.closeExternal (External.externalLifecycle queue)
 
 testOwnedRuntime :: Assertion
 testOwnedRuntime =
@@ -1212,8 +1195,8 @@ testStopLifecycle =
               else assertEqual "manager request before stop" expected (rawFrameOpcode frame)
       untilOpcode (Opcode 2)
       untilOpcode (Opcode 0)
-      External.submitExternal (External.externalProducer queue) () >>= assertEqual "stop closes admission" External.IngressClosed
-      External.wakeExternalPending (External.externalLifecycle queue)
+      External.submitExternal queue () >>= assertEqual "stop closes admission" External.IngressClosed
+      External.signalExternal queue
       sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
       receiveSequenceCompletion reader peer managerId (Opcode 4)
       sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
@@ -1222,19 +1205,19 @@ testStopLifecycle =
       receiveSequenceCompletion reader peer managerId (Opcode 4)
       sendFrames peer [encodedFrame managerId (Opcode 1) (pure ())]
       receiveExpectedRequest reader peer managerId (Opcode 1) (pure ())
-      External.wakeExternalPending (External.externalLifecycle queue)
+      External.signalExternal queue
       expectClosed peer
     let handlers =
           (runtimeHandlers (const (pure ())))
-            { riverExternalIngress = Just (External.externalLifecycle queue)
+            { riverExternalIngress = Just (External.ingressHandle queue)
             , prepareRiverRenderPlan = \_ -> pure (pure (RenderOutcome True))
             , prepareRiverManagePlan = \_ -> do
-                External.wakeExternalPending (External.externalLifecycle queue)
+                External.signalExternal queue
                 _ <- External.drainExternal queue
                 pure (pure StopManaging)
             }
     session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
-    External.submitExternal (External.externalProducer queue) () >>= assertEqual "initial input" External.Accepted
+    External.submitExternal queue () >>= assertEqual "initial input" External.Accepted
     result <- runRiverSession session
     expectMockSuccess mockDone
     assertEqual "a requested finish ends the session as stopped" (Right RiverStopped) result
@@ -1284,18 +1267,18 @@ testExternalBatches = withRuntimePair $ \target peer -> do
   let handlers =
         (runtimeHandlers (\_ -> pure ()))
           { riverInputRules = []
-          , riverExternalIngress = Just (External.externalLifecycle queue)
+          , riverExternalIngress = Just (External.ingressHandle queue)
           , prepareRiverManagePlan = \_ -> do
               batch <- External.drainExternal queue
-              modifyIORef' applied (<> External.drainedInputs batch)
+              modifyIORef' applied (<> batch)
               pure (pure KeepManaging)
           }
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit handlers
-  mapM (External.submitExternal (External.externalProducer queue)) [1 .. 65 :: Int] >>= assertEqual "admitted burst" (replicate 65 External.Accepted)
+  mapM (External.submitExternal queue) [1 .. 65 :: Int] >>= assertEqual "admitted burst" (replicate 65 External.Accepted)
   runRiverSession session >>= assertEqual "EOF" (Right RiverEnded)
   expectMockSuccess mockDone
   readIORef applied >>= assertEqual "all batches applied once in FIFO order" [1 .. 65]
-  External.submitExternal (External.externalProducer queue) 66 >>= assertEqual "EOF closed producer" External.IngressClosed
+  External.submitExternal queue 66 >>= assertEqual "EOF closed producer" External.IngressClosed
 
 testInput :: Word32 -> Assertion
 testInput version = withRuntimePair $ \target peer -> do

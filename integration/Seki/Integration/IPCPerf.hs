@@ -58,7 +58,7 @@ ipcPerf = do
           _ <- readLine
           pure (client, readLine)
     withIPCAt path (mPolicy fixture) $ do
-      submitExternal (policyExternalProducer (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "publish initial" Accepted
+      submitExternal (policyIngress (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "publish initial" Accepted
       forM_ [1, 2, 32 :: Int] $ \clients -> bracket open close $ \commander -> do
         readReply <- bufferedLine commander
         let unread = max 0 (clients - 2)
