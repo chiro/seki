@@ -72,7 +72,7 @@ externalWake = do
           done <- newEmptyMVar
           void (forkIO (action >> putMVar done ()))
           takeMVar done
-    idleStatus <- waitUntil "dispatcher sleeping on Wayland read" assertionTimeoutMicroseconds (show <$> threadStatus (mDispatcher fixture)) (== "ThreadBlocked BlockedOnOther")
+    idleStatus <- waitUntil "dispatcher sleeping on Wayland read" assertionTimeoutMicroseconds (show <$> threadStatus (mDispatcher fixture)) (== "ThreadBlocked BlockedOnMVar")
     announce ("M3_IDLE_DISPATCHER " <> idleStatus)
     forM_ [1 .. 1000 :: Int] $ \n -> do
       threadDelay 1000
