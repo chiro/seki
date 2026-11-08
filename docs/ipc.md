@@ -138,8 +138,9 @@ characters with `name_truncated`. Defaults and current values are arrays of
 `{setting, value}`; an absent setting is unknown, never an assumed default.
 Generic input management has no default/current feedback. XKB has no defaults.
 Results are `{setting, requested, revision, status}`. Status is one of `pending`,
-`loading`, `compiling`, `awaiting`, `applied`, `rejected_invalid`, `sent`,
-`observed`, `unavailable`, `unsupported`, `removed`.
+`applied`, `rejected_invalid`, `sent`, `observed`, `unavailable`, `unsupported`,
+`removed`. `pending` covers both a request not yet sent and one awaiting its
+keymap load, compilation, or libinput result.
 Only libinput success acknowledgements mean applied. Generic requests remain
 sent. XKB layout/lock requests become observed only after matching feedback.
 Keymap compilation success permits assignment; assignment remains sent. Local

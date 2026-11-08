@@ -113,7 +113,7 @@ updateInput generation event inventory = inventory{inputDevices = Map.adjust upd
     Input.RiverInputDeviceV1TypeEnumTablet -> Just Tablet
     _ -> Nothing
 
-data SettingOutcome = SettingPending | SettingLoading | SettingCompiling | SettingAwaiting | SettingApplied | SettingRejectedInvalid | SettingSent | SettingObserved | SettingUnavailable | SettingUnsupported | SettingRemoved deriving (Eq, Show)
+data SettingOutcome = SettingPending | SettingInFlight | SettingApplied | SettingRejectedInvalid | SettingSent | SettingObserved | SettingUnavailable | SettingUnsupported | SettingRemoved deriving (Eq, Show)
 data SettingResult = SettingResult
   { settingDesired :: InputSetting
   , settingRevision :: Integer
@@ -275,7 +275,6 @@ openInputSession rules wayland failed = do
                                   readIORef xkbManager >>= \case
                                     Nothing -> modifyIORef' keymapOutstanding (subtract 1) >> void (closeOwnedFd fd) >> setKeymapOutcome token SettingUnavailable
                                     Just manager -> do
-                                      setKeymapOutcome token SettingCompiling
                                       let response keymap event = do
                                             modifyIORef' keymapOutstanding (subtract 1)
                                             latest <- readIORef state
@@ -305,7 +304,7 @@ openInputSession rules wayland failed = do
                           when (count < 32) $ do
                             startKeymapLoad keymaps (readIORef notify >>= id) (inputGeneration device, object, desired) path
                             modifyIORef' keymapOutstanding (+ 1)
-                            setKeymapOutcome (inputGeneration device, object, desired) SettingLoading
+                            setKeymapOutcome (inputGeneration device, object, desired) SettingInFlight
                     sendOne object (key, desired)
                       | maybe True ((== SettingSent) . settingOutcome) (Map.lookup KeymapKey (inputResults device))
                       , settingOutcome desired == SettingPending
@@ -495,7 +494,7 @@ awaitingLibinput inventory =
     , facetLifecycle (inputLibinput device) == FacetReady
     , (key, setting) <- Map.toList (inputResults device)
     , libinputKey key
-    , settingOutcome setting == SettingAwaiting
+    , settingOutcome setting == SettingInFlight
     ]
 
 sendLibinput :: IORef (Maybe (Object L.RiverLibinputConfigV1)) -> IORef InputInventory -> Connection -> IO () -> (ConnectionError -> IO ()) -> InputDevice -> IO ()
@@ -512,7 +511,7 @@ sendLibinput managerRef state connection apply failed device =
     , supportsSetting facet (settingDesired desired) == Just True = do
         count <- awaitingLibinput <$> readIORef state
         when (count < 256) $ do
-          modifyIORef' state (\i -> i{inputDevices = Map.adjust (\d -> d{inputResults = Map.adjust (\r -> r{settingOutcome = SettingAwaiting}) key (inputResults d)}) generation (inputDevices i)})
+          modifyIORef' state (\i -> i{inputDevices = Map.adjust (\d -> d{inputResults = Map.adjust (\r -> r{settingOutcome = SettingInFlight}) key (inputResults d)}) generation (inputDevices i)})
           let complete outcome = modifyIORef' state (acknowledgeLibinput generation object desired outcome)
               acknowledged = \case
                 L.RiverLibinputResultV1Success -> SettingApplied
@@ -554,7 +553,7 @@ sendLibinput managerRef state connection apply failed device =
                           stillCurrent = do
                             inventory <- readIORef state
                             pure $ case Map.lookup generation (inputDevices inventory) of
-                              Just current -> facetObject (inputLibinput current) == Just object && Map.lookup key (inputResults current) == Just desired{settingOutcome = SettingAwaiting}
+                              Just current -> facetObject (inputLibinput current) == Just object && Map.lookup key (inputResults current) == Just desired{settingOutcome = SettingInFlight}
                               Nothing -> False
                           points [] = do
                             live <- stillCurrent
@@ -582,7 +581,7 @@ acknowledgeLibinput generation object desired outcome inventory = inventory{inpu
     | inputLifecycle device == Removed || facetGeneration (inputLibinput device) /= settingFacet desired || facetObject (inputLibinput device) /= Just object = device
     | otherwise = device{inputResults = Map.adjust record (settingKey (settingDesired desired)) (inputResults device)}
   record current
-    | settingFacet current == settingFacet desired && settingRevision current == settingRevision desired && settingDesired current == settingDesired desired && settingOutcome current == SettingAwaiting = current{settingOutcome = outcome}
+    | settingFacet current == settingFacet desired && settingRevision current == settingRevision desired && settingDesired current == settingDesired desired && settingOutcome current == SettingInFlight = current{settingOutcome = outcome}
     | otherwise = current
 
 finishFacetDiscovery :: Object L.RiverLibinputDeviceV1 -> FacetGeneration -> InputInventory -> InputInventory
