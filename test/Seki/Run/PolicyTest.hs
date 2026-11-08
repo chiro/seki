@@ -6,9 +6,10 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar (MVar)
 import Control.Concurrent.STM (atomically, newEmptyTMVarIO, tryReadTMVar)
 import Control.Exception (SomeException)
+import Control.Monad (void)
 import Data.ByteString.Char8 qualified as Char8
 import Data.IORef (modifyIORef', newIORef, readIORef)
-import Data.List (sort)
+import Data.List (isPrefixOf, sort)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
 import Data.Text qualified as Text
@@ -31,9 +32,11 @@ import Seki.Internal.Core.StackSet (
   view,
  )
 import Seki.Internal.Core.State (CoreState (..), HeadlessWorkspaces (..), WorkspaceTagError (..), Workspaces (..), fromWorkspaces, newCoreState)
+import Seki.Internal.Input (InputRule (..), InputSetting (..), compileDevicePattern)
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.External qualified as External
+import Seki.Run.Input (emptyInputInventory)
 import Seki.Run.Inventory (RiverWindowState (..), emptyRiverInventory, riverInventoryWindows)
 import Seki.Run.MockRiver (
   FrameReader,
@@ -91,6 +94,7 @@ tests =
   testGroup
     "runtime policy"
     [ testCase "external commands and completions run only during bounded manage drains" testExternalManage
+    , testCase "input changes are logged once per change" testInputChangeLog
     , testCase "rejects configuration errors before connecting" testConfigErrors
     , testCase "applies river events at the next manage_start" testEventsAtManageStart
     , testCase "runs the manage hook on the properties river sent before manage_start" testManageHookProps
@@ -567,6 +571,22 @@ currentTagOf st = case coreWorkspaces st of
 lastMaybe :: [a] -> Maybe a
 lastMaybe [] = Nothing
 lastMaybe xs = Just (last xs)
+
+testInputChangeLog :: Assertion
+testInputChangeLog = do
+  logs <- newIORef []
+  patternValue <- either (assertFailure . show) pure (compileDevicePattern "*")
+  let rules = [InputRule patternValue Nothing [RepeatInfo 25 600]]
+      config = PolicyConfig [] rules Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (const (pure (Right ()))) (\line -> modifyIORef' logs (<> [line]))
+  policy <- expectRight =<< newPolicy config
+  let manage input = void (prepareRiverManagePlan (policyRuntimeHandlers policy) (RiverRuntimeSnapshot emptyRiverInventory input []))
+      inputLines = length . filter ("input: " `isPrefixOf`) <$> readIORef logs
+  manage (InputUnavailable rules)
+  manage (InputUnavailable rules)
+  inputLines >>= assertEqual "unchanged input logs once" 1
+  manage (InputAvailable emptyInputInventory)
+  manage (InputAvailable emptyInputInventory)
+  inputLines >>= assertEqual "a change logs once more" 2
 
 testExternalManage :: Assertion
 testExternalManage = do
