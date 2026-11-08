@@ -117,7 +117,6 @@ tests =
                 let (_, _, effects) = Action.runAction action state
                 mapM_ (\cell -> atomically (void (tryPutTMVar cell revision))) receipt
                 pure effects
-              apply _ (ExternalBuild _) = assertFailure "unexpected build input"
           inputs <- within "both commands admitted while wake blocked" (collect 2 [])
           effects <- sequence (zipWith apply [1 ..] inputs)
           assertEqual "cancelled caller's work and later work execute once in FIFO" [[Action.Spawn "first"], [Action.Spawn "second"]] effects

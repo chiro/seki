@@ -6,149 +6,112 @@ module Seki.Run.BuildSession (
   BuildSession,
   BuildState (..),
   BuildEvent (..),
-  BuildEffect (..),
   newBuildSession,
   newUnavailableBuildSession,
   transitionBuild,
   requestBuild,
-  completeBuild,
   closeBuildSession,
   buildStatus,
   recordRecoveryFailure,
   readyTarget,
 ) where
 
-import Control.Concurrent (ThreadId, forkIOWithUnmask, killThread, threadDelay)
-import Control.Concurrent.MVar
-import Control.Exception (IOException, finally, mask, try)
-import Control.Monad (void)
+import Control.Concurrent (ThreadId, forkIOWithUnmask, killThread)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar)
+import Control.Concurrent.STM (TVar, atomically, modifyTVar', newTVarIO, readTVar, readTVarIO, retry, stateTVar)
+import Control.Exception (IOException, finally, mask_, try)
+import Control.Monad (forever, void)
 import Data.Aeson (ToJSON, Value (..), object, toJSON, (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as BS
 import Data.IORef
 import Data.Text qualified as Text
-import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Run.ConfigBuild
-import Seki.Run.External (Admission (..))
 import System.Environment (getExecutablePath)
 import System.IO (IOMode (ReadMode), SeekMode (AbsoluteSeek), hFileSize, hPutStrLn, hSeek, stderr, withBinaryFile)
 
-newtype BuildEpoch = BuildEpoch Integer deriving (Eq, Show, Num, ToJSON)
 newtype BuildGeneration = BuildGeneration Integer deriving (Eq, Show, Num, ToJSON)
+
 data BuildState
-  = BuildIdle BuildEpoch
-  | BuildRunning BuildEpoch BuildGeneration (Maybe BuildGeneration) (Maybe FilePath)
-  | BuildFailed BuildEpoch BuildGeneration String (Maybe FilePath)
-  | BuildReady BuildEpoch BuildGeneration ValidatedTarget
-  | BuildClosed
+  = BuildIdle
+  | BuildRunning BuildGeneration Bool (Maybe FilePath)
+  | BuildFailed BuildGeneration String (Maybe FilePath)
+  | BuildReady BuildGeneration ValidatedTarget
   deriving (Eq, Show)
 
 data BuildEvent
   = BuildRequested
-  | BuildCompleted BuildEpoch BuildGeneration (Either (String, Maybe FilePath) ValidatedTarget)
-  | BuildLog BuildEpoch BuildGeneration FilePath
+  | BuildLogged FilePath
+  | BuildFinished (Either (String, Maybe FilePath) ValidatedTarget)
   deriving (Eq, Show)
-data BuildEffect = StartBuild BuildEpoch BuildGeneration | ActivateBuild | NoBuildEffect deriving (Eq, Show)
 
-transitionBuild :: BuildState -> BuildEvent -> (BuildState, BuildEffect)
+transitionBuild :: BuildState -> BuildEvent -> BuildState
 transitionBuild state event = case (state, event) of
-  (BuildClosed, _) -> (state, NoBuildEffect)
-  (BuildRunning epoch generation _ logPath, BuildRequested) -> (BuildRunning epoch generation (Just (generation + 1)) logPath, NoBuildEffect)
-  (BuildRunning epoch generation queued _, BuildCompleted e g result)
-    | epoch == e && generation == g -> case queued of
-        Just next -> (BuildRunning epoch next Nothing Nothing, StartBuild epoch next)
-        Nothing -> case result of
-          Left (message, logPath) -> (BuildFailed epoch generation message logPath, NoBuildEffect)
-          Right target -> (BuildReady epoch generation target, ActivateBuild)
-  (BuildRunning epoch generation queued _, BuildLog e g path)
-    | epoch == e && generation == g -> (BuildRunning epoch generation queued (Just path), NoBuildEffect)
-  (BuildIdle epoch, BuildRequested) -> start epoch 1
-  (BuildFailed epoch generation _ _, BuildRequested) -> start epoch (generation + 1)
-  (BuildReady epoch generation _, BuildRequested) -> start epoch (generation + 1)
-  _ -> (state, NoBuildEffect)
+  (BuildRunning generation _ logPath, BuildRequested) -> BuildRunning generation True logPath
+  (BuildRunning generation queued _, BuildLogged path) -> BuildRunning generation queued (Just path)
+  (BuildRunning generation True _, BuildFinished _) -> start (generation + 1)
+  (BuildRunning generation False _, BuildFinished (Left (message, logPath))) -> BuildFailed generation message logPath
+  (BuildRunning generation False _, BuildFinished (Right target)) -> BuildReady generation target
+  (BuildIdle, BuildRequested) -> start 1
+  (BuildFailed generation _ _, BuildRequested) -> start (generation + 1)
+  (BuildReady generation _, BuildRequested) -> start (generation + 1)
+  _ -> state
  where
-  start epoch generation = (BuildRunning epoch generation Nothing Nothing, StartBuild epoch generation)
+  start generation = BuildRunning generation False Nothing
 
-data Worker = Worker ThreadId (MVar ())
-data WorkerSlot = WorkersOpen (Maybe Worker) | WorkersClosed
-data BuildSession = BuildSession (Either String BuildContext) (IORef BuildState) (MVar WorkerSlot)
+data BuildSession = BuildSession (TVar BuildState) ThreadId (MVar ())
 
-newBuildSession :: BuildContext -> IO BuildSession
-newBuildSession = newSession . Right
+newBuildSession :: IO () -> BuildContext -> IO BuildSession
+newBuildSession wake = newSession wake . Right
 
-newUnavailableBuildSession :: String -> IO BuildSession
-newUnavailableBuildSession = newSession . Left
+newUnavailableBuildSession :: IO () -> String -> IO BuildSession
+newUnavailableBuildSession wake = newSession wake . Left
 
-newSession :: Either String BuildContext -> IO BuildSession
-newSession context = do
-  epoch <- BuildEpoch . toInteger <$> getMonotonicTimeNSec
-  BuildSession context <$> newIORef (BuildIdle epoch) <*> newMVar (WorkersOpen Nothing)
+{- | One thread runs every build of the session in order, so a result always
+belongs to the build the state shows as running. It reports each change
+through @wake@ rather than the command queue, which may be full.
+-}
+newSession :: IO () -> Either String BuildContext -> IO BuildSession
+newSession wake context = do
+  state <- newTVarIO BuildIdle
+  done <- newEmptyMVar
+  thread <- mask_ (forkIOWithUnmask (\unmask -> unmask (forever (runNextBuild context state wake)) `finally` putMVar done ()))
+  pure (BuildSession state thread done)
 
-requestBuild :: BuildSession -> (BuildEvent -> IO Admission) -> IO ()
-requestBuild session send = apply session send BuildRequested >> pure ()
-
-completeBuild :: BuildSession -> (BuildEvent -> IO Admission) -> BuildEvent -> IO Bool
-completeBuild = apply
-
-apply :: BuildSession -> (BuildEvent -> IO Admission) -> BuildEvent -> IO Bool
-apply session@(BuildSession _ state _) send event = do
-  old <- readIORef state
-  let (next, effect) = transitionBuild old event
-  writeIORef state next
-  case next of
-    BuildFailed _ _ message _ | old /= next -> void (try @IOException (hPutStrLn stderr ("seki: configuration build failed: " <> take 8192 message)))
+runNextBuild :: Either String BuildContext -> TVar BuildState -> IO () -> IO ()
+runNextBuild context state wake = do
+  atomically (readTVar state >>= \case BuildRunning{} -> pure (); _ -> retry)
+  logPath <- newIORef Nothing
+  let step event = atomically (stateTVar state (\current -> let next = transitionBuild current event in (next, next)))
+      report path = writeIORef logPath (Just path) >> step (BuildLogged path) >> wake
+  result <- try @IOException $ case context of
+    Left message -> ioError (userError message)
+    Right (BuildContext resources config directory) -> privateDirectory directory >> generate resources config >> buildWithLog resources config directory report
+  path <- readIORef logPath
+  outcome <- case result of
+    Left err -> do
+      tailBytes <- maybe (pure BS.empty) diagnosticTail path
+      pure (Left (show err <> "\n" <> map (toEnum . fromEnum) (BS.unpack tailBytes), path))
+    Right target -> pure (Right target)
+  step (BuildFinished outcome) >>= \case
+    BuildFailed _ message _ -> void (try @IOException (hPutStrLn stderr ("seki: configuration build failed: " <> take 8192 message)))
     _ -> pure ()
-  case effect of
-    StartBuild epoch generation -> startWorker session send epoch generation >> pure False
-    ActivateBuild -> pure True
-    NoBuildEffect -> pure False
+  wake
 
-startWorker :: BuildSession -> (BuildEvent -> IO Admission) -> BuildEpoch -> BuildGeneration -> IO ()
-startWorker (BuildSession context _ slot) send epoch generation = modifyMVar_ slot $ \case
-  WorkersClosed -> pure WorkersClosed
-  WorkersOpen previous -> mask $ \_ -> do
-    mapM_ (\(Worker _ done) -> readMVar done) previous
-    done <- newEmptyMVar
-    gate <- newEmptyMVar
-    tid <- forkIOWithUnmask $ \unmask ->
-      ( unmask $ do
-          takeMVar gate
-          logPath <- newIORef Nothing
-          let deliver event =
-                send event >>= \case
-                  Full -> threadDelay 10000 >> deliver event
-                  _ -> pure ()
-              report path = writeIORef logPath (Just path) >> deliver (BuildLog epoch generation path)
-          result <- try @IOException $ case context of
-            Left message -> ioError (userError message)
-            Right (BuildContext resources config directory) -> privateDirectory directory >> generate resources config >> buildWithLog resources config directory report
-          path <- readIORef logPath
-          event <- case result of
-            Left err -> do
-              tailBytes <- maybe (pure BS.empty) diagnosticTail path
-              pure (BuildCompleted epoch generation (Left (show err <> "\n" <> map (toEnum . fromEnum) (BS.unpack tailBytes), path)))
-            Right target -> pure (BuildCompleted epoch generation (Right target))
-          deliver event
-      )
-        `finally` putMVar done ()
-    putMVar gate ()
-    pure (WorkersOpen (Just (Worker tid done)))
+requestBuild :: BuildSession -> IO ()
+requestBuild (BuildSession state _ _) = atomically (modifyTVar' state (`transitionBuild` BuildRequested))
 
 closeBuildSession :: BuildSession -> IO ()
-closeBuildSession (BuildSession _ _ slot) = mask $ \_ -> do
-  worker <- swapMVar slot WorkersClosed
-  case worker of
-    WorkersClosed -> pure ()
-    WorkersOpen active -> mapM_ (\(Worker tid done) -> killThread tid >> void (readMVar done)) active
+closeBuildSession (BuildSession _ thread done) = mask_ (killThread thread >> readMVar done)
 
 readyTarget :: BuildSession -> IO (Maybe ValidatedTarget)
-readyTarget (BuildSession _ state _) =
-  readIORef state >>= \case
-    BuildReady _ _ target -> pure (Just target)
+readyTarget (BuildSession state _ _) =
+  readTVarIO state >>= \case
+    BuildReady _ target -> pure (Just target)
     _ -> pure Nothing
 
 buildStatus :: BuildSession -> IO Value
-buildStatus (BuildSession _ state _) = do
+buildStatus (BuildSession state _ _) = do
   image <- getExecutablePath
   status <- readStatus
   pure $ case status of
@@ -156,14 +119,13 @@ buildStatus (BuildSession _ state _) = do
     other -> other
  where
   readStatus =
-    readIORef state >>= \case
-      BuildIdle epoch -> pure (value "idle" epoch 0 Nothing Nothing)
-      BuildRunning epoch generation queued logPath -> pure (object ["log_path" .= logPath, "state" .= ("building" :: String), "epoch" .= epoch, "generation" .= generation, "queued" .= queued])
-      BuildFailed epoch generation message logPath -> pure (value "failed" epoch generation (Just (take 8192 message)) logPath)
-      BuildReady epoch generation target -> pure (value "validated" epoch generation Nothing (Just (validatedLog target)))
-      BuildClosed -> pure (object ["state" .= ("closed" :: String)])
-  value :: String -> BuildEpoch -> BuildGeneration -> Maybe String -> Maybe FilePath -> Value
-  value status epoch generation message logPath = object ["state" .= status, "epoch" .= epoch, "generation" .= generation, "error" .= fmap Text.pack message, "log_path" .= logPath]
+    readTVarIO state >>= \case
+      BuildIdle -> pure (value "idle" 0 Nothing Nothing)
+      BuildRunning generation queued logPath -> pure (object ["log_path" .= logPath, "state" .= ("building" :: String), "generation" .= generation, "queued" .= if queued then Just (generation + 1) else Nothing])
+      BuildFailed generation message logPath -> pure (value "failed" generation (Just (take 8192 message)) logPath)
+      BuildReady generation target -> pure (value "validated" generation Nothing (Just (validatedLog target)))
+  value :: String -> BuildGeneration -> Maybe String -> Maybe FilePath -> Value
+  value status generation message logPath = object ["state" .= status, "generation" .= generation, "error" .= fmap Text.pack message, "log_path" .= logPath]
 
 diagnosticTail :: FilePath -> IO BS.ByteString
 diagnosticTail path =
@@ -176,7 +138,8 @@ diagnosticTail path =
       )
 
 recordRecoveryFailure :: BuildSession -> String -> IO ()
-recordRecoveryFailure (BuildSession _ state _) message =
-  readIORef state >>= \case
-    BuildIdle epoch -> writeIORef state (BuildFailed epoch 0 message Nothing)
-    _ -> pure ()
+recordRecoveryFailure (BuildSession state _ _) message =
+  atomically $
+    modifyTVar' state $ \case
+      BuildIdle -> BuildFailed 0 message Nothing
+      current -> current

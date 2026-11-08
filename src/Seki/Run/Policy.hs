@@ -130,7 +130,7 @@ data DrainView = DrainView
   -- ^ The op river runs, not the op the core wants.
   }
 
-data ExternalInput i l = ExternalInput (Action i l ()) (Maybe (TMVar Integer)) | ExternalBuild BuildEvent
+data ExternalInput i l = ExternalInput (Action i l ()) (Maybe (TMVar Integer))
 
 closePolicyIngress :: Policy i l -> IO ()
 closePolicyIngress policy = do
@@ -150,10 +150,10 @@ policyExternalProducer :: Policy i l -> ExternalProducer (ExternalInput i l)
 policyExternalProducer = externalProducer . policyIngress
 
 configureBuild :: Policy i l -> BuildContext -> IO ()
-configureBuild policy context = newBuildSession context >>= writeIORef (policyBuild policy) . Just
+configureBuild policy context = newBuildSession (signalExternal (policyExternalProducer policy)) context >>= writeIORef (policyBuild policy) . Just
 
 configureBuildFailure :: Policy i l -> String -> IO ()
-configureBuildFailure policy message = newUnavailableBuildSession message >>= writeIORef (policyBuild policy) . Just
+configureBuildFailure policy message = newUnavailableBuildSession (signalExternal (policyExternalProducer policy)) message >>= writeIORef (policyBuild policy) . Just
 
 recordPolicyRecoveryFailure :: Policy i l -> String -> IO ()
 recordPolicyRecoveryFailure policy message = readIORef (policyBuild policy) >>= mapM_ (\session -> recordRecoveryFailure session message)
@@ -295,28 +295,20 @@ prepareManagePlan policy snapshot = do
   let view = DrainView inventory (shownBox before previous) (`Map.lookup` reconciledOps previous)
   events <- map ($ view) . reverse <$> atomicModifyIORef' (policyQueue policy) ([],)
   external <- drainedInputs <$> drainExternal (policyIngress policy)
-  _ <-
-    mapM
-      ( \case
-          ExternalBuild event -> readIORef (policyBuild policy) >>= maybe (pure False) (\session -> completeBuild session (submitExternal (policyExternalProducer policy) . ExternalBuild) event)
-          _ -> pure False
-      )
-      external
   let externalEvent (ExternalInput action _) = RunAction action
-      externalEvent (ExternalBuild _) = RunAction (pure ())
       (st, intents) = drainCoreWithScratchpads (policyScratchpads (policyConfig policy)) (policyManageHook (policyConfig policy)) (events <> map externalEvent external) before
   writeIORef (policyState policy) st
   writeIORef (policyDrainedInventory policy) (liveInventoryOf inventory)
   let effects = interpretIntents intents
   buildSession <- readIORef (policyBuild policy)
-  when (planRestart effects) $ mapM_ (\session -> requestBuild session (submitExternal (policyExternalProducer policy) . ExternalBuild)) buildSession
+  when (planRestart effects) $ mapM_ requestBuild buildSession
   mapM_ (policyLaunch (policyConfig policy)) (planLaunch effects)
   mapM_ (policyLog (policyConfig policy)) (planNotices effects)
   mapM_ (\(_, _, command) -> policyLaunch (policyConfig policy) command) (planPads effects)
   revision <- atomicModifyIORef' (policyRevision policy) (\n -> (n + 1, n + 1))
   observer <- readIORef (policyObserver policy)
   observer revision st snapshot
-  mapM_ (\case ExternalInput _ receipt -> mapM_ (\cell -> void (atomically (tryPutTMVar cell revision))) receipt; ExternalBuild _ -> pure ()) external
+  mapM_ (\(ExternalInput _ receipt) -> mapM_ (\cell -> void (atomically (tryPutTMVar cell revision))) receipt) external
   let scene =
         planScene
           (policySceneStyle (policyConfig policy))
