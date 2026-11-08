@@ -6,8 +6,7 @@ module Seki.Run.IPC (withIPC, withIPCAt, ipcPath, CommandResult (..), submitComm
 import Control.Concurrent (forkFinally, killThread)
 import Control.Concurrent.MVar (modifyMVar, modifyMVar_, newMVar)
 import Control.Concurrent.STM
-import Control.DeepSeq (force)
-import Control.Exception (IOException, bracket, bracketOnError, evaluate, finally, mask, onException, try)
+import Control.Exception (IOException, bracket, bracketOnError, finally, mask, onException, try)
 import Control.Monad (forever, unless, when)
 import Data.Aeson (Value (..), object, toJSON, (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -109,8 +108,7 @@ withIPCAt path policy body =
       build <- policyBuildStatus policy
       let base = projectSnapshot session Text.pack (policyTagsOf policy) revision st runtime
           combined = case base of Object fields -> Object (KeyMap.insert "build" (toJSON build) fields); other -> other
-      snapshot <- evaluate (force combined)
-      atomically (writeTVar latest (Just (revision, snapshot)))
+      atomically (writeTVar latest (Just (revision, combined)))
     let acceptLoop = forever $ mask $ \unmask ->
           bracketOnError (accept listener) (close . fst) $ \(client, _) -> do
             closeOnExec client
