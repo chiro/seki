@@ -65,7 +65,7 @@ withManager nested config action = do
 apply :: PadPolicy -> Action String StdLayouts () -> IO ()
 apply policy action = do
   receipt <- newEmptyTMVarIO
-  submitExternal (policyExternalProducer policy) (ExternalInput action (Just receipt)) >>= assertEqual "restore action admitted" Accepted
+  submitExternal (policyIngress policy) (ExternalInput action (Just receipt)) >>= assertEqual "restore action admitted" Accepted
   void (atomically (takeTMVar receipt))
 
 awaitOwner :: PadPolicy -> String -> IO ScratchpadState

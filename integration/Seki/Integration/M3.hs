@@ -65,7 +65,7 @@ externalWake = do
       config = (policyConfigOf def){policyLaunch = \marker -> modifyIORef' applied (<> [marker])}
   withFixtureUsing decorate config "m3-external-wake" 1 $ \fixture probe -> do
     _ <- openWindow probe Red
-    let producer = policyExternalProducer (mPolicy fixture)
+    let producer = policyIngress (mPolicy fixture)
         submit marker = submitExternal producer (ExternalInput (spawn marker) Nothing) >>= assertEqual "accepted marker" Accepted
         expect markers = void (waitUntil "accepted commands applied in FIFO order" assertionTimeoutMicroseconds (readIORef applied) (== markers))
         inProducer action = do
@@ -140,7 +140,7 @@ sessionIsolation = withNestedRiver 1 $ \river -> do
   first <- newPolicy config >>= requireRight "first policy"
   session <- open first
   done <- run session
-  let old = policyExternalProducer first
+  let old = policyIngress first
       accepted action = submitExternal old (ExternalInput action Nothing) >>= assertEqual "first admission" Accepted
   ( do
       attached first
@@ -161,7 +161,7 @@ sessionIsolation = withNestedRiver 1 $ \river -> do
           readPolicyState second >>= \state -> case coreWorkspaces state of
             AttachedState ss _ -> assertEqual "restored workspace unchanged by old token" "2" (SS.currentTag ss)
             _ -> failIntegration "restore headless"
-          submitExternal (policyExternalProducer second) (ExternalInput (windows (SS.view "1")) Nothing) >>= assertEqual "fresh producer" Accepted
+          submitExternal (policyIngress second) (ExternalInput (windows (SS.view "1")) Nothing) >>= assertEqual "fresh producer" Accepted
           void (waitUntil "new session progresses" assertionTimeoutMicroseconds (readPolicyState second) (\state -> case coreWorkspaces state of AttachedState ss _ -> SS.currentTag ss == "1"; _ -> False))
         )
         `finally` (stopManagedProcess (riverProcess river) >> waitForRuntimeExit nextDone)
@@ -184,7 +184,7 @@ ipcBoundary = do
           pure client
         request bytes = bracket open close $ \client -> sendAll client bytes >> ipcLine client
     withIPCAt path (mPolicy fixture) $ do
-      submitExternal (policyExternalProducer (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "initial publication trigger" Accepted
+      submitExternal (policyIngress (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "initial publication trigger" Accepted
       initial <- request "{\"version\":1,\"id\":\"a\",\"op\":\"snapshot\"}\n"
       assertEqual "initial snapshot" True ("\"workspaces\"" `BS.isInfixOf` initial)
       cliExecutable <- getEnv "SEKICTL_EXECUTABLE"
@@ -246,7 +246,7 @@ ipcMetadata = withFixture (policyConfigOf def) "m3-ipc-metadata" 1 $ \fixture pr
       title = "<b>&\"\n$(touch /tmp/seki-title-must-not-run)"
   withIPCAt path (mPolicy fixture) $ bracket open close $ \subscriber -> do
     sendAll subscriber "{\"version\":1,\"id\":\"sub\",\"op\":\"subscribe\"}\n"
-    submitExternal (policyExternalProducer (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "publish initial" Accepted
+    submitExternal (policyIngress (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "publish initial" Accepted
     initial <- ipcLine subscriber
     (initialRevision, initialTitle) <- snapshotTitle initial
     assertEqual "initial subscription has no title" Nothing initialTitle
@@ -294,7 +294,7 @@ ipcState = withFixture (policyConfigOf def) "m3-ipc-state" 2 $ \fixture probe ->
       snapshot = request "{\"version\":1,\"id\":\"state\",\"op\":\"snapshot\"}\n"
   withIPCAt path (mPolicy fixture) $ do
     _ <- openWindow probe Red
-    submitExternal (policyExternalProducer (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "publish" Accepted
+    submitExternal (policyIngress (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "publish" Accepted
     initial <- snapshot
     (names, flags, available) <- snapshotFlags initial
     assertEqual "two connector names" [Just "HEADLESS-1", Just "HEADLESS-2"] (sort names)
@@ -425,7 +425,7 @@ ipcLimits = do
           pure client
         request bytes = bracket open close $ \client -> sendAll client bytes >> ipcLine client
     withIPCAt path (mPolicy fixture) $ do
-      submitExternal (policyExternalProducer (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "publish oversized projection" Accepted
+      submitExternal (policyIngress (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "publish oversized projection" Accepted
       tooLarge <- request "{\"version\":1,\"id\":\"large-id\",\"op\":\"snapshot\"}\n"
       assertEqual "oversized snapshot reported" True ("snapshot_too_large" `BS.isInfixOf` tooLarge)
       assertEqual "oversize error preserves request ID" True ("large-id" `BS.isInfixOf` tooLarge)

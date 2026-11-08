@@ -139,7 +139,7 @@ withFixtureEnvironment extra transform policyConfig name outputCount action =
     session <- openRiverSessionAt (UnixSocketPath socketPath) defaultObjectLimit (transform (recordWindowRequests requests (policyRuntimeHandlers policy))) >>= requireRight "runtime"
     result <- newEmptyMVar
     dispatcher <- forkIO (runRiverSession session >>= putMVar result)
-    let cleanup = stopManagedProcess river >> waitForRuntimeExit result
+    let cleanup = stopManagedProcess river >> waitForRuntimeExit result >> closePolicy policy
     ( do
         _ <- waitUntil "fixture outputs discovered" assertionTimeoutMicroseconds (readRiverInventory session) (\i -> length (riverInventoryOutputs i) == outputCount && all ((/= Nothing) . riverOutputRectangle) (riverInventoryOutputs i))
         namesByGlobal <- outputNames socketPath

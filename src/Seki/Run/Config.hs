@@ -27,7 +27,7 @@ import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.ConfigBuild (installedContext, validatedProfile)
 import Seki.Run.IPC (withIPC)
 import Seki.Run.Pointer (RiverPointerBinding (..))
-import Seki.Run.Policy (Policy, PolicyConfig (..), PolicyError, configureBuild, configureBuildFailure, launchDetached, newPolicy, policyRuntimeHandlers, policyValidatedTarget, readRestoreState, recordPolicyRecoveryFailure)
+import Seki.Run.Policy (Policy, PolicyConfig (..), PolicyError, closePolicy, configureBuild, configureBuildFailure, launchDetached, newPolicy, policyRuntimeHandlers, policyValidatedTarget, readRestoreState, recordPolicyRecoveryFailure)
 import Seki.Run.Restart (Launch (..), RestartRefusal (..), checkRestartTarget, describeLoadError, discoverLaunch, execRestart, execValidatedRestart, loadRestoreFile, reapInheritedChildren, writeRestoreFile)
 import Seki.Run.Runtime (RiverExit (..), RiverRuntimeError (..), closeRiverSession, openRiverSessionAt, runRiverSession)
 import Seki.Run.Startup (WaylandStartupError (..))
@@ -134,9 +134,9 @@ runSessions launch configFor = pass (launchFirstTarget launch) unavailableRetrie
             _ -> pure ()
           mapM_ (recordPolicyRecoveryFailure policy) previousFailure
           openRiverSessionAt connection defaultObjectLimit (policyRuntimeHandlers policy) >>= \case
-            Left e -> pure (Left (ConfigRuntimeError e))
+            Left e -> closePolicy policy >> pure (Left (ConfigRuntimeError e))
             Right session ->
-              (withIPC logLine policy (runRiverSession session) `finally` closeRiverSession session) >>= \case
+              (withIPC logLine policy (runRiverSession session) `finally` (closeRiverSession session >> closePolicy policy)) >>= \case
                 Left RiverRuntimeWindowManagerUnavailable
                   | retries > 0 -> do
                       logLine "window management unavailable, retrying"

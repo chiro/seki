@@ -26,7 +26,7 @@ module Seki.Run.Policy (
   Policy,
   newPolicy,
   ExternalInput (..),
-  policyExternalProducer,
+  policyIngress,
   configureBuild,
   configureBuildFailure,
   recordPolicyRecoveryFailure,
@@ -34,7 +34,7 @@ module Seki.Run.Policy (
   policyValidatedTarget,
   policyCanBuild,
   observePolicy,
-  closePolicyIngress,
+  closePolicy,
   policyTagsOf,
   policyScratchpadNames,
   policyRuntimeHandlers,
@@ -132,9 +132,9 @@ data DrainView = DrainView
 
 data ExternalInput i l = ExternalInput (Action i l ()) (Maybe (TMVar Integer))
 
-closePolicyIngress :: Policy i l -> IO ()
-closePolicyIngress policy = do
-  closeExternal (externalLifecycle (policyIngress policy))
+closePolicy :: Policy i l -> IO ()
+closePolicy policy = do
+  closeIngress (ingressHandle (policyIngress policy))
   readIORef (policyBuild policy) >>= mapM_ closeBuildSession
 
 policyScratchpadNames :: Policy i l -> [String]
@@ -146,14 +146,11 @@ policyTagsOf = policyTags . policyConfig
 observePolicy :: Policy i l -> (Integer -> CoreState i l -> RiverRuntimeSnapshot -> IO ()) -> IO ()
 observePolicy policy = writeIORef (policyObserver policy)
 
-policyExternalProducer :: Policy i l -> ExternalProducer (ExternalInput i l)
-policyExternalProducer = externalProducer . policyIngress
-
 configureBuild :: Policy i l -> BuildContext -> IO ()
-configureBuild policy context = newBuildSession (signalExternal (policyExternalProducer policy)) context >>= writeIORef (policyBuild policy) . Just
+configureBuild policy context = newBuildSession (signalExternal (policyIngress policy)) context >>= writeIORef (policyBuild policy) . Just
 
 configureBuildFailure :: Policy i l -> String -> IO ()
-configureBuildFailure policy message = newUnavailableBuildSession (signalExternal (policyExternalProducer policy)) message >>= writeIORef (policyBuild policy) . Just
+configureBuildFailure policy message = newUnavailableBuildSession (signalExternal (policyIngress policy)) message >>= writeIORef (policyBuild policy) . Just
 
 recordPolicyRecoveryFailure :: Policy i l -> String -> IO ()
 recordPolicyRecoveryFailure policy message = readIORef (policyBuild policy) >>= mapM_ (\session -> recordRecoveryFailure session message)
@@ -220,7 +217,7 @@ policyRuntimeHandlers :: (Eq i, Show i, LayoutClass l) => Policy i l -> RiverRun
 policyRuntimeHandlers policy =
   RiverRuntimeHandlers
     { riverInputRules = policyInputRules (policyConfig policy)
-    , riverExternalIngress = Just ingressLifecycle
+    , riverExternalIngress = Just (ingressHandle (policyIngress policy))
     , riverProtocolHandlers =
         RiverWindowManagerHandlers
           { handleRiverWindowManagerEvent = \_ _ -> pure ()
@@ -263,7 +260,6 @@ policyRuntimeHandlers policy =
     , prepareRiverRenderPlan = prepareRenderPlan policy
     }
  where
-  ingressLifecycle = let lifecycle = externalLifecycle (policyIngress policy) in lifecycle{closeExternal = closePolicyIngress policy}
   bindings = policyBindings (policyConfig policy)
   pointerBindings = policyPointerBindings (policyConfig policy)
   startOp origin kind seat window view =
@@ -294,7 +290,7 @@ prepareManagePlan policy snapshot = do
   previous <- readIORef (policyReconcile policy)
   let view = DrainView inventory (shownBox before previous) (`Map.lookup` reconciledOps previous)
   events <- map ($ view) . reverse <$> atomicModifyIORef' (policyQueue policy) ([],)
-  external <- drainedInputs <$> drainExternal (policyIngress policy)
+  external <- drainExternal (policyIngress policy)
   let externalEvent (ExternalInput action _) = RunAction action
       (st, intents) = drainCoreWithScratchpads (policyScratchpads (policyConfig policy)) (policyManageHook (policyConfig policy)) (events <> map externalEvent external) before
   writeIORef (policyState policy) st

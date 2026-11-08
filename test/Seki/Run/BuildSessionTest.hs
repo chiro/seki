@@ -4,6 +4,7 @@
 module Seki.Run.BuildSessionTest (tests) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.STM (atomically, tryTakeTMVar)
 import Control.Exception (bracket, finally, throwIO)
 import Control.Monad (void)
 import Data.Aeson (Value (..))
@@ -19,7 +20,7 @@ import Seki.Run.BuildSession
 import Seki.Run.ConfigBuild
 import Seki.Run.External
 import Seki.Run.Inventory (emptyRiverInventory)
-import Seki.Run.Policy (ExternalInput (..), PolicyConfig (..), configureBuild, newPolicy, policyExternalProducer, policyRuntimeHandlers, policyValidatedTarget)
+import Seki.Run.Policy (ExternalInput (..), PolicyConfig (..), closePolicy, configureBuild, newPolicy, policyIngress, policyRuntimeHandlers, policyValidatedTarget)
 import Seki.Run.Restart
 import Seki.Run.Runtime (RiverInputSnapshot (..), RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
 import Seki.Wire.Transport (ConnectionDiscoveryError (..), ConnectionTarget (..))
@@ -37,15 +38,7 @@ tests :: TestTree
 tests =
   testGroup
     "session config builds"
-    [ testCase "activation seal waits for accepted inputs and rejects later admission" $ do
-        ingress <- newExternalIngress
-        bindExternalWake (externalLifecycle ingress) (pure True) >>= (@?= True)
-        submitExternal (externalProducer ingress) (1 :: Int) >>= (@?= Accepted)
-        sealExternal ingress >>= (@?= False)
-        drainExternal ingress >>= (\batch -> drainedInputs batch @?= [1])
-        sealExternal ingress >>= (@?= True)
-        submitExternal (externalProducer ingress) 2 >>= (@?= IngressClosed)
-    , testCase "duplicate requests bound queue and invalidate older failure" $ do
+    [ testCase "duplicate requests bound queue and invalidate older failure" $ do
         let running = transitionBuild BuildIdle BuildRequested
             queued = foldl (\state _ -> transitionBuild state BuildRequested) running [1 .. 1000 :: Int]
         queued @?= BuildRunning 1 True Nothing
@@ -53,26 +46,25 @@ tests =
     , testCase "policy build completion wakes the owner through a full command queue" $
         fixture "exit 0" $ \context@(BuildContext resources _ _) directory -> do
           writeFile (environment resources) ("#!/bin/sh\nfor arg do\ncase \"$arg\" in\nbuild) touch '" <> directory </> "started'; while [ ! -f '" <> directory </> "release' ]; do sleep 0.02; done; exit 0;;\nlist-bin) printf '%s\\n' '" <> directory </> "image'; exit 0;;\nesac\ndone\nexit 2\n")
-          wakes <- newIORef (0 :: Int)
           policy <- newPolicy (PolicyConfig [] [] Layout.Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (const (pure (Right ()))) (\_ -> pure ())) >>= either (assertFailure . show) pure
           configureBuild policy context
           let handlers = policyRuntimeHandlers policy
-              producer = policyExternalProducer policy
+              ingress = policyIngress policy
               snapshot = RiverRuntimeSnapshot emptyRiverInventory (InputUnavailable []) []
-          lifecycle <- maybe (assertFailure "missing ingress") pure (riverExternalIngress handlers)
-          bindExternalWake lifecycle (atomicModifyIORef' wakes (\n -> (n + 1, ())) >> pure True) >>= assertBool "bound"
+          handle <- maybe (assertFailure "missing ingress") pure (riverExternalIngress handlers)
+          let takeWake = isJust <$> atomically (tryTakeTMVar (ingressWake handle))
           ( do
-              submitExternal producer (ExternalInput restart Nothing) >>= (@?= Accepted)
+              submitExternal ingress (ExternalInput restart Nothing) >>= (@?= Accepted)
               _ <- prepareRiverManagePlan handlers snapshot
               await (doesFileExist (directory </> "started"))
-              mapM_ (\_ -> submitExternal producer (ExternalInput (pure ()) Nothing)) [1 .. 256 :: Int]
-              submitExternal producer (ExternalInput (pure ()) Nothing) >>= (@?= Full)
-              filled <- readIORef wakes
+              mapM_ (\_ -> submitExternal ingress (ExternalInput (pure ()) Nothing)) [1 .. 256 :: Int]
+              submitExternal ingress (ExternalInput (pure ()) Nothing) >>= (@?= Full)
+              _ <- takeWake
               writeFile (directory </> "release") ""
               await (isJust <$> policyValidatedTarget policy)
-              await ((> filled) <$> readIORef wakes)
+              await takeWake
             )
-            `finally` closeExternal lifecycle
+            `finally` closePolicy policy
     , testCase "existing user files do not open template resources" $
         fixture "exit 0" $ \(BuildContext resources config _) _ -> do
           generate resources config

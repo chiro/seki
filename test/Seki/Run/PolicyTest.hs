@@ -62,7 +62,7 @@ import Seki.Run.Policy (
   launchDetached,
   newPolicy,
   parseResizeEdges,
-  policyExternalProducer,
+  policyIngress,
   policyRuntimeHandlers,
   readPolicyState,
  )
@@ -574,11 +574,8 @@ testExternalManage = do
   let config = PolicyConfig [] [] Full [1 :: Int] [] defaultSceneStyle (\marker -> modifyIORef' launches (<> [marker])) idHook (pure ()) [] Nothing (const (pure (Right ()))) (\_ -> pure ())
   policy <- expectRight =<< newPolicy config
   let handlers = policyRuntimeHandlers policy
-      producer = policyExternalProducer policy
+      producer = policyIngress policy
       snapshot = RiverRuntimeSnapshot emptyRiverInventory (InputUnavailable []) []
-  case riverExternalIngress handlers of
-    Nothing -> assertFailure "missing ingress"
-    Just lifecycle -> External.bindExternalWake lifecycle (pure True) >>= assertBool "bound"
   mapM_ (\n -> External.submitExternal producer (ExternalInput (spawn (show n)) Nothing) >>= assertEqual "accepted" External.Accepted) [1 .. 33 :: Int]
   receipt <- newEmptyTMVarIO
   External.submitExternal producer (ExternalInput (pure ()) (Just receipt)) >>= assertEqual "receipt command accepted" External.Accepted

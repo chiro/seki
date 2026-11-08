@@ -31,9 +31,10 @@ module Seki.Run.Runtime (
 where
 
 import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
+import Control.Concurrent.STM (newEmptyTMVarIO)
 import Control.Exception (finally, mask, onException)
 import Control.Monad (void, when, (<=<))
-import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import GHC.Clock (getMonotonicTimeNSec)
@@ -42,7 +43,7 @@ import Seki.Protocol.RiverLayerShellV1 qualified as LayerShell
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Protocol.RiverXkbBindingsV1 qualified as Xkb
 import Seki.Protocol.Wayland qualified as Wayland
-import Seki.Run.External (ExternalLifecycle, bindExternalWake, closeExternal, wakeExternalPending)
+import Seki.Run.External (IngressHandle, closeIngress, ingressWake)
 import Seki.Run.Input (InputInventory, InputSession, bindInputNotify, closeInputSession, drainInputCompletions, inputSessionAvailable, openInputSession, readInputInventory, refreshInputOutputs)
 import Seki.Run.Inventory (
   RiverInventory,
@@ -140,7 +141,7 @@ data RiverSession = RiverSession
   , riverSequenceStatus :: IORef (Either RiverRuntimeError RiverSequenceState)
   , riverInventoryState :: IORef RiverInventory
   , riverSeatBindingsState :: IORef (Map ObjectId RiverSeatBindings)
-  , riverExternalLifecycle :: Maybe ExternalLifecycle
+  , riverSessionIngress :: Maybe IngressHandle
   , riverInputPolicy :: [InputRule]
   , riverInputSession :: IORef (Maybe InputSession)
   , riverLifecycle :: IORef Lifecycle
@@ -221,7 +222,7 @@ data RiverRuntimeSnapshot = RiverRuntimeSnapshot
 
 data RiverRuntimeHandlers = RiverRuntimeHandlers
   { riverInputRules :: [InputRule]
-  , riverExternalIngress :: Maybe ExternalLifecycle
+  , riverExternalIngress :: Maybe IngressHandle
   , riverProtocolHandlers :: RiverWindowManagerHandlers
   , riverKeyBindings :: [RiverKeyBinding]
   , handleRiverKeyBindingEvent :: RiverKeyBinding -> Object Xkb.RiverXkbBindingV1 -> Xkb.RiverXkbBindingV1Event OwnedFd -> IO ()
@@ -247,7 +248,6 @@ data RiverRuntimeError
   | RiverRuntimeXkbGlobalUnavailable
   | RiverRuntimeLayerShellGlobalUnavailable
   | RiverRuntimeSequenceError RiverSequenceError
-  | RiverRuntimeIngressAlreadyBound
   | RiverRuntimeEventLoopAlreadyOwned
   | RiverRuntimeWindowManagerUnavailable
   deriving (Eq, Show)
@@ -307,49 +307,42 @@ openRiverSessionWith openWayland runtimeHandlers
             case result of
               Left errorValue -> closeInput >> closeWaylandSession wayland >> pure (Left errorValue)
               Right (manager, xkbBindings, layerShell) -> do
-                ownedIngresses <- newIORef []
-                let closeOwned = readIORef ownedIngresses >>= mapM_ closeExternal
+                let ingress = riverExternalIngress runtimeHandlers
+                    closeAdmission = mapM_ closeIngress ingress
                     disableInput = readIORef inputSession >>= mapM_ (\session -> bindInputNotify session (pure ()))
-                    failWake errorValue = closeOwned >> recordRuntimeError sequenceStatus (RiverRuntimeConnectionError errorValue)
-                wake <- newManageWake (submitRequest (waylandConnection wayland) River.riverWindowManagerV1Interface manager River.encodeRiverWindowManagerV1ManageDirty) failWake
+                    failWake errorValue = closeAdmission >> recordRuntimeError sequenceStatus (RiverRuntimeConnectionError errorValue)
+                pending <- maybe newEmptyTMVarIO (pure . ingressWake) ingress
+                wake <- newManageWake pending (submitRequest (waylandConnection wayland) River.riverWindowManagerV1Interface manager River.encodeRiverWindowManagerV1ManageDirty) failWake
                 writeIORef manageWake (Just wake)
                 let abort = do
-                      closeOwned
+                      closeAdmission
                       disableInput
                       abortManageWake wake
                       closeInput
                       closeWaylandSession wayland
-                    bindOwned ingress = do
-                      bound <- bindExternalWake ingress (signalManageWake wake)
-                      when bound (modifyIORef' ownedIngresses (ingress :))
-                      pure bound
                 flip onException abort $ do
                   writeIORef managerState (Just manager)
                   writeIORef xkbGlobalState (Just xkbBindings)
                   writeIORef layerShellGlobalState (Just layerShell)
-                  bound <- maybe (pure True) bindOwned (riverExternalIngress runtimeHandlers)
-                  if not bound
-                    then abort >> pure (Left RiverRuntimeIngressAlreadyBound)
-                    else do
-                      readIORef inputSession >>= mapM_ (\session -> bindInputNotify session (void (signalManageWake wake)))
-                      eventLoopClaim <- newMVar False
-                      let session =
-                            RiverSession
-                              wayland
-                              manager
-                              xkbBindings
-                              layerShell
-                              eventLoopClaim
-                              sequenceStatus
-                              inventoryState
-                              seatBindingsState
-                              (riverExternalIngress runtimeHandlers)
-                              (riverInputRules runtimeHandlers)
-                              inputSession
-                              lifecycle
-                              wake
-                      startManageWake wake
-                      pure (Right session)
+                  readIORef inputSession >>= mapM_ (\session -> bindInputNotify session (void (signalManageWake wake)))
+                  eventLoopClaim <- newMVar False
+                  let session =
+                        RiverSession
+                          wayland
+                          manager
+                          xkbBindings
+                          layerShell
+                          eventLoopClaim
+                          sequenceStatus
+                          inventoryState
+                          seatBindingsState
+                          ingress
+                          (riverInputRules runtimeHandlers)
+                          inputSession
+                          lifecycle
+                          wake
+                  startManageWake wake
+                  pure (Right session)
 
 bindRuntimeGlobals ::
   WaylandSession ->
@@ -420,7 +413,7 @@ runRiverSession session = do
 -- | Close a runtime without running it. Repeated calls are safe.
 closeRiverSession :: RiverSession -> IO ()
 closeRiverSession session = do
-  mapM_ closeExternal (riverExternalLifecycle session)
+  mapM_ closeIngress (riverSessionIngress session)
   readIORef (riverInputSession session) >>= mapM_ (\input -> bindInputNotify input (pure ()))
   abortManageWake (riverManageWake session)
   readIORef (riverInputSession session) >>= mapM_ closeInputSession
@@ -463,7 +456,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState managerState xkbGl
     }
  where
   quiesceWakes = do
-    mapM_ closeExternal (riverExternalIngress runtimeHandlers)
+    mapM_ closeIngress (riverExternalIngress runtimeHandlers)
     readIORef inputSession >>= mapM_ (\session -> bindInputNotify session (pure ()))
     readIORef manageWake >>= mapM_ quiesceManageWake
   handleManagerEvent manager event = case event of
@@ -479,7 +472,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState managerState xkbGl
         startManageSequence
         runManagePlans
         ( \case
-            KeepManaging -> mapM_ wakeExternalPending (riverExternalIngress runtimeHandlers)
+            KeepManaging -> pure ()
             StopManaging -> do
               quiesceWakes
               readIORef lifecycle >>= \case
