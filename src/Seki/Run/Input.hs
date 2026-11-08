@@ -125,7 +125,7 @@ updateInput generation event inventory = inventory{inputDevices = Map.adjust upd
     Input.RiverInputDeviceV1TypeEnumTablet -> Just Tablet
     _ -> Nothing
 
-data SettingOutcome = SettingPending | SettingLoading | SettingCompiling | SettingAwaiting | SettingApplied | SettingRejectedInvalid | SettingSent | SettingObserved | SettingUnavailable | SettingUnsupported | SettingInvalid SettingError | SettingRemoved deriving (Eq, Show)
+data SettingOutcome = SettingPending | SettingLoading | SettingCompiling | SettingAwaiting | SettingApplied | SettingRejectedInvalid | SettingSent | SettingObserved | SettingUnavailable | SettingUnsupported | SettingRemoved deriving (Eq, Show)
 data SettingResult = SettingResult
   { settingDesired :: InputSetting
   , settingRevision :: Integer
@@ -173,40 +173,34 @@ planInput rules outputs inventory =
   classifyDevice device kind setting
     | xkbKey (settingKey setting) =
         let facet = inputXkb device
-         in SettingResult setting 0 (xkbGeneration facet) (objectId <$> xkbObject facet) $ case validateInputSetting setting of
-              Left e -> SettingInvalid e
-              Right () -> case xkbLifecycle facet of
-                FacetUnavailable -> SettingUnavailable
-                FacetRemoved -> SettingUnavailable
-                FacetDiscovering -> SettingPending
-                FacetReady | ScrollLock _ <- setting, maybe True ((< 3) . objectVersion) (xkbObject facet) -> SettingUnsupported
-                FacetReady -> SettingPending
-    | libinputKey (settingKey setting) = SettingResult setting 0 (facetGeneration (inputLibinput device)) (objectId <$> facetObject (inputLibinput device)) $ case validateInputSetting setting of
-        Left e -> SettingInvalid e
-        Right () -> case facetLifecycle (inputLibinput device) of
-          FacetUnavailable -> SettingUnavailable
-          FacetRemoved -> SettingUnavailable
-          FacetDiscovering -> SettingPending
-          FacetReady -> case supportsSetting (inputLibinput device) setting of
-            Nothing -> SettingPending
-            Just False -> SettingUnsupported
-            Just True -> SettingPending
+         in SettingResult setting 0 (xkbGeneration facet) (objectId <$> xkbObject facet) $ case xkbLifecycle facet of
+              FacetUnavailable -> SettingUnavailable
+              FacetRemoved -> SettingUnavailable
+              FacetDiscovering -> SettingPending
+              FacetReady | ScrollLock _ <- setting, maybe True ((< 3) . objectVersion) (xkbObject facet) -> SettingUnsupported
+              FacetReady -> SettingPending
+    | libinputKey (settingKey setting) = SettingResult setting 0 (facetGeneration (inputLibinput device)) (objectId <$> facetObject (inputLibinput device)) $ case facetLifecycle (inputLibinput device) of
+        FacetUnavailable -> SettingUnavailable
+        FacetRemoved -> SettingUnavailable
+        FacetDiscovering -> SettingPending
+        FacetReady -> case supportsSetting (inputLibinput device) setting of
+          Nothing -> SettingPending
+          Just False -> SettingUnsupported
+          Just True -> SettingPending
     | otherwise = classify kind setting
-  classify kind setting = case validateInputSetting setting of
-    Left errorValue -> SettingResult setting 0 Nothing Nothing (SettingInvalid errorValue)
-    Right () -> case setting of
-      RepeatInfo _ _ -> result (kind == Keyboard)
-      ScrollFactor _ -> result (kind == Pointer)
-      MapRectangle _ -> result (kind /= Keyboard)
-      MapOutput target
-        | kind == Keyboard -> result False
-        | Just name <- target -> case Map.lookup name outputs of
-            Nothing -> SettingResult setting 0 Nothing Nothing SettingUnavailable
-            Just output -> SettingResult setting 0 Nothing (Just output) SettingPending
-        | otherwise -> result True
-      _ -> SettingResult setting 0 Nothing Nothing SettingUnavailable
-     where
-      result supported = SettingResult setting 0 Nothing Nothing (if supported then SettingPending else SettingUnsupported)
+  classify kind setting = case setting of
+    RepeatInfo _ _ -> result (kind == Keyboard)
+    ScrollFactor _ -> result (kind == Pointer)
+    MapRectangle _ -> result (kind /= Keyboard)
+    MapOutput target
+      | kind == Keyboard -> result False
+      | Just name <- target -> case Map.lookup name outputs of
+          Nothing -> SettingResult setting 0 Nothing Nothing SettingUnavailable
+          Just output -> SettingResult setting 0 Nothing (Just output) SettingPending
+      | otherwise -> result True
+    _ -> SettingResult setting 0 Nothing Nothing SettingUnavailable
+   where
+    result supported = SettingResult setting 0 Nothing Nothing (if supported then SettingPending else SettingUnsupported)
 
 data InputSession = InputSession
   { inputSessionAvailable :: IORef Bool
