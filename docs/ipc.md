@@ -72,8 +72,9 @@ for its application receipt. If no receipt arrives, that request receives
 and other connections remain available. A timeout does not undo a command that
 may apply later, and commands are never automatically replayed.
 Oversized snapshots produce an explicit `snapshot_too_large` error instead of a
-partial snapshot. Titles, output names, and layout descriptions are limited to 1024 Unicode characters with
-explicit truncation indicators. Escaped JSON byte size still obeys the line limit.
+partial snapshot. Text fields are not truncated, because river limits each string
+it sends to 4096 bytes. Only the input device and keyboard lists keep a byte
+budget, because they grow with hardware.
 
 The runtime owns one wake worker. Ingress callbacks signal it without waiting
 for transport, and repeated signals coalesce into one pending flag. A client
@@ -132,8 +133,7 @@ that is unique within the IPC session. `wire_id` is an ephemeral diagnostic and
 can be reused; never use it as a stable identity.
 
 Each device has nullable `name`, `type`, lifecycle (`discovering`, `ready`,
-`removed`), libinput availability and an `xkb` object. Names are capped at 128
-characters with `name_truncated`. Defaults and current values are arrays of
+`removed`), libinput availability and an `xkb` object. Defaults and current values are arrays of
 `{setting, value}`; an absent setting is unknown, never an assumed default.
 Generic input management has no default/current feedback. XKB has no defaults.
 Results are `{setting, requested, revision, status}`. Status is one of `pending`,
@@ -144,19 +144,15 @@ Only libinput success acknowledgements mean applied. Generic requests remain
 sent. XKB layout/lock requests become observed only after matching feedback.
 Keymap compilation success permits assignment; assignment remains sent. Local
 load errors are unavailable; compositor compilation errors are rejected_invalid.
-No keymap contents are serialized. Paths and selectors have explicit truncation flags and are capped at 128
-characters. Custom curves include movement type, step, point_count, at most eight
-points and an explicit truncated flag; matrix values are finite or null.
-Diagnostics use the same bounded collection shape, capped at 1024 encoded bytes,
-with at most 32 retained facet messages, each projected as a 128-character
-`message` and explicit `truncated` flag. Nonfinite numbers are null.
+No keymap contents are serialized. Matrix values are finite or null.
+`diagnostics` is an array of message strings; a device keeps at most 16 XKB and
+16 libinput messages. Nonfinite numbers are null.
 
 `xkb` is null when input management is unavailable; otherwise it is a bounded
 collection (8000 encoded item bytes) of `{identity, name, state}` for keyboards.
 State holds availability, nullable layout_index/layout_name, caps_lock, num_lock,
 and scroll_lock. Unknown locks are null, including scroll lock before protocol
-v3. Layout names are capped at 128 characters with `layout_name_truncated`; keyboard
-summary names have `name_truncated`. Separate keyboards retain separate
+v3. Separate keyboards retain separate
 states; this is not an active-global-keyboard indicator. The shipped Waybar helper
 sorts by name then identity and displays every retained device as `name: layout`,
 using `?` for unknown values and an ellipsis when the collection is truncated.
@@ -165,16 +161,14 @@ Tiling layout remains the workspace's `layout` field.
 Input changes wake the runtime owner and are projected with the same immutable
 inventory as the window snapshot. Workers never read input maps or send Wayland
 requests. Unchanged input does not trigger another wake. Input changes are logged
-as bounded structured JSON with session/device/setting identities and device names
-(capped at 128 characters, with `name_truncated`). JSON and Pango
+as structured JSON with device and setting identities and device names. JSON and Pango
 escaping are separate; the Waybar helper escapes the combined display string and
 never interpolates device or layout data into a shell command. Older snapshots
 with absent or null xkb remain accepted.
 
-When input protocols are unavailable, `requested_rules` contains bounded rule
-summaries (`name_pattern`, nullable `type`, bounded `settings`). Each requested
-setting explicitly includes `setting`, `requested`, and status `unavailable`. The rule collection has an 8000-byte
-item budget and each settings collection 4096 bytes, with counts and truncation.
+When input protocols are unavailable, `requested_rules` contains rule summaries
+(`name_pattern`, nullable `type`, `settings`). Each requested setting explicitly
+includes `setting`, `requested`, and status `unavailable`.
 The pattern is its escaped source form. This diagnostic never claims a matched
 device or an applied setting. Status logs omit unchanged current values, so a
 layout feedback stream does not duplicate terminal setting-result log entries.
@@ -185,7 +179,7 @@ Setting names and values in `requested`, `defaults`, and `current` are:
 | --- | --- |
 | `repeat_info` | `{rate, delay}` integer rate and delay |
 | `scroll_factor`, `accel_speed` | finite number |
-| `map_output` | null to clear, or `{name, truncated}` |
+| `map_output` | null to clear, or `{name}` |
 | `map_rectangle` | null to clear, or `[x, y, width, height]` |
 | `send_events` | `events_enabled`, `events_disabled`, `events_disabled_on_external_mouse` |
 | `tap`, `drag`, `natural_scroll`, `left_handed`, `middle_emulation`, `scroll_button_lock`, `disable_while_typing`, `disable_while_trackpoint` | boolean |
@@ -198,15 +192,13 @@ Setting names and values in `requested`, `defaults`, and `current` are:
 | `scroll_method` | `scroll_none`, `scroll_two_finger`, `scroll_edge`, `scroll_on_button` |
 | `scroll_button` | unsigned button code |
 | `rotation` | unsigned degrees, below 360 |
-| `keymap` | `{path, truncated}`; never file contents |
-| `active_layout` | `{index}` or `{name, truncated}` |
+| `keymap` | `{path}`; never file contents |
+| `active_layout` | `{index}` or `{name}` |
 | `caps_lock`, `num_lock`, `scroll_lock` | boolean |
 
-A custom curve summary is `{type, step, point_count, points, truncated}`. Type is
-`curve_fallback`, `curve_motion`, or `curve_scroll`. At most three curves and eight
-preview points per curve are serialized. Valid requested curves contain at most
-64 points; point_count always describes the complete input. Text values above
-use a 128-character cap and explicit flags. A defensive nonfinite numeric input
+A custom curve is `{type, step, points}`. Type is `curve_fallback`,
+`curve_motion`, or `curve_scroll`. Valid curves contain at most 64 points, and
+every point is serialized. A defensive nonfinite numeric input
 is null, including a null matrix/curve component; public validation rejects it
 before connection. Null clear requests differ from absent unknown current values.
 

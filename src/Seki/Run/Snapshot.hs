@@ -7,7 +7,6 @@ import Data.List (find)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
 import Data.Text (Text)
-import Data.Text qualified as Text
 import Seki.Internal.Core.Layout (LayoutClass, description)
 import Seki.Internal.Core.Scratchpad.Types (ScratchpadState (..))
 import Seki.Internal.Core.StackSet (OutputId (..), Screen (..), StackSet (..), WindowId (..), Workspace (..), integrate', peek)
@@ -27,8 +26,7 @@ projectSnapshot session label tags revision st runtime =
     , "revision" .= revision
     , "outputs" .= map outputValue (riverInventoryOutputs inventory)
     , "workspaces" .= map workspaceValue tags
-    , "focused_title" .= fmap (Text.take 1024) title
-    , "focused_title_truncated" .= maybe False ((> 1024) . Text.length) title
+    , "focused_title" .= title
     , "keyboard_available" .= keyboardAvailable
     , "xkb" .= xkbValue (riverRuntimeInput runtime)
     , "input" .= inputValue (riverRuntimeInput runtime)
@@ -56,15 +54,13 @@ projectSnapshot session label tags revision st runtime =
       , "occupied" .= maybe False (not . null . integrate' . stack) ws
       , "visible" .= any ((== t) . tag . workspace) shown
       , "focused" .= (t == selected)
-      , "layout" .= fmap (take 1024 . description . layout) ws
-      , "layout_truncated" .= maybe False ((> 1024) . length . take 1025 . description . layout) ws
+      , "layout" .= fmap (description . layout) ws
       ]
    where
     ws = find ((== t) . tag) allWorkspaces
   outputValue o =
     object
-      [ "name" .= fmap (Text.take 1024) (riverOutputName o)
-      , "name_truncated" .= maybe False ((> 1024) . Text.length) (riverOutputName o)
+      [ "name" .= riverOutputName o
       , "wire_id" .= ident
       , "wl_output_name" .= riverOutputWlOutputName o
       , "workspace" .= fmap (label . tag . workspace) (find ((== OutputId ident) . output) shown)

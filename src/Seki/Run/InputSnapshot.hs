@@ -1,13 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Bounded wire projection of immutable input state. No wire handles escape.
+-- | Wire projection of immutable input state. No wire handles escape.
 module Seki.Run.InputSnapshot (inputValue, inputStatusValue, xkbValue, settingValue, outcomeName) where
 
 import Data.Aeson (Value (..), encode, object, toJSON, (.=))
 import Data.ByteString.Lazy qualified as Lazy
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
-import Data.Text qualified as Text
 import Seki.Internal.Input
 import Seki.Run.Input
 import Seki.Run.Libinput
@@ -16,6 +15,7 @@ import Seki.Run.XkbConfig
 import Seki.Wire.Connection.ObjectTable (objectId)
 import Seki.Wire.Types (objectIdValue)
 
+-- | Device lists grow with hardware, so they keep a byte budget instead of failing the line limit.
 bounded :: Int -> [Value] -> Value
 bounded budget values = object ["items" .= kept, "count" .= length values, "truncated" .= (length kept /= length values)]
  where
@@ -32,7 +32,7 @@ inputValue (InputUnavailable rules) =
   object
     [ "availability" .= ("unavailable" :: Text)
     , "requested_rule_count" .= length rules
-    , "requested_rules" .= bounded 8000 (map ruleValue rules)
+    , "requested_rules" .= map ruleValue rules
     , "devices" .= bounded 0 []
     ]
  where
@@ -40,12 +40,7 @@ inputValue (InputUnavailable rules) =
     object
       [ "name_pattern" .= devicePatternText (ruleDeviceName rule)
       , "type" .= fmap deviceTypeName (ruleDeviceType rule)
-      , "settings"
-          .= bounded
-            4096
-            [ object ["setting" .= keyName (settingKey setting), "requested" .= settingValue setting, "status" .= ("unavailable" :: Text)]
-            | setting <- ruleSettings rule
-            ]
+      , "settings" .= [object ["setting" .= keyName (settingKey setting), "requested" .= settingValue setting, "status" .= ("unavailable" :: Text)] | setting <- ruleSettings rule]
       ]
 inputValue (InputAvailable inventory) =
   object
@@ -58,14 +53,13 @@ inputStatusValue unavailable@(InputUnavailable _) = inputValue unavailable
 inputStatusValue (InputAvailable inventory) =
   object
     [ "availability" .= ("available" :: Text)
-    , "devices" .= bounded 8000 (map statusValue (Map.elems (inputDevices inventory)))
+    , "devices" .= map statusValue (Map.elems (inputDevices inventory))
     ]
  where
   statusValue device =
     object
       [ "identity" .= identityValue device
-      , "name" .= fmap (Text.take 128) (inputName device)
-      , "name_truncated" .= maybe False ((> 128) . Text.length) (inputName device)
+      , "name" .= inputName device
       , "libinput" .= facetName (facetLifecycle (inputLibinput device))
       , "xkb" .= facetName (xkbLifecycle (inputXkb device))
       , "results" .= resultsValue device
@@ -90,8 +84,7 @@ deviceValue d =
   object
     [ "identity" .= identityValue d
     , "wire_id" .= objectIdValue (objectId (inputObject d))
-    , "name" .= fmap (Text.take 128) (inputName d)
-    , "name_truncated" .= maybe False ((> 128) . Text.length) (inputName d)
+    , "name" .= inputName d
     , "type" .= fmap deviceTypeName (inputType d)
     , "lifecycle" .= lifecycleName (inputLifecycle d)
     , "libinput" .= facetName (facetLifecycle (inputLibinput d))
@@ -99,22 +92,21 @@ deviceValue d =
     , "defaults" .= values (inputDefaults d)
     , "current" .= values (inputCurrent d)
     , "results" .= resultsValue d
-    , "diagnostics" .= bounded 1024 [object ["message" .= Text.take 128 message, "truncated" .= (Text.length message > 128)] | message <- xkbDiagnostics (inputXkb d) <> facetDiagnostics (inputLibinput d)]
+    , "diagnostics" .= (xkbDiagnostics (inputXkb d) <> facetDiagnostics (inputLibinput d))
     ]
  where
   values m = [object ["setting" .= keyName k, "value" .= settingValue v] | (k, v) <- Map.toList m]
 
 xkbValue :: RiverInputSnapshot -> Value
 xkbValue (InputUnavailable _) = Null
-xkbValue (InputAvailable inventory) = bounded 8000 [object ["identity" .= identityValue d, "name" .= fmap (Text.take 128) (inputName d), "name_truncated" .= maybe False ((> 128) . Text.length) (inputName d), "state" .= keyboardValue d] | d <- Map.elems (inputDevices inventory), inputType d == Just Keyboard]
+xkbValue (InputAvailable inventory) = bounded 8000 [object ["identity" .= identityValue d, "name" .= inputName d, "state" .= keyboardValue d] | d <- Map.elems (inputDevices inventory), inputType d == Just Keyboard]
 
 keyboardValue :: InputDevice -> Value
 keyboardValue d =
   object
     [ "availability" .= facetName (xkbLifecycle facet)
     , "layout_index" .= fmap fst (xkbLayout current)
-    , "layout_name" .= fmap (Text.take 128) (xkbLayout current >>= snd)
-    , "layout_name_truncated" .= maybe False ((> 128) . Text.length) (xkbLayout current >>= snd)
+    , "layout_name" .= (xkbLayout current >>= snd)
     , "caps_lock" .= xkbCapsLock current
     , "num_lock" .= xkbNumLock current
     , "scroll_lock" .= xkbScrollLock current
@@ -191,7 +183,7 @@ settingValue :: InputSetting -> Value
 settingValue v = case v of
   RepeatInfo rate delay -> object ["rate" .= rate, "delay" .= delay]
   ScrollFactor value -> toJSON (finite value)
-  MapOutput value -> maybe Null (\name -> object ["name" .= Text.take 128 name, "truncated" .= (Text.length name > 128)]) value
+  MapOutput value -> maybe Null (\name -> object ["name" .= name]) value
   MapRectangle rectangle -> maybe Null (\(InputRectangle x y w h) -> toJSON [x, y, w, h]) rectangle
   SendEvents value -> toJSON (sendEventsModeName value)
   Tap value -> toJSON value
@@ -200,7 +192,7 @@ settingValue v = case v of
   DragLock value -> toJSON (dragLockModeName value)
   ThreeFingerDrag value -> toJSON (threeFingerDragModeName value)
   CalibrationMatrix values -> toJSON (map finite values)
-  Acceleration (AccelerationCurves curves) -> toJSON [object ["type" .= curveType kind, "step" .= finite step, "point_count" .= length points, "points" .= map finite (take 8 points), "truncated" .= (length points > 8)] | AccelCurve kind step points <- take 3 curves]
+  Acceleration (AccelerationCurves curves) -> toJSON [object ["type" .= curveType kind, "step" .= finite step, "points" .= map finite points] | AccelCurve kind step points <- curves]
   Acceleration (AccelerationProfile profile) -> toJSON (profileName profile)
   AccelSpeed value -> toJSON (finite value)
   NaturalScroll value -> toJSON value
@@ -214,9 +206,9 @@ settingValue v = case v of
   DisableWhileTyping value -> toJSON value
   DisableWhileTrackpoint value -> toJSON value
   Rotation value -> toJSON value
-  Keymap path -> object ["path" .= take 128 path, "truncated" .= (length path > 128)]
+  Keymap path -> object ["path" .= path]
   ActiveLayout (LayoutByIndex index) -> object ["index" .= index]
-  ActiveLayout (LayoutByName name) -> object ["name" .= Text.take 128 name, "truncated" .= (Text.length name > 128)]
+  ActiveLayout (LayoutByName name) -> object ["name" .= name]
   CapsLock value -> toJSON value
   NumLock value -> toJSON value
   ScrollLock value -> toJSON value
