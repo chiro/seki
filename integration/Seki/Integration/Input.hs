@@ -31,7 +31,7 @@ import Seki.Wire.Connection
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit, objectId)
 import Seki.Wire.Connection.Registry
 import Seki.Wire.Transport (ConnectionTarget (..))
-import System.Directory (copyFile, doesDirectoryExist, doesFileExist, getCurrentDirectory, listDirectory)
+import System.Directory (copyFile, doesFileExist, getCurrentDirectory)
 import System.Environment (getEnv, getExecutablePath, lookupEnv)
 import System.FilePath (takeDirectory, (</>))
 import System.IO.Temp (withSystemTempDirectory)
