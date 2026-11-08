@@ -219,8 +219,8 @@ Installed sessions route that action through the same build lifecycle.
 
 The applied revision receipt acknowledges reduction of the request, not build,
 validation, activation, or a displayed frame. The additive `build` snapshot field
-is null for direct runtimes. Installed sessions report state, session epoch,
-generation, queued generation where applicable, error and full disk log path.
+is null for direct runtimes. Installed sessions report state, generation,
+queued generation where applicable, error and full disk log path.
 States include idle, building, failed and validated. A validated image
 has passed its own `--check`; this does not acknowledge activation. A fresh
 managed session and its new IPC session identity establish successful runtime
