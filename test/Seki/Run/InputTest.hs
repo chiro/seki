@@ -4,22 +4,23 @@
 module Seki.Run.InputTest (tests) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryTakeMVar)
 import Control.Exception (IOException, bracket, try)
 import Data.ByteString qualified as BS
+import Data.List (isPrefixOf)
 import Data.Map.Strict qualified as Map
 import Seki.Internal.Input
 import Seki.Protocol.RiverInputManagementV1 qualified as Input
 import Seki.Protocol.RiverLibinputConfigV1 qualified as L
 import Seki.Protocol.RiverXkbConfigV1 qualified as X
 import Seki.Protocol.Wayland qualified as Wayland
-import Seki.Run.External
 import Seki.Run.Input
 import Seki.Run.Keymap
 import Seki.Run.Libinput
 import Seki.Run.XkbConfig
 import Seki.Wire.Connection.ObjectTable
 import Seki.Wire.Transport (OwnedFd, closeOwnedFd, withOwnedFd)
-import System.Directory (removeFile)
+import System.Directory (getSymbolicLinkTarget, listDirectory, removeFile)
 import System.FilePath ((</>))
 import System.IO (hClose, hPutStr, openTempFile)
 import System.IO.Temp (withSystemTempDirectory)
@@ -75,39 +76,41 @@ tests =
         bracket (openTempFile "/tmp" "seki-keymap-test") (\(path, _) -> removeFile path) $ \(path, handle) -> do
           hPutStr handle "xkb_keymap {};"
           hClose handle
-          bracket newKeymapWorker closeKeymapWorker $ \worker -> do
-            _ <- bindExternalWake (keymapWake worker) (pure True)
-            admitted <- enqueueKeymap worker (1 :: Int) path
-            assertBool "admitted" admitted
-            let await = drainKeymaps worker >>= \caseValue -> case caseValue of [] -> threadDelay 1000 >> await; value -> pure value
-            completed <- timeout 3000000 await
-            case completed of
-              Just [(1, Just fd)] -> do
-                writeFile path "changed"
-                bytes <- withOwnedFd fd (\raw -> fdRead raw 100)
-                assertEqual "source mutation cannot change sealed snapshot" (Right "xkb_keymap {};\0") bytes
-                rejected <- withOwnedFd fd (\raw -> try @IOException (fdWrite raw "mutation"))
-                assertBool "snapshot sealed against writes" (case rejected of Right (Left _) -> True; _ -> False)
-                assertBool "close once" =<< closeOwnedFd fd
-                assertBool "second close no ownership" . not =<< closeOwnedFd fd
-              other -> assertFailure ("missing helper result: " <> show (fmap (map fst) other))
+          loadKeymapOnce path >>= \case
+            Just fd -> do
+              writeFile path "changed"
+              bytes <- withOwnedFd fd (\raw -> fdRead raw 100)
+              assertEqual "source mutation cannot change sealed snapshot" (Right "xkb_keymap {};\0") bytes
+              rejected <- withOwnedFd fd (\raw -> try @IOException (fdWrite raw "mutation"))
+              assertBool "snapshot sealed against writes" (case rejected of Right (Left _) -> True; _ -> False)
+              assertBool "close once" =<< closeOwnedFd fd
+              assertBool "second close no ownership" . not =<< closeOwnedFd fd
+            Nothing -> assertFailure "valid keymap rejected"
     , testCase "keymap loader rejects missing, directory, empty, malformed UTF8 and embedded NUL" $
         bracket (openTempFile "/tmp" "seki-keymap-invalid") (\(path, _) -> removeFile path) $ \(path, handle) -> do
           hClose handle
-          bracket newKeymapWorker closeKeymapWorker $ \worker -> do
-            _ <- bindExternalWake (keymapWake worker) (pure True)
-            let check file = do
-                  admitted <- enqueueKeymap worker () file
-                  assertBool "admitted" admitted
-                  let await = drainKeymaps worker >>= \items -> case items of [] -> threadDelay 1000 >> await; value -> pure value
-                  result <- timeout 3000000 await
-                  case result of Just [((), Nothing)] -> pure (); _ -> assertFailure "invalid input returned a resource or hung"
-            check (path <> ".missing")
-            check "/tmp"
-            mapM_ (\bytes -> BS.writeFile path bytes >> check path) [BS.empty, BS.pack [0xc0, 0x80], BS.pack [0xed, 0xa0, 0x80], BS.pack [0, 65], BS.replicate (4 * 1024 * 1024 + 1) 65]
-            closeKeymapWorker worker
-            assertEqual "closed admission" False =<< enqueueKeymap worker () path
-            assertBool "closed completions empty" . null =<< drainKeymaps worker
+          let check file = loadKeymapOnce file >>= assertRejected file
+          check (path <> ".missing")
+          check "/tmp"
+          mapM_ (\bytes -> BS.writeFile path bytes >> check path) [BS.empty, BS.pack [0xc0, 0x80], BS.pack [0xed, 0xa0, 0x80], BS.pack [0, 65], BS.replicate (4 * 1024 * 1024 + 1) 65]
+    , testCase "keymap loads wake the owner and close results that arrive after close" $
+        withSystemTempDirectory "seki-keymap" $ \directory -> do
+          let path = directory </> "keymap.xkb"
+          BS.writeFile path "xkb_keymap {};"
+          loads <- newKeymapLoads
+          woke <- newEmptyMVar
+          startKeymapLoad loads (putMVar woke ()) (1 :: Int) path
+          timeout 3000000 (takeMVar woke) >>= assertEqual "owner woken once the result is ready" (Just ())
+          drainKeymaps loads >>= \case
+            [(1, Just fd)] -> closeOwnedFd fd >>= assertBool "drained result owned by the caller"
+            other -> assertFailure ("unexpected results " <> show (map fst other))
+          closeKeymapLoads loads
+          before <- keymapSnapshots
+          startKeymapLoad loads (putMVar woke ()) 2 path
+          threadDelay 200000
+          keymapSnapshots >>= assertEqual "late result closed" before
+          tryTakeMVar woke >>= assertEqual "closed loads do not wake" Nothing
+          map fst <$> drainKeymaps loads >>= assertEqual "closed loads deliver nothing" []
     , testCase "keymap loader keeps a final NUL and accepts exactly 4 MiB" $
         withSystemTempDirectory "seki-keymap" $ \directory -> do
           let path = directory </> "keymap.xkb"
@@ -238,15 +241,13 @@ tests =
     pure [InputRule patternValue Nothing settings]
 
 loadKeymapOnce :: FilePath -> IO (Maybe OwnedFd)
-loadKeymapOnce path = bracket newKeymapWorker closeKeymapWorker $ \worker -> do
-  _ <- bindExternalWake (keymapWake worker) (pure True)
-  enqueueKeymap worker () path >>= assertBool "admitted"
-  let await =
-        drainKeymaps worker >>= \case
-          [] -> threadDelay 1000 >> await
-          [((), fd)] -> pure fd
-          _ -> assertFailure "more than one result"
-  timeout 3000000 await >>= maybe (assertFailure "keymap load hung") pure
+loadKeymapOnce path = timeout 3000000 (loadKeymap path) >>= maybe (assertFailure "keymap load hung") pure
+
+keymapSnapshots :: IO Int
+keymapSnapshots = do
+  entries <- listDirectory "/proc/self/fd"
+  targets <- mapM (\entry -> either (const "") id <$> try @IOException (getSymbolicLinkTarget ("/proc/self/fd" </> entry))) entries
+  pure (length (filter ("/memfd:seki-keymap" `isPrefixOf`) targets))
 
 snapshotOf :: Maybe OwnedFd -> IO (Maybe BS.ByteString)
 snapshotOf = traverse $ \fd -> do

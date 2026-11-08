@@ -528,12 +528,14 @@ Waybar case to capture 30 seconds of native frames; compilation and performance
 runs must remain serial with fixtures.
 
 `m3-input-worker-lifecycle` starts a separate private runtime with a test-only
-loader interposer. It confirms the stopped loader inherits only fd 3, receives a
-normal workspace application reply while the loader is held, reaps work on device
-replacement, and reaps a fresh held helper when river ends. It never signals an
-unrelated process. `m3-input-output-mapping` disables/re-enables a private headless
-output and checks unavailable then resubmitted mapping. It claims submission,
-not applied pointer coordinates. `m3-input-perf` retains 1000 contiguous native
+interposer that holds the thread opening the keymap. It receives a normal
+workspace application reply while the load is held, starts the replacement
+device's load while the first is still held, and checks that the runtime exits
+when river ends with both loads still held. The suite links the threaded RTS,
+as generated user configurations do; on the single-threaded RTS a held load
+would stall the whole runtime. `m3-input-output-mapping` disables and re-enables
+a private headless output and checks unavailable then resubmitted mapping. It
+claims submission, not applied pointer coordinates. `m3-input-perf` retains 1000 contiguous native
 layout-to-subscriber receipts with a 50 ms p99 ceiling. Its bounded process budget
 is 30 seconds because the source emits at 10 ms intervals; ordinary assertions
 retain their 10-second budget. The full suite has a 480-second outer limit for the input cases and five
