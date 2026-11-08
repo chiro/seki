@@ -125,12 +125,12 @@ error retains the subscription's request ID.
 
 `input.availability` is `available` or `unavailable`. Absence of optional input
 protocols does not stop window management. `requested_rule_count` accompanies
-unavailability. An available inventory has a session object (`pid`, monotonic
-`token`, process `unique`) and `devices`: `{items, count, truncated}`. Count is the
-complete live inventory size; items are a deterministic generation-ordered prefix
-whose encoded values consume at most 24000 bytes. No removal history is retained.
-Device identity combines this session and a monotonic `generation`. `wire_id` is
-an ephemeral diagnostic and can be reused; never use it as a stable identity.
+unavailability. An available inventory has `devices`: `{items, count, truncated}`.
+Count is the complete live inventory size; items are a deterministic
+generation-ordered prefix whose encoded values consume at most 24000 bytes. No
+removal history is retained. A device's `identity` is `{generation}`, a counter
+that is unique within the IPC session. `wire_id` is an ephemeral diagnostic and
+can be reused; never use it as a stable identity.
 
 Each device has nullable `name`, `type`, lifecycle (`discovering`, `ready`,
 `removed`), libinput availability and an `xkb` object. Names are capped at 128
