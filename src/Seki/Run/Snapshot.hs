@@ -30,10 +30,8 @@ projectSnapshot session label tags revision st runtime =
     , "focused_title" .= fmap (Text.take 1024) title
     , "focused_title_truncated" .= maybe False ((> 1024) . Text.length) title
     , "keyboard_available" .= keyboardAvailable
-    , "urgent" .= Null
     , "xkb" .= xkbValue (riverRuntimeInput runtime)
     , "input" .= inputValue (riverRuntimeInput runtime)
-    , "submap" .= Null
     ]
  where
   status slot = case slot of

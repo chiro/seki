@@ -44,9 +44,8 @@ version 4. Its registry global and wire ID remain session-local.
 Each workspace has `tag`, `occupied`, `visible`, `focused`, and `layout`.
 `focused_title` is nullable. Workspace focus expresses policy intent.
 `keyboard_available` separately describes layer focus and seat availability.
-`urgent`, `xkb`, and deferred `submap` are null because these capabilities are
-unsupported in this version. Output wire IDs are session-local. They are not
-persistent output names or window identities.
+`xkb` describes keyboard layouts; see below. Output wire IDs are session-local.
+They are not persistent output names or window identities.
 
 The `scratchpads` array contains `name` and `state` for each owned or pending
 scratchpad. States are `pending`, `shown`, and `hidden`. An unresolved launch
