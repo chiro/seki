@@ -1,8 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 
 module Seki.Run.Input (
-  InputSessionIdentity (..),
-  InputIdentity (..),
   InputGeneration (..),
   DeviceLifecycle (..),
   InputDevice (..),
@@ -36,9 +34,6 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Unique (hashUnique, newUnique)
-import Data.Word (Word64)
-import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Internal.Input
 import Seki.Protocol.RiverInputManagementV1 qualified as Input
 import Seki.Protocol.RiverLibinputConfigV1 qualified as L
@@ -54,17 +49,11 @@ import Seki.Wire.Connection.ObjectTable (Object, objectId, objectVersion)
 import Seki.Wire.Connection.Registry
 import Seki.Wire.Transport (closeOwnedFd)
 import Seki.Wire.Types (ObjectId)
-import System.Posix.Process (getProcessID)
-
-data InputSessionIdentity = InputSessionIdentity Int Word64 Int deriving (Eq, Ord, Show)
-
-data InputIdentity = InputIdentity InputSessionIdentity InputGeneration deriving (Eq, Ord, Show)
 
 newtype InputGeneration = InputGeneration Integer deriving (Eq, Ord, Show)
 data DeviceLifecycle = Discovering | Ready | Removed deriving (Eq, Show)
 data InputDevice = InputDevice
-  { inputIdentity :: InputIdentity
-  , inputGeneration :: InputGeneration
+  { inputGeneration :: InputGeneration
   , inputObject :: Object Input.RiverInputDeviceV1
   , inputLifecycle :: DeviceLifecycle
   , inputName :: Maybe Text
@@ -77,20 +66,19 @@ data InputDevice = InputDevice
   }
   deriving (Eq, Show)
 data InputInventory = InputInventory
-  { inputSessionIdentity :: InputSessionIdentity
-  , inputNextGeneration :: Integer
+  { inputNextGeneration :: Integer
   , inputDevices :: Map InputGeneration InputDevice
   }
   deriving (Eq, Show)
 
 emptyInputInventory :: InputInventory
-emptyInputInventory = InputInventory (InputSessionIdentity 0 0 0) 0 Map.empty
+emptyInputInventory = InputInventory 0 Map.empty
 
 discoverInput :: Object Input.RiverInputDeviceV1 -> InputInventory -> InputInventory
 discoverInput object inventory =
   inventory
     { inputNextGeneration = next + 1
-    , inputDevices = Map.insert generation (InputDevice (InputIdentity (inputSessionIdentity inventory) generation) generation object Discovering Nothing Nothing Map.empty Map.empty (emptyXkbFacet FacetUnavailable) (emptyFacet FacetUnavailable) Map.empty) (inputDevices inventory)
+    , inputDevices = Map.insert generation (InputDevice generation object Discovering Nothing Nothing Map.empty Map.empty (emptyXkbFacet FacetUnavailable) (emptyFacet FacetUnavailable) Map.empty) (inputDevices inventory)
     }
  where
   next = inputNextGeneration inventory
@@ -208,7 +196,7 @@ data InputSession = InputSession
   , inputNotify :: IORef (IO ())
   , inputOutputs :: IORef (Map Text ObjectId)
   , inputApply :: IO ()
-  , inputKeymaps :: KeymapLoads (InputIdentity, Object X.RiverXkbKeyboardV1, SettingResult)
+  , inputKeymaps :: KeymapLoads (InputGeneration, Object X.RiverXkbKeyboardV1, SettingResult)
   , inputDrain :: IO ()
   }
 
@@ -235,11 +223,10 @@ openInputSession rules wayland failed = do
       Left _ -> pure (Right Nothing)
       Right [] -> pure (Right Nothing)
       Right (global : _) -> mask $ \restore -> do
-        identity <- InputSessionIdentity <$> (fromIntegral <$> getProcessID) <*> getMonotonicTimeNSec <*> (hashUnique <$> newUnique)
         available <- newIORef True
-        state <- newIORef emptyInputInventory{inputSessionIdentity = identity}
+        state <- newIORef emptyInputInventory
         notify <- newIORef (pure ())
-        published <- newIORef (True, emptyInputInventory{inputSessionIdentity = identity})
+        published <- newIORef (True, emptyInputInventory)
         outputs <- newIORef Map.empty
         libManager <- newIORef Nothing
         libEnabled <- newIORef False
@@ -265,7 +252,7 @@ openInputSession rules wayland failed = do
                     when ((live, latest) /= previous) $ do
                       writeIORef published (live, latest)
                       readIORef notify >>= id
-                  matchesToken (identityValue, object, desired) device = inputIdentity device == identityValue && inputLifecycle device == Ready && xkbObject (inputXkb device) == Just object && xkbGeneration (inputXkb device) == settingFacet desired && maybe False (\r -> settingRevision r == settingRevision desired && settingDesired r == settingDesired desired) (Map.lookup KeymapKey (inputResults device))
+                  matchesToken (generation, object, desired) device = inputGeneration device == generation && inputLifecycle device == Ready && xkbObject (inputXkb device) == Just object && xkbGeneration (inputXkb device) == settingFacet desired && maybe False (\r -> settingRevision r == settingRevision desired && settingDesired r == settingDesired desired) (Map.lookup KeymapKey (inputResults device))
                   setKeymapOutcome token outcome = modifyIORef' state (\i -> i{inputDevices = fmap (\d -> if matchesToken token d then d{inputResults = Map.adjust (\r -> r{settingOutcome = outcome}) KeymapKey (inputResults d)} else d) (inputDevices i)})
                   retireKeymap keymap = do
                     modifyIORef' keymapObjects (Map.delete (objectId keymap))
@@ -316,9 +303,9 @@ openInputSession rules wayland failed = do
                       , Keymap path <- settingDesired desired = do
                           count <- readIORef keymapOutstanding
                           when (count < 32) $ do
-                            startKeymapLoad keymaps (readIORef notify >>= id) (inputIdentity device, object, desired) path
+                            startKeymapLoad keymaps (readIORef notify >>= id) (inputGeneration device, object, desired) path
                             modifyIORef' keymapOutstanding (+ 1)
-                            setKeymapOutcome (inputIdentity device, object, desired) SettingLoading
+                            setKeymapOutcome (inputGeneration device, object, desired) SettingLoading
                     sendOne object (key, desired)
                       | maybe True ((== SettingSent) . settingOutcome) (Map.lookup KeymapKey (inputResults device))
                       , settingOutcome desired == SettingPending

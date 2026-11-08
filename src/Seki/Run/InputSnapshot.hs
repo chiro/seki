@@ -50,7 +50,6 @@ inputValue (InputUnavailable rules) =
 inputValue (InputAvailable inventory) =
   object
     [ "availability" .= ("available" :: Text)
-    , "session" .= sessionValue (inputSessionIdentity inventory)
     , "devices" .= bounded 24000 (map deviceValue (Map.elems (inputDevices inventory)))
     ]
 
@@ -59,7 +58,6 @@ inputStatusValue unavailable@(InputUnavailable _) = inputValue unavailable
 inputStatusValue (InputAvailable inventory) =
   object
     [ "availability" .= ("available" :: Text)
-    , "session" .= sessionValue (inputSessionIdentity inventory)
     , "devices" .= bounded 8000 (map statusValue (Map.elems (inputDevices inventory)))
     ]
  where
@@ -84,11 +82,8 @@ resultsValue device =
   | (key, result) <- Map.toList (inputResults device)
   ]
 
-sessionValue :: InputSessionIdentity -> Value
-sessionValue (InputSessionIdentity pid token unique) = object ["pid" .= pid, "token" .= token, "unique" .= unique]
-
 identityValue :: InputDevice -> Value
-identityValue d = let InputGeneration generation = inputGeneration d in object ["session" .= sessionValue (case inputIdentity d of InputIdentity session _ -> session), "generation" .= generation]
+identityValue d = let InputGeneration generation = inputGeneration d in object ["generation" .= generation]
 
 deviceValue :: InputDevice -> Value
 deviceValue d =
