@@ -143,7 +143,7 @@ withFixtureEnvironment extra transform policyConfig name outputCount action =
     ( do
         _ <- waitUntil "fixture outputs discovered" assertionTimeoutMicroseconds (readRiverInventory session) (\i -> length (riverInventoryOutputs i) == outputCount && all ((/= Nothing) . riverOutputRectangle) (riverInventoryOutputs i))
         namesByGlobal <- outputNames socketPath
-        initialState <- readPolicyState policy
+        initialState <- waitUntil "core attached to the discovered outputs" assertionTimeoutMicroseconds (readPolicyState policy) (\st -> case coreWorkspaces st of AttachedState ss _ -> 1 + length (SS.visible ss) == outputCount; HeadlessState _ -> False)
         inventory <- readRiverInventory session
         currentGlobal <- case coreWorkspaces initialState of
           AttachedState ss _ -> case find ((== SS.output (SS.current ss)) . SS.OutputId . objectIdValue . ObjectTable.objectId . riverOutputObject) (riverInventoryOutputs inventory) of
