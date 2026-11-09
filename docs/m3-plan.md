@@ -1,6 +1,6 @@
 # M3 Daily use implementation plan
 
-Status is **Software complete; daily-work acceptance pending**. Updated 2026-11-09 against `5aaf32fc9482bfabca38a6d0ae94ccffba673bde`, the head of #72.
+Status is **Software complete; daily-work acceptance pending**. Updated 2026-11-09 against `5aaf32fc9482bfabca38a6d0ae94ccffba673bde`.
 M3 makes seki usable for daily work in place of xmonad.
 It builds external event ingress, bar IPC and `sekictl`, input rules, scratchpads,
 and configuration compilation in M3-01 through M3-07.
@@ -10,7 +10,7 @@ M3-02 landed through PR #43 on 2026-11-02 at `dbab756a27bcf4566e10789a4ef5c79a64
 M3-03, M3-04, and M3-06 landed together through PR #44 on 2026-11-03 as `6d349f5729b62522dbdd6ab6dc435da55b50c762`. PR #45 (M3-04) and PR #46 (M3-06) merged into the #44 stack before it landed.
 The operator deferred M3-05, automatic client urgency, from M3 on 2026-11-03. River has no supported client signal for it (M3-D01), and M3 ships no manual substitute.
 M3-07 is three stacked PRs, which the operator merges in this order.
-[PR #68](https://github.com/chiro/seki/pull/68) adds the daily-use configuration and its real-river lanes.
+[PR #68](https://github.com/chiro/seki/pull/68) adds the daily-use configuration and its real-river lanes. It merged on 2026-11-09 as `1545eee900b14e380d7b153e1e0890ec6b4fbc4c`, and its tree matches the reviewed head `b72b2b1`.
 [PR #72](https://github.com/chiro/seki/pull/72) adds the m3 latency workload and the strict campaign.
 [PR #75](https://github.com/chiro/seki/pull/75) commits this plan and brings the documentation up to date.
 [PR #70](https://github.com/chiro/seki/pull/70) made the installed `config-delivery` product ship `sekictl`. It landed on 2026-11-09 as `3c3037369eed28e5dc59528046afa4b7a1309cae`.
@@ -476,17 +476,17 @@ The shipped lanes are `m2-reference-config` for lane 1 and the `m3-daily-*` scen
 
 **Merge.**
 
-- [ ] Record a clean independent verdict at the exact head, complete review-bot triage, and confirm current dependencies. Stop at merge-ready for the operator. The root verdict on #68 is merge-ready at `b72b2b1`. #72 and #75 wait for their verdicts, and the operator merges all three.
+- [ ] Record a clean independent verdict at the exact head, complete review-bot triage, and confirm current dependencies. Stop at merge-ready for the operator. The root verdicts on #68 and #72 are posted on those PRs, and #68 has merged. #75's verdict and the remaining merges are pending.
 
 ## Close the program
 
 - [ ] Link unit, live, and performance evidence for every package to the final head SHA. Leave incomplete boxes unchecked. Partly done. The [coverage ledger](#record-package-coverage) links each package's evidence to its own merge or PR head. The final head exists only after the operator merges #75.
 - [ ] Resolve every M3-D entry below and link the decision and regression evidence. Do not mark missing client urgency as implemented. M3-D03 still needs the physical acceptance in lane 9.
-- [x] Pass the complete pinned release command and exact manifest, including every existing M0, M1, and M2 scenario. CI's pinned real-river job passes the full 67-scenario manifest at #72's head `5aaf32f`.
+- [x] Pass the complete pinned release command and exact manifest, including every existing M0, M1, and M2 scenario. CI's pinned real-river job passes the full 67-scenario manifest at `5aaf32f`, a head of #72.
 - [ ] Confirm the public daily-use configuration builds outside the repository and works on the recorded physical devices. This is an operator gate, which lane 9 and the runbook in #68's description cover.
 - [ ] Obtain the operator's daily-work acceptance record. Update the milestone table to Complete only after that record and all gates exist. This is an operator gate. The spec and README say that acceptance is pending.
 - [ ] The operator reviews the M3-07 media under `artifacts/m3/M3-07/review/root-b52cc23/`.
-- [ ] The operator merges #68, #72, and #75, in that order.
+- [ ] The operator merges #68, #72, and #75, in that order. #68 merged on 2026-11-09.
 - [ ] The operator runs lanes 9 and 10 and fills in the [operator acceptance record](#operator-acceptance-record).
 - [ ] Report final PR links, measured results, coverage gaps, and the operator's remaining actions.
 
@@ -567,8 +567,8 @@ command, observation, and artifact path. Do not turn an unrun check into a passe
 | M3-D02 | Verified for M3-01 | Direct worker `manage_dirty` wakes idle river under the non-threaded RTS. The queue retains one dispatcher and policy owner, with capacity 256 and batch size 32. The initial round-trip probe used coarse polling and established feasibility, not precise wire latency. M3-01 selected a 50 ms enqueue-to-observed-policy p99 ceiling before production measurement. Independent checks at `5dc5da1` cover waiter cancellation, owned-wake failure, saturation with focus/resize, shutdown, and stale sessions. The root verdict stayed on the maintainer's host and is not in the repository. | M3-01 |
 | M3-D03 | Discovery/adapters independently verified; physical acceptance pending | At `44c24e9`, pinned river v0.5.0 input XMLs, source-level v1 compatibility, capped v1/v2/v3 discovery, facet/generation retirement and real XKB/generic controls pass independent checks. Custom curves with 64 points pass native transient configuration checks. Actual river 0.4.5 execution and physical libinput application are not claimed. | M3-03 |
 | M3-D04 | Verified for the declared source-archive plus pinned Nix dependency path | Exact public candidate --check, fresh Cabal cache/store, warm repeat, installed archive/compiler/default/product delivery, threaded skeleton and stable profile handover proved. Changed-image state, pixels, input, PID, and argv0, and recovery from a failed exec and from serialization, were independently verified. First closure acquisition requires Nix network/trust; no secure-index repair or cold-Nix claim. | M3-06 |
-| M3-D05 | Decided in M3-04 | Exercise scratchpad launch-pending, hide/show, duplicate matches, workspace moves, restart, and changed definitions. Confirm storage and manageHook precedence with executable proof before freezing the API. [Scratchpads](scratchpads.md) documents the shipped storage, precedence, and restore rules. The `m3-scratchpad-*` release scenarios exercise pending launches, hide and show, duplicates, workspace moves, restart, and changed definitions. | M3-04 |
-| M3-D06 | Decided in M3-02 | Exercise IPC command acceptance versus application and displayed state, slow readers, reconnect, and title-only updates. Confirm revision and error semantics from observed traces. [IPC](ipc.md) documents the shipped receipt, revision, and error contract. The `m3-ipc-*` release scenarios exercise receipts, slow readers, reconnect, and title-only updates. | M3-02 |
+| M3-D05 | Decided in M3-04 | Exercise scratchpad launch-pending, hide/show, duplicate matches, workspace moves, restart, and changed definitions. Confirm storage and manageHook precedence with executable proof before freezing the API. Decision: a definition's first matching window becomes its owner and bypasses the user `manageHook`, and hidden pads stay outside workspace navigation. [Scratchpads](scratchpads.md) documents the shipped storage, precedence, and restore rules. The `m3-scratchpad-*` release scenarios exercise pending launches, hide and show, duplicates, workspace moves, restart, and changed definitions. | M3-04 |
+| M3-D06 | Decided in M3-02 | Exercise IPC command acceptance versus application and displayed state, slow readers, reconnect, and title-only updates. Confirm revision and error semantics from observed traces. Decision: a receipt means the reducer applied the command and carries that revision, not a displayed frame, and a subscriber may skip intermediate revisions. [IPC](ipc.md) documents the shipped receipt, revision, and error contract. The `m3-ipc-*` release scenarios exercise receipts, slow readers, reconnect, and title-only updates. | M3-02 |
 | M3-D07 | Decided by operator 2026-11-01 | Retain one active seki IPC owner per runtime directory for M3. A second seki sharing `$XDG_RUNTIME_DIR/seki/ipc.sock` exits at IPC startup; `sekictl` targets the existing endpoint. Concurrent-session discovery is outside M3. Existing isolated test sessions use private runtime directories. | M3-02 |
 
 The proposed IPC limits, rule precedence, scratchpad behavior, and response targets in the

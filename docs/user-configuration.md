@@ -79,7 +79,8 @@ Wayland socket.
 `dailyConfig` in `test-public/PortedConfig.hs` is the maintainer's daily-use
 configuration. It extends the M2 port `portedConfig` with Waybar, swaybg,
 swayidle and swaylock, fcitx5, an alacritty scratchpad on Mod-grave, and input
-rules for keyboards and one touchpad. `test-public/DailyConfigMain.hs` runs it
+rules for keyboards and one touchpad, which the rule matches as a pointer.
+`test-public/DailyConfigMain.hs` runs it
 with the keymap at `$XDG_CONFIG_HOME/seki/keymap.xkb`. When `XDG_CONFIG_HOME`
 is unset or relative, the keymap is `~/.config/seki/keymap.xkb`.
 
