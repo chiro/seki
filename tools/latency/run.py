@@ -245,7 +245,7 @@ def endpoint_section(trials, river):
     method = dict(methods.pop())
     lines = ["", "## M3 command endpoints", "",
              f"Each sample runs from the driver's send of one IPC command to the outcome named below, on idle river after a {method['idle_gap_us'] / 1000:g} ms gap, "
-             f"with no physical input. Probe outcomes are polled every {method['observation_poll_us'] / 1000:g} ms; subscriber lines are stamped on arrival. "
+             f"with no physical input. Probe outcomes are polled every {method['observation_poll_us'] / 1000:g} ms; subscriber lines are stamped when the driver's reader thread takes them. "
              "No ratio compares these with the m2 sequences.", ""]
     for workload in dict.fromkeys(t["workload"] for t, _, _ in rows):
         for name, spec in WORKLOADS[workload]["endpoints"].items():
