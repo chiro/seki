@@ -717,7 +717,7 @@ trimAscii = reverse . dropWhile (`elem` [' ', '\t', '\r', '\n']) . reverse . dro
 runFcitx5MozcAssertions :: RiverFixture -> IO ()
 runFcitx5MozcAssertions fixture = do
   preflightImeProtocols fixture
-  preflightFootIme (fixtureClientEnvironment fixture)
+  preflightFootIme "fcitx5-mozc" (fixtureClientEnvironment fixture)
   imeBaseEnvironment <- prepareFcitxEnvironment (fixtureClientEnvironment fixture)
   withPrivateDbus imeBaseEnvironment $ \imeEnvironment ->
     bracket
@@ -841,15 +841,15 @@ preflightImeProtocols fixture = do
       )
   announce "fcitx5-mozc: input-method-v2 and text-input-v3 advertised"
 
-preflightFootIme :: [(String, String)] -> IO ()
-preflightFootIme childEnvironment = do
+preflightFootIme :: String -> [(String, String)] -> IO ()
+preflightFootIme label childEnvironment = do
   version <- runProcessCapture childEnvironment "foot" ["--version"]
   unless ("+ime" `elem` words (ByteString8.unpack version)) $
     failIntegration
       ( "foot was built without IME support; foot --version output: "
           <> show version
       )
-  announce "fcitx5-mozc: foot +ime build feature verified"
+  announce (label <> ": foot +ime build feature verified")
 
 sendFcitxVirtualKeyboardSequence :: [(String, String)] -> [(Int, Int)] -> IO ()
 sendFcitxVirtualKeyboardSequence childEnvironment keys =

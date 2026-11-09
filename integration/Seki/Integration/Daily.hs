@@ -544,7 +544,7 @@ imeHandover = withDailyHome (dailyOptions 1) $ \home -> do
     runDaily "m3-daily-ime" home [] $ \session -> do
       let client = clientEnvironment session
       bus <- maybe (failIntegration "the IME environment has no private D-Bus") pure (lookup "DBUS_SESSION_BUS_ADDRESS" ime)
-      preflightFootIme client
+      preflightFootIme "m3-daily-ime" client
       _ <- waitUntil "the daily startup hook's fcitx5 serves the private D-Bus" assertionTimeoutMicroseconds (isRight <$> try @IntegrationFailure (runProcessCapture ime "fcitx5-remote" ["--check"])) id
       before <- snapshot session
       modKeys (clientEnvironment session) ["q"]
