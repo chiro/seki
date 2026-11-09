@@ -12,6 +12,8 @@ module Seki.Latency.Workload (
   WorkloadName (..),
   parseWorkloadName,
   workloadText,
+  Driver (..),
+  workloadDriver,
   WindowRole (..),
   windowRoles,
   Ratio (..),
@@ -30,6 +32,7 @@ module Seki.Latency.Workload (
   endpointText,
   stepCommand,
   stepEndpoints,
+  padName,
   padAppId,
   padContentBox,
   Layer (..),
@@ -48,6 +51,7 @@ import Data.List (find)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, listToMaybe)
+import Data.Text qualified as Text
 import Data.Word (Word64, Word8)
 import Seki.Fixture.Probe (Color (..), Image (..))
 import Seki.Run.IPCSchema qualified as IPC
@@ -61,6 +65,16 @@ workloadText :: WorkloadName -> String
 workloadText M1 = "m1"
 workloadText M2 = "m2"
 workloadText M3 = "m3"
+
+{- | How the live driver submits steps: key presses through wtype, or
+commands through the WM's IPC socket, which also serves a build session.
+-}
+data Driver = KeyDriver | IPCDriver deriving (Eq, Show)
+
+workloadDriver :: WorkloadName -> Driver
+workloadDriver M1 = KeyDriver
+workloadDriver M2 = KeyDriver
+workloadDriver M3 = IPCDriver
 
 {- | A window in open order. A tile commits the size the WM proposes. A
 dialog names its parent by open order and commits a fixed size, so the
@@ -76,6 +90,9 @@ windowRoles :: WorkloadName -> [WindowRole]
 windowRoles M1 = map TileRole (take 8 (cycle [Red, Green, Blue]))
 windowRoles M2 = map TileRole [Red, Green, Blue, Red, Green, Blue] ++ [DialogRole Red (300, 200) 0, DialogRole Green (200, 300) 0]
 windowRoles M3 = [TileRole Red, TileRole Blue, PadRole Green]
+
+padName :: String
+padName = "pad"
 
 padAppId :: String
 padAppId = "seki-latency-pad"
@@ -237,7 +254,7 @@ stepCommand :: Step -> Maybe (IPC.Operation, [Endpoint])
 stepCommand step = case step of
   ViewEmpty -> Just (IPC.Workspace "2", [ExternalWake, IPCUpdate])
   ViewPopulated -> Just (IPC.Workspace "1", [ExternalWake, IPCUpdate])
-  TogglePad -> Just (IPC.Scratchpad "pad", [ScratchpadToggle])
+  TogglePad -> Just (IPC.Scratchpad (Text.pack padName), [ScratchpadToggle])
   Recompile -> Just (IPC.Recompile, [RecompileCompletion])
   FocusDown -> Nothing
   FocusUp -> Nothing
@@ -247,8 +264,9 @@ stepCommand step = case step of
   ExitFullscreen -> Nothing
 
 stepEndpoints :: WorkloadName -> Step -> [Endpoint]
-stepEndpoints M3 step = maybe [] snd (stepCommand step)
-stepEndpoints _ _ = []
+stepEndpoints name step = case workloadDriver name of
+  KeyDriver -> []
+  IPCDriver -> maybe [] snd (stepCommand step)
 
 tiles :: WorkloadName -> [Int]
 tiles name = [i | i <- [0 .. length (windowRoles name) - 1], TileRole _ <- [roleAt name i]]

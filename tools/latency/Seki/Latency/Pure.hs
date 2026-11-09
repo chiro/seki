@@ -26,7 +26,7 @@ import Seki.Internal.Core.StackSet qualified as S
 import Seki.Internal.Core.State
 import Seki.Internal.Layout.Full
 import Seki.Internal.Layout.Tall
-import Seki.Latency.Workload (WorkloadName (..), workloadText)
+import Seki.Latency.Workload (WorkloadName (..), padName, workloadText)
 
 type BenchLayout = Choose Tall (Choose (Mirror Tall) Full)
 layout :: BenchLayout
@@ -37,7 +37,7 @@ initialState name count = withPad (fst (drainCore idHook [RunAction (windows (S.
  where
   attached = overWorkspaces (\ws -> foldl' (flip (manageWindow id)) (addOutput (S.OutputId 1) ws) [S.WindowId (fromIntegral i) | i <- [1 .. count]]) (either (error . show) id (newCoreState layout ["1", "2", "3"]))
   withPad st = case name of
-    M3 -> st{coreScratchpadDefinitions = Map.singleton "pad" ("pad", padGeometry), coreScratchpads = Map.singleton "pad" (HiddenPad (S.WindowId (fromIntegral count + 1)) padGeometry)}
+    M3 -> st{coreScratchpadDefinitions = Map.singleton padName (padName, padGeometry), coreScratchpads = Map.singleton padName (HiddenPad (S.WindowId (fromIntegral count + 1)) padGeometry)}
     _ -> st
   padGeometry = S.FloatAt (OutputRect (either (error . show) id (mkSize 960 540 >>= mkRect (Point 480 270))))
 
@@ -62,7 +62,7 @@ focus, a client fullscreen request that the core drops unless window 2 is
 focused, a click that focuses and raises a dialog, and floating window 3.
 -}
 eventFor :: WorkloadName -> Int -> Int -> CoreEvent String BenchLayout
-eventFor M3 _ 20 = RunAction (toggleScratchpad "pad")
+eventFor M3 _ 20 = RunAction (toggleScratchpad padName)
 eventFor M3 _ 21 = RunAction restart
 eventFor M3 count code = eventFor M2 count code
 eventFor M2 _ 16 = RunAction (withFocused toggleFullscreen)
