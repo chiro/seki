@@ -262,17 +262,19 @@ class ReportTest(unittest.TestCase):
     def test_campaign_report_names_every_compared_path(self):
         self.campaign()
         text = (self.path / "report.md").read_text()
-        self.assertIn("Runtime sources under `src`, `src-core`, `src-public`, `src-generated`, and `cbits` are identical across the revisions, "
-                      "so their m2 manage and render differences are a noise floor.", text)
-        self.assertIn("Latency driver sources under `tools/latency` and `integration/Seki/Integration/Harness.hs` are identical across the revisions, "
-                      "so their pure m2 differences are a noise floor too.", text)
+        self.assertIn("Runtime sources under `src`, `src-core`, `src-public`, `src-generated`, and `cbits` are identical across the revisions.", text)
+        self.assertIn("Latency driver sources under `tools/latency`, `integration/Seki/Integration/Harness.hs`, `tools/layer-surface-fixture/src`, "
+                      "and `tools-generated/layer-surface-fixture` are identical across the revisions, "
+                      "so manage, render, and pure differences between them are a noise floor.", text)
 
-    def test_a_driver_difference_keeps_pure_m2_out_of_the_noise_floor(self):
+    def test_a_driver_difference_claims_no_noise_floor(self):
         self.campaign(driver=False)
         text = (self.path / "report.md").read_text()
-        self.assertIn("their m2 manage and render differences are a noise floor", text)
-        self.assertIn("Latency driver sources under `tools/latency` and `integration/Seki/Integration/Harness.hs` differ across the revisions.", text)
-        self.assertNotIn("pure m2 differences are a noise floor", text)
+        self.assertIn("Latency driver sources under `tools/latency`, `integration/Seki/Integration/Harness.hs`, `tools/layer-surface-fixture/src`, "
+                      "and `tools-generated/layer-surface-fixture` differ across the revisions.", text)
+        self.assertIn("The WM runs the driver's policy setup", text)
+        self.assertNotIn("noise floor", text)
+        self.assertIn("This report claims no speedup or regression.", text)
 
     def test_source_comparison_reads_each_group_from_git(self):
         repo = self.path / "repo"
@@ -288,10 +290,12 @@ class ReportTest(unittest.TestCase):
         base = commit("README")
         wire = commit("cbits/transport.c")
         latency = commit("tools/latency/Seki/Latency/Live.hs")
+        fixture = commit("tools/layer-surface-fixture/src/Fixture.hs")
         compare = lambda a, b: {name: group["identical"] for name, group in
                                 runner.compare_sources({"trunk": dict(git_sha=a, worktree=str(repo)), "head": dict(git_sha=b, worktree=str(repo))}).items()}
         self.assertEqual(compare(base, wire), {"runtime": False, "driver": True})
         self.assertEqual(compare(wire, latency), {"runtime": True, "driver": False})
+        self.assertEqual(compare(latency, fixture), {"runtime": True, "driver": False})
         self.assertIsNone(runner.compare_sources({"local": dict(git_sha=None, worktree=None)}))
 
     def test_unsupported_input_results_name_the_river_that_ran(self):

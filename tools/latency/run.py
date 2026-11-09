@@ -42,7 +42,8 @@ WORKLOADS = {
 SCHEMA = 4
 
 SOURCES = {"runtime": ["src", "src-core", "src-public", "src-generated", "cbits"],
-           "driver": ["tools/latency", "integration/Seki/Integration/Harness.hs"]}
+           "driver": ["tools/latency", "integration/Seki/Integration/Harness.hs",
+                      "tools/layer-surface-fixture/src", "tools-generated/layer-surface-fixture"]}
 
 BUDGETS = {"pure_p99": ("pure", "p99_ms", 2), "manage_p99": ("manage", "p99_ms", 10),
            "render_p99": ("render", "p99_ms", 10), "wm_gc_max": ("wm_rts", "max_stw_pause_ms", 10)}
@@ -210,15 +211,13 @@ def revision_section(manifest, checksums):
         lines.append("One revision ran, so no sources were compared.")
     else:
         runtime, driver = sources["runtime"], sources["driver"]
-        if runtime["identical"]:
-            lines.append(f"Runtime sources under {listed(runtime['paths'])} are identical across the revisions, so their m2 manage and render differences are a noise floor.")
-        else:
-            lines.append(f"Runtime sources under {listed(runtime['paths'])} differ across the revisions.")
+        lines.append(f"Runtime sources under {listed(runtime['paths'])} {'are identical' if runtime['identical'] else 'differ'} across the revisions.")
         if not driver["identical"]:
-            lines.append(f"Latency driver sources under {listed(driver['paths'])} differ across the revisions. The pure interval includes the driver's checksum fold, "
-                         "so matching pure checksums show the same output, not the same cost.")
+            lines.append(f"Latency driver sources under {listed(driver['paths'])} differ across the revisions. The WM runs the driver's policy setup, and the pure interval "
+                         "includes the driver's checksum fold, so this report draws no conclusion from differences between revisions. Matching pure checksums show the same output, not the same cost.")
         elif runtime["identical"]:
-            lines.append(f"Latency driver sources under {listed(driver['paths'])} are identical across the revisions, so their pure m2 differences are a noise floor too.")
+            lines.append(f"Latency driver sources under {listed(driver['paths'])} are identical across the revisions, "
+                         "so manage, render, and pure differences between them are a noise floor.")
         else:
             lines.append(f"Latency driver sources under {listed(driver['paths'])} are identical across the revisions.")
         if runtime["identical"]:
