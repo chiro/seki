@@ -17,11 +17,12 @@ import Data.List (find, isPrefixOf, nub, sort)
 import Data.Maybe (fromMaybe, isJust, listToMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Word (Word32)
 import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Fixture.Probe
 import Seki.Integration.Fixture (BorderStyle (..), Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, png, withKeyboard, withNestedRiverEnvironment)
 import Seki.Integration.Harness
-import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist)
+import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, removeFile)
 import System.Environment (lookupEnv)
 import System.FilePath (takeDirectory, takeFileName, (</>))
 import System.IO.Temp (withSystemTempDirectory)
@@ -33,6 +34,7 @@ dailyScenarios =
   [ ("m3-daily-two-output", twoOutput)
   , ("m3-daily-build", buildHandover)
   , ("m3-daily-bar", barReconnect)
+  , ("m3-daily-hotplug", hotplug)
   ]
 
 -- | What a lane needs before the daily process starts, held for the session's lifetime.
@@ -295,8 +297,8 @@ data OutputView = OutputView {outputName :: Maybe Text, outputWorkspace :: Maybe
 
 data WorkspaceView = WorkspaceView {wsTag :: Text, wsOccupied :: Bool, wsVisible :: Bool, wsFocused :: Bool, wsLayout :: Maybe Text} deriving (Eq, Show)
 
--- | A device's identity, kind, and the status of each setting result.
-data DeviceView = DeviceView {deviceGeneration :: Integer, deviceName :: Maybe Text, deviceType :: Maybe Text, deviceLifecycle :: Text, deviceResults :: [(Text, Text)]} deriving (Eq, Show)
+-- | A device's identity, kind, the status of each setting result, and the keymap path it was asked to load.
+data DeviceView = DeviceView {deviceGeneration :: Integer, deviceName :: Maybe Text, deviceType :: Maybe Text, deviceLifecycle :: Text, deviceResults :: [(Text, Text)], deviceKeymap :: Maybe FilePath} deriving (Eq, Show)
 
 data BuildView = BuildView {buildState :: Text, buildGeneration :: Integer, buildError :: Maybe Text, buildImage :: Maybe FilePath} deriving (Eq, Show)
 
@@ -315,8 +317,9 @@ parseSnapshot = withObject "snapshot" $ \o -> do
  where
   parseDevice = withObject "device" $ \d -> do
     generation <- d .: "identity" >>= withObject "identity" (.: "generation")
-    results <- d .: "results" >>= mapM (withObject "result" (\r -> (,) <$> r .: "setting" <*> r .: "status"))
-    DeviceView generation <$> d .: "name" <*> d .: "type" <*> d .: "lifecycle" <*> pure results
+    results <- d .: "results" >>= mapM (withObject "result" (\r -> (,,) <$> r .: "setting" <*> r .: "status" <*> r .: "requested"))
+    keymap <- traverse (withObject "keymap request" (.: "path")) (listToMaybe [requested | (setting', _, requested) <- results, setting' == ("keymap" :: Text)])
+    DeviceView generation <$> d .: "name" <*> d .: "type" <*> d .: "lifecycle" <*> pure [(setting', status) | (setting', status, _ :: Value) <- results] <*> pure keymap
 
 {- | Two outputs: term tiles two windows under Mirror Tall with a title set
 through the probe, emacs shows an Emacs window on the other output, and the
@@ -473,3 +476,97 @@ barReconnect = withDailySession "m3-daily-bar" (dailyOptions 1) $ \session -> wi
   markerLines >>= assertEqual "the spawn was not replayed by either restart" ["once"]
   picture session output "term tiles its two windows in the third session" [Paint Green (Box 1 1 398 598) True, Paint Blue (Box 401 1 398 598) False]
   capture session "daily-bar"
+
+-- | The maintainer's touchpad, the only device the daily touchpad rule names.
+touchpadName :: Text
+touchpadName = "ELAN06C7:00 04F3:3193 Touchpad"
+
+backendKeyboards :: [Text]
+backendKeyboards = ["seki-private-backend-keyboard", "seki-private-second-keyboard"]
+
+hotplugKeyboard :: Text
+hotplugKeyboard = "seki-private-hotplug-keyboard"
+
+namedDevices :: [Text] -> Snapshot -> [DeviceView]
+namedDevices names shot = [d | d <- snapDevices shot, maybe False (`elem` names) (deviceName d)]
+
+{- | The input backend's keyboards get the daily keyboard rule's results, and
+river reports the rule's repeat. A keyboard and a touchpad named as the
+maintainer's plugged in later get the same keyboard results and the
+touchpad rule's honest unavailable results, and leave the inventory when
+unplugged. Turning off the output that shows the scratchpad hides its
+workspace as spec 3.2 decides; viewing that workspace brings its window and
+the pad, kept inside the remaining output, and turning the output back on
+restores both outputs.
+-}
+hotplug :: IO ()
+hotplug = do
+  backend <- setting "SEKI_INPUT_BACKEND"
+  withSystemTempDirectory "seki-daily-hotplug" $ \directory -> do
+    let plugged = directory </> "plugged"
+        options = (dailyOptions 2){optionRiverEnvironment = [("LD_PRELOAD", backend), ("SEKI_FIXTURE_HOTPLUG", plugged), ("SEKI_FIXTURE_HOTPLUG_POINTER", Text.unpack touchpadName)]}
+    withDailySession "m3-daily-hotplug" options $ \session -> do
+      let probe = sessionProbe session
+          randr arguments = void (runProcessCapture (clientEnvironment session) "wlr-randr" arguments)
+          keyboardResults = [("keymap", "sent"), ("repeat_info", "sent")]
+          settled names shot = sort [(deviceName d, sort (deviceResults d), deviceKeymap d) | d <- namedDevices names shot, deviceLifecycle d == "ready"]
+          dailyKeyboard name = (Just name, keyboardResults, Just (sessionKeymap session))
+          projected project phase = waitUntil phase assertionTimeoutMicroseconds (project <$> snapshot session)
+      initial <- waitSnapshot session "term and emacs are shown on the two outputs" (\s -> all (\tag -> any ((== Just tag) . outputWorkspace) (snapOutputs s)) ["term", "emacs"])
+      termOutput <- shownOn initial "term"
+      emacsOutput <- shownOn initial "emacs"
+      ready <- projected (settled backendKeyboards) "the daily keyboard rule's results reach both backend keyboards" (== map dailyKeyboard backendKeyboards)
+      report "BACKEND_KEYBOARDS" (show ready)
+      pointer <- projected (\shot -> [filter ((`elem` touchpadSettings) . fst) (deviceResults d) | d <- namedDevices ["seki-private-backend-pointer"] shot]) "the backend pointer is in the inventory" (not . null)
+      assertEqual "the touchpad rule applies to no backend pointer" [[]] pointer
+      repeats <- waitUntil "river applies the rule's 25 Hz repeat after 660 ms" assertionTimeoutMicroseconds (filter ("fixture group repeat observed" `isPrefixOf`) . lines <$> renderManagedProcessLogs (riverProcess (sessionRiver session))) (elem "fixture group repeat observed 25 660")
+      report "RIVER_REPEAT" (show repeats)
+      writeFile plugged ""
+      added <- projected (settled [hotplugKeyboard, touchpadName]) "the plugged keyboard gets the daily keyboard results and the touchpad the touchpad results" (== sort [dailyKeyboard hotplugKeyboard, (Just touchpadName, [("click_method", "unavailable"), ("natural_scroll", "unavailable"), ("tap", "unavailable")], Nothing)])
+      report "PLUGGED_DEVICES" (show added)
+      removeFile plugged
+      gone <- projected (map deviceName . snapDevices) "the unplugged devices leave the inventory" (\names -> all ((`notElem` names) . Just) [hotplugKeyboard, touchpadName])
+      report "AFTER_UNPLUG" (show gone)
+      projected (settled backendKeyboards) "the backend keyboards keep their results after the unplug" (== map dailyKeyboard backendKeyboards) >>= report "BACKEND_KEYBOARDS_AFTER_UNPLUG" . show
+      tile <- openWindow probe Green
+      editor <- openWindowWith probe (windowSpec Green){specAppId = CustomAppId "Emacs"}
+      let emacsX = if emacsOutput > termOutput then 800 else 0 :: Word32
+          shows' pads focused = bar [(termOutput, "term"), (emacsOutput, "emacs")] [workspace "term" ([Occupied, Visible] <> [Focused | focused == "term"]) "Tall", workspace "emacs" ([Occupied, Visible] <> [Focused | focused == "emacs"]) "Tall"] Nothing pads
+          remaining shown = bar [(termOutput, shown)] [workspace "term" ([Occupied] <> [Visible | shown == "term"] <> [Focused | shown == "term"]) "Tall", workspace "emacs" ([Occupied] <> [Visible | shown == "emacs"] <> [Focused | shown == "emacs"]) "Tall"] Nothing [("term", "shown")]
+      click (sessionSocket session) (1600, 600) (emacsX + 400, 300)
+      waitFocus session "a click focuses the Emacs window on the other output" (Just editor)
+      key session ["grave"]
+      launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty --class seki-scratchpad"
+      pad <- openWindowWith probe (windowSpec Blue){specAppId = CustomAppId "seki-scratchpad"}
+      waitFocus session "the shown pad has keyboard focus" (Just pad)
+      picture session emacsOutput "the pad shows on emacs's output" [Paint Blue (Box 1 1 798 598) True]
+      picture session termOutput "term keeps its tile on the other output" [Paint Green (Box 1 1 798 598) False]
+      snapshotShows session "the pad is shown on emacs" (shows' [("term", "shown")] "emacs")
+      capture session "daily-hotplug-before"
+      randr ["--output", Text.unpack emacsOutput, "--off"]
+      snapshotShows session "the removed output's workspace returns to hidden with the pad still shown on it" (remaining "term")
+      waitFocus session "focus moves to the surviving output's tile" (Just tile)
+      picture session termOutput "the surviving output shows term" [Paint Green (Box 1 1 798 598) True]
+      capture session "daily-hotplug-off"
+      key session ["2"]
+      snapshotShows session "Mod-2 brings emacs to the remaining output" (remaining "emacs")
+      waitFocus session "the pad has keyboard focus on the remaining output" (Just pad)
+      picture session termOutput "the pad covers the Emacs window inside the remaining output" [Paint Blue (Box 1 1 798 598) True]
+      capture session "daily-hotplug-moved"
+      key session ["1"]
+      snapshotShows session "Mod-1 shows term again" (remaining "term")
+      randr ["--output", Text.unpack emacsOutput, "--on", "--custom-mode", "800x600", "--pos", show emacsX <> ",0"]
+      snapshotShows session "the re-added output shows emacs again" (shows' [("term", "shown")] "term")
+      picture session emacsOutput "the pad is back inside the re-added output" [Paint Blue (Box 1 1 798 598) False]
+      picture session termOutput "term keeps the focused tile" [Paint Green (Box 1 1 798 598) True]
+      capture session "daily-hotplug"
+
+-- | The touchpad rule's settings.
+touchpadSettings :: [Text]
+touchpadSettings = ["tap", "click_method", "natural_scroll"]
+
+-- | Wait until a fresh snapshot shows the bar state.
+snapshotShows :: DailySession -> String -> BarView -> IO ()
+snapshotShows session phase expected = do
+  _ <- waitSnapshot session phase ((== expected) . barView)
+  report "BAR" (phase <> ": " <> show expected)

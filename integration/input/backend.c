@@ -8,6 +8,7 @@
 #include <xkbcommon/xkbcommon.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <wlr/backend.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/interfaces/wlr_pointer.h>
@@ -25,6 +26,10 @@ static bool active;
 static struct wlr_keyboard keyboard;
 static struct wlr_keyboard second;
 static struct wlr_pointer pointer;
+static struct wl_event_source *hotplug_timer;
+static bool plugged;
+static struct wlr_keyboard hotplug_keyboard;
+static struct wlr_pointer hotplug_pointer;
 static const struct wlr_pointer_impl pointer_impl = {.name="seki-fixture"};
 static const struct wlr_keyboard_impl impl = {0};
 static void report(struct wl_listener *listener, void *data) {
@@ -80,6 +85,33 @@ static int add(void *data) {
  if (stage==0) {stage=1; wl_event_source_timer_update(timer,600);}
  return 0;
 }
+/* SEKI_FIXTURE_HOTPLUG names a file whose presence plugs a keyboard and a
+ * pointer named by SEKI_FIXTURE_HOTPLUG_POINTER; its removal unplugs both. */
+static int hotplug(void *data) {
+ (void)data;
+ bool wanted=access(getenv("SEKI_FIXTURE_HOTPLUG"),F_OK)==0;
+ if (wanted && !plugged) {
+  wlr_keyboard_init(&hotplug_keyboard,&impl,"seki-private-hotplug-keyboard");
+  struct xkb_context *context=xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+  struct xkb_rule_names names={.layout="us"};
+  struct xkb_keymap *keymap=xkb_keymap_new_from_names(context,&names,XKB_KEYMAP_COMPILE_NO_FLAGS);
+  if (!keymap) abort();
+  wlr_keyboard_set_keymap(&hotplug_keyboard,keymap);
+  xkb_keymap_unref(keymap); xkb_context_unref(context);
+  wl_signal_emit_mutable(&backend->events.new_input,&hotplug_keyboard.base);
+  const char *name=getenv("SEKI_FIXTURE_HOTPLUG_POINTER");
+  wlr_pointer_init(&hotplug_pointer,&pointer_impl,name ? name : "seki-private-hotplug-pointer");
+  wl_signal_emit_mutable(&backend->events.new_input,&hotplug_pointer.base);
+  plugged=true;
+  fprintf(stderr,"fixture hotplug devices added\n");
+ } else if (!wanted && plugged) {
+  wlr_keyboard_finish(&hotplug_keyboard); wlr_pointer_finish(&hotplug_pointer);
+  plugged=false;
+  fprintf(stderr,"fixture hotplug devices removed\n");
+ }
+ wl_event_source_timer_update(hotplug_timer,50);
+ return 0;
+}
 struct wlr_backend *wlr_backend_autocreate(struct wl_event_loop *loop, struct wlr_session **session) {
  struct wlr_backend *(*real)(struct wl_event_loop *,struct wlr_session **) = dlsym(RTLD_NEXT,"wlr_backend_autocreate");
  backend=real(loop,session);
@@ -91,11 +123,16 @@ struct wlr_backend *wlr_backend_autocreate(struct wl_event_loop *loop, struct wl
  }
  timer=wl_event_loop_add_timer(loop,add,NULL);
  wl_event_source_timer_update(timer,300);
+ if (getenv("SEKI_FIXTURE_HOTPLUG")) {
+  hotplug_timer=wl_event_loop_add_timer(loop,hotplug,NULL);
+  wl_event_source_timer_update(hotplug_timer,50);
+ }
  return backend;
 }
 void wlr_backend_destroy(struct wlr_backend *b) {
  void (*real)(struct wlr_backend *) = dlsym(RTLD_NEXT,"wlr_backend_destroy");
  if (b==backend && active) {wl_list_remove(&repeat.link); wlr_keyboard_finish(&keyboard); wlr_keyboard_finish(&second); wlr_pointer_finish(&pointer);}
+ if (b==backend && plugged) {wlr_keyboard_finish(&hotplug_keyboard); wlr_pointer_finish(&hotplug_pointer); plugged=false;}
  real(b);
 }
 void wlr_keyboard_set_repeat_info(struct wlr_keyboard *kb, int32_t rate, int32_t delay) {
