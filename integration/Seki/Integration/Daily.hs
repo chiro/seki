@@ -32,6 +32,7 @@ dailyScenarios :: [(String, IO ())]
 dailyScenarios =
   [ ("m3-daily-two-output", twoOutput)
   , ("m3-daily-build", buildHandover)
+  , ("m3-daily-bar", barReconnect)
   ]
 
 -- | What a lane needs before the daily process starts, held for the session's lifetime.
@@ -430,3 +431,45 @@ buildHandover = withDailySession "m3-daily-build" (dailyOptions 2){optionAround 
   runInputDriver (clientEnvironment session) ["-k", "XF86AudioRaiseVolume"]
   launchedOnce session "XF86AudioRaiseVolume works in the new image" "amixer -D pulse sset Master 2%+"
   startupRanOnce session "no startup command ran again after the handover"
+
+{- | A subscriber stays connected across two Mod-q restarts. Each restart
+starts a fresh IPC session whose first snapshot already matches the
+windows, and a spawn issued before the restarts runs exactly once.
+-}
+barReconnect :: IO ()
+barReconnect = withDailySession "m3-daily-bar" (dailyOptions 1) $ \session -> withSubscription session "daily-bar-subscription.jsonl" $ \stream -> do
+  let probe = sessionProbe session
+      marker = sessionHome session </> "spawn-marker"
+      markerLines = doesFileExist marker >>= \exists -> if exists then lines <$> readFile marker else pure []
+  initial <- waitSnapshot session "term is shown" (any ((== Just "term") . outputWorkspace) . snapOutputs)
+  output <- shownOn initial "term"
+  let onTerm title = bar [(output, "term")] [workspace "term" [Occupied, Visible, Focused] "Tall"] title []
+      onEmacs = bar [(output, "emacs")] [workspace "term" [Occupied] "Tall", workspace "emacs" [Visible, Focused] "Tall"] Nothing []
+      restartShows phase expected = do
+        before <- nub . map snapSession <$> stream
+        key session ["q"]
+        shots <- waitUntil (phase <> " starts a fresh IPC session") assertionTimeoutMicroseconds stream (\shots -> length (nub (map snapSession shots)) > length before)
+        fresh <- maybe (failIntegration (phase <> ": no snapshot of the new session")) pure (find ((`notElem` before) . snapSession) shots)
+        report "FRESH_SESSION" (phase <> ": " <> Text.unpack (snapSession fresh) <> " revision " <> show (snapRevision fresh) <> " " <> show (barView fresh))
+        assertEqual (phase <> ": the new session's first snapshot matches the windows") expected (barView fresh)
+        (_, arguments) <- processImage (sessionPid session)
+        assertEqual (phase <> ": the daily process keeps its pid and restores") True ("--restore" `elem` arguments)
+        startupRanOnce session (phase <> ": no startup command ran again")
+  _ <- openWindow probe Blue
+  second <- openWindow probe Green
+  waitFocus session "the newest term window has keyboard focus" (Just second)
+  setTitle probe second "daily bar first session"
+  barShows stream "the bar shows the titled term window" (onTerm (Just "daily bar first session"))
+  _ <- sekictl session ["spawn", "printf 'once\\n' >> '" <> marker <> "'"]
+  _ <- waitUntil "the spawned marker runs once" assertionTimeoutMicroseconds markerLines (== ["once"])
+  restartShows "the first Mod-q" (onTerm (Just "daily bar first session"))
+  key session ["2"]
+  barShows stream "the second session shows the empty emacs workspace" onEmacs
+  restartShows "the second Mod-q" onEmacs
+  key session ["1"]
+  waitFocus session "term's window has keyboard focus in the third session" (Just second)
+  setTitle probe second "daily bar third session"
+  barShows stream "the third session shows the new title" (onTerm (Just "daily bar third session"))
+  markerLines >>= assertEqual "the spawn was not replayed by either restart" ["once"]
+  picture session output "term tiles its two windows in the third session" [Paint Green (Box 1 1 398 598) True, Paint Blue (Box 401 1 398 598) False]
+  capture session "daily-bar"
