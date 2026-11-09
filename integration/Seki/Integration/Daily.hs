@@ -145,9 +145,6 @@ clientEnvironment = riverEnvironment . sessionRiver
 sessionSocket :: DailySession -> FilePath
 sessionSocket = riverSocket . sessionRiver
 
-modKeys :: DailySession -> [String] -> IO ()
-modKeys session keys = runInputDriver (clientEnvironment session) (["-M", "logo"] <> concatMap (\k -> ["-k", k]) keys <> ["-m", "logo"])
-
 sekictl :: DailySession -> [String] -> IO BS.ByteString
 sekictl session = runProcessCapture (clientEnvironment session) (sessionCli session)
 
@@ -310,12 +307,12 @@ twoOutput = withDailySession "m3-daily-two-output" (dailyOptions 2) $ \session -
   second <- openWindow probe Green
   waitFocus session "the newest term window has keyboard focus" (Just second)
   setTitle probe second "daily two-output"
-  modKeys session ["space"]
+  modKeys (clientEnvironment session) ["space"]
   picture session termOutput "term tiles its two windows under Mirror Tall" [Paint Green (Box 1 1 798 298) True, Paint Blue (Box 1 301 798 298) False]
   picture session emacsOutput "emacs shows the Emacs window on the other output" [Paint Green (Box 1 1 798 598) False]
   barShows stream "the bar shows both outputs, the title, and the layout" (shown [] (Just "daily two-output"))
   capture session "daily-two-output-windows"
-  modKeys session ["grave"]
+  modKeys (clientEnvironment session) ["grave"]
   launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty --class seki-scratchpad"
   barShows stream "the launched scratchpad is pending" (shown [("term", "pending")] (Just "daily two-output"))
   pad <- openWindowWith probe (windowSpec Blue){specAppId = CustomAppId "seki-scratchpad"}
@@ -324,7 +321,7 @@ twoOutput = withDailySession "m3-daily-two-output" (dailyOptions 2) $ \session -
   picture session termOutput "the pad floats over term clamped inside its 800 by 600 output" [Paint Blue (Box 1 1 798 598) True]
   barShows stream "the matching window shows the pad" (shown [("term", "shown")] (Just "daily scratchpad"))
   capture session "daily-two-output"
-  modKeys session ["grave"]
+  modKeys (clientEnvironment session) ["grave"]
   waitFocus session "hiding the pad returns focus to the term window" (Just second)
   picture session termOutput "term tiles its two windows again with the pad hidden" [Paint Green (Box 1 1 798 298) True, Paint Blue (Box 1 301 798 298) False]
   barShows stream "the second Mod-grave hides the pad" (shown [("term", "hidden")] (Just "daily two-output"))
@@ -358,7 +355,7 @@ buildHandover = withDailySession "m3-daily-build" (dailyOptions 2){optionSetup =
   _ <- openWindow probe Blue
   editor <- openWindowWith probe (windowSpec Blue){specAppId = CustomAppId "Emacs"}
   requestFullscreen probe editor
-  modKeys session ["grave"]
+  modKeys (clientEnvironment session) ["grave"]
   launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty --class seki-scratchpad"
   pad <- openWindowWith probe (windowSpec Green){specAppId = CustomAppId "seki-scratchpad"}
   waitFocus session "the shown pad has keyboard focus" (Just pad)
@@ -384,7 +381,7 @@ buildHandover = withDailySession "m3-daily-build" (dailyOptions 2){optionSetup =
   restored "after the handover"
   waitFocus session "the pad keeps keyboard focus after the handover" (Just pad)
   capture session "daily-build"
-  modKeys session ["grave"]
+  modKeys (clientEnvironment session) ["grave"]
   picture session termOutput "the hidden pad uncovers term's own tile" [Paint Blue (Box 1 1 798 598) True]
   barShows stream "the restored pad hides with Mod-grave" (windows Nothing [("term", "hidden")])
   capture session "daily-build-pad-hidden"
@@ -403,7 +400,7 @@ barReconnect = withDailySession "m3-daily-bar" (dailyOptions 1) $ \session -> wi
       onEmacs = bar [(output, "emacs")] [workspace "term" [Occupied] "Tall", workspace "emacs" [Visible, Focused] "Tall"] Nothing []
       restartShows phase expected = do
         before <- nub . map snapSession <$> stream
-        modKeys session ["q"]
+        modKeys (clientEnvironment session) ["q"]
         shots <- waitUntil (phase <> " starts a fresh IPC session") assertionTimeoutMicroseconds stream (\shots -> length (nub (map snapSession shots)) > length before)
         fresh <- maybe (failIntegration (phase <> ": no snapshot of the new session")) pure (find ((`notElem` before) . snapSession) shots)
         report "FRESH_SESSION" (phase <> ": " <> Text.unpack (snapSession fresh) <> " revision " <> show (snapRevision fresh) <> " " <> show (barView fresh))
@@ -421,11 +418,11 @@ barReconnect = withDailySession "m3-daily-bar" (dailyOptions 1) $ \session -> wi
   _ <- waitUntil "the spawned marker runs once" assertionTimeoutMicroseconds markerLines (== ["once"])
   restartShows "the first Mod-q" (onTerm (Just "daily bar first session"))
   capture session "daily-bar-second-session"
-  modKeys session ["2"]
+  modKeys (clientEnvironment session) ["2"]
   barShows stream "the second session shows the empty emacs workspace" onEmacs
   restartShows "the second Mod-q" onEmacs
   capture session "daily-bar-third-session"
-  modKeys session ["1"]
+  modKeys (clientEnvironment session) ["1"]
   waitFocus session "term's window has keyboard focus in the third session" (Just second)
   setTitle probe second "daily bar third session"
   barShows stream "the third session shows the new title" (onTerm (Just "daily bar third session"))
@@ -482,7 +479,7 @@ hotplug = do
           remaining shown = bar [(termOutput, shown)] [workspace "term" ([Occupied] <> [Visible | shown == "term"] <> [Focused | shown == "term"]) "Tall", workspace "emacs" ([Occupied] <> [Visible | shown == "emacs"] <> [Focused | shown == "emacs"]) "Tall"] Nothing [("term", "shown")]
       click (sessionSocket session) (1600, 600) (emacsX + 400, 300)
       waitFocus session "a click focuses the Emacs window on the other output" (Just editor)
-      modKeys session ["grave"]
+      modKeys (clientEnvironment session) ["grave"]
       launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty --class seki-scratchpad"
       pad <- openWindowWith probe (windowSpec Blue){specAppId = CustomAppId "seki-scratchpad"}
       waitFocus session "the shown pad has keyboard focus" (Just pad)
@@ -495,12 +492,12 @@ hotplug = do
       waitFocus session "focus moves to the surviving output's tile" (Just tile)
       picture session termOutput "the surviving output shows term" [Paint Green (Box 1 1 798 598) True]
       capture session "daily-hotplug-off"
-      modKeys session ["2"]
+      modKeys (clientEnvironment session) ["2"]
       snapshotShows session "Mod-2 brings emacs to the remaining output" (remaining "emacs")
       waitFocus session "the pad has keyboard focus on the remaining output" (Just pad)
       picture session termOutput "the pad covers the Emacs window inside the remaining output" [Paint Blue (Box 1 1 798 598) True]
       capture session "daily-hotplug-moved"
-      modKeys session ["1"]
+      modKeys (clientEnvironment session) ["1"]
       snapshotShows session "Mod-1 shows term again" (remaining "term")
       randr ["--output", Text.unpack emacsOutput, "--on", "--custom-mode", "800x600", "--pos", show emacsX <> ",0"]
       snapshotShows session "the re-added output shows emacs again" (bothShown [("term", "shown")] "term")
@@ -546,7 +543,7 @@ imeHandover = withDailySession "m3-daily-ime" (dailyOptions 1){optionSetup = rea
   preflightFootIme client
   _ <- waitUntil "the daily startup hook's fcitx5 serves the private D-Bus" assertionTimeoutMicroseconds (isRight <$> try @SomeException (runProcessCapture ime "fcitx5-remote" ["--check"])) id
   before <- snapshot session
-  modKeys session ["q"]
+  modKeys (clientEnvironment session) ["q"]
   after <- waitSnapshot session "Mod-q hands over to a fresh IPC session" ((/= snapSession before) . snapSession)
   report "HANDOVER" (Text.unpack (snapSession before) <> " -> " <> Text.unpack (snapSession after))
   (_, arguments) <- processImage (sessionPid session)
@@ -597,7 +594,7 @@ xwaylandManagement = withDailySession "m3-daily-xwayland" (dailyOptions 1){optio
     report "XTERM_GEOMETRY" (show geometry)
     snapshotShows session "the bar shows the focused xterm's title" (onTerm (Just xtermTitle) [])
     capture session "daily-xwayland-tiled"
-    modKeys session ["j"]
+    modKeys (clientEnvironment session) ["j"]
     waitFocus session "Mod-j moves keyboard focus to the native window" (Just native)
     picture session output "the native window takes the focused border" [Paint Green (Box 401 1 398 598) True]
     click (sessionSocket session) (800, 600) (200, 300)
@@ -608,12 +605,12 @@ xwaylandManagement = withDailySession "m3-daily-xwayland" (dailyOptions 1){optio
     waitFocus session "Mod-Shift-2 leaves the native window focused on term" (Just native)
     picture session output "term shows only the native window" [Paint Green (Box 1 1 798 598) True]
     snapshotShows session "the xterm is on emacs" (onTerm Nothing [workspace "emacs" [Occupied] "Tall"])
-    modKeys session ["2"]
+    modKeys (clientEnvironment session) ["2"]
     xFocus "viewing emacs gives the xterm X input focus"
     picture session output "emacs shows only the xterm" []
     capture session "daily-xwayland-moved"
     modShift "1"
-    modKeys session ["1"]
+    modKeys (clientEnvironment session) ["1"]
     xFocus "the xterm moved back to term has X input focus"
     picture session output "the xterm tiles beside the native window again" [Paint Green (Box 401 1 398 598) False]
     snapshotShows session "the xterm is back on term" (onTerm (Just xtermTitle) [])
@@ -709,7 +706,7 @@ loadResponsive = withDailySession "m3-daily-load" (dailyOptions 1) $ \session ->
   (idle, idleOwner) <- wtypeKeyToFocus session "j" (Just master)
   assertEqual "Mod-j without the flood moves focus down the stack" (Just stacked) idleOwner
   report "WTYPE_KEY_TO_FOCUS_IDLE_NS" (show idle)
-  modKeys session ["k"]
+  modKeys (clientEnvironment session) ["k"]
   waitFocus session "Mod-k returns focus to the master" (Just master)
   started <- getMonotonicTimeNSec
   (count, loaded, frames) <- withFlood session 8 $ \flood -> do

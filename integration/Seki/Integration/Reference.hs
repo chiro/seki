@@ -38,7 +38,6 @@ referenceConfig = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-r
       sekiEnvironment = [("HOME", home), ("PATH", bin <> ":" <> fromMaybe "/usr/bin:/bin" (lookup "PATH" base))] <> filter ((`notElem` ["HOME", "PATH"]) . fst) base
       socket = riverSocket nested
       input = runInputDriver base
-      key keys = input (["-M", "logo"] <> concatMap (\k -> ["-k", k]) keys <> ["-m", "logo"])
       recorded = doesFileExist launches >>= \exists -> if exists then lines . BS8.unpack <$> BS8.readFile launches else pure []
       launched phase expected = void (waitUntil phase assertionTimeoutMicroseconds recorded ((== expected) . drop (length startupCommands)))
   forM_ (map (bin </>) ["nitrogen", "fcitx5", "xscreensaver", "xscreensaver-command", "alacritty", "amixer", "brightnessctl"] <> [home </> ".config/polybar/launch.sh"]) $ \stub -> do
@@ -66,11 +65,11 @@ referenceConfig = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-r
           _ <- waitUntil "a click focuses the right tile" assertionTimeoutMicroseconds (keyboardSnapshot probe) ((== Just first) . keyboardOwner)
           _ <- waitUntil "the click also reaches the right tile's client" assertionTimeoutMicroseconds (pointerSnapshot probe) ((== 1) . Map.findWithDefault 0 first . pointerPresses)
           onOutput "the clicked tile takes the focused border" [Paint Green leftTile False, Paint Blue rightTile True]
-          key ["2"]
+          modKeys base ["2"]
           emacs <- emacsShown
           _ <- waitUntil "the Emacs window has keyboard focus on emacs" assertionTimeoutMicroseconds (keyboardSnapshot probe) ((== Just emacs) . keyboardOwner)
           onOutput "emacs shows the Emacs window alone" [Paint Green fullTile True]
-          key ["1"]
+          modKeys base ["1"]
           onOutput "term still holds only its two windows" [Paint Green leftTile False, Paint Blue rightTile True]
           input ["-M", "logo", "-M", "shift", "-k", "Return", "-m", "shift", "-m", "logo"]
           launched "Mod-Shift-Return launches the terminal" ["alacritty"]
@@ -78,14 +77,14 @@ referenceConfig = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-r
           launched "XF86AudioRaiseVolume raises the volume" ["alacritty", "amixer -D pulse sset Master 2%+"]
           input ["-M", "logo", "-M", "shift", "-k", "l", "-m", "shift", "-m", "logo"]
           launched "Mod-Shift-l locks the screen" ["alacritty", "amixer -D pulse sset Master 2%+", "xscreensaver-command --lock"]
-          key ["q"]
+          modKeys base ["q"]
           _ <- waitUntil "seki execs itself with --restore" assertionTimeoutMicroseconds (BS8.unpack <$> BS.readFile ("/proc/" <> show pid <> "/cmdline")) ("--restore" `isInfixOf`)
           _ <-
             waitUntil
               "restarted workspace binding selects Emacs"
               assertionTimeoutMicroseconds
               ( do
-                  key ["2"]
+                  modKeys base ["2"]
                   frame <- captureOutput socket output
                   pure (pictureErrorWith portedBorders [Paint Green fullTile True] frame)
               )
