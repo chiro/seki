@@ -547,10 +547,10 @@ imeHandover = withDailyHome (dailyOptions 1) $ \home -> do
   daemon <- findExecutable "fcitx5" >>= maybe (failIntegration "fcitx5 is not installed") pure
   imeBase <- prepareFcitxEnvironment (riverEnvironment (homeRiver home))
   withPrivateDbus imeBase $ \ime -> do
-    let carried = [(name, value) | (name, value) <- ime, lookup name (dailyEnvironment home []) /= Just value]
-        quote value = "'" <> concatMap (\c -> if c == '\'' then "'\\''" else [c]) value <> "'"
-    writeExecutable (homeBin home </> "fcitx5") (loggingStub (homeLaunchLog home) <> "exec env " <> unwords [name <> "=" <> quote value | (name, value) <- carried] <> " " <> quote daemon <> " -D -k\n")
-    runDaily "m3-daily-ime" home [] $ \session -> do
+    let extra = []
+        carried = [(name, value) | (name, value) <- ime, lookup name (dailyEnvironment home extra) /= Just value]
+    writeExecutable (homeBin home </> "fcitx5") (loggingStub (homeLaunchLog home) <> "exec env " <> unwords [name <> "=" <> shellQuote value | (name, value) <- carried] <> " " <> shellQuote daemon <> " -D -k\n")
+    runDaily "m3-daily-ime" home extra $ \session -> do
       let client = clientEnvironment session
       bus <- maybe (failIntegration "the IME environment has no private D-Bus") pure (lookup "DBUS_SESSION_BUS_ADDRESS" ime)
       preflightFootIme "m3-daily-ime" client
@@ -668,13 +668,33 @@ withFlood session workers action = do
       Just (Right ()) -> pure ()
     pure result
 
-subscriberStall :: Flood -> IO (Int, Int, Integer, Integer)
+data Stall = Stall {backlogBefore :: Int, backlogAfter :: Int, revisionFrom :: Integer, revisionTo :: Integer}
+  deriving (Show)
+
+-- A backlog of 32 first-snapshot sizes (about 36 KB) cannot be a reader that is merely
+-- behind, and it stays under the roughly 104 KB the AF_UNIX send buffer held in every run.
+stallSnapshots :: Int
+stallSnapshots = 32
+
+-- The flood advances the revision several times per millisecond, so a backlog that does
+-- not grow over this window means the server's writes to the subscriber are blocked.
+stallWindowMicroseconds :: Int
+stallWindowMicroseconds = 200000
+
+subscriberStall :: Flood -> IO Stall
 subscriberStall flood = do
   before <- unreadBacklog flood
   from <- floodRevision flood
-  threadDelay 200000
-  (,,,) before <$> unreadBacklog flood <*> pure from <*> floodRevision flood
+  threadDelay stallWindowMicroseconds
+  Stall before <$> unreadBacklog flood <*> pure from <*> floodRevision flood
 
+stalled :: Flood -> Stall -> Bool
+stalled flood stall =
+  backlogBefore stall >= stallSnapshots * unreadFirst flood
+    && backlogAfter stall == backlogBefore stall
+    && revisionTo stall > revisionFrom stall
+
+-- waitUntil polls every 20 ms, too coarse for a key-to-focus sample.
 keyToFocusPollMicroseconds :: Int
 keyToFocusPollMicroseconds = 1000
 
@@ -710,7 +730,7 @@ loadResponsive = withDailySession "m3-daily-load" (dailyOptions 1) $ \session ->
   started <- getMonotonicTimeNSec
   (count, loaded, frames) <- withFlood session 8 $ \flood -> do
     _ <- waitUntil "the flood is answering requests" assertionTimeoutMicroseconds (floodReplies flood) (>= 100)
-    stall <- waitUntil "the never-reading subscriber holds 32 unread snapshots and stops growing while the flood advances the revision" assertionTimeoutMicroseconds (subscriberStall flood) (\(before, after, from, to) -> before >= 32 * unreadFirst flood && before == after && to > from)
+    stall <- waitUntil "the never-reading subscriber's unread bytes reach 32 first-snapshot sizes and stop growing while the flood advances the revision" assertionTimeoutMicroseconds (subscriberStall flood) (stalled flood)
     report "SUBSCRIBER_STALL" (show (unreadFirst flood, stall))
     first <- captureOutput surface output
     (moved, resized) <- withHeldLogoIn (clientEnvironment session) probe . withVirtualPointer surface (sessionExtent session) $ \pointer -> do
