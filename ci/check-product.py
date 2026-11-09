@@ -144,7 +144,6 @@ def prove(command, root, env, archive, provisioned=False):
 
 
 def prove_client(client):
-    """The shipped sekictl sends one version 1 request to the runtime endpoint."""
     with tempfile.TemporaryDirectory(prefix="seki-client-") as runtime:
         endpoint = Path(runtime) / "seki"
         endpoint.mkdir(mode=0o700)
