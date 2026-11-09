@@ -7,7 +7,9 @@ executable's RTS defaults. Three reviewed reports keep compact evidence. The
 M1 [reference report](latency-baseline/report.md) of 2026-10-18 and the M2
 [workload report](latency-m2/report.md) of 2026-10-25 alternate five trials
 per collector. The M3 [campaign report](latency-m3/report.md) interleaves five
-trunk and head m2 trials per collector and adds the m3 workload at head.
+trunk and head m2 trials per collector and adds the m3 workload at head. Its
+hand-written [notes](latency-m3/notes.md) scope the noise floor and name the
+limiters.
 Ordinary unit CI does not enforce timing budgets.
 
 ## Run a comparison
