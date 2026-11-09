@@ -57,6 +57,7 @@
         mkdir -p "$out/bin" "$out/share/seki"
         ln -s ${configEnvironment}/bin/seki-config-env "$out/bin/seki-config-env"
         ln -s ${sekiPackage}/bin/seki-default "$out/bin/seki-default"
+        ln -s ${sekiPackage}/bin/sekictl "$out/bin/sekictl"
         ln -s ${configLauncher}/bin/seki "$out/bin/seki"
         ln -s ${configArchive}/seki-0.1.0.0.tar.gz "$out/share/seki/source.tar.gz"
       '';
