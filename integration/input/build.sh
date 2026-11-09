@@ -8,5 +8,6 @@ cc -shared -fPIC -Wall -Wextra -Werror "$(dirname "$0")/backend.c" -o "$output/b
   $(pkg-config --cflags --libs wlroots-0.20 wayland-server xkbcommon pixman-1) -ldl
 cc -Wall -Wextra -Werror "$(dirname "$0")/keymap.c" -o "$output/keymap" $(pkg-config --cflags --libs xkbcommon)
 "$output/keymap" > "$output/two-layouts.xkb"
+"$output/keymap" evdev pc105 us ctrl:nocaps > "$output/daily.xkb"
 printf '%s\n' 'not an XKB keymap' > "$output/invalid.xkb"
 cc -shared -fPIC -Wall -Wextra -Werror "$(dirname "$0")/hold.c" -o "$output/hold.so"
