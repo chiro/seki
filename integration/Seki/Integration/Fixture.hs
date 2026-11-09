@@ -5,6 +5,7 @@ module Seki.Integration.Fixture (
   NestedRiver (..),
   withNestedRiver,
   withNestedRiverEnvironment,
+  withNestedXwaylandRiver,
   Fixture (..),
   Box (..),
   Paint (..),
@@ -100,7 +101,14 @@ withNestedRiver :: Int -> (NestedRiver -> IO a) -> IO a
 withNestedRiver = withNestedRiverEnvironment []
 
 withNestedRiverEnvironment :: [(String, String)] -> Int -> (NestedRiver -> IO a) -> IO a
-withNestedRiverEnvironment extra outputCount action = do
+withNestedRiverEnvironment = withNestedRiverUsing False
+
+-- | A nested river with Xwayland, whose client environment names its private X display.
+withNestedXwaylandRiver :: [(String, String)] -> Int -> (NestedRiver -> IO a) -> IO a
+withNestedXwaylandRiver = withNestedRiverUsing True
+
+withNestedRiverUsing :: Bool -> [(String, String)] -> Int -> (NestedRiver -> IO a) -> IO a
+withNestedRiverUsing xwayland extra outputCount action = do
   requireExecutables ["river", "wtype", "wlr-randr"]
   executable <- getExecutablePath
   host <- getEnvironment
@@ -112,12 +120,16 @@ withNestedRiverEnvironment extra outputCount action = do
     createPrivateDirectory config
     let riverEnv = extra <> filter (\(key, _) -> key `notElem` map fst extra) (fixtureEnvironment host runtime config <> [("WLR_BACKENDS", "headless"), ("WLR_HEADLESS_OUTPUTS", show outputCount)])
     withUnixListener initSocket $ \listener ->
-      bracket (startManagedProcess "river" riverEnv (proc "river" (riverArguments False executable initSocket))) stopManagedProcess $ \river -> do
+      bracket (startManagedProcess "river" riverEnv (proc "river" (riverArguments xwayland executable initSocket))) stopManagedProcess $ \river -> do
         names <- waitForRiverInit listener river
+        display <- case (xwayland, nestedXDisplay names) of
+          (False, _) -> pure []
+          (True, Just value) -> pure [("DISPLAY", value)]
+          (True, Nothing) -> failIntegration "Xwayland unavailable: river init did not report DISPLAY"
         action
           NestedRiver
             { riverSocket = runtime </> nestedWaylandDisplay names
-            , riverEnvironment = fixtureEnvironment host runtime config <> [("WAYLAND_DISPLAY", nestedWaylandDisplay names)]
+            , riverEnvironment = fixtureEnvironment host runtime config <> [("WAYLAND_DISPLAY", nestedWaylandDisplay names)] <> display
             , riverRuntimeDirectory = runtime
             , riverProcess = river
             }
