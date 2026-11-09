@@ -35,7 +35,7 @@ tests =
         observedOwner (expectedObservation hidden) @?= Nothing
         pictureMismatch [] (paint []) @?= Nothing
     , testCase "workload names parse from their text" $
-        map (parseWorkloadName . workloadText) [minBound .. maxBound] @?= map Just [M1, M2]
+        map (parseWorkloadName . workloadText) [minBound .. maxBound] @?= map Just [M1, M2, M3]
     , testCase "the tile table agrees with the production Tall layout" $
         sequence_ [tileBoxes r n @?= production r n | r <- [Half, TwoFifths], n <- [1, 6, 8]]
     , testCase "m2 opens six tiles, then two dialogs of the first tile" $
@@ -87,6 +87,50 @@ tests =
         pictureMismatch (expectedLayers full) (paint (expectedLayers full)) @?= Nothing
         pictureMismatch dialogs (paint dialogs) @?= Nothing
         assertBool "the lower dialog showing through the upper" (pictureMismatch dialogs (paint (reverse (drop 6 dialogs) ++ take 6 dialogs)) /= Nothing)
+    , testCase "m3 opens two tiles, then the pad, which the WM adopts and shows" $ do
+        windowRoles M3 @?= [TileRole Red, TileRole Blue, PadRole Green]
+        let m0 = initialModel M3
+        (modelFocus m0, modelPadShown m0, observedOwner (expectedObservation m0)) @?= (1, True, Just 0)
+        expectedLayers m0 @?= zipWith (\c b -> Layer c b 2) [Blue, Red] (tileBoxes Half 2) ++ [Layer Green padContent 2]
+    , testCase "hiding the pad returns the keyboard to the focused tile and keeps every size" $ do
+        let m0 = initialModel M3
+            hidden = stepModel m0 TogglePad
+        observedOwner (expectedObservation hidden) @?= Just 1
+        observedSizes (expectedObservation hidden) @?= observedSizes (expectedObservation m0)
+        Map.lookup 0 (observedSizes (expectedObservation m0)) @?= Just (396, 296)
+        map layerColor (expectedLayers hidden) @?= [Blue, Red]
+    , testCase "the m3 plan hides the adopted pad, then cycles two views, two toggles, and a recompile" $
+        take 11 (plan M3 1909 (initialModel M3))
+          @?= [TogglePad, ViewEmpty, ViewPopulated, TogglePad, TogglePad, Recompile, ViewEmpty, ViewPopulated, TogglePad, TogglePad, Recompile]
+    , testCase "every m3 step changes what the probe or the subscriber observes" $ do
+        let m0 = initialModel M3
+            models = scanl stepModel m0 (take 3000 (plan M3 1910 m0))
+            seen m = (expectedObservation m, expectedPublication m)
+        sequence_ [assertBool (show m) (seen next /= seen m) | (m, next) <- zip models (drop 1 models)]
+    , testCase "a recompile publishes one more finished build and leaves the probe's view alone" $ do
+        let m0 = stepModel (initialModel M3) TogglePad
+            built = stepModel m0 Recompile
+        (publishedTag (expectedPublication built), publishedBuilds (expectedPublication built)) @?= ("1", 1)
+        expectedObservation built @?= expectedObservation m0
+        publishedTag (expectedPublication (stepModel m0 ViewEmpty)) @?= "2"
+    , testCase "24 warmup steps leave the pad shown, so 2500 measured m3 steps time 1001 toggles and 499 recompiles" $ do
+        let m0 = initialModel M3
+            warmed = foldl stepModel m0 (take 24 (plan M3 1909 m0))
+            measured = take 2500 (plan M3 1910 warmed)
+            counts = Map.fromListWith (+) [(endpointText e, 1 :: Int) | s <- measured, e <- stepEndpoints M3 s]
+        modelPadShown warmed @?= True
+        counts @?= Map.fromList [("external_wake", 1000), ("ipc_update", 1000), ("scratchpad_toggle", 1001), ("recompile_completion", 499)]
+    , testCase "the m3 restore steps show workspace 1 with the pad hidden" $ do
+        let shownAway = stepModel (initialModel M3) ViewEmpty
+            restored = foldl stepModel shownAway (restoreSteps shownAway)
+        restoreSteps shownAway @?= [ViewPopulated, TogglePad]
+        (modelShown restored, modelPadShown restored) @?= (True, False)
+    , testCase "m1 and m2 steps time no m3 endpoint" $
+        [e | name <- [M1, M2], s <- [minBound .. maxBound], e <- stepEndpoints name s] @?= []
+    , testCase "the shown pad's picture matches its own layers, and a missing pad is reported" $ do
+        let layers = expectedLayers (initialModel M3)
+        pictureMismatch layers (paint layers) @?= Nothing
+        assertBool "pad absent" (pictureMismatch layers (paint (take 2 layers)) /= Nothing)
     ]
  where
   m1Colors = [Green, Red, Blue, Green, Red, Blue, Green, Red]
