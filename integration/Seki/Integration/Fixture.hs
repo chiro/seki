@@ -10,6 +10,7 @@ module Seki.Integration.Fixture (
   Box (..),
   Paint (..),
   BorderStyle (..),
+  portedBorders,
   WindowRequest (..),
   withFixture,
   withFixtureUsing,
@@ -87,6 +88,9 @@ data Paint = Paint Color Box Bool deriving (Eq, Show)
 expects. A probe color equal to a border pixel is not checked for coverage.
 -}
 data BorderStyle = BorderStyle Int BS.ByteString BS.ByteString deriving (Eq, Show)
+
+portedBorders :: BorderStyle
+portedBorders = BorderStyle 1 (BS.pack [255, 0, 0]) (BS.pack [0, 0, 221])
 
 -- | A nested headless river with no window manager yet.
 data NestedRiver = NestedRiver
