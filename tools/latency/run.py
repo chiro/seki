@@ -390,9 +390,9 @@ def prepare_revision(worktree, binary, compiler, build_flags):
         record |= {"build_command": None, "build_provenance": "provided binary; dependency optimization flags unverified",
                    "compiler": output([str(binary), "info"]) + " (patch version unverified)"}
     libraries = linked_seki_libraries(output(["ldd", str(binary)]))
-    if worktree and record["build_command"]:
+    if record["build_command"]:
         for library in libraries:
-            require(Path(library).resolve().is_relative_to(Path(worktree).resolve()), f"{binary} loads {library} from outside {worktree}")
+            require(Path(library).resolve().is_relative_to(worktree), f"{binary} loads {library} from outside {worktree}")
     record |= {"git_sha": output(["git", "rev-parse", "HEAD"], cwd=worktree) if worktree else None,
                "dirty_paths": output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=worktree).splitlines() if worktree else [],
                "binary": str(binary), "binary_sha256": sha256(binary), "binary_reported_compiler": output([str(binary), "info"]),

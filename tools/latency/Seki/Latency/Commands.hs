@@ -77,8 +77,5 @@ awaitPublished :: Commands -> Int -> (Published -> Bool) -> IO Published
 awaitPublished (Commands _ _ published) limit wanted = loop
  where
   loop = do
-    next <- bounded limit "IPC publication" (readChan published) >>= either fail pure
+    next <- timeout limit (readChan published) >>= maybe (fail "timed out waiting for IPC publication") pure >>= either fail pure
     if wanted next then pure next else loop
-
-bounded :: Int -> String -> IO a -> IO a
-bounded limit what action = timeout limit action >>= maybe (fail ("timed out waiting for " <> what)) pure
