@@ -66,7 +66,16 @@ extra-doc-files:
   docs/latency-baseline/summary.json
   docs/latency-baseline/manifest.json
   docs/latency-baseline/profile-summary.json
+  docs/latency-m2/report.md
+  docs/latency-m2/summary.json
+  docs/latency-m2/manifest.json
+  docs/latency-m3/report.md
+  docs/latency-m3/notes.md
+  docs/latency-m3/summary.json
+  docs/latency-m3/manifest.json
   docs/m1-plan.md
+  docs/m2-plan.md
+  docs/m3-plan.md
   docs/reconciliation.md
   docs/spec.md
   docs/wire-protocol.md
