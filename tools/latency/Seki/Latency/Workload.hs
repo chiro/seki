@@ -181,11 +181,13 @@ stepModel m step = case step of
   count = length (windowRoles (modelWorkload m))
   focus i = m{modelFocus = i, modelFullscreen = Nothing, modelRaise = if isDialog (modelWorkload m) i then filter (/= i) (modelRaise m) ++ [i] else modelRaise m}
 
-{- | The infinite seeded plan from a model, one group per generator value.
+{- | The infinite plan from a model, one group per generator value.
 An M1 group changes focus, then views the empty workspace and back. An M2
 group changes focus, flips the master ratio so every tile resizes, may
 request fullscreen on a focused tile, views the empty workspace and back,
-and may then request the fullscreen exit.
+and may then request the fullscreen exit. An M3 group ignores the seed: it
+returns to the resting state, views the empty workspace and back, shows and
+hides the pad, and recompiles.
 -}
 plan :: WorkloadName -> Word64 -> Model -> [Step]
 plan name seed = go (map (`shiftR` 32) (drop 1 (iterate next seed)))
@@ -218,7 +220,9 @@ data Observation = Observation
   deriving (Eq, Show)
 
 {- | A tile commits its content box, or the whole output while fullscreen. A
-dialog commits its fixed size. A hidden workspace keeps every size.
+dialog commits its fixed size, and the pad its content box. A shown pad
+holds the keyboard. A hidden workspace keeps every size and has no
+keyboard owner.
 -}
 expectedObservation :: Model -> Observation
 expectedObservation m =
