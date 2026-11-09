@@ -591,4 +591,5 @@ ran exactly once at its start and at its end.
 Set `SEKI_INTEGRATION_ARTIFACT_DIR` to keep each phase's PNG, every output
 side by side, and each subscription's JSONL. The log has one
 `M3_DAILY_CAPTURE` line per capture and `M3_DAILY_*` lines for the observed
-values, including the load scenario's key-to-focus latency.
+values, including the load scenario's key-to-focus time measured from
+wtype's launch.

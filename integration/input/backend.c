@@ -85,8 +85,6 @@ static int add(void *data) {
  if (stage==0) {stage=1; wl_event_source_timer_update(timer,600);}
  return 0;
 }
-/* SEKI_FIXTURE_HOTPLUG names a file whose presence plugs a keyboard and a
- * pointer named by SEKI_FIXTURE_HOTPLUG_POINTER; its removal unplugs both. */
 static int hotplug(void *data) {
  (void)data;
  bool wanted=access(getenv("SEKI_FIXTURE_HOTPLUG"),F_OK)==0;
