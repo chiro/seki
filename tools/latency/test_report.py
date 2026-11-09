@@ -111,13 +111,10 @@ class ReportTest(unittest.TestCase):
         self.driver["exercised"] = {name: 0 for name in self.driver["exercised"]}
         self.assertEqual(self.summarize("m1")["exercised"]["fullscreen_enters"], 0)
 
-    def test_schema_1_driver_is_m1(self):
-        del self.driver["workload"], self.driver["exercised"], self.pure["workload"]
-        self.assertEqual(self.summarize("m1")["exercised"], {})
-
-    def test_schema_1_manifest_is_m1(self):
-        self.assertEqual(runner.manifest_workload({"schema": 1}), "m1")
-        self.assertEqual(runner.manifest_workload({"schema": 2, "workload": "m2"}), "m2")
+    def test_report_refuses_an_older_manifest_schema(self):
+        runner.write(self.path / "manifest.json", dict(schema=2, workload="m2", trials=[]))
+        with self.assertRaisesRegex(ValueError, "schema 2"):
+            runner.report(self.path)
 
     def test_report_names_a_missed_budget_and_counts_per_action(self):
         self.wm["samples"] = [dict(kind=k, start_ns=s, end_ns=e) for k,s,e in [("manage",1,2),("manage",11,12_000_009),("render",12_000_009,12_000_010),("render",12_000_013,12_000_014)]]
@@ -128,8 +125,7 @@ class ReportTest(unittest.TestCase):
             runner.write(trial/f"{name}.json",getattr(self,name))
         for name in ["wm.rts","pure.rts","wm-checkpoint-0.json","wm-checkpoint-1.json"]:
             (trial/name).write_text((self.path/name).read_text())
-        runner.write(self.path/"manifest.json", dict(schema=2, workload="m2", machine="m", compiler="c", binary_sha256="h", seed=1, live_steps=1, pure_steps=1, pure_windows=2,
-                                                    trials=[dict(directory="00-normal", collector="normal", load_before=[0], load_after=[0])]))
+        runner.write(self.path/"manifest.json", manifest([("00-normal", "head", "m2")], revisions={"head": revision("abc1234")}))
         summary = runner.report(self.path)
         self.assertEqual(summary["trials"][0]["budgets"]["manage_p99"], False)
         text = (self.path/"report.md").read_text()

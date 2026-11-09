@@ -39,6 +39,8 @@ WORKLOADS = {
            }},
 }
 
+SCHEMA = 3
+
 BUDGETS = {"pure_p99": ("pure", "p99_ms", 2), "manage_p99": ("manage", "p99_ms", 10),
            "render_p99": ("render", "p99_ms", 10), "wm_gc_max": ("wm_rts", "max_stw_pause_ms", 10)}
 
@@ -87,10 +89,6 @@ def rts_summary(path):
             "collections": generations, "scope": "process lifetime including shutdown; no forced GC"}
 
 
-def manifest_workload(manifest):
-    return manifest["workload"] if manifest["schema"] >= 2 else "m1"
-
-
 def reversed_on_odd_rounds(names, index):
     return names[::-1] if index % 2 else names
 
@@ -129,8 +127,8 @@ def summarize_trial(directory, workload):
     directory = Path(directory)
     wm, driver, pure = (read(directory / f"{name}.json") for name in ["wm", "driver", "pure"])
     require(wm["clean_exit"] and driver["valid"] and driver["native_checks"] and pure["valid"], "failed workload")
-    require(driver.get("workload", "m1") == workload and pure.get("workload", "m1") == workload, "trial ran a different workload")
-    exercised = driver.get("exercised", {})
+    require(driver["workload"] == workload and pure["workload"] == workload, "trial ran a different workload")
+    exercised = driver["exercised"]
     for name in WORKLOADS[workload]["exercised"]:
         require(exercised.get(name, 0) > 0, f"workload did not exercise {name}")
     require(wm["failed"] == wm["dropped"] == 0, "failed or dropped sequences")
@@ -183,13 +181,12 @@ def budget_section(trials):
     lines = ["", "## Budgets", "",
              "Budgets are pure p99 < 2 ms, manage and render sequence p99 < 10 ms, and maximum observed WM stop-the-world pause < 10 ms. "
              "An m3 trial must also meet each command target that names one."]
-    if all("revision" in t for t in trials):
-        lines += ["", "| Trial | Revision | Workload | Collector | Pure p99 | Manage p99 | Render p99 | Max STW | Endpoint p99 | Pass |",
-                  "|---|---|---|---|---:|---:|---:|---:|---|---|"]
-        for t in trials:
-            endpoints = ", ".join(f"{name} {v['p99_ms']:.2f}" for name, v in t["endpoints"].items()) or "none"
-            lines.append(f"| {t['directory']} | {t['revision']} | {t['workload']} | {t['collector']} | {t['pure']['p99_ms']:.4f} | {t['manage']['p99_ms']:.4f} | "
-                         f"{t['render']['p99_ms']:.4f} | {t['wm_rts']['max_stw_pause_ms']:.1f} | {endpoints} | {'pass' if all(t['budgets'].values()) else 'FAIL'} |")
+    lines += ["", "| Trial | Revision | Workload | Collector | Pure p99 | Manage p99 | Render p99 | Max STW | Endpoint p99 | Pass |",
+              "|---|---|---|---|---:|---:|---:|---:|---|---|"]
+    for t in trials:
+        endpoints = ", ".join(f"{name} {v['p99_ms']:.2f}" for name, v in t["endpoints"].items()) or "none"
+        lines.append(f"| {t['directory']} | {t['revision']} | {t['workload']} | {t['collector']} | {t['pure']['p99_ms']:.4f} | {t['manage']['p99_ms']:.4f} | "
+                     f"{t['render']['p99_ms']:.4f} | {t['wm_rts']['max_stw_pause_ms']:.1f} | {endpoints} | {'pass' if all(t['budgets'].values()) else 'FAIL'} |")
     if misses:
         lines += ["", "Missed:", ""] + [f"- {miss}" for miss in misses]
     else:
@@ -245,34 +242,27 @@ def endpoint_section(trials):
 def report(directory):
     directory = Path(directory)
     manifest = read(directory / "manifest.json")
-    campaign = manifest["schema"] >= 3
+    require(manifest["schema"] == SCHEMA, f"report mode reads schema {SCHEMA} manifests; {directory / 'manifest.json'} is schema {manifest['schema']}")
     trials = []
     for item in manifest["trials"]:
-        workload = item["workload"] if campaign else manifest_workload(manifest)
-        trial = item | {"workload": workload} | summarize_trial(directory / item["directory"], workload)
-        trial["budgets"] = budget_outcomes(trial, workload)
+        trial = item | summarize_trial(directory / item["directory"], item["workload"])
+        trial["budgets"] = budget_outcomes(trial, item["workload"])
         trials.append(trial)
     checksums = {}
     for t in trials:
-        seen = checksums.setdefault(t["workload"], {}).setdefault(t.get("revision", "local"), t["pure_checksum"])
-        require(seen == t["pure_checksum"], f"deterministic checksum differs across {t['workload']} trials at {t.get('revision', 'local')}")
+        seen = checksums.setdefault(t["workload"], {}).setdefault(t["revision"], t["pure_checksum"])
+        require(seen == t["pure_checksum"], f"deterministic checksum differs across {t['workload']} trials at {t['revision']}")
     groups = {}
     for t in trials:
-        groups.setdefault((t["workload"], t.get("revision", "local"), t["collector"]), []).append(t)
+        groups.setdefault((t["workload"], t["revision"], t["collector"]), []).append(t)
     summary = {"manifest": manifest, "workloads": list(checksums), "trials": trials, "pure_checksums": checksums,
                "verdict": "inconclusive; production defaults unchanged"}
     lines = ["# Latency and collector evidence", "", "Collector selection is inconclusive. Production defaults remain unchanged.", "",
              "The diagnostic uses the same optimized threaded build at `-N1`; only `--nonmoving-gc` differs. WM sequence latency is request submission time, not compositor acknowledgment or display latency.", ""]
     per_group = min(len(group) for group in groups.values())
-    if campaign:
-        lines += [f"Trials per workload, revision, and collector: {per_group}. Fewer than five is exploratory evidence only.",
-                  f"Machine: {manifest['uname']}; {manifest['cpu_model']}, {manifest['cpu_count']} CPUs. River {manifest['river']} with `WLR_RENDERER={manifest['renderer']}`."]
-        lines += [f"Workload {w}: {WORKLOADS[w]['text']}; {manifest['live_steps'][w]} acknowledged actions after 24 warmup actions." for w in checksums]
-    else:
-        workload = manifest_workload(manifest)
-        lines += [f"Trials per collector: {per_group}. Fewer than five is exploratory evidence only.",
-                  f"Machine: {manifest['machine']}. Compiler: {manifest['compiler']}. Binary SHA-256: `{manifest['binary_sha256']}`.",
-                  f"Workload {workload}: {WORKLOADS[workload]['text']}; {manifest['live_steps']} acknowledged actions after 24 warmup actions."]
+    lines += [f"Trials per workload, revision, and collector: {per_group}. Fewer than five is exploratory evidence only.",
+              f"Machine: {manifest['uname']}; {manifest['cpu_model']}, {manifest['cpu_count']} CPUs. River {manifest['river']} with `WLR_RENDERER={manifest['renderer']}`."]
+    lines += [f"Workload {w}: {WORKLOADS[w]['text']}; {manifest['live_steps'][w]} acknowledged actions after 24 warmup actions." for w in checksums]
     lines += [f"Seed {manifest['seed']}. Pure mode uses {manifest['pure_windows']} windows, {manifest['pure_steps']} events, and 128 warmup events.", "",
               "| Workload | Revision | Collector | Metric | Trials | Median | Min | Max |", "|---|---|---|---|---:|---:|---:|---:|"]
     for (workload, revision, collector), group in groups.items():
@@ -281,8 +271,7 @@ def report(directory):
         for name, values in metrics:
             lines.append(f"| {workload} | {revision} | {collector} | {name} | {len(values)} | {statistics.median(values):.4f} | {min(values):.4f} | {max(values):.4f} |")
     lines += budget_section(trials)
-    if campaign:
-        lines += revision_section(manifest, checksums)
+    lines += revision_section(manifest, checksums)
     lines += endpoint_section(trials)
     lines += ["", "## Work and validity", "",
               "Sequences per action count the manage and render sequences inside the interval for each measured action. A rise against the same workload points at repeated proposals.", "",
@@ -447,7 +436,7 @@ def main():
     else:
         order = trial_plan(args.trials, list(revisions), workloads, supported)
     live_steps = {w: args.live_steps or WORKLOADS[w]["live_steps"] for w in workloads}
-    manifest = {"schema": 3, "workloads": workloads, "machine": platform.platform(), "uname": " ".join(os.uname()), "cpu_count": os.cpu_count(),
+    manifest = {"schema": SCHEMA, "workloads": workloads, "machine": platform.platform(), "uname": " ".join(os.uname()), "cpu_count": os.cpu_count(),
                 "cpu_model": next((l.split(":",1)[1].strip() for l in Path("/proc/cpuinfo").read_text().splitlines() if l.startswith("model name")), "unknown"),
                 "river": output(["river", "-version"], stderr=subprocess.STDOUT), "renderer": "pixman",
                 "revisions": revisions, "unsupported": unsupported, "runtime_sources": runtime_sources(revisions),
