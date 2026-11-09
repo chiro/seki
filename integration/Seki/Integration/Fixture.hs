@@ -103,7 +103,6 @@ withNestedRiver = withNestedRiverEnvironment []
 withNestedRiverEnvironment :: [(String, String)] -> Int -> (NestedRiver -> IO a) -> IO a
 withNestedRiverEnvironment = withNestedRiverUsing False
 
--- | A nested river with Xwayland, whose client environment names its private X display.
 withNestedXwaylandRiver :: [(String, String)] -> Int -> (NestedRiver -> IO a) -> IO a
 withNestedXwaylandRiver = withNestedRiverUsing True
 

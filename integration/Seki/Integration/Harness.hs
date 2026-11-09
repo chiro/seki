@@ -747,10 +747,6 @@ withFcitxVirtualKeyboardOwner imeEnvironment =
     )
     stopManagedProcess
 
-{- | Select Mozc for the focused foot, type @nihongo@ and a space through
-fcitx5's virtual keyboard backend, press Return with wtype, and return the
-line the IME terminal probe receives.
--}
 commitMozcText :: String -> [(String, String)] -> [(String, String)] -> ManagedProcess -> Handle -> IO String
 commitMozcText label imeEnvironment clientEnvironment virtualKeyboardOwner probeHandle = do
   _ <- runProcessCapture imeEnvironment "fcitx5-remote" ["-s", "mozc"]

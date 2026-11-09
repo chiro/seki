@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: MIT
  * Generate test data with the closure's libxkbcommon and xkeyboard-config.
- * With no arguments it writes the US/Japanese pair; with RULES MODEL LAYOUT
- * OPTIONS it writes the keymap those XKB names select.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <xkbcommon/xkbcommon.h>
 int main(int argc, char **argv) {
- if (argc != 1 && argc != 5) return 2;
+ if (argc != 1 && argc != 5) {
+  fputs("usage: keymap [RULES MODEL LAYOUT OPTIONS]\n",stderr);
+  return 2;
+ }
  struct xkb_context *context=xkb_context_new(XKB_CONTEXT_NO_FLAGS);
  struct xkb_rule_names names={.layout="us,jp"};
  if (argc == 5) names=(struct xkb_rule_names){.rules=argv[1],.model=argv[2],.layout=argv[3],.options=argv[4]};

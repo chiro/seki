@@ -84,7 +84,6 @@ portedConfig =
   opaque r g b = BorderColor (channel r) (channel g) (channel b) maxBound
   channel byte = byte * 0x01010101
 
--- | The daily configuration, loading the keyboard keymap from the given path.
 dailyConfig :: FilePath -> Either String (Config StdLayouts)
 dailyConfig keymap = do
   padRect <- first show (mkSize 1280 800 >>= mkRect (Point 320 200))
