@@ -20,7 +20,7 @@ import Seki.Internal.Core.Scratchpad.Types (ScratchpadState (..))
 import Seki.Internal.Core.StackSet qualified as S
 import Seki.Internal.Core.State
 import Seki.Latency.Pure
-import Seki.Latency.Workload (WorkloadName (..))
+import Seki.Latency.Workload (WorkloadName (..), padName)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
 import Test.Tasty
@@ -73,21 +73,21 @@ tests =
         operationCodes M3 1909 200 @?= [fromIntegral ((x `shiftR` 32) `mod` 22) | x <- take 200 (drop 1 (iterate lcg 1909))]
     , testCase "m3 starts as m2 with a hidden pad outside every workspace" $ do
         let st = initialState M3 8
-        Map.keys (coreScratchpads st) @?= ["pad"]
-        fmap padWindow (Map.lookup "pad" (coreScratchpads st)) @?= Just (S.WindowId 9, False)
+        Map.keys (coreScratchpads st) @?= [padName]
+        fmap padWindow (Map.lookup padName (coreScratchpads st)) @?= Just (S.WindowId 9, False)
         coreWorkspaces st @?= coreWorkspaces (initialState M2 8)
         assertBool "the hidden pad leaves the m2 invariants" (validateResult 8 st (planFor M3 8 st))
     , testCase "m3 toggles the pad into the workspace and out, and requests a restart" $ do
         let run codes = drainCore idHook (map (eventFor M3 8) codes) (initialState M3 8)
             shown = fst (run [20])
-        fmap padWindow (Map.lookup "pad" (coreScratchpads shown)) @?= Just (S.WindowId 9, True)
+        fmap padWindow (Map.lookup padName (coreScratchpads shown)) @?= Just (S.WindowId 9, True)
         assertBool "a shown pad is a managed window" (validateResult 8 shown (planFor M3 8 shown))
-        fmap padWindow (Map.lookup "pad" (coreScratchpads (fst (run [20, 20])))) @?= Just (S.WindowId 9, False)
+        fmap padWindow (Map.lookup padName (coreScratchpads (fst (run [20, 20])))) @?= Just (S.WindowId 9, False)
         snd (run [21]) @?= [Restart]
         fst (run [16]) @?= fst (drainCore idHook [eventFor M2 8 16] (initialState M3 8))
     , testCase "a pad missing from the workspaces fails validation" $ do
         let shown = fst (drainCore idHook [eventFor M3 8 20] (initialState M3 8))
-            lost = shown{coreScratchpads = Map.insert "pad" (ShownPad (S.WindowId 10) Nothing) (coreScratchpads shown)}
+            lost = shown{coreScratchpads = Map.insert padName (ShownPad (S.WindowId 10) Nothing) (coreScratchpads shown)}
         assertBool "the pad's window is not managed" (not (validateResult 8 lost (planFor M3 8 lost)))
     , testCase "m2 keeps trunk c2b7851's pure checksum over 512 steps of seed 1909 on 32 windows" $
         withSystemTempDirectory "seki-pure" $ \directory -> do
@@ -96,7 +96,7 @@ tests =
           checksum <- either fail pure (decoded >>= parseEither (withObject "pure" (.: "checksum")))
           checksum @?= (16867668497154443398 :: Word64)
     , testCase "the m3 digest consumes the pad state" $
-        throws (forceResult (initialState M3 8){coreScratchpads = Map.singleton "pad" (ShownPad (error "unforced pad") Nothing)} [] emptyScene)
+        throws (forceResult (initialState M3 8){coreScratchpads = Map.singleton padName (ShownPad (error "unforced pad") Nothing)} [] emptyScene)
     ]
  where
   initial = initialState M1 8
