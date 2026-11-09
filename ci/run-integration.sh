@@ -55,6 +55,7 @@ fi
 integration_executable=$(cabal list-bin seki-integration "$@" 2>>"$raw_log")
 seki_executable=$(cabal list-bin seki-default "$@" 2>>"$raw_log")
 reference_config_executable=$(cabal list-bin seki-reference-config "$@" 2>>"$raw_log")
+daily_config_executable=$(cabal list-bin seki-daily-config "$@" 2>>"$raw_log")
 launcher_executable=$(cabal list-bin seki "$@" 2>>"$raw_log")
 sekictl_executable=$(cabal list-bin sekictl "$@" 2>>"$raw_log")
 
@@ -64,6 +65,7 @@ SEKI_RUN_INTEGRATION=1 \
   SEKICTL_EXECUTABLE="$sekictl_executable" \
   SEKI_EXECUTABLE="$seki_executable" \
   SEKI_REFERENCE_CONFIG_EXECUTABLE="$reference_config_executable" \
+  SEKI_DAILY_CONFIG_EXECUTABLE="$daily_config_executable" \
   SEKI_INTEGRATION_ARTIFACT_DIR="$artifact_directory" \
   SEKI_INTEGRATION_MANIFEST="$manifest" \
   timeout 480s "$integration_executable" 2>&1 | tee -a "$raw_log"

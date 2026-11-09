@@ -1,5 +1,6 @@
 module Main (main) where
 
+import Seki.Integration.Daily (dailyScenarios)
 import Seki.Integration.Harness (mainWith)
 import Seki.Integration.Input (inputScenarios, inputWorkerMain)
 import Seki.Integration.M1 (m1Scenarios)
@@ -16,4 +17,4 @@ main = do
   args <- getArgs
   case args of
     ["--input-worker", path] -> inputWorkerMain path
-    _ -> mainWith (m1Scenarios <> m2Scenarios <> restartScenarios <> referenceScenarios <> m3Scenarios <> recompileScenarios <> ipcScenarios <> inputScenarios <> scratchpadScenarios <> scratchpadRestoreScenarios)
+    _ -> mainWith (m1Scenarios <> m2Scenarios <> restartScenarios <> referenceScenarios <> m3Scenarios <> recompileScenarios <> ipcScenarios <> inputScenarios <> scratchpadScenarios <> scratchpadRestoreScenarios <> dailyScenarios)
