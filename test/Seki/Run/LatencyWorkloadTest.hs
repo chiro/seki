@@ -3,6 +3,7 @@ module Seki.Run.LatencyWorkloadTest (tests) where
 import Data.Bits (shiftR)
 import Data.ByteString qualified as BS
 import Data.Map.Strict qualified as Map
+import Data.Maybe (isJust)
 import Data.Word (Word64)
 import Seki.Fixture.Probe (Color (..), Image (..))
 import Seki.Internal.Core.Geometry (Point (..), mkRect, mkSize, rectHeight, rectWidth, rectX, rectY)
@@ -125,6 +126,11 @@ tests =
             restored = foldl stepModel shownAway (restoreSteps shownAway)
         restoreSteps shownAway @?= [ViewPopulated, TogglePad]
         (modelShown restored, modelPadShown restored) @?= (True, False)
+    , testCase "every m3 plan step and restore step has an IPC command" $ do
+        let m0 = initialModel M3
+            warmup = take 24 (plan M3 1909 m0)
+            steps = warmup ++ take 3000 (plan M3 1910 (foldl stepModel m0 warmup))
+        sequence_ [assertBool (show s) (isJust (stepCommand s)) | s <- steps ++ concatMap restoreSteps (scanl stepModel m0 steps)]
     , testCase "m1 and m2 steps time no m3 endpoint" $
         [e | name <- [M1, M2], s <- [minBound .. maxBound], e <- stepEndpoints name s] @?= []
     , testCase "the shown pad's picture matches its own layers, and a missing pad is reported" $ do
