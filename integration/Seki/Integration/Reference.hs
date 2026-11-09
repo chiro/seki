@@ -70,11 +70,11 @@ referenceConfig = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-r
           onOutput "emacs shows the Emacs window alone" [Paint Green fullTile True]
           modKeys base ["1"]
           onOutput "term still holds only its two windows" [Paint Green leftTile False, Paint Blue rightTile True]
-          input ["-M", "logo", "-M", "shift", "-k", "Return", "-m", "shift", "-m", "logo"]
+          modShiftKeys base ["Return"]
           launched "Mod-Shift-Return launches the terminal" ["alacritty"]
           input ["-k", "XF86AudioRaiseVolume"]
           launched "XF86AudioRaiseVolume raises the volume" ["alacritty", "amixer -D pulse sset Master 2%+"]
-          input ["-M", "logo", "-M", "shift", "-k", "l", "-m", "shift", "-m", "logo"]
+          modShiftKeys base ["l"]
           launched "Mod-Shift-l locks the screen" ["alacritty", "amixer -D pulse sset Master 2%+", "xscreensaver-command --lock"]
           modKeys base ["q"]
           _ <- waitUntil "seki execs itself with --restore" assertionTimeoutMicroseconds (BS8.unpack <$> BS.readFile ("/proc/" <> show pid <> "/cmdline")) ("--restore" `isInfixOf`)

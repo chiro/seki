@@ -38,6 +38,7 @@ module Seki.Integration.Harness (
   runProcessOutcome,
   runInputDriver,
   modKeys,
+  modShiftKeys,
   waitUntil,
   assertionTimeoutMicroseconds,
   pollIntervalMicroseconds,
@@ -1442,6 +1443,9 @@ runInputDriver childEnvironment arguments =
 
 modKeys :: [(String, String)] -> [String] -> IO ()
 modKeys childEnvironment keys = runInputDriver childEnvironment (["-M", "logo"] <> concatMap (\key -> ["-k", key]) keys <> ["-m", "logo"])
+
+modShiftKeys :: [(String, String)] -> [String] -> IO ()
+modShiftKeys childEnvironment keys = runInputDriver childEnvironment (["-M", "logo", "-M", "shift"] <> concatMap (\key -> ["-k", key]) keys <> ["-m", "shift", "-m", "logo"])
 
 startManagedProcess :: String -> [(String, String)] -> CreateProcess -> IO ManagedProcess
 startManagedProcess label childEnvironment specification = do

@@ -32,7 +32,7 @@ import System.Directory (createDirectoryIfMissing, getSymbolicLinkTarget, listDi
 import System.Environment (lookupEnv)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
-import System.Posix.Files (createSymbolicLink, setFileMode)
+import System.Posix.Files (createSymbolicLink)
 import System.Posix.Process (executeFile)
 import System.Process (proc)
 import System.Timeout (timeout)
@@ -157,8 +157,7 @@ restartFallback = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-r
       socket = riverSocket nested
       environment = riverEnvironment nested
       press k = runInputDriver environment ["-k", k]
-  writeFile target "#!/nonexistent/interpreter\n"
-  setFileMode target 0o755
+  writeExecutable target "#!/nonexistent/interpreter\n"
   let launch =
         Launch
           { launchFirstTarget = Right (UnixSocketPath socket)
