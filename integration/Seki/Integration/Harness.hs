@@ -1220,7 +1220,7 @@ receiveAll connection = go []
 
 riverInitHelper :: FilePath -> IO ()
 riverInitHelper socketPath = do
-  waylandDisplay <- requireSetting "WAYLAND_DISPLAY"
+  waylandDisplay <- lookupEnv "WAYLAND_DISPLAY" >>= maybe (failIntegration "river did not give its init command WAYLAND_DISPLAY") pure
   xDisplay <- lookupEnv "DISPLAY"
   preload <- lookupEnv "LD_PRELOAD"
   bracket (socket AF_UNIX Stream defaultProtocol) close $ \connection -> do

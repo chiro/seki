@@ -671,13 +671,14 @@ withFlood session workers action = do
 data Stall = Stall {backlogBefore :: Int, backlogAfter :: Int, revisionFrom :: Integer, revisionTo :: Integer}
   deriving (Show)
 
--- A backlog of 32 first-snapshot sizes (about 36 KB) cannot be a reader that is merely
--- behind, and it stays under the roughly 104 KB the AF_UNIX send buffer held in every run.
+-- A backlog of 32 first-snapshot sizes (about 36 KB) shows the server kept streaming after the
+-- first snapshot until the socket filled; it stays under the roughly 104 KB the AF_UNIX send
+-- buffer held in every run.
 stallSnapshots :: Int
 stallSnapshots = 32
 
--- The flood advances the revision several times per millisecond, so a backlog that does
--- not grow over this window means the server's writes to the subscriber are blocked.
+-- The flood advances the revision hundreds of times in this window, so a backlog that does
+-- not grow over it means the server's writes to the subscriber are blocked.
 stallWindowMicroseconds :: Int
 stallWindowMicroseconds = 200000
 
@@ -730,7 +731,7 @@ loadResponsive = withDailySession "m3-daily-load" (dailyOptions 1) $ \session ->
   started <- getMonotonicTimeNSec
   (count, loaded, frames) <- withFlood session 8 $ \flood -> do
     _ <- waitUntil "the flood is answering requests" assertionTimeoutMicroseconds (floodReplies flood) (>= 100)
-    stall <- waitUntil "the never-reading subscriber's unread bytes reach 32 first-snapshot sizes and stop growing while the flood advances the revision" assertionTimeoutMicroseconds (subscriberStall flood) (stalled flood)
+    stall <- waitUntil ("the never-reading subscriber's unread bytes reach " <> show (stallSnapshots * unreadFirst flood) <> " (" <> show stallSnapshots <> " first-snapshot sizes) and stop growing while the flood advances the revision") assertionTimeoutMicroseconds (subscriberStall flood) (stalled flood)
     report "SUBSCRIBER_STALL" (show (unreadFirst flood, stall))
     first <- captureOutput surface output
     (moved, resized) <- withHeldLogoIn (clientEnvironment session) probe . withVirtualPointer surface (sessionExtent session) $ \pointer -> do
