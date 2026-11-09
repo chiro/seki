@@ -318,36 +318,9 @@ cabal run seki-scanner -- generate Seki.Fixture.Protocol.WlrVirtualPointerUnstab
 
 ## Completion manifest and CI gate
 
-An enabled successful run must produce exactly:
-
-```text
-enabled=true
-native-wayland-full=passed
-two-output-full=passed
-xwayland=passed
-fcitx5-mozc=passed
-m1-tall-three=passed
-m1-tall-messages=passed
-m1-focus-borders=passed
-m1-swap-master=passed
-m1-layout-cycle=passed
-m1-workspace-visibility=passed
-m1-greedy-view=passed
-m1-layer-exclusive-zone=passed
-m1-layer-focus=passed
-m1-output-readd=passed
-m2-probe-self-test=passed
-m2-manage-shift=passed
-m2-startup-keys=passed
-m2-float-dialog=passed
-m2-fullscreen=passed
-m2-size-policy=passed
-m2-pointer-drag=passed
-m2-client-move=passed
-m2-restart=passed
-m2-restart-fallback=passed
-m2-reference-config=passed
-```
+An enabled successful run must produce exactly the lines of
+`ci/expected-integration-manifest.txt`: `enabled=true`, then one
+`<scenario>=passed` line for each registered scenario in registration order.
 
 `ci/run-integration.sh` byte-compares the generated file with
 `ci/expected-integration-manifest.txt`. A missing, failed, skipped, reordered,
@@ -405,8 +378,9 @@ in a way that can hide deterministic failures.
 
 When adding, removing, or renaming a scenario:
 
-1. update the ordered scenario lists in `integration/Seki/Integration/Harness.hs`,
-   `integration/Seki/Integration/M1.hs`, and `integration/Seki/Integration/M2.hs`;
+1. add the scenario to its module's ordered list, such as `dailyScenarios` in
+   `integration/Seki/Integration/Daily.hs`, and add a new module's list to the
+   lists that `integration/Main.hs` passes to `mainWith`;
 2. update `ci/expected-integration-manifest.txt` in the same order;
 3. add required programs and runtime data to the `ci` shell in `flake.nix`;
 4. add important component versions to
@@ -538,9 +512,10 @@ a private headless output and checks unavailable then resubmitted mapping. It
 claims submission, not applied pointer coordinates. `m3-input-perf` retains 1000 contiguous native
 layout-to-subscriber receipts with a 50 ms p99 ceiling. Its bounded process budget
 is 30 seconds because the source emits at 10 ms intervals; ordinary assertions
-retain their 10-second budget. The full suite has a 480-second outer limit for the input cases and five
-1,000-toggle scratchpad trials. Individual assertion and latency budgets stay
-fixed.
+retain their 10-second budget. The full suite has a 480-second outer limit. At
+1fe09e8 the complete suite, including the seven daily scenarios, took 295.5
+and 299.2 seconds in CI jobs 128956572250 and 128956585393. Individual
+assertion and latency budgets stay fixed.
 
 The backend consumes `LD_PRELOAD` in its startup constructor, before river can
 fork/exec its init command. The init handshake reports and checks an empty preload;
@@ -571,22 +546,23 @@ late matching window. It has no launch deadline or timer wait.
 The `m3-daily-*` scenarios run the `seki-daily-config` executable, the
 public `dailyConfig` in `test-public/PortedConfig.hs`, as a real process.
 `ci/run-integration.sh` passes it in `SEKI_DAILY_CONFIG_EXECUTABLE`. Each
-scenario gives it a private `HOME` with no `XDG_CONFIG_HOME`, so it loads
-`$HOME/.config/seki/keymap.xkb`. That keymap is `daily.xkb`, which the input
-fixture build compiles for rules evdev, model pc105, layout us, and option
-ctrl:nocaps. A `PATH` of stubs logs each launch of the programs the
+scenario gives it a private `HOME` and no `XDG_CONFIG_HOME`, except that
+`m3-daily-hotplug` sets a relative one, which the executable ignores. Either
+way it loads `$HOME/.config/seki/keymap.xkb`. That keymap is `daily.xkb`,
+which the input fixture build compiles for rules evdev, model pc105, layout
+us, and option ctrl:nocaps. A `PATH` of stubs logs each launch of the programs the
 configuration starts or binds. Each scenario checks that every startup command
 ran exactly once at its start and at its end.
 
-| Manifest entry | What it verifies |
-| --- | --- |
-| `m3-daily-two-output` | Windows on both outputs, a probe title, Mod-space, and the scratchpad from pending to shown to hidden match the latest `sekictl subscribe` snapshot |
-| `m3-daily-build` | `sekictl recompile` with stub `SEKI_CONFIG_*` resources validates and execs a copy of the executable under the same pid; the shown pad, a fullscreen window, focus, and workspaces return, and IPC reports the new image |
-| `m3-daily-bar` | A subscriber survives two Mod-q restarts; each new session's first snapshot matches the windows, and an earlier spawn is not replayed |
-| `m3-daily-hotplug` | Keyboard rule results, river's 25 Hz/660 ms repeat, a keyboard and an ELAN-named touchpad plugged in later through `SEKI_FIXTURE_HOTPLUG`, and an output turned off and on with the pad shown on it |
-| `m3-daily-ime` | The configuration's own `fcitx5` launch on a private D-Bus commits `日本語` through Mozc into foot after a Mod-q handover |
-| `m3-daily-xwayland` | An xterm tiles, takes and loses focus by binding and click, moves between workspaces, and closes with Mod-Shift-c; no urgency claim |
-| `m3-daily-load` | Logo drags move and resize a float to exact geometry while IPC workers flood requests and a subscriber never reads; a key binding and a fresh `sekictl` request still respond |
+| Manifest entry | What it verifies | Additional programs |
+| --- | --- | --- |
+| `m3-daily-two-output` | Windows on both outputs, a probe title, Mod-space, and the scratchpad from pending to shown to hidden match the latest `sekictl subscribe` snapshot; Mod-Shift-l runs `swaylock` | `wlr-randr` |
+| `m3-daily-build` | `sekictl recompile` with stub `SEKI_CONFIG_*` resources validates and execs a copy of the executable under the same pid; the shown pad, a fullscreen window, focus, and workspaces return, and IPC reports the new image | `wlr-randr` |
+| `m3-daily-bar` | A `sekictl subscribe` subscriber, the stream that `examples/waybar/seki.py` reads, survives two Mod-q restarts; each new session's first snapshot matches the windows, and an earlier spawn is not replayed. Waybar itself is a logging stub | `wlr-randr` |
+| `m3-daily-hotplug` | Keyboard rule results, river's 25 Hz/660 ms repeat, a keyboard and an ELAN-named touchpad plugged in later through `SEKI_FIXTURE_HOTPLUG`, and an output turned off and on with the pad shown on it | `wlr-randr` |
+| `m3-daily-ime` | The configuration's own `fcitx5` launch on a private D-Bus commits `日本語` through Mozc into foot after a Mod-q handover, and exactly one `fcitx5` process from the scenario's D-Bus runs at the end | `wlr-randr`, `foot`, `dbus-daemon`, `dbus-test-tool`, `gdbus`, `fcitx5`, `fcitx5-remote`, Mozc |
+| `m3-daily-xwayland` | An xterm tiles, takes and loses focus by binding and click, moves between workspaces, and closes with Mod-Shift-c; no urgency claim | `wlr-randr`, `xterm`, `xdotool` |
+| `m3-daily-load` | While IPC workers flood requests, a subscriber that never reads holds at least 32 unread snapshots and stops growing as the revision advances; logo drags then move and resize a float to exact geometry, and a key binding and a fresh `sekictl` request still respond | `wlr-randr` |
 
 Set `SEKI_INTEGRATION_ARTIFACT_DIR` to keep each phase's PNG, every output
 side by side, and each subscription's JSONL. The log has one
