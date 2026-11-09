@@ -62,7 +62,7 @@ runWM workload socket directory = do
     IPCDriver -> do
       getEnv "XDG_RUNTIME_DIR" >>= buildFailingCheck . (</> "build") >>= configureBuild policy
       path <- ipcPath
-      pure (withIPCAt path policy)
+      pure (withIPCAt path policy . (publish (directory </> "wm.ipc") path >>))
   let handlers = (policyRuntimeHandlers policy){riverSequenceRecorder = Just recorder}
   session <- openRiverSessionAt (UnixSocketPath socket) defaultObjectLimit handlers >>= requireRight "latency WM open"
   pid <- getProcessID
@@ -242,8 +242,8 @@ runLive directory workload seed steps collector = do
                         withDriver body = case workloadDriver workload of
                           KeyDriver -> body (\model step _ -> [] <$ drive model step)
                           IPCDriver -> do
-                            let path = runtime </> "seki" </> "ipc.sock"
-                            _ <- waitUntil "WM IPC socket" assertionTimeoutMicroseconds (doesFileExist path) id
+                            _ <- waitUntil "WM serving IPC" assertionTimeoutMicroseconds (doesFileExist (directory </> "wm.ipc")) id
+                            path <- readFile (directory </> "wm.ipc")
                             withCommands path (\c -> body (\_ step next -> timeCommand c observe next step))
                     withDriver $ \act -> do
                       let perform (model, timed) step = do
@@ -361,6 +361,9 @@ openRole :: Probe -> [ProbeWindow] -> WindowRole -> IO ProbeWindow
 openRole probe _ (TileRole color) = openWindow probe color
 openRole probe opened (DialogRole color (width, height) parent) = openWindowWith probe (windowSpec color){specParent = Just (opened !! parent), specCommit = CommitFixed width height}
 openRole probe _ (PadRole color) = openWindowWith probe (windowSpec color){specAppId = CustomAppId (Text.pack padAppId)}
+
+publish :: FilePath -> String -> IO ()
+publish path contents = writeFile (path <> ".tmp") contents >> renameFile (path <> ".tmp") path
 
 writeProcesses :: FilePath -> [(String, Maybe Int)] -> IO ()
 writeProcesses directory processes = do
