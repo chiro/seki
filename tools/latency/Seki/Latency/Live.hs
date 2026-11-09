@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Seki.Latency.Live (runWM, runLive) where
@@ -34,7 +33,6 @@ import Seki.Latency.Workload
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.ConfigBuild (BuildContext (..), Resources (..))
 import Seki.Run.IPC (ipcPath, withIPCAt)
-import Seki.Run.IPCSchema qualified as IPC
 import Seki.Run.Inventory (riverInventoryWindows)
 import Seki.Run.Latency
 import Seki.Run.Policy
@@ -248,9 +246,9 @@ runLive directory workload seed steps collector = do
                             pure (next, foldl' (\m (endpoint, ns) -> Map.insertWith (<>) endpoint [ns] m) timed samples)
                           issue c next step = do
                             threadDelay idleGapMicroseconds
-                            operation <- maybe (fail ("m3 has no command for " <> show step)) pure (stepCommand step)
+                            (operation, endpoints) <- maybe (fail ("m3 has no command for " <> show step)) pure (stepCommand step)
                             Receipt started revision <- command c operation
-                            forM (stepEndpoints workload step) $ \endpoint -> do
+                            forM endpoints $ \endpoint -> do
                               ended <- case endpoint of
                                 ExternalWake -> observed next
                                 ScratchpadToggle -> observed next
@@ -339,14 +337,6 @@ idleGapMicroseconds = 1000
 
 pollMicroseconds :: Int
 pollMicroseconds = 100
-
-stepCommand :: Step -> Maybe IPC.Operation
-stepCommand = \case
-  ViewEmpty -> Just (IPC.Workspace "2")
-  ViewPopulated -> Just (IPC.Workspace "1")
-  TogglePad -> Just (IPC.Scratchpad "pad")
-  Recompile -> Just IPC.Recompile
-  _ -> Nothing
 
 withCommandsFor :: WorkloadName -> FilePath -> (Maybe Commands -> IO a) -> IO a
 withCommandsFor M3 path body = do
