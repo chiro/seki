@@ -14,6 +14,8 @@ The planner insets each tile by the border width. A tile whose content would
 have zero width or height becomes omitted. Hidden workspace windows and
 windows omitted by `Full` remain in the scene, with no placement. They receive
 no dimension proposal.
+A hidden scratchpad is outside every workspace, so it is not in the scene at
+all. The reconciler hides every window that the scene does not place.
 
 The reconciler retains the requested size separately from the client's
 actual size, and shows the actual size at the desired top-left. The tile's
