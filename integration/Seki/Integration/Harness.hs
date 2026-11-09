@@ -41,6 +41,7 @@ module Seki.Integration.Harness (
   modShiftKeys,
   shellQuote,
   waitUntil,
+  waitUntilEvery,
   assertionTimeoutMicroseconds,
   pollIntervalMicroseconds,
   waitForMVar,
@@ -1173,7 +1174,10 @@ waitForObservation phase session sessionResult predicate =
       Just result -> failIntegration ("river runtime exited during " <> phase <> ": " <> show result)
 
 waitUntil :: (Show value) => String -> Int -> IO value -> (value -> Bool) -> IO value
-waitUntil phase timeoutMicroseconds observe predicate = do
+waitUntil phase timeoutMicroseconds = waitUntilEvery phase timeoutMicroseconds pollIntervalMicroseconds
+
+waitUntilEvery :: (Show value) => String -> Int -> Int -> IO value -> (value -> Bool) -> IO value
+waitUntilEvery phase timeoutMicroseconds intervalMicroseconds observe predicate = do
   started <- getMonotonicTimeNSec
   let deadline = started + fromIntegral timeoutMicroseconds * 1000
       loop lastValue = do
@@ -1184,7 +1188,7 @@ waitUntil phase timeoutMicroseconds observe predicate = do
             now <- getMonotonicTimeNSec
             if now >= deadline
               then failIntegration ("timeout waiting for " <> phase <> "; last state: " <> showValue lastValue value)
-              else threadDelay pollIntervalMicroseconds >> loop (Just value)
+              else threadDelay intervalMicroseconds >> loop (Just value)
   loop Nothing
  where
   showValue _ value = show value
