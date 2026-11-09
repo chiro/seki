@@ -7,6 +7,8 @@ module Seki.Integration.Harness (
   DisplayNames (..),
   requireExecutables,
   createPrivateDirectory,
+  loggingStub,
+  writeExecutable,
   fixtureEnvironment,
   withUnixListener,
   ManagedProcess,
@@ -1626,6 +1628,12 @@ isIsolatedVariable name =
 
 createPrivateDirectory :: FilePath -> IO ()
 createPrivateDirectory path = createDirectory path >> setFileMode path 0o700
+
+loggingStub :: FilePath -> String
+loggingStub launches = "#!/bin/sh\nline=${0##*/}\nfor argument in \"$@\"; do line=\"$line $argument\"; done\nprintf '%s\\n' \"$line\" >> '" <> launches <> "'\n"
+
+writeExecutable :: FilePath -> String -> IO ()
+writeExecutable path script = writeFile path script >> setFileMode path 0o755
 
 writeFootConfig :: FilePath -> IO ()
 writeFootConfig path =
