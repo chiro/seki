@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Seki.Integration.IPCPerf (ipcPerfScenarios) where
+module Seki.Integration.IPCPerf (ipcPerfScenarios, appliedRevision, bufferedLine) where
 
 import Control.Concurrent (forkFinally, killThread)
 import Control.Concurrent.Chan (newChan, readChan, writeChan)
