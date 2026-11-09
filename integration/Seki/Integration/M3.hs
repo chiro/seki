@@ -372,7 +372,7 @@ ipcReconnect = withNestedRiver 1 $ \nested -> do
       marker = runtime </> "spawn-count"
       logFile = runtime </> "subscription.jsonl"
       readLines path = doesFileExist path >>= \exists -> if exists then BS.split 10 <$> BS.readFile path else pure []
-      key = runInputDriver environment ["-M", "logo", "-k", "q", "-m", "logo"]
+      key = modKeys environment ["q"]
   bracket (startManagedProcess "seki" environment (proc executable [])) stopManagedProcess $ \manager -> do
     [(_, output)] <- waitUntil "one output" assertionTimeoutMicroseconds (outputNames (riverSocket nested)) ((== 1) . length)
     withKeyboard environment . withProbe (riverSocket nested) $ \probe -> do
@@ -468,7 +468,7 @@ recompileResponsive = withFixture (policyConfigOf def) "m3-recompile" 1 $ \fixtu
       _ <- runProcessCapture environment cli ["recompile"]
       before <- keyboardOwner <$> keyboardSnapshot probe
       beforeLayout <- layoutDescription
-      runInputDriver environment ["-M", "logo", "-k", "j", "-k", "space", "-m", "logo"]
+      modKeys environment ["j", "space"]
       void (waitUntil "real focus changes while compiler held" assertionTimeoutMicroseconds (keyboardOwner <$> keyboardSnapshot probe) (/= before))
       void (waitUntil "real layout changes while compiler held" assertionTimeoutMicroseconds layoutDescription (/= beforeLayout))
     _ <- runProcessCapture environment cli ["workspace", "2"]

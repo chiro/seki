@@ -343,7 +343,7 @@ twoOutput = withDailySession "m3-daily-two-output" (dailyOptions 2) $ \session -
   picture session termOutput "term tiles its two windows again with the pad hidden" [Paint Green (Box 1 1 798 298) True, Paint Blue (Box 1 301 798 298) False]
   streamShows stream "the second Mod-grave hides the pad" (shown (Just "daily two-output") [("term", "hidden")])
   capture session "daily-two-output-hidden"
-  runInputDriver (clientEnvironment session) ["-M", "logo", "-M", "shift", "-k", "l", "-m", "shift", "-m", "logo"]
+  modShiftKeys (clientEnvironment session) ["l"]
   launchedOnce session "Mod-Shift-l locks the screen with swaylock" "swaylock"
 
 stubBuildResources :: DailyHome -> FilePath -> IO [(String, String)]
@@ -556,7 +556,7 @@ imeHandover = withDailyHome (dailyOptions 1) $ \home -> do
       preflightFootIme "m3-daily-ime" client
       _ <- waitUntil "the daily startup hook's fcitx5 serves the private D-Bus" assertionTimeoutMicroseconds (isRight <$> try @IntegrationFailure (runProcessCapture ime "fcitx5-remote" ["--check"])) id
       before <- snapshot session
-      modKeys (clientEnvironment session) ["q"]
+      modKeys client ["q"]
       after <- waitSnapshot session "Mod-q hands over to a fresh IPC session" ((/= snapSession before) . snapSession)
       report "HANDOVER" (Text.unpack (snapSession before) <> " -> " <> Text.unpack (snapSession after))
       (_, arguments) <- processImage (sessionPid session)
@@ -580,7 +580,6 @@ xwaylandManagement :: IO ()
 xwaylandManagement = withDailySession "m3-daily-xwayland" (dailyOptions 1){optionXwayland = True} $ \session -> do
   let probe = sessionProbe session
       client = clientEnvironment session
-      modShift k = runInputDriver client ["-M", "logo", "-M", "shift", "-k", k, "-m", "shift", "-m", "logo"]
       -- xdotool fails while X focus is still on the root window, before any X client maps.
       xFocus phase = void (waitUntil phase assertionTimeoutMicroseconds (either (const Nothing) (Just . Text.pack) <$> try @IntegrationFailure (queryX11FocusedWindowName client)) (== Just xtermTitle))
       xGeometry = do
@@ -598,28 +597,28 @@ xwaylandManagement = withDailySession "m3-daily-xwayland" (dailyOptions 1){optio
     report "XTERM_GEOMETRY" (show geometry)
     polledShows session "the bar shows the focused xterm's title" (onTerm (Just xtermTitle) [])
     capture session "daily-xwayland-tiled"
-    modKeys (clientEnvironment session) ["j"]
+    modKeys client ["j"]
     waitFocus session "Mod-j moves keyboard focus to the native window" (Just native)
     picture session output "the native window takes the focused border" [Paint Green (Box 401 1 398 598) True]
     click (sessionSocket session) (sessionExtent session) (200, 300)
     xFocus "a click gives the xterm X input focus"
     waitFocus session "the click takes keyboard focus from the native window" Nothing
     picture session output "the clicked xterm takes the focused border" [Paint Green (Box 401 1 398 598) False]
-    modShift "2"
+    modShiftKeys client ["2"]
     waitFocus session "Mod-Shift-2 leaves the native window focused on term" (Just native)
     picture session output "term shows only the native window" [Paint Green (Box 1 1 798 598) True]
     polledShows session "the xterm is on emacs" (onTerm Nothing [workspace "emacs" [Occupied] "Tall"])
-    modKeys (clientEnvironment session) ["2"]
+    modKeys client ["2"]
     xFocus "viewing emacs gives the xterm X input focus"
     picture session output "emacs shows only the xterm" []
     capture session "daily-xwayland-moved"
-    modShift "1"
-    modKeys (clientEnvironment session) ["1"]
+    modShiftKeys client ["1"]
+    modKeys client ["1"]
     xFocus "the xterm moved back to term has X input focus"
     picture session output "the xterm tiles beside the native window again" [Paint Green (Box 401 1 398 598) False]
     polledShows session "the xterm is back on term" (onTerm (Just xtermTitle) [])
     capture session "daily-xwayland"
-    modShift "c"
+    modShiftKeys client ["c"]
     exit <- waitForProcessWithTimeout "Mod-Shift-c closes the xterm" xterm
     report "XTERM_EXIT" (show exit)
     waitFocus session "the native window has keyboard focus after the close" (Just native)
