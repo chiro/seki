@@ -39,6 +39,7 @@ module Seki.Integration.Harness (
   pollIntervalMicroseconds,
   waitForMVar,
   failIntegration,
+  requireSetting,
   IntegrationFailure (..),
   socketQueuedBytes,
 ) where
@@ -1668,6 +1669,9 @@ requireEnvironment name =
   lookupEnv name >>= \case
     Nothing -> failIntegration ("required environment variable missing: " <> name)
     Just value -> pure value
+
+requireSetting :: String -> IO String
+requireSetting variable = lookupEnv variable >>= maybe (failIntegration (variable <> " is unset; run through ci/run-integration.sh")) pure
 
 requireRight :: (Show errorValue) => String -> Either errorValue value -> IO value
 requireRight phase = \case

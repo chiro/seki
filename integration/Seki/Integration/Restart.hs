@@ -52,7 +52,7 @@ its pid, and the bindings still work.
 -}
 restartProcess :: IO ()
 restartProcess = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-restart-bin" $ \bin -> do
-  executable <- lookupEnv "SEKI_EXECUTABLE" >>= maybe (failIntegration "SEKI_EXECUTABLE is unset; run through ci/run-integration.sh") pure
+  executable <- requireSetting "SEKI_EXECUTABLE"
   createSymbolicLink executable (bin </> "seki")
   let base = riverEnvironment nested
       environment = [("PATH", bin <> ":" <> fromMaybe "/usr/bin:/bin" (lookup "PATH" base))] <> filter ((/= "PATH") . fst) base
@@ -105,7 +105,7 @@ seki reports the switch; both workspaces are empty, so the output cannot show it
 -}
 focusedWorkspace :: [(String, String)] -> IO (Maybe Text)
 focusedWorkspace environment = do
-  cli <- lookupEnv "SEKICTL_EXECUTABLE" >>= maybe (failIntegration "SEKICTL_EXECUTABLE is unset; run through ci/run-integration.sh") pure
+  cli <- requireSetting "SEKICTL_EXECUTABLE"
   reply <- try @SomeException (runProcessCapture environment cli ["snapshot"])
   pure $ either (const Nothing) (either (const Nothing) id . (eitherDecodeStrict' >=> parseEither focused)) reply
  where

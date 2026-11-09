@@ -15,7 +15,6 @@ import Seki.Fixture.Probe
 import Seki.Integration.Fixture (BorderStyle (..), Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, withKeyboard, withNestedRiver)
 import Seki.Integration.Harness
 import System.Directory (createDirectoryIfMissing, doesFileExist)
-import System.Environment (lookupEnv)
 import System.FilePath (takeDirectory, (</>))
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Files (setFileMode)
@@ -33,7 +32,7 @@ bindings launch their commands; and after Mod-q the Emacs window is still on
 -}
 referenceConfig :: IO ()
 referenceConfig = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-reference-home" $ \home -> do
-  executable <- lookupEnv "SEKI_REFERENCE_CONFIG_EXECUTABLE" >>= maybe (failIntegration "SEKI_REFERENCE_CONFIG_EXECUTABLE is unset; run through ci/run-integration.sh") pure
+  executable <- requireSetting "SEKI_REFERENCE_CONFIG_EXECUTABLE"
   let bin = home </> "bin"
       launches = home </> "launches"
       base = riverEnvironment nested
