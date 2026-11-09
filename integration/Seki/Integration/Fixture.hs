@@ -6,6 +6,7 @@ module Seki.Integration.Fixture (
   withNestedRiver,
   withNestedRiverEnvironment,
   withNestedRiverUsing,
+  outputOrigins,
   placeOutputs,
   Fixture (..),
   Box (..),
