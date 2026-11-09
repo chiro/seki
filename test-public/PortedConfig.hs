@@ -34,9 +34,7 @@ everything above and differs from xmonad.hs in these further ways:
   port locks on purpose, because the maintainer chose swayidle with swaylock.
 * Mod-Shift-l runs @swaylock@ instead of @xscreensaver-command --lock@.
 * Mod-grave toggles a terminal scratchpad that xmonad.hs does not have.
-  alacritty's @--class@ sets the Wayland app_id the pad matches. The pad's
-  origin centers it on the maintainer's 1920 by 1200 panel, and floating rules
-  keep it inside a smaller output.
+  alacritty's @--class@ sets the Wayland app_id the pad matches.
 * The keyboard and touchpad settings come from xorg.conf.d and xset and move
   into input rules. Compile the keymap file 'dailyConfig' is given from the
   X11 settings with @xkbcli compile-keymap --rules evdev --model pc105 --layout
@@ -85,7 +83,7 @@ portedConfig =
 
 dailyConfig :: FilePath -> Either String (Config StdLayouts)
 dailyConfig keymap = do
-  padRect <- first show (mkSize 1280 800 >>= mkRect (Point 320 200))
+  padRect <- first show (mkSize 1280 800 >>= mkRect (Point ((1920 - 1280) `div` 2) ((1200 - 800) `div` 2)))
   anyKeyboard <- first show (compileDevicePattern "*")
   touchpad <- first show (compileDevicePattern "ELAN06C7:00 04F3:3193 Touchpad")
   pure $
