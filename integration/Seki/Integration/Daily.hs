@@ -458,13 +458,13 @@ hotplug = do
   withSystemTempDirectory "seki-daily-hotplug" $ \directory -> do
     let plugged = directory </> "plugged"
         options = (dailyOptions 2){optionRiverEnvironment = [("LD_PRELOAD", backend), ("SEKI_FIXTURE_HOTPLUG", plugged), ("SEKI_FIXTURE_HOTPLUG_POINTER", Text.unpack touchpadName)]}
-    withDailySession "m3-daily-hotplug" options $ \session -> do
+    withDailyHome options $ \home -> runDaily "m3-daily-hotplug" home [("XDG_CONFIG_HOME", "relative-config")] $ \session -> do
       hotplugDevices session plugged
       hotplugOutput session
 
 hotplugDevices :: DailySession -> FilePath -> IO ()
 hotplugDevices session plugged = do
-  ready <- projected (settled backendKeyboards) "the daily keyboard rule's results reach both backend keyboards" (== map dailyKeyboard backendKeyboards)
+  ready <- projected (settled backendKeyboards) "the daily keyboard rule's results reach both backend keyboards with HOME/.config/seki/keymap.xkb despite a relative XDG_CONFIG_HOME" (== map dailyKeyboard backendKeyboards)
   report "BACKEND_KEYBOARDS" (show ready)
   pointer <- projected (\shot -> [filter ((`elem` touchpadSettings) . fst) (deviceResults d) | d <- namedDevices ["seki-private-backend-pointer"] shot]) "the backend pointer is in the inventory" (not . null)
   assertEqual "the touchpad rule applies to no backend pointer" [[]] pointer
