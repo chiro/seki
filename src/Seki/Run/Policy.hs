@@ -305,9 +305,6 @@ outputArrived o st = case statePendingStartup st of
  where
   arrived = queueEvent (const (OutputCreated o)) st
 
-{- | A sequence that restarts ends with @stop@ only when the restart check
-passes; otherwise the refusal is logged and seki keeps running.
--}
 prepareManagePlan :: (Eq i, Show i, LayoutClass l) => Policy i l -> RiverRuntimeSnapshot -> IO (ManageM ManageOutcome)
 prepareManagePlan policy snapshot = do
   stored <- readIORef (policyState policy)
@@ -341,25 +338,17 @@ prepareManagePlan policy snapshot = do
 
 data ManageStep = ManageStep
   { stepEffects :: [ManageEffect]
-  -- ^ In run order.
   , stepCheck :: RestartCheck
   , stepPlan :: ManageM ()
   }
 
 data ManageEffect = LogLine String | RequestBuild | LaunchCommand String
 
--- | Settled after the effects run, because a build they request replaces a ready target.
 data RestartCheck
   = NoRestartCheck
-  | -- | A build session exists, so stop only for the target it validated.
-    CheckReadyTarget
-  | -- | No build session, and the drain asked to restart.
-    CheckRecordedTarget
+  | CheckReadyTarget
+  | CheckRecordedTarget
 
-{- | Drain the queue and plan the sequence. The first sequence restores the
-saved state before its drain, so the queued creation events of restored
-windows change nothing.
--}
 stepManage ::
   (Eq i, Show i, LayoutClass l) =>
   PolicyConfig i l ->
@@ -374,10 +363,10 @@ stepManage config canBuild snapshot external stored = (next, ManageStep effects 
   input = riverRuntimeInput snapshot
   pending = statePendingRestore stored
   previous = stateReconcile stored
-  (before, notes) = maybe (stateCore stored, []) (\saved -> restoreCore (liveInventoryOf inventory) saved (stateCore stored)) pending
-  view = DrainView inventory (shownBox before previous) (`Map.lookup` reconciledOps previous)
+  (restored, notes) = maybe (stateCore stored, []) (\saved -> restoreCore (liveInventoryOf inventory) saved (stateCore stored)) pending
+  view = DrainView inventory (shownBox restored previous) (`Map.lookup` reconciledOps previous)
   events = map ($ view) (reverse (stateQueue stored))
-  (st, raised) = drainCoreWithScratchpads (policyScratchpads config) (policyManageHook config) (events <> map RunAction external) before
+  (st, raised) = drainCoreWithScratchpads (policyScratchpads config) (policyManageHook config) (events <> map RunAction external) restored
   intents = interpretIntents raised
   scene =
     planScene
@@ -401,14 +390,15 @@ stepManage config canBuild snapshot external stored = (next, ManageStep effects 
   effects =
     [LogLine ("input: " <> Lazy.unpack (encode (inputStatusValue input))) | not (null (policyInputRules config)), stateLastInput stored /= Just input]
       <> map (LogLine . ("restore: " <>) . describeRestoreNote) notes
-      <> [RequestBuild | canBuild, planRestart intents]
+      <> buildRequest
       <> map LaunchCommand (planLaunch intents)
       <> map LogLine (planNotices intents)
       <> [LaunchCommand command | (_, _, command) <- planPads intents]
-  check
-    | canBuild = CheckReadyTarget
-    | planRestart intents = CheckRecordedTarget
-    | otherwise = NoRestartCheck
+  (buildRequest, check) = case (canBuild, planRestart intents) of
+    (True, True) -> ([RequestBuild], NoRestartCheck)
+    (True, False) -> ([], CheckReadyTarget)
+    (False, True) -> ([], CheckRecordedTarget)
+    (False, False) -> ([], NoRestartCheck)
   liveWindow (WindowId w) =
     riverWindowObject <$> (mkObjectId w >>= (`lookupRiverWindow` inventory))
   isInteraction WindowInteraction{} = True
