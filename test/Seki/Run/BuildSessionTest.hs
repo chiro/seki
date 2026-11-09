@@ -65,6 +65,26 @@ tests =
               await takeWake
             )
             `finally` closePolicy policy
+    , testCase "a restart requested while a target is ready builds again instead of stopping" $
+        fixture "exit 0" $ \context _ -> do
+          checks <- newIORef (0 :: Int)
+          policy <- newPolicy (PolicyConfig [] [] Layout.Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (\_ -> modifyIORef' checks (+ 1) >> pure (Right ())) (\_ -> pure ())) >>= either (assertFailure . show) pure
+          configureBuild policy context
+          let handlers = policyRuntimeHandlers policy
+              snapshot = RiverRuntimeSnapshot emptyRiverInventory (InputUnavailable []) []
+              manageAfter action = do
+                submitExternal (policyIngress policy) (ExternalInput action Nothing) >>= (@?= Accepted)
+                void (prepareRiverManagePlan handlers snapshot)
+          ( do
+              manageAfter restart
+              await (isJust <$> policyValidatedTarget policy)
+              manageAfter restart
+              readIORef checks >>= assertEqual "no restart check while the requested build runs" 0
+              await (isJust <$> policyValidatedTarget policy)
+              manageAfter (pure ())
+              readIORef checks >>= assertEqual "the next manage checks the new target" 1
+            )
+            `finally` closePolicy policy
     , testCase "existing user files do not open template resources" $
         fixture "exit 0" $ \(BuildContext resources config _) _ -> do
           generate resources config
