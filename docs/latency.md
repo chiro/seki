@@ -6,7 +6,9 @@ generate a report. They do not change production configuration or the
 executable's RTS defaults. Two reviewed reports keep compact evidence of five
 alternating trials per collector: the M1 [reference report](latency-baseline/report.md)
 of 2026-10-18 and the M2 [workload report](latency-m2/report.md) of
-2026-10-25. Ordinary unit CI does not enforce timing budgets.
+2026-10-25. The M3 [campaign report](latency-m3/report.md) interleaves five
+trunk and head m2 trials per collector and adds the m3 workload at head.
+Ordinary unit CI does not enforce timing budgets.
 
 ## Run a comparison
 
@@ -20,18 +22,51 @@ nix develop --no-write-lock-file .#ci --command python3 tools/latency/run.py art
 nix develop --no-write-lock-file .#ci --command python3 tools/latency/run.py artifacts/latency/m2 --report-only
 ```
 
-`--workload` is required to collect trials. `m2` is the M2 gate. `m1` is the
-M1 workload, still runnable on current code for comparison. Report-only mode
-reads the workload from `manifest.json`; a schema 1 manifest, written before
-workloads existed, reads as `m1`. It needs the full trial directories, so it
-cannot regenerate a retained compact report.
+`--workload` is required to collect trials, and you can repeat it. `m2` is the
+M2 gate. `m3` times the M3 command paths. `m1` is the M1 workload, still
+runnable on current code for comparison. Report-only mode reads the workloads
+from `manifest.json`; a schema 1 manifest, written before workloads existed,
+reads as `m1`. It needs the full trial directories, so it cannot regenerate a
+retained compact report.
+
+## Compare two revisions
+
+Give each revision a clean worktree and name it with `--revision`:
+
+```sh
+git worktree add --detach ../seki-trunk main
+git worktree add --detach ../seki-head HEAD
+python3 tools/latency/run.py artifacts/latency/m3 --workload m2 --workload m3 \
+  --revision trunk=../seki-trunk --revision head=../seki-head
+```
+
+The runner builds `seki-latency` in each worktree before the first trial. The
+executables link the seki libraries dynamically, so a binary copied out of its
+worktree still loads the libraries of the last build there. Building in place
+keeps each revision's code separate. The runner refuses a revision with
+uncommitted tracked changes, and refuses a binary that loads a seki library
+from outside its worktree. It records each revision's commit, binary hash,
+and the hash of every linked seki library, and checks those hashes again after
+the last trial.
+
+Before any trial, the runner runs a one-event pure probe of each requested
+workload on each binary. A binary that rejects the workload name skips that
+workload, and `manifest.json` records the rejection under `unsupported`. Each
+round runs the normal collector and then the nonmoving collector. Each
+collector runs every workload at each revision that supports it. Odd rounds
+reverse the order of the revisions. When the revisions have identical
+`src/`, `src-core/`, and `src-public/` trees, the report states that their
+difference is a noise floor and claims no speedup or regression.
 
 Both retained reports used local GHC 9.6.7 and Cabal 3.10. The M2 report ran
 `WLR_RENDERER=pixman python3 tools/latency/run.py artifacts/latency/m2-2026-10-25 --workload m2 --compiler ghc-9.6.7`
 with system-installed runtime dependencies. This is a local command, not the
 pinned release toolchain.
 For collection and profile runs, pass `--compiler` explicitly; the runner
-defaults to `ghc-9.10.3`. Report-only mode does not use a compiler.
+defaults to `ghc-9.10.3`. Report-only mode does not use a compiler. The M3
+report ran on a host without nix. It used the GHC 9.10.3 bindist on `PATH`,
+the system river 0.5.0, wtype, and wlr-randr. The live driver always starts
+river with `WLR_RENDERER=pixman`.
 
 The runner builds once with `--enable-optimization=2` into
 `dist-newstyle/latency`. It alternates normal/nonmoving trials five times using
@@ -55,10 +90,11 @@ failure. It never attaches to an existing compositor session.
 
 ## Workloads and endpoints
 
-Both live workloads run on one 800 by 600 output under Tall with the default
-`Crop` policy, seed 1909, 24 warmup actions, and 1023 measured actions. The
-pure model in `tools/latency/Seki/Latency/Workload.hs` names the windows, the
-seeded plan, what the probe observes after each action, and the expected
+The live workloads run on one 800 by 600 output under Tall with the default
+`Crop` policy, seed 1909, and 24 warmup actions. m1 and m2 measure 1023
+actions, and m3 measures 2500. The pure model in
+`tools/latency/Seki/Latency/Workload.hs` names the windows, the plan, what the
+probe and an IPC subscriber observe after each action, and the expected
 picture; `test/Seki/Run/LatencyWorkloadTest.hs` checks it without river.
 
 - **m1** opens eight solid-color tiles. Each group selects a seeded focus
@@ -72,6 +108,37 @@ picture; `test/Seki/Run/LatencyWorkloadTest.hs` checks it without river.
   and restores a fullscreen window; and may request the fullscreen exit. Over
   the measured actions it makes 225 resizes, 90 fullscreen entries, 58 exits by
   focus, 32 exits by request, 90 hidden-fullscreen views, and 24 dialog raises.
+- **m3** opens two tiles and then a window with the scratchpad's app ID, which
+  the WM adopts as its pad and shows at a fixed 400 by 300 box. The WM also
+  serves IPC and holds a build session. Each round views the empty workspace
+  and back, shows and hides the pad, and recompiles. The driver sends every
+  action as an IPC command after a 1 ms idle gap, with no physical input. The
+  measured actions time four endpoints from the command's send:
+  - `external_wake`: 1000 workspace commands, each to the probe's keyboard
+    owner change.
+  - `ipc_update`: the same commands, each to the subscriber line whose
+    revision applied it. That line must publish the requested workspace.
+  - `scratchpad_toggle`: 1001 toggles, each to the probe's keyboard owner
+    change between the pad and the focused tile.
+  - `recompile_completion`: 499 recompiles, each to the subscriber line that
+    reports that build generation as failed. The stub compiler succeeds, and
+    its candidate fails `--check` with a fixed message that the driver
+    requires. The build therefore runs every step and keeps the session. The
+    build worker polls each of its subprocesses every 10 ms, so this endpoint
+    measures that polling as well.
+
+  Probe outcomes are polled every 0.1 ms. Subscriber lines are stamped when
+  they arrive. Wakes, IPC updates, and toggles must meet a p99 below 50 ms,
+  the ceiling M3-01 set. No earlier target covers a failed build. The report
+  gives no ratio between m2 sequences and m3 endpoints.
+
+  The latency fixture cannot measure two M3 paths, and the report records
+  both. River 0.5.0 lists no input device for the fixture's wtype virtual
+  keyboard, so input rule results have no device to report on;
+  `m3-input-perf` measures them with the preloaded fixture backend. A
+  validated build makes the WM exec its target, which ends the process that
+  owns the trial's samples; the `m3-recompile` integration lane covers that
+  handover.
 
 Every action waits until the probe observes the expected keyboard owner and the
 size every window last committed. The plan's tests prove that each action
@@ -111,7 +178,10 @@ It exercises focus, swaps, workspace changes, shifts, Tall sizing/master counts,
 Tall/Mirror/Full selection, floating bookkeeping and intents. The m2 workload
 starts with the two newest windows as client-sized dialog floats of window 1,
 planned with those parent links, and adds a fullscreen toggle on the focus, a
-client fullscreen request, a click on a dialog, and floating window 3. Concrete random
+client fullscreen request, a click on a dialog, and floating window 3. The m3
+workload starts as m2 with one more window held as a hidden pad, and adds a
+pad toggle and a restart request. An empty pad map adds nothing to the
+checksum, so m1 and m2 keep their checksums. Concrete random
 operation codes and initial state are forced before measurement. Every timed
 iteration runs production `drainCore` and `planScene`, then a strict structural
 checksum fold over all state, layout, tag, stack, floating, fullscreen,
@@ -122,13 +192,16 @@ each timer; a separate replay must produce the same retained checksum.
 ## Artifacts and interpretation
 
 Each trial retains `wm.json`, `wm.rts`, `driver.json`, `pure.json`, `pure.rts`,
-process identities, two WM RTS checkpoints, and process logs. `manifest.json`
-records machine/CPU, binary hash, compiler, river version, actual build command,
-RTS flags, seed, workload, trial order and host load. `summary.json` contains
-per-trial quantiles, counts, collector statistics, exercise counts and budget
-outcomes; `report.md` gives medians and ranges across trials, a generated
-budgets section that names each miss with its value, manage and render
-sequences per measured action, and the m2 exercise counts. Keep the compact summary
+process identities, two WM RTS checkpoints, and process logs. An m3
+`driver.json` also keeps every endpoint sample. `manifest.json`
+records machine/CPU, each revision's commit, binary and library hashes,
+compiler, and build command, the river version, RTS flags, seed, workloads,
+unsupported workloads, trial order and host load. `summary.json` contains
+per-trial quantiles, counts, collector statistics, exercise counts, endpoint
+quantiles and budget outcomes; `report.md` gives medians and ranges for each
+workload, revision, and collector, a per-trial budget table, a generated
+list that names each miss with its value, the m3 endpoint distributions,
+manage and render sequences per measured action, and the m2 exercise counts. Keep the compact summary
 with the reviewed report. Bulk raw artifacts may remain under ignored
 `artifacts/latency/`.
 
