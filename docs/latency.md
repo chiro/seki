@@ -142,7 +142,9 @@ picture; `test/Seki/Run/LatencyWorkloadTest.hs` checks it without river.
     measures that polling as well.
 
   Probe outcomes are polled every 0.1 ms and fail the trial after 10 s.
-  Subscriber lines are stamped when they arrive. Each `driver.json` records
+  Subscriber lines are stamped when the driver's reader thread takes them,
+  which can trail their arrival by one probe poll because the driver runs on
+  one capability. Each `driver.json` records
   the idle gap and the poll interval, and the report prints them from there.
   The WM writes the socket path it serves to `wm.ipc`, and the driver connects
   to that path. Wakes, IPC updates, and toggles must meet a p99 below 50 ms,
@@ -150,7 +152,7 @@ picture; `test/Seki/Run/LatencyWorkloadTest.hs` checks it without river.
   gives no ratio between m2 sequences and m3 endpoints.
 
   The latency fixture cannot measure two M3 paths, and the report records
-  both. River 0.5.0 lists no input device for the fixture's wtype virtual
+  both. River (observed on 0.5.0) lists no input device for the fixture's wtype virtual
   keyboard, so input rule results have no device to report on;
   `m3-input-perf` measures them with the preloaded fixture backend. A
   validated build makes the WM exec its target, which ends the process that
