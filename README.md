@@ -216,6 +216,21 @@ The pure configuration lives in `seki-core`. The private `seki-wire`
 component lowers keys and styles into the production policy. The public
 library depends on both, and the executable imports only `Seki`.
 
+Input devices can be configured with ordered `inputRules` in `Config`. Patterns
+and settings are validated before connecting. See [input configuration](docs/input.md)
+for a public-only example and [IPC](docs/ipc.md) for per-device layout and setting
+results. The Waybar example displays named keyboards independently.
+
+Named terminal scratchpads can hide outside workspace navigation and return on
+the current output. See [scratchpad configuration and recovery](docs/scratchpads.md)
+for the public API, matching precedence and restart limits.
+
+User configuration startup and validation use the installed `seki` launcher; see
+[User configurations](docs/user-configuration.md). Direct development runtime
+uses `cabal run exe:seki-default`. Installed sessions rebuild asynchronously through
+`seki --recompile` or the configured restart action. Build and validation failures
+leave the running configuration active.
+
 ## Architectural consequences
 
 Splitting the WM from the compositor changes the behavior of restarts, failures, and input processing:
@@ -340,18 +355,3 @@ MIT. See [`LICENSE`](LICENSE).
 
 Vendored protocol definitions retain their upstream MIT notices; see
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
-
-Input devices can be configured with ordered `inputRules` in `Config`. Patterns
-and settings are validated before connecting. See [input configuration](docs/input.md)
-for a public-only example and [IPC](docs/ipc.md) for per-device layout and setting
-results. The Waybar example displays named keyboards independently.
-
-Named terminal scratchpads can hide outside workspace navigation and return on
-the current output. See [scratchpad configuration and recovery](docs/scratchpads.md)
-for the public API, matching precedence and restart limits.
-
-User configuration startup and validation use the installed `seki` launcher; see
-[User configurations](docs/user-configuration.md). Direct development runtime
-uses `cabal run exe:seki-default`. Installed sessions rebuild asynchronously through
-`seki --recompile` or the configured restart action. Build and validation failures
-leave the running configuration active.
