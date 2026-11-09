@@ -30,7 +30,7 @@ WORKLOADS = {
                "recompile_completion": {"text": "IPC recompile to the subscriber line that publishes the build generation's result", "target_p99_ms": None},
            },
            "unsupported": {
-               "input_result": "river 0.5.0 lists no input device for the fixture's wtype virtual keyboard, so no input rule has a device "
+               "input_result": "river {river} lists no input device for the fixture's wtype virtual keyboard, so no input rule has a device "
                                "to report on; integration/input/backend.so creates devices only when preloaded into river, which "
                                "m3-input-perf measures",
                "recompile_handover": "a validated build makes the WM stop managing and exec its target, which ends the process that "
@@ -237,7 +237,7 @@ def listed(paths):
     return quoted[0] if len(quoted) == 1 else ", ".join(quoted[:-1]) + (" and " if len(quoted) == 2 else ", and ") + quoted[-1]
 
 
-def endpoint_section(trials):
+def endpoint_section(trials, river):
     rows = [(t, name, v) for t in trials for name, v in t["endpoints"].items()]
     if not rows:
         return []
@@ -252,7 +252,7 @@ def endpoint_section(trials):
         for name, spec in WORKLOADS[workload]["endpoints"].items():
             lines.append(f"- `{name}`: {spec['text']}.")
         for name, reason in WORKLOADS[workload].get("unsupported", {}).items():
-            lines.append(f"- `{name}` is unsupported: {reason}.")
+            lines.append(f"- `{name}` is unsupported: {reason.format(river=river.split()[0])}.")
     lines += ["", "| Trial | Endpoint | Samples | p50 ms | p95 ms | p99 ms | Max ms | Target p99 |", "|---|---|---:|---:|---:|---:|---:|---|"]
     for t, name, v in rows:
         target = WORKLOADS[t["workload"]]["endpoints"][name]["target_p99_ms"]
@@ -294,7 +294,7 @@ def report(directory):
             lines.append(f"| {workload} | {revision} | {collector} | {name} | {len(values)} | {statistics.median(values):.4f} | {min(values):.4f} | {max(values):.4f} |")
     lines += budget_section(trials)
     lines += revision_section(manifest, checksums)
-    lines += endpoint_section(trials)
+    lines += endpoint_section(trials, manifest["river"])
     lines += ["", "## Work and validity", "",
               "Sequences per action count the manage and render sequences inside the interval for each measured action. A rise against the same workload points at repeated proposals.", "",
               "| Trial | Manage | Render | Manage per action | Render per action | Pure | Major GC in workload | Load before / after |", "|---|---:|---:|---:|---:|---:|---|---|"]
@@ -304,7 +304,7 @@ def report(directory):
         names = WORKLOADS[workload]["exercised"]
         if not names:
             continue
-        lines += ["", "## Exercised M2 features", "",
+        lines += ["", f"## Exercised {workload.upper()} features", "",
                   "Counts come from the model's transitions over the measured actions. Every count except float raises changed what the probe observed, so a barrier confirmed it.", "",
                   "| Trial | " + " | ".join(names) + " |", "|---|" + "---:|" * len(names)]
         for t in trials:

@@ -3,6 +3,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location("latency_run", Path(__file__).with_name("run.py"))
 runner = importlib.util.module_from_spec(spec)
@@ -35,9 +36,9 @@ def revision(sha):
     return dict(git_sha=sha, compiler="ghc 9.10", binary_sha256="b" + sha, linked_seki_libraries={"/lib/" + sha: "l" + sha})
 
 
-def manifest(trials, revisions, unsupported=(), sources=None):
+def manifest(trials, revisions, unsupported=(), sources=None, river="0.5.0 +xwayland"):
     workloads = list(dict.fromkeys(w for _, _, w in trials))
-    return dict(schema=runner.SCHEMA, workloads=workloads, machine="m", uname="Linux host", cpu_count=12, cpu_model="cpu", river="0.5.0", renderer="pixman",
+    return dict(schema=runner.SCHEMA, workloads=workloads, machine="m", uname="Linux host", cpu_count=12, cpu_model="cpu", river=river, renderer="pixman",
                 revisions=revisions, unsupported=list(unsupported), sources=sources,
                 seed=1, live_steps={w: 1 for w in workloads}, pure_steps=1, pure_windows=2,
                 trials=[dict(directory=d, revision=r, workload=w, collector="normal", load_before=[0.5], load_after=[0.6]) for d, r, w in trials])
@@ -292,6 +293,21 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(compare(base, wire), {"runtime": False, "driver": True})
         self.assertEqual(compare(wire, latency), {"runtime": True, "driver": False})
         self.assertIsNone(runner.compare_sources({"local": dict(git_sha=None, worktree=None)}))
+
+    def test_unsupported_input_results_name_the_river_that_ran(self):
+        self.write_trial("00-head-m3-normal", "m3", 456)
+        runner.write(self.path / "manifest.json", manifest([("00-head-m3-normal", "head", "m3")], revisions={"head": revision("abc1234")}, river="0.6.1 +xwayland"))
+        runner.report(self.path)
+        self.assertIn("`input_result` is unsupported: river 0.6.1 lists no input device", (self.path / "report.md").read_text())
+
+    def test_exercised_heading_names_its_workload(self):
+        with mock.patch.dict(runner.WORKLOADS["m3"], {"exercised": ["float_raises"]}):
+            self.write_trial("00-head-m3-normal", "m3", 456)
+            runner.write(self.path / "manifest.json", manifest([("00-head-m3-normal", "head", "m3")], revisions={"head": revision("abc1234")}))
+            runner.report(self.path)
+        text = (self.path / "report.md").read_text()
+        self.assertIn("## Exercised M3 features", text)
+        self.assertNotIn("M2", text)
 
     def test_endpoint_method_comes_from_the_trials(self):
         driver = driver_for("m3") | dict(idle_gap_us=2500, observation_poll_us=200)
