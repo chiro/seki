@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 {- | The native latency workloads as a pure model: which windows the driver
 opens, which steps it takes, what the probe observes after each step, and
 what the output shows. The live driver interprets it, and tests check it
@@ -26,6 +28,7 @@ module Seki.Latency.Workload (
   expectedPublication,
   Endpoint (..),
   endpointText,
+  stepCommand,
   stepEndpoints,
   padAppId,
   padContentBox,
@@ -47,6 +50,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, listToMaybe)
 import Data.Word (Word64, Word8)
 import Seki.Fixture.Probe (Color (..), Image (..))
+import Seki.Run.IPCSchema qualified as IPC
 
 data WorkloadName = M1 | M2 | M3 deriving (Eq, Show, Enum, Bounded)
 
@@ -229,13 +233,21 @@ endpointText IPCUpdate = "ipc_update"
 endpointText ScratchpadToggle = "scratchpad_toggle"
 endpointText RecompileCompletion = "recompile_completion"
 
+stepCommand :: Step -> Maybe (IPC.Operation, [Endpoint])
+stepCommand step = case step of
+  ViewEmpty -> Just (IPC.Workspace "2", [ExternalWake, IPCUpdate])
+  ViewPopulated -> Just (IPC.Workspace "1", [ExternalWake, IPCUpdate])
+  TogglePad -> Just (IPC.Scratchpad "pad", [ScratchpadToggle])
+  Recompile -> Just (IPC.Recompile, [RecompileCompletion])
+  FocusDown -> Nothing
+  FocusUp -> Nothing
+  ShrinkMaster -> Nothing
+  ExpandMaster -> Nothing
+  EnterFullscreen -> Nothing
+  ExitFullscreen -> Nothing
+
 stepEndpoints :: WorkloadName -> Step -> [Endpoint]
-stepEndpoints M3 step = case step of
-  ViewEmpty -> [ExternalWake, IPCUpdate]
-  ViewPopulated -> [ExternalWake, IPCUpdate]
-  TogglePad -> [ScratchpadToggle]
-  Recompile -> [RecompileCompletion]
-  _ -> []
+stepEndpoints M3 step = maybe [] snd (stepCommand step)
 stepEndpoints _ _ = []
 
 tiles :: WorkloadName -> [Int]
