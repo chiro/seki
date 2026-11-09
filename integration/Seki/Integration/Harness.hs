@@ -1218,7 +1218,7 @@ receiveAll connection = go []
 
 riverInitHelper :: FilePath -> IO ()
 riverInitHelper socketPath = do
-  waylandDisplay <- requireEnvironment "WAYLAND_DISPLAY"
+  waylandDisplay <- requireSetting "WAYLAND_DISPLAY"
   xDisplay <- lookupEnv "DISPLAY"
   preload <- lookupEnv "LD_PRELOAD"
   bracket (socket AF_UNIX Stream defaultProtocol) close $ \connection -> do
@@ -1698,12 +1698,6 @@ shellQuote value = "'" <> concatMap quoteCharacter value <> "'"
  where
   quoteCharacter '\'' = "'\\''"
   quoteCharacter character = [character]
-
-requireEnvironment :: String -> IO String
-requireEnvironment name =
-  lookupEnv name >>= \case
-    Nothing -> failIntegration ("required environment variable missing: " <> name)
-    Just value -> pure value
 
 requireSetting :: String -> IO String
 requireSetting variable = lookupEnv variable >>= maybe (failIntegration (variable <> " is unset; run through ci/run-integration.sh")) pure

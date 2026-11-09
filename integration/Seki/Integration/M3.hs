@@ -37,7 +37,7 @@ import Seki.Run.Runtime
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
 import Seki.Wire.Transport (ConnectionTarget (..))
 import System.Directory (createDirectory, doesFileExist, getCurrentDirectory, listDirectory)
-import System.Environment (getEnv, lookupEnv)
+import System.Environment (lookupEnv)
 import System.FilePath ((</>))
 import System.Posix.Files (setFileMode)
 import System.Process (proc)
@@ -187,7 +187,7 @@ ipcBoundary = do
       submitExternal (policyIngress (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "initial publication trigger" Accepted
       initial <- request "{\"version\":1,\"id\":\"a\",\"op\":\"snapshot\"}\n"
       assertEqual "initial snapshot" True ("\"workspaces\"" `BS.isInfixOf` initial)
-      cliExecutable <- getEnv "SEKICTL_EXECUTABLE"
+      cliExecutable <- requireSetting "SEKICTL_EXECUTABLE"
       cli <- runProcessCapture (mEnvironment fixture) cliExecutable ["workspace", "3"]
       assertEqual "CLI applied receipt" True ("\"revision\"" `BS.isInfixOf` cli)
       void (waitUntil "CLI workspace applied" assertionTimeoutMicroseconds (readPolicyState (mPolicy fixture)) (\st -> case coreWorkspaces st of AttachedState ss _ -> SS.currentTag ss == "3"; _ -> False))
@@ -300,7 +300,7 @@ ipcState = withFixture (policyConfigOf def) "m3-ipc-state" 2 $ \fixture probe ->
     assertEqual "two workspaces visible" 2 (length (filter (\(_, shown, _) -> shown) flags))
     assertEqual "one intended workspace focus" 1 (length (filter (\(_, _, focused) -> focused) flags))
     assertEqual "window keyboard available" True available
-    cliExecutable <- getEnv "SEKICTL_EXECUTABLE"
+    cliExecutable <- requireSetting "SEKICTL_EXECUTABLE"
     _ <- runProcessCapture (mEnvironment fixture) cliExecutable ["workspace", "3"]
     _ <- openWindow probe Green
     changed <- snapshot
@@ -365,8 +365,8 @@ snapshotFlags bytes = do
 
 ipcReconnect :: IO ()
 ipcReconnect = withNestedRiver 1 $ \nested -> do
-  executable <- getEnv "SEKI_EXECUTABLE"
-  cli <- getEnv "SEKICTL_EXECUTABLE"
+  executable <- requireSetting "SEKI_EXECUTABLE"
+  cli <- requireSetting "SEKICTL_EXECUTABLE"
   let environment = riverEnvironment nested
       runtime = riverRuntimeDirectory nested
       marker = runtime </> "spawn-count"
@@ -403,7 +403,7 @@ snapshotSession bytes = do
 
 ipcLimits :: IO ()
 ipcLimits = do
-  cli <- getEnv "SEKICTL_EXECUTABLE"
+  cli <- requireSetting "SEKICTL_EXECUTABLE"
   cwd <- getCurrentDirectory
   _ <- runProcessCapture [] "python3" [cwd </> "integration/ipc-stream.py", cli]
   launched <- newIORef []
@@ -440,8 +440,8 @@ recompileScenarios = [("m3-recompile", recompileResponsive)]
 recompileResponsive :: IO ()
 recompileResponsive = withFixture (policyConfigOf def) "m3-recompile" 1 $ \fixture probe -> do
   root <- maybe (failIntegration "missing private runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
-  cli <- getEnv "SEKICTL_EXECUTABLE"
-  launcher <- getEnv "SEKI_LAUNCHER_EXECUTABLE"
+  cli <- requireSetting "SEKICTL_EXECUTABLE"
+  launcher <- requireSetting "SEKI_LAUNCHER_EXECUTABLE"
   let directory = root </> "build-proof"
       wrapper = directory </> "compiler"
       started = directory </> "started"
