@@ -565,3 +565,30 @@ intent and has separate pure restore coverage.
 
 `m3-scratchpad-reset` checks pending launch coalescing, explicit reset, and a
 late matching window. It has no launch deadline or timer wait.
+
+## Daily configuration
+
+The `m3-daily-*` scenarios run the `seki-daily-config` executable, the
+public `dailyConfig` in `test-public/PortedConfig.hs`, as a real process.
+`ci/run-integration.sh` passes it in `SEKI_DAILY_CONFIG_EXECUTABLE`. Each
+scenario gives it a private `HOME` with no `XDG_CONFIG_HOME`, so it loads
+`$HOME/.config/seki/keymap.xkb`. That keymap is `daily.xkb`, which the input
+fixture build compiles for rules evdev, model pc105, layout us, and option
+ctrl:nocaps. A `PATH` of stubs logs each launch of the programs the
+configuration starts or binds. Each scenario checks that every startup command
+ran exactly once at its start and at its end.
+
+| Manifest entry | What it verifies |
+| --- | --- |
+| `m3-daily-two-output` | Windows on both outputs, a probe title, Mod-space, and the scratchpad from pending to shown to hidden match the latest `sekictl subscribe` snapshot |
+| `m3-daily-build` | `sekictl recompile` with stub `SEKI_CONFIG_*` resources validates and execs a copy of the executable under the same pid; the shown pad, a fullscreen window, focus, and workspaces return, and IPC reports the new image |
+| `m3-daily-bar` | A subscriber survives two Mod-q restarts; each new session's first snapshot matches the windows, and an earlier spawn is not replayed |
+| `m3-daily-hotplug` | Keyboard rule results, river's 25 Hz/660 ms repeat, a keyboard and an ELAN-named touchpad plugged in later through `SEKI_FIXTURE_HOTPLUG`, and an output turned off and on with the pad shown on it |
+| `m3-daily-ime` | The configuration's own `fcitx5` launch on a private D-Bus commits `日本語` through Mozc into foot after a Mod-q handover |
+| `m3-daily-xwayland` | An xterm tiles, takes and loses focus by binding and click, moves between workspaces, and closes with Mod-Shift-c; no urgency claim |
+| `m3-daily-load` | Logo drags move and resize a float to exact geometry while IPC workers flood requests and a subscriber never reads; a key binding and a fresh `sekictl` request still respond |
+
+Set `SEKI_INTEGRATION_ARTIFACT_DIR` to keep each phase's PNG, every output
+side by side, and each subscription's JSONL. The log has one
+`M3_DAILY_CAPTURE` line per capture and `M3_DAILY_*` lines for the observed
+values, including the load scenario's key-to-focus latency.
