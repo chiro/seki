@@ -329,11 +329,7 @@ timeCommand commands observe next step = do
     pure (endpoint, ended - started)
  where
   expected = expectedPublication next
-  observed = do
-    seen <- observe
-    if seen == expectedObservation next
-      then getMonotonicTimeNSec
-      else threadDelay pollMicroseconds >> observed
+  observed = waitUntilEvery ("probe outcome of " <> show step) assertionTimeoutMicroseconds pollMicroseconds observe (== expectedObservation next) >> getMonotonicTimeNSec
   publishes p = do
     unless (Text.unpack (publishedFocus p) == publishedFocusedTag expected) (fail ("subscriber published " <> show p <> " for " <> show next))
     pure p
