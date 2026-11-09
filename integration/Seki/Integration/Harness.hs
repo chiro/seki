@@ -39,6 +39,7 @@ module Seki.Integration.Harness (
   runInputDriver,
   modKeys,
   modShiftKeys,
+  shellQuote,
   waitUntil,
   assertionTimeoutMicroseconds,
   pollIntervalMicroseconds,
