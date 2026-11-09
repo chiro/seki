@@ -17,9 +17,15 @@ These statements cover trunk `3c30373` and head `82a31cc` only.
 `git diff 3c30373 82a31cc` is empty for `src`, `src-core`, `src-public`,
 `src-generated`, and `cbits`, the trees that the seki runtime libraries build
 from. It is also empty for `tools/layer-surface-fixture/src` and
-`tools-generated/layer-surface-fixture`, the trees of the probe library. The m2
-manage and render comparison between these two revisions is therefore a noise
-floor. This report claims no speedup and no regression.
+`tools-generated/layer-surface-fixture`, the trees of the probe library. The WM
+process in these trials is `seki-latency wm`, and its policy setup (`runWM` in
+`tools/latency`) changed. The m2 policy it builds is the same at both revisions.
+The m2 layout, bindings, and manage hook are unchanged by reading, and an
+equivalence smoke run of the old and new drivers gave identical seed-determined
+driver and WM outputs. On that basis, and only for these two revisions, the m2
+manage and render comparison is treated as a noise floor. The generated report
+draws no such conclusion, because its source check sees the driver differ. This
+report claims no speedup and no regression.
 
 The latency driver differs between the revisions. This PR changes
 `tools/latency`, and PR 68 and this PR both change
@@ -47,7 +53,10 @@ All 30 trials meet every budget. The worst values are pure p99 0.054 ms in
 
 For each collector, the trunk and head medians of m2 manage p99 differ by at
 most 0.003 ms, and render p99 by at most 0.005 ms. Every trunk range overlaps
-the head range for the same metric. Under the normal collector, the median m2
+the head range for each manage, render, and WM metric, and for pure p50, p95,
+and p99. Pure m2 maximum under the nonmoving collector does not overlap: 0.189
+to 0.230 ms at trunk against 0.120 to 0.132 ms at head. The pure m2 code
+changed, so that difference is outside the noise floor. Under the normal collector, the median m2
 maximum pause is 1.7 ms at trunk (range 1.7 to 1.8 ms) and 2.1 ms at head
 (range 1.7 to 2.5 ms). The RTS summary prints pauses at 0.1 ms resolution, and
 the maximum covers the whole WM process lifetime, including startup and
