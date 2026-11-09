@@ -512,10 +512,9 @@ a private headless output and checks unavailable then resubmitted mapping. It
 claims submission, not applied pointer coordinates. `m3-input-perf` retains 1000 contiguous native
 layout-to-subscriber receipts with a 50 ms p99 ceiling. Its bounded process budget
 is 30 seconds because the source emits at 10 ms intervals; ordinary assertions
-retain their 10-second budget. The full suite has a 480-second outer limit. At
-1fe09e8 the complete suite, including the seven daily scenarios, took 295.5
-and 299.2 seconds in CI jobs 128956572250 and 128956585393. Individual
-assertion and latency budgets stay fixed.
+retain their 10-second budget. The full suite has a 480-second outer limit for the input cases and five
+1,000-toggle scratchpad trials. With the seven daily scenarios added, the complete suite took about 300
+seconds in CI in November 2026. Individual assertion and latency budgets stay fixed.
 
 The backend consumes `LD_PRELOAD` in its startup constructor, before river can
 fork/exec its init command. The init handshake reports and checks an empty preload;
@@ -560,9 +559,9 @@ ran exactly once at its start and at its end.
 | `m3-daily-build` | `sekictl recompile` with stub `SEKI_CONFIG_*` resources validates and execs a copy of the executable under the same pid; the shown pad, a fullscreen window, focus, and workspaces return, and IPC reports the new image | `wlr-randr` |
 | `m3-daily-bar` | A `sekictl subscribe` subscriber, the stream that `examples/waybar/seki.py` reads, survives two Mod-q restarts; each new session's first snapshot matches the windows, and an earlier spawn is not replayed. Waybar itself is a logging stub | `wlr-randr` |
 | `m3-daily-hotplug` | Keyboard rule results, river's 25 Hz/660 ms repeat, a keyboard and an ELAN-named touchpad plugged in later through `SEKI_FIXTURE_HOTPLUG`, and an output turned off and on with the pad shown on it | `wlr-randr` |
-| `m3-daily-ime` | The configuration's own `fcitx5` launch on a private D-Bus commits `日本語` through Mozc into foot after a Mod-q handover, and exactly one `fcitx5` process from the scenario's D-Bus runs at the end | `wlr-randr`, `foot`, `dbus-daemon`, `dbus-test-tool`, `gdbus`, `fcitx5`, `fcitx5-remote`, Mozc |
+| `m3-daily-ime` | The configuration's own `fcitx5` launch on a private D-Bus commits `日本語` through Mozc into foot after a Mod-q handover, and exactly one `fcitx5` process from the scenario's D-Bus runs at the end | `wlr-randr`, `dbus-daemon`, `dbus-test-tool`, `gdbus`, `fcitx5`, `fcitx5-remote`, Mozc |
 | `m3-daily-xwayland` | An xterm tiles, takes and loses focus by binding and click, moves between workspaces, and closes with Mod-Shift-c; no urgency claim | `wlr-randr`, `xterm`, `xdotool` |
-| `m3-daily-load` | While IPC workers flood requests, a subscriber that never reads holds at least 32 unread snapshots and stops growing as the revision advances; logo drags then move and resize a float to exact geometry, and a key binding and a fresh `sekictl` request still respond | `wlr-randr` |
+| `m3-daily-load` | While IPC workers flood requests, the unread bytes of a subscriber that never reads reach 32 times its first snapshot's size and stop growing as the revision advances; logo drags then move and resize a float to exact geometry, and a key binding and a fresh `sekictl` request still respond | `wlr-randr` |
 
 Set `SEKI_INTEGRATION_ARTIFACT_DIR` to keep each phase's PNG, every output
 side by side, and each subscription's JSONL. The log has one
