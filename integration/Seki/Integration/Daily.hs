@@ -13,7 +13,7 @@ import Data.Aeson (Value, eitherDecodeStrict', withObject, (.:), (.:?))
 import Data.Aeson.Types (Parser, parseEither)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
-import Data.List (find, sort)
+import Data.List (find, isPrefixOf, nub, sort)
 import Data.Maybe (fromMaybe, isJust, listToMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -22,8 +22,9 @@ import Seki.Fixture.Probe
 import Seki.Integration.Fixture (BorderStyle (..), Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, png, withKeyboard, withNestedRiverEnvironment)
 import Seki.Integration.Harness
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist)
+import System.Posix.Files (readSymbolicLink)
 import System.Environment (lookupEnv)
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath (takeDirectory, takeFileName, (</>))
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Files (setFileMode)
 import System.Process (proc)
@@ -31,6 +32,7 @@ import System.Process (proc)
 dailyScenarios :: [(String, IO ())]
 dailyScenarios =
   [ ("m3-daily-two-output", twoOutput)
+  , ("m3-daily-build", buildHandover)
   ]
 
 -- | What a lane needs before the daily process starts, held for the session's lifetime.
@@ -116,8 +118,9 @@ withDailySession name options body = do
               pure result
         )
           `onException` (renderManagedProcessLogs process >>= announce)
- where
-  setting variable = lookupEnv variable >>= maybe (failIntegration (variable <> " is unset; run through ci/run-integration.sh")) pure
+
+setting :: String -> IO String
+setting variable = lookupEnv variable >>= maybe (failIntegration (variable <> " is unset; run through ci/run-integration.sh")) pure
 
 -- | Every program the daily configuration starts or binds.
 stubPrograms :: [String]
@@ -168,6 +171,14 @@ waitSnapshot session phase = waitUntil phase assertionTimeoutMicroseconds (snaps
 
 waitFocus :: DailySession -> String -> Maybe ProbeWindow -> IO ()
 waitFocus session phase wanted = void (waitUntil phase assertionTimeoutMicroseconds (keyboardSnapshot (sessionProbe session)) ((== wanted) . keyboardOwner))
+
+-- | The applied revision of a command receipt.
+receiptRevision :: BS.ByteString -> Either String Integer
+receiptRevision bytes = eitherDecodeStrict' bytes >>= parseEither (withObject "reply" (\reply -> reply .: "result" >>= withObject "result" (.: "revision")))
+
+-- | The executable path and command line of a live process.
+processImage :: Int -> IO (FilePath, [String])
+processImage pid = (,) <$> readSymbolicLink ("/proc/" <> show pid <> "/exe") <*> (map BS8.unpack . filter (not . BS.null) . BS.split 0 <$> BS.readFile ("/proc/" <> show pid <> "/cmdline"))
 
 -- | The output IPC shows the workspace on.
 shownOn :: Snapshot -> Text -> IO Text
@@ -345,3 +356,78 @@ twoOutput = withDailySession "m3-daily-two-output" (dailyOptions 2) $ \session -
   picture session termOutput "term tiles its two windows again with the pad hidden" [Paint Green (Box 1 1 798 298) True, Paint Blue (Box 1 301 798 298) False]
   barShows stream "the second Mod-grave hides the pad" (shown [("term", "hidden")] (Just "daily two-output"))
   capture session "daily-two-output-hidden"
+
+{- | Build resources for an installed session whose compiler steps are stubs:
+Cabal's build succeeds and @list-bin@ names the daily executable, so the
+candidate the session copies and checks is that executable. The env stub
+logs each step it runs.
+-}
+stubBuildResources :: Around
+stubBuildResources = Around $ \_ home use -> do
+  daily <- setting "SEKI_DAILY_CONFIG_EXECUTABLE"
+  let resources = home </> "config-resources"
+      templates = resources </> "templates"
+      steps = home </> "build-steps"
+  createDirectoryIfMissing True templates
+  forM_ ["Main.hs", "seki-user.cabal", "cabal.project"] $ \file -> writeFile (templates </> file) ("-- " <> file <> " for @ARCHIVE@ built by @COMPILER@\n")
+  forM_ ["archive", "ghc", "cabal"] $ \file -> writeFile (resources </> file) ""
+  writeExecutable (resources </> "env") ("#!/bin/sh\nprintf '%s\\n' \"$3\" >> '" <> steps <> "'\ncase \"$3\" in\n  build) exit 0 ;;\n  list-bin) printf '%s\\n' '" <> daily <> "' ;;\n  *) exit 64 ;;\nesac\n")
+  use
+    (Additions [] [("SEKI_CONFIG_" <> variable, resources </> file) | (variable, file) <- [("ARCHIVE", "archive"), ("GHC", "ghc"), ("CABAL", "cabal"), ("ENV", "env"), ("TEMPLATES", "templates")]] [])
+
+{- | A recompile of the running daily process while the scratchpad is shown
+over term and an Emacs window is fullscreen on the other output. The
+process keeps its pid and execs the checked candidate, IPC starts a fresh
+session, and every window comes back where it was with no startup command
+run again.
+-}
+buildHandover :: IO ()
+buildHandover = withDailySession "m3-daily-build" (dailyOptions 2){optionAround = stubBuildResources} $ \session -> withSubscription session "daily-build-subscription.jsonl" $ \stream -> do
+  let probe = sessionProbe session
+      stateDirectory = sessionHome session </> ".local" </> "state" </> "seki"
+  initial <- waitSnapshot session "term and emacs are shown on the two outputs" (\s -> all (\tag -> any ((== Just tag) . outputWorkspace) (snapOutputs s)) ["term", "emacs"])
+  termOutput <- shownOn initial "term"
+  emacsOutput <- shownOn initial "emacs"
+  let windows pads = bar [(termOutput, "term"), (emacsOutput, "emacs")] [workspace "term" [Occupied, Visible, Focused] "Tall", workspace "emacs" [Occupied, Visible] "Tall"] (Just "daily build pad") pads
+      restored phase = do
+        picture session termOutput (phase <> ": the pad covers term") [Paint Green (Box 1 1 798 598) True]
+        picture session emacsOutput (phase <> ": the Emacs window covers its output fullscreen") [Paint Blue (Box 0 0 800 600) False]
+        barShows stream (phase <> ": the bar shows the pad and both workspaces") (windows [("term", "shown")])
+  _ <- openWindow probe Blue
+  editor <- openWindowWith probe (windowSpec Blue){specAppId = CustomAppId "Emacs"}
+  requestFullscreen probe editor
+  key session ["grave"]
+  launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty --class seki-scratchpad"
+  pad <- openWindowWith probe (windowSpec Green){specAppId = CustomAppId "seki-scratchpad"}
+  waitFocus session "the shown pad has keyboard focus" (Just pad)
+  setTitle probe pad "daily build pad"
+  restored "before the recompile"
+  capture session "daily-build-before"
+  oldSession <- snapSession <$> snapshot session
+  receipt <- sekictl session ["recompile"]
+  revision <- requireRight "recompile receipt" (receiptRevision receipt)
+  report "RECOMPILE_RECEIPT" (show revision)
+  sessions <- waitUntil "the checked candidate starts a fresh IPC session" assertionTimeoutMicroseconds (nub . map snapSession <$> stream) ((>= 2) . length)
+  report "SESSIONS" (show sessions)
+  (image, arguments) <- processImage (sessionPid session)
+  report "IMAGE" (show (image, arguments))
+  assertEqual "the daily process keeps its pid and restores into the new image" True ("--restore" `elem` arguments)
+  assertEqual "the new image is a checked candidate in the state directory" (stateDirectory, True) (takeDirectory image, "candidate" `isPrefixOf` takeFileName image)
+  readSymbolicLink (stateDirectory </> "profile") >>= assertEqual "the profile names the running candidate" image
+  recorded <- stream
+  let (old, new) = span ((== oldSession) . snapSession) recorded
+      oldStates = nub [buildState b | Just b <- map snapBuild old]
+  report "BUILD_STATES" (show (oldStates, map snapBuild (take 1 new)))
+  assertEqual "the old session reports the validated build" True ("validated" `elem` oldStates)
+  assertEqual "the new session runs the candidate with no build error" [Just (BuildView "idle" 0 Nothing (Just image))] (map snapBuild (take 1 new))
+  lines <$> readFile (sessionHome session </> "build-steps") >>= assertEqual "the session ran one build and one list-bin" ["build", "list-bin"]
+  restored "after the handover"
+  waitFocus session "the pad keeps keyboard focus after the handover" (Just pad)
+  capture session "daily-build"
+  key session ["grave"]
+  picture session termOutput "the hidden pad uncovers term's own tile" [Paint Blue (Box 1 1 798 598) True]
+  barShows stream "the restored pad hides with Mod-grave" (windows [("term", "hidden")]){barTitle = Nothing}
+  capture session "daily-build-pad-hidden"
+  runInputDriver (clientEnvironment session) ["-k", "XF86AudioRaiseVolume"]
+  launchedOnce session "XF86AudioRaiseVolume works in the new image" "amixer -D pulse sset Master 2%+"
+  startupRanOnce session "no startup command ran again after the handover"
