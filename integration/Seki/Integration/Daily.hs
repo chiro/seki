@@ -22,7 +22,7 @@ import Data.Text qualified as Text
 import Data.Word (Word32)
 import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Fixture.Probe
-import Seki.Integration.Fixture (BorderStyle (..), Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, png, withKeyboard, withNestedRiverEnvironment)
+import Seki.Integration.Fixture (BorderStyle (..), Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, png, withKeyboard, withNestedRiverEnvironment, withNestedXwaylandRiver)
 import Seki.Integration.Harness
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable, listDirectory, removeFile)
 import System.Environment (getExecutablePath, lookupEnv)
@@ -39,6 +39,7 @@ dailyScenarios =
   , ("m3-daily-bar", barReconnect)
   , ("m3-daily-hotplug", hotplug)
   , ("m3-daily-ime", imeHandover)
+  , ("m3-daily-xwayland", xwaylandManagement)
   ]
 
 -- | What a lane needs before the daily process starts, held for the session's lifetime.
@@ -55,12 +56,13 @@ data Additions = Additions
 
 data DailyOptions = DailyOptions
   { optionOutputs :: Int
+  , optionXwayland :: Bool
   , optionRiverEnvironment :: [(String, String)]
   , optionAround :: Around
   }
 
 dailyOptions :: Int -> DailyOptions
-dailyOptions outputs = DailyOptions outputs [] (Around (\_ _ use -> use (Additions [] [] [])))
+dailyOptions outputs = DailyOptions outputs False [] (Around (\_ _ use -> use (Additions [] [] [])))
 
 data DailySession = DailySession
   { sessionName :: String
@@ -86,7 +88,7 @@ withDailySession name options body = do
   executable <- setting "SEKI_DAILY_CONFIG_EXECUTABLE"
   cli <- setting "SEKICTL_EXECUTABLE"
   backend <- setting "SEKI_INPUT_BACKEND"
-  withNestedRiverEnvironment (optionRiverEnvironment options) (optionOutputs options) $ \nested -> withSystemTempDirectory "seki-daily-home" $ \home -> do
+  (if optionXwayland options then withNestedXwaylandRiver else withNestedRiverEnvironment) (optionRiverEnvironment options) (optionOutputs options) $ \nested -> withSystemTempDirectory "seki-daily-home" $ \home -> do
     let bin = home </> "bin"
         launches = home </> "launches"
         keymap = home </> ".config" </> "seki" </> "keymap.xkb"
@@ -634,3 +636,62 @@ imeHandover = withDailySession "m3-daily-ime" (dailyOptions 1){optionAround = re
   daemons <- fixtureProcesses "fcitx5" ("DBUS_SESSION_BUS_ADDRESS", bus)
   report "FCITX5_PROCESSES" (show daemons)
   assertEqual "one fcitx5 process from this fixture exists" 1 (length daemons)
+
+xtermTitle :: Text
+xtermTitle = "seki-daily-xterm"
+
+{- | An xterm under the daily configuration tiles beside a native window,
+loses and regains focus by binding and by click, moves to another
+workspace and back, and closes with Mod-Shift-c.
+-}
+xwaylandManagement :: IO ()
+xwaylandManagement = withDailySession "m3-daily-xwayland" (dailyOptions 1){optionXwayland = True} $ \session -> do
+  let probe = sessionProbe session
+      client = clientEnvironment session
+      modShift k = runInputDriver client ["-M", "logo", "-M", "shift", "-k", k, "-m", "shift", "-m", "logo"]
+      -- xdotool fails while X focus is still on the root window, before any X client maps.
+      xFocus phase = void (waitUntil phase assertionTimeoutMicroseconds (either (const Nothing) (Just . Text.pack) <$> try @SomeException (queryX11FocusedWindowName client)) (== Just xtermTitle))
+      xGeometry = do
+        found <- runProcessCapture client "xdotool" ["search", "--name", Text.unpack xtermTitle, "getwindowgeometry", "--shell"]
+        pure (sort [line | line <- lines (BS8.unpack found), any (`isPrefixOf` line) ["X=", "Y=", "WIDTH=", "HEIGHT="]])
+  initial <- waitSnapshot session "term is shown" (any ((== Just "term") . outputWorkspace) . snapOutputs)
+  output <- shownOn initial "term"
+  let onTerm title others = bar [(output, "term")] (workspace "term" [Occupied, Visible, Focused] "Tall" : others) title []
+  native <- openWindow probe Green
+  waitFocus session "the native window has keyboard focus" (Just native)
+  bracket (startManagedProcess "xterm" client (proc "xterm" ["-title", Text.unpack xtermTitle, "-fa", "monospace", "-fs", "12", "-e", "cat"])) stopManagedProcess $ \xterm -> do
+    xFocus "the new xterm has X input focus"
+    waitFocus session "the native window loses keyboard focus to the xterm" Nothing
+    picture session output "the xterm tiles as master beside the native window" [Paint Green (Box 401 1 398 598) False]
+    geometry <- waitUntil "the xterm's X window fills the master tile" assertionTimeoutMicroseconds xGeometry (== ["HEIGHT=598", "WIDTH=398", "X=1", "Y=1"])
+    report "XTERM_GEOMETRY" (show geometry)
+    snapshotShows session "the bar shows the focused xterm's title" (onTerm (Just xtermTitle) [])
+    capture session "daily-xwayland-tiled"
+    key session ["j"]
+    waitFocus session "Mod-j moves keyboard focus to the native window" (Just native)
+    picture session output "the native window takes the focused border" [Paint Green (Box 401 1 398 598) True]
+    click (sessionSocket session) (800, 600) (200, 300)
+    xFocus "a click gives the xterm X input focus"
+    waitFocus session "the click takes keyboard focus from the native window" Nothing
+    picture session output "the clicked xterm takes the focused border" [Paint Green (Box 401 1 398 598) False]
+    modShift "2"
+    waitFocus session "Mod-Shift-2 leaves the native window focused on term" (Just native)
+    picture session output "term shows only the native window" [Paint Green (Box 1 1 798 598) True]
+    snapshotShows session "the xterm is on emacs" (onTerm Nothing [workspace "emacs" [Occupied] "Tall"])
+    key session ["2"]
+    xFocus "viewing emacs gives the xterm X input focus"
+    picture session output "emacs shows only the xterm" []
+    capture session "daily-xwayland-moved"
+    modShift "1"
+    key session ["1"]
+    xFocus "the xterm moved back to term has X input focus"
+    picture session output "the xterm tiles beside the native window again" [Paint Green (Box 401 1 398 598) False]
+    snapshotShows session "the xterm is back on term" (onTerm (Just xtermTitle) [])
+    capture session "daily-xwayland"
+    modShift "c"
+    exit <- waitForProcessWithTimeout "Mod-Shift-c closes the xterm" xterm
+    report "XTERM_EXIT" (show exit)
+    waitFocus session "the native window has keyboard focus after the close" (Just native)
+    picture session output "term shows only the native window after the close" [Paint Green (Box 1 1 798 598) True]
+    snapshotShows session "the bar shows only the native window" (onTerm Nothing [])
+    capture session "daily-xwayland-closed"
