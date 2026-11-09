@@ -62,11 +62,6 @@ operationCodes name seed count = take count [fromIntegral ((x `shiftR` 32) `mod`
   next x = x * 6364136223846793005 + 1442695040888963407
   codes = case name of M1 -> 16; M2 -> 20; M3 -> 22
 
-{- | Codes 0 to 15 are the M1 operations. M2 adds a fullscreen toggle on the
-focus, a client fullscreen request that the core drops unless window 2 is
-focused, a click that focuses and raises a dialog, and floating window 3.
-M3 adds code 20, a pad toggle, and code 21, a restart request.
--}
 eventFor :: WorkloadName -> Int -> Int -> CoreEvent String BenchLayout
 eventFor M3 _ 20 = RunAction (toggleScratchpad padName)
 eventFor M3 _ 21 = RunAction restart
