@@ -21,10 +21,11 @@ import Data.Text qualified as Text
 import Data.Word (Word32)
 import GHC.Clock (getMonotonicTimeNSec)
 import Network.Socket (Family (AF_UNIX), SockAddr (SockAddrUnix), SocketType (Stream), close, connect, defaultProtocol, socket)
-import Network.Socket.ByteString (recv, sendAll)
+import Network.Socket.ByteString (sendAll)
 import Seki.Fixture.Probe
 import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputOrigins, outputPicture, pictureErrorWith, placeOutputs, portedBorders, saveOutputsSideBySide, withHeldLogoIn, withKeyboard, withNestedRiverUsing)
 import Seki.Integration.Harness
+import Seki.Integration.IPCPerf (appliedRevision, bufferedLine)
 import Seki.Integration.M2 (drag)
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable, listDirectory, removeFile)
 import System.Environment (lookupEnv)
@@ -185,9 +186,6 @@ waitSnapshot session phase ready = waitUntil phase assertionTimeoutMicroseconds 
 
 waitFocus :: DailySession -> String -> Maybe ProbeWindow -> IO ()
 waitFocus session phase wanted = void (waitUntil phase assertionTimeoutMicroseconds (keyboardSnapshot (sessionProbe session)) ((== wanted) . keyboardOwner))
-
-receiptRevision :: BS.ByteString -> Either String Integer
-receiptRevision bytes = eitherDecodeStrict' bytes >>= parseEither (withObject "reply" (\reply -> reply .: "result" >>= withObject "result" (.: "revision")))
 
 processImage :: Int -> IO (FilePath, [String])
 processImage pid = (,) <$> readSymbolicLink ("/proc/" <> show pid <> "/exe") <*> (map BS8.unpack . filter (not . BS.null) . BS.split 0 <$> BS.readFile ("/proc/" <> show pid <> "/cmdline"))
@@ -375,7 +373,7 @@ buildHandover = withDailyHome (dailyOptions 2) $ \home -> do
     capture session "daily-build-before"
     oldSession <- snapSession <$> snapshot session
     receipt <- sekictl session ["recompile"]
-    revision <- requireRight "recompile receipt" (receiptRevision receipt)
+    revision <- appliedRevision receipt
     report "RECOMPILE_RECEIPT" (show revision)
     sessions <- waitUntil "the checked candidate starts a fresh IPC session" assertionTimeoutMicroseconds (nub . map snapSession <$> stream) ((>= 2) . length)
     report "SESSIONS" (show sessions)
@@ -632,25 +630,27 @@ withFlood session workers action = do
   stop <- newIORef False
   replies <- newIORef (0 :: Int)
   latest <- newIORef (0 :: Integer)
-  let request client pending bytes expected = do
+  let request readReply client bytes expected = do
         sendAll client bytes
-        (reply, rest) <- replyLine client pending
+        reply <- readReply
         unless (expected `BS.isInfixOf` reply) (failIntegration ("flood reply lacks " <> show expected <> ": " <> show (BS.take 200 reply)))
         atomicModifyIORef' replies (\count -> (count + 1, ()))
-        pure (reply, rest)
-      work client pending =
-        readIORef stop >>= \stopped -> unless stopped $ do
-          (_, afterSnapshot) <- request client pending "{\"version\":1,\"id\":\"flood\",\"op\":\"snapshot\"}\n" "\"snapshot\""
-          (receipt, rest) <- request client afterSnapshot "{\"version\":1,\"id\":\"flood\",\"op\":\"workspace\",\"tag\":\"term\"}\n" "\"revision\""
-          revision <- requireRight "flood receipt" (receiptRevision receipt)
-          atomicModifyIORef' latest (\seen -> (max seen revision, ()))
-          work client rest
+        pure reply
+      work client = do
+        readReply <- bufferedLine client
+        let loop =
+              readIORef stop >>= \stopped -> unless stopped $ do
+                _ <- request readReply client "{\"version\":1,\"id\":\"flood\",\"op\":\"snapshot\"}\n" "\"snapshot\""
+                revision <- request readReply client "{\"version\":1,\"id\":\"flood\",\"op\":\"workspace\",\"tag\":\"term\"}\n" "\"revision\"" >>= appliedRevision
+                atomicModifyIORef' latest (\seen -> (max seen revision, ()))
+                loop
+        loop
   bracket open close $ \unread -> do
     sendAll unread "{\"version\":1,\"id\":\"unread\",\"op\":\"subscribe\"}\n"
     first <- waitUntil "the unread subscriber receives its first snapshot" assertionTimeoutMicroseconds (socketQueuedBytes unread) (> 0)
     finished <- forM [1 .. workers] $ \_ -> do
       done <- newEmptyMVar
-      _ <- forkFinally (bracket open close (`work` BS.empty)) (putMVar done)
+      _ <- forkFinally (bracket open close work) (putMVar done)
       pure done
     result <- action (Flood (readIORef replies) (readIORef latest) first (socketQueuedBytes unread)) `finally` writeIORef stop True
     outcomes <- forM finished (timeout assertionTimeoutMicroseconds . takeMVar)
@@ -659,14 +659,6 @@ withFlood session workers action = do
       Just (Left failure) -> failIntegration ("an IPC flood worker failed: " <> show failure)
       Just (Right ()) -> pure ()
     pure result
- where
-  replyLine client pending = case BS.elemIndex 10 pending of
-    Just index -> pure (BS.take index pending, BS.drop (index + 1) pending)
-    Nothing ->
-      timeout assertionTimeoutMicroseconds (recv client 65536) >>= \received -> case received of
-        Nothing -> failIntegration "an IPC flood reply timed out"
-        Just chunk | BS.null chunk -> failIntegration "IPC closed a flood connection"
-        Just chunk -> replyLine client (pending <> chunk)
 
 subscriberStall :: Flood -> IO (Int, Int, Integer, Integer)
 subscriberStall flood = do
@@ -725,7 +717,7 @@ loadResponsive = withDailySession "m3-daily-load" (dailyOptions 1) $ \session ->
     (latency, owner) <- wtypeKeyToFocus session "j" (Just dragged)
     assertEqual "Mod-j during the flood moves focus from the float to the master" (Just master) owner
     receipt <- sekictl session ["workspace", "term"]
-    revision <- requireRight "a fresh sekictl receipt during the flood" (receiptRevision receipt)
+    revision <- appliedRevision receipt
     report "FRESH_RECEIPT_REVISION" (show revision)
     count <- floodReplies flood
     pure (count, latency, map imageRgb [first, moved, resized])
