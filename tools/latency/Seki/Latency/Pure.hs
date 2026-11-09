@@ -21,6 +21,7 @@ import Seki.Internal.Core.Layout
 import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.PointerOp (HEdge (..), OpId, OpKind (..), PointerOp (..), ResizeEdges (..), SeatId (..), SizeBounds (..), VEdge (..))
 import Seki.Internal.Core.Scene
+import Seki.Internal.Core.Scratchpad.Types (ScratchpadState (..))
 import Seki.Internal.Core.StackSet qualified as S
 import Seki.Internal.Core.State
 import Seki.Internal.Layout.Full
@@ -31,17 +32,22 @@ type BenchLayout = Choose Tall (Choose (Mirror Tall) Full)
 layout :: BenchLayout
 layout = Tall 1 (1 / 10) (1 / 2) ||| Mirror (Tall 1 (1 / 10) (1 / 2)) ||| Full
 
-{- | Every window managed on workspace 1, the newest focused. In M2 the two
-newest windows are client-sized floats, as dialogs of window 1 are.
+{- | Every window managed on workspace 1, the newest focused. In M2 and M3
+the two newest windows are client-sized floats, as dialogs of window 1 are.
+M3 also holds window @count + 1@ as the hidden pad.
 -}
 initialState :: WorkloadName -> Int -> CoreState String BenchLayout
-initialState name count = fst (drainCore idHook [RunAction (windows (S.float w S.ClientSized)) | w <- Map.keys (planParents name count)] attached)
+initialState name count = withPad (fst (drainCore idHook [RunAction (windows (S.float w S.ClientSized)) | w <- Map.keys (planParents name count)] attached))
  where
   attached = overWorkspaces (\ws -> foldl' (flip (manageWindow id)) (addOutput (S.OutputId 1) ws) [S.WindowId (fromIntegral i) | i <- [1 .. count]]) (either (error . show) id (newCoreState layout ["1", "2", "3"]))
+  withPad st = case name of
+    M3 -> st{coreScratchpadDefinitions = Map.singleton "pad" ("pad", padGeometry), coreScratchpads = Map.singleton "pad" (HiddenPad (S.WindowId (fromIntegral count + 1)) padGeometry)}
+    _ -> st
+  padGeometry = S.FloatAt (OutputRect (either (error . show) id (mkSize 960 540 >>= mkRect (Point 480 270))))
 
 planParents :: WorkloadName -> Int -> Map.Map S.WindowId (Maybe S.WindowId)
 planParents M1 _ = Map.empty
-planParents M2 count = Map.fromList [(S.WindowId (fromIntegral w), Just (S.WindowId 1)) | w <- [count - 1, count]]
+planParents _ count = Map.fromList [(S.WindowId (fromIntegral w), Just (S.WindowId 1)) | w <- [count - 1, count]]
 
 planFor :: WorkloadName -> Int -> CoreState String BenchLayout -> DesiredScene
 planFor name count st = planScene defaultSceneStyle st (Map.singleton (S.OutputId 1) (OutputArea area area)) (planParents name count)
@@ -53,13 +59,17 @@ operationCodes :: WorkloadName -> Word64 -> Int -> [Int]
 operationCodes name seed count = take count [fromIntegral ((x `shiftR` 32) `mod` codes) | x <- tail (iterate next seed)]
  where
   next x = x * 6364136223846793005 + 1442695040888963407
-  codes = case name of M1 -> 16; M2 -> 20
+  codes = case name of M1 -> 16; M2 -> 20; M3 -> 22
 
 {- | Codes 0 to 15 are the M1 operations. M2 adds a fullscreen toggle on the
 focus, a client fullscreen request that the core drops unless window 2 is
 focused, a click that focuses and raises a dialog, and floating window 3.
+M3 adds a pad toggle and a restart request.
 -}
 eventFor :: WorkloadName -> Int -> Int -> CoreEvent String BenchLayout
+eventFor M3 _ 20 = RunAction (toggleScratchpad "pad")
+eventFor M3 _ 21 = RunAction restart
+eventFor M3 count code = eventFor M2 count code
 eventFor M2 _ 16 = RunAction (withFocused toggleFullscreen)
 eventFor M2 _ 17 = FullscreenRequested (S.WindowId 2)
 eventFor M2 count 18 = WindowInteraction (S.WindowId (fromIntegral (count - 1)))
@@ -111,13 +121,16 @@ screen :: S.Screen String BenchLayout -> Word64
 screen (S.Screen ws o) = mix (workspace ws) (output o)
 floats :: Map.Map S.WindowId S.FloatGeom -> Word64
 floats = Map.foldlWithKey' (\a w g -> mix a (mix (window w) (geometry g))) 0
- where
-  geometry S.ClientSized = 0
-  geometry (S.FloatAt (OutputRect r)) = mix 1 (rect r)
+geometry :: S.FloatGeom -> Word64
+geometry S.ClientSized = 0
+geometry (S.FloatAt (OutputRect r)) = mix 1 (rect r)
+
+{- | An empty pad map adds no term, so M1 and M2 keep the checksums of the
+reports retained before M3.
+-}
 state :: CoreState String BenchLayout -> Word64
 state st =
-  many
-    id
+  many id $
     [ many command (Set.toList (coreSpawnedOnce st))
     , many window (coreRaiseOrder st)
     , many window (Set.toList (coreFullscreen st))
@@ -127,6 +140,11 @@ state st =
         HeadlessState (HeadlessWorkspaces c hs fs) -> many id [0, workspace c, many workspace hs, floats fs]
         AttachedState (S.StackSet c vs hs fs) os -> many id [1, screen c, many screen vs, many workspace hs, floats fs, many output os]
     ]
+      ++ [Map.foldlWithKey' (\a name slot -> mix a (mix (command name) (pad slot))) 0 (coreScratchpads st) | not (Map.null (coreScratchpads st))]
+ where
+  pad (LaunchPending generation) = mix 1 (fromInteger generation)
+  pad (HiddenPad w g) = mix 2 (mix (window w) (geometry g))
+  pad (ShownPad w prior) = mix 3 (mix (window w) (optional window prior))
 
 -- | 'OpId' is abstract, so its rendering is the only way to reach the counter.
 opNumber :: OpId -> Word64
@@ -172,6 +190,7 @@ scene (DesiredScene ws order raised stacking focus out op) =
 forceResult :: CoreState String BenchLayout -> [Intent] -> DesiredScene -> Word64
 forceResult st intents desired = many id [state st, many intent intents, scene desired]
 
+-- | A shown pad joins the workspaces, and a hidden one leaves them.
 validateResult :: Int -> CoreState String BenchLayout -> DesiredScene -> Bool
 validateResult count st desired = case coreWorkspaces st of
   HeadlessState _ -> False
@@ -186,7 +205,7 @@ validateResult count st desired = case coreWorkspaces st of
       && maybe True (\w -> maybe False placementShown (Map.lookup w (sceneWindows desired))) (sceneFocus desired)
       && all (\w -> any (\ws -> fmap S.focus (S.stack ws) == Just w) (S.workspaces ss)) (coreFullscreen st)
  where
-  expected = [S.WindowId (fromIntegral i) | i <- [1 .. count]]
+  expected = sort ([S.WindowId (fromIntegral i) | i <- [1 .. count]] ++ [w | ShownPad w _ <- Map.elems (coreScratchpads st)])
   validPlacement Omitted = True
   validPlacement (Placed _ r) = inScreen r
   validPlacement (Floating r) = inScreen r

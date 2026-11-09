@@ -276,6 +276,7 @@ runLive directory workload seed steps collector = do
 openRole :: Probe -> [ProbeWindow] -> WindowRole -> IO ProbeWindow
 openRole probe _ (TileRole color) = openWindow probe color
 openRole probe opened (DialogRole color (width, height) parent) = openWindowWith probe (windowSpec color){specParent = Just (opened !! parent), specCommit = CommitFixed width height}
+openRole probe _ (PadRole color) = openWindowWith probe (windowSpec color){specAppId = CustomAppId (Text.pack padAppId)}
 
 writeProcesses :: FilePath -> [(String, Maybe Int)] -> IO ()
 writeProcesses directory processes = do

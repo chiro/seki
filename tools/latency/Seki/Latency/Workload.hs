@@ -22,6 +22,14 @@ module Seki.Latency.Workload (
   restoreSteps,
   Observation (..),
   expectedObservation,
+  Publication (..),
+  expectedPublication,
+  Endpoint (..),
+  endpointText,
+  stepEndpoints,
+  padAppId,
+  padBox,
+  padContent,
   Layer (..),
   expectedLayers,
   pictureMismatch,
@@ -41,7 +49,7 @@ import Data.Maybe (isJust, listToMaybe)
 import Data.Word (Word64, Word8)
 import Seki.Fixture.Probe (Color (..), Image (..))
 
-data WorkloadName = M1 | M2 deriving (Eq, Show, Enum, Bounded)
+data WorkloadName = M1 | M2 | M3 deriving (Eq, Show, Enum, Bounded)
 
 parseWorkloadName :: String -> Maybe WorkloadName
 parseWorkloadName text = find ((== text) . workloadText) [minBound .. maxBound]
@@ -49,19 +57,33 @@ parseWorkloadName text = find ((== text) . workloadText) [minBound .. maxBound]
 workloadText :: WorkloadName -> String
 workloadText M1 = "m1"
 workloadText M2 = "m2"
+workloadText M3 = "m3"
 
 {- | A window in open order. A tile commits the size the WM proposes. A
 dialog names its parent by open order and commits a fixed size, so the
-default manage hook floats it and it never allocates another buffer.
+default manage hook floats it and it never allocates another buffer. A pad
+carries the scratchpad's app ID, so the WM adopts and shows it on open.
 -}
 data WindowRole
   = TileRole Color
   | DialogRole Color (Int32, Int32) Int
+  | PadRole Color
   deriving (Eq, Show)
 
 windowRoles :: WorkloadName -> [WindowRole]
 windowRoles M1 = map TileRole (take 8 (cycle [Red, Green, Blue]))
 windowRoles M2 = map TileRole [Red, Green, Blue, Red, Green, Blue] ++ [DialogRole Red (300, 200) 0, DialogRole Green (200, 300) 0]
+windowRoles M3 = [TileRole Red, TileRole Blue, PadRole Green]
+
+padAppId :: String
+padAppId = "seki-latency-pad"
+
+-- | The pad's floating box on the output, including its 2 px border.
+padBox :: (Int, Int, Int, Int)
+padBox = (200, 150, 400, 300)
+
+padContent :: (Int, Int, Int, Int)
+padContent = let (x, y, w, h) = padBox in (x + 2, y + 2, w - 4, h - 4)
 
 {- | The Tall master ratio. The plan only flips between these two, so the
 geometry stays a small table independent of the production layout.
@@ -71,7 +93,7 @@ data Ratio = Half | TwoFifths deriving (Eq, Show)
 data Model = Model
   { modelWorkload :: WorkloadName
   , modelFocus :: Int
-  -- ^ The stack index of the focused window.
+  -- ^ The stack index of the focused tile or dialog.
   , modelShown :: Bool
   -- ^ Workspace 1 is viewed.
   , modelRatio :: Ratio
@@ -79,17 +101,26 @@ data Model = Model
   -- ^ Always the focused window (M2-D03).
   , modelRaise :: [Int]
   -- ^ The dialogs, bottom to top.
+  , modelPadShown :: Bool
+  , modelBuilds :: Int
+  -- ^ Configuration builds that have finished.
   }
   deriving (Eq, Show)
 
 initialModel :: WorkloadName -> Model
-initialModel name = Model name 0 True Half Nothing (reverse (filter (isDialog name) [0 .. length (windowRoles name) - 1]))
+initialModel name = Model name newestUnpadded True Half Nothing (reverse (filter (isDialog name) indices)) (any (isPad name) indices) 0
+ where
+  indices = [0 .. length (windowRoles name) - 1]
+  newestUnpadded = length (takeWhile (isPad name) indices)
 
 roleAt :: WorkloadName -> Int -> WindowRole
 roleAt name i = let roles = windowRoles name in roles !! (length roles - 1 - i)
 
 isDialog :: WorkloadName -> Int -> Bool
-isDialog name i = case roleAt name i of DialogRole{} -> True; TileRole _ -> False
+isDialog name i = case roleAt name i of DialogRole{} -> True; _ -> False
+
+isPad :: WorkloadName -> Int -> Bool
+isPad name i = case roleAt name i of PadRole _ -> True; _ -> False
 
 -- | Codes 0 to 3 keep the meaning of the retained M1 action codes.
 data Step
@@ -101,6 +132,8 @@ data Step
   | ExpandMaster
   | EnterFullscreen
   | ExitFullscreen
+  | TogglePad
+  | Recompile
   deriving (Eq, Show, Enum, Bounded)
 
 stepCode :: Step -> Int
@@ -119,6 +152,8 @@ stepModel m step = case step of
   ExpandMaster -> m{modelRatio = Half}
   EnterFullscreen -> m{modelFullscreen = Just (modelFocus m)}
   ExitFullscreen -> m{modelFullscreen = Nothing}
+  TogglePad -> m{modelPadShown = not (modelPadShown m)}
+  Recompile -> m{modelBuilds = modelBuilds m + 1}
  where
   count = length (windowRoles (modelWorkload m))
   focus i = m{modelFocus = i, modelFullscreen = Nothing, modelRaise = if isDialog (modelWorkload m) i then filter (/= i) (modelRaise m) ++ [i] else modelRaise m}
@@ -127,7 +162,9 @@ stepModel m step = case step of
 An M1 group changes focus, then views the empty workspace and back. An M2
 group changes focus, flips the master ratio so every tile resizes, may
 request fullscreen on a focused tile, views the empty workspace and back,
-and may then request the fullscreen exit.
+and may then request the fullscreen exit. An M3 group ignores its value: it
+restores the populated workspace with the pad hidden, views the empty
+workspace and back, shows and hides the pad, and recompiles.
 -}
 plan :: WorkloadName -> Word64 -> Model -> [Step]
 plan name seed = go (map (`shiftR` 32) (drop 1 (iterate next seed)))
@@ -143,14 +180,15 @@ plan name seed = go (map (`shiftR` 32) (drop 1 (iterate next seed)))
           enter = [EnterFullscreen | testBit x 1, not (isDialog name (modelFocus focused))]
           exit = [ExitFullscreen | testBit x 2, not (null enter)]
        in [focusStep, resize] ++ enter ++ [ViewEmpty, ViewPopulated] ++ exit
+    M3 -> restoreSteps m ++ [ViewEmpty, ViewPopulated, TogglePad, TogglePad, Recompile]
    where
     focusStep = if testBit x 0 then FocusUp else FocusDown
 
-{- | Steps after the measured interval that view the populated workspace and
-exit fullscreen, so the last picture shows every window.
+{- | Steps after the measured interval that view the populated workspace,
+exit fullscreen, and hide the pad, so the last picture shows every tile.
 -}
 restoreSteps :: Model -> [Step]
-restoreSteps m = [ViewPopulated | not (modelShown m)] ++ [ExitFullscreen | isJust (modelFullscreen m)]
+restoreSteps m = [ViewPopulated | not (modelShown m)] ++ [ExitFullscreen | isJust (modelFullscreen m)] ++ [TogglePad | modelPadShown m]
 
 {- | What the probe sees: the keyboard owner and the size each window last
 committed.
@@ -161,24 +199,68 @@ data Observation = Observation
   }
   deriving (Eq, Show)
 
-{- | A tile commits its content box, or the whole output while fullscreen. A
-dialog commits its fixed size. A hidden workspace keeps every size.
+{- | A shown pad owns the keyboard over the focused window. A tile commits its
+content box, or the whole output while fullscreen. A dialog commits its
+fixed size, and a pad its content box. A hidden workspace or pad keeps
+every size.
 -}
 expectedObservation :: Model -> Observation
 expectedObservation m =
   Observation
-    (if modelShown m then Just (modelFocus m) else Nothing)
+    owner
     (Map.fromList [(i, size i) | i <- [0 .. length (windowRoles name) - 1]])
  where
   name = modelWorkload m
+  owner
+    | not (modelShown m) = Nothing
+    | modelPadShown m = find (isPad name) [0 .. length (windowRoles name) - 1]
+    | otherwise = Just (modelFocus m)
   size i = case roleAt name i of
     DialogRole _ fixed _ -> fixed
+    PadRole _ -> let (_, _, w, h) = padContent in (fromIntegral w, fromIntegral h)
     TileRole _
       | modelFullscreen m == Just i -> (800, 600)
       | otherwise -> let (_, _, w, h) = tileBox m i in (fromIntegral w, fromIntegral h)
 
+-- | What an IPC subscriber reads: the focused workspace and the finished builds.
+data Publication = Publication
+  { publishedTag :: String
+  , publishedBuilds :: Int
+  }
+  deriving (Eq, Show)
+
+expectedPublication :: Model -> Publication
+expectedPublication m = Publication (if modelShown m then "1" else "2") (modelBuilds m)
+
+-- | A command-to-outcome distribution that the M3 workload times.
+data Endpoint
+  = -- | An IPC command to the probe's keyboard owner change, on idle river.
+    ExternalWake
+  | -- | The same command to the subscriber line that publishes its workspace.
+    IPCUpdate
+  | -- | An IPC toggle to the probe's keyboard owner change.
+    ScratchpadToggle
+  | -- | An IPC recompile to the subscriber line that publishes the finished build.
+    RecompileCompletion
+  deriving (Eq, Ord, Show, Enum, Bounded)
+
+endpointText :: Endpoint -> String
+endpointText ExternalWake = "external_wake"
+endpointText IPCUpdate = "ipc_update"
+endpointText ScratchpadToggle = "scratchpad_toggle"
+endpointText RecompileCompletion = "recompile_completion"
+
+stepEndpoints :: WorkloadName -> Step -> [Endpoint]
+stepEndpoints M3 step = case step of
+  ViewEmpty -> [ExternalWake, IPCUpdate]
+  ViewPopulated -> [ExternalWake, IPCUpdate]
+  TogglePad -> [ScratchpadToggle]
+  Recompile -> [RecompileCompletion]
+  _ -> []
+stepEndpoints _ _ = []
+
 tiles :: WorkloadName -> [Int]
-tiles name = filter (not . isDialog name) [0 .. length (windowRoles name) - 1]
+tiles name = [i | i <- [0 .. length (windowRoles name) - 1], TileRole _ <- [roleAt name i]]
 
 tileBox :: Model -> Int -> (Int, Int, Int, Int)
 tileBox m i = Map.fromList (zip ts (tileBoxes (modelRatio m) (length ts))) Map.! i
@@ -212,8 +294,8 @@ data Layer = Layer
   deriving (Eq, Show)
 
 {- | Bottom to top: the tiles, then the dialogs in raise order, each centered
-on the output, then the fullscreen window over the whole output. Empty
-while the empty workspace is viewed.
+on the output, then a shown pad in its box, then the fullscreen window over
+the whole output. Empty while the empty workspace is viewed.
 -}
 expectedLayers :: Model -> [Layer]
 expectedLayers m
@@ -221,10 +303,11 @@ expectedLayers m
   | otherwise =
       [Layer (colorOf i) (tileBox m i) 2 | i <- tiles name, Just i /= modelFullscreen m]
         ++ [Layer c (centered w h) 2 | i <- modelRaise m, DialogRole c (w, h) _ <- [roleAt name i]]
+        ++ [Layer c padContent 2 | modelPadShown m, PadRole c <- windowRoles name]
         ++ [Layer (colorOf f) (0, 0, 800, 600) 0 | Just f <- [modelFullscreen m]]
  where
   name = modelWorkload m
-  colorOf i = case roleAt name i of TileRole c -> c; DialogRole c _ _ -> c
+  colorOf i = case roleAt name i of TileRole c -> c; DialogRole c _ _ -> c; PadRole c -> c
   centered w h = (2 + (796 - fromIntegral w) `div` 2, 2 + (596 - fromIntegral h) `div` 2, fromIntegral w, fromIntegral h)
 
 {- | Check every pixel of an 800x600 capture: content shows its window's
