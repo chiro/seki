@@ -163,8 +163,11 @@ sekictl session = runProcessCapture (clientEnvironment session) (sessionCli sess
 snapshot :: DailySession -> IO Snapshot
 snapshot session = sekictl session ["snapshot"] >>= requireRight "sekictl snapshot reply" . replySnapshot
 
+-- | Poll until a snapshot satisfies the predicate. sekictl makes one attempt, so a call that fails while a restart replaces the IPC socket only means not yet.
 waitSnapshot :: DailySession -> String -> (Snapshot -> Bool) -> IO Snapshot
-waitSnapshot session phase = waitUntil phase assertionTimeoutMicroseconds (snapshot session)
+waitSnapshot session phase ready = waitUntil phase assertionTimeoutMicroseconds attempt (either (const False) ready) >>= either failIntegration pure
+ where
+  attempt = either (\(IntegrationFailure failure) -> Left failure) replySnapshot <$> try (sekictl session ["snapshot"])
 
 waitFocus :: DailySession -> String -> Maybe ProbeWindow -> IO ()
 waitFocus session phase wanted = void (waitUntil phase assertionTimeoutMicroseconds (keyboardSnapshot (sessionProbe session)) ((== wanted) . keyboardOwner))
