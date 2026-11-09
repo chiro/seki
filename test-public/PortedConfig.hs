@@ -31,7 +31,7 @@ everything above and differs from xmonad.hs in these further ways:
   saved mode 5, zoom fill, is swaybg's @fill@ mode.
 * @xscreensaver --no-splash@ becomes @swayidle@, which runs @swaylock@ after
   10 minutes idle. xscreensaver blanked the screen without locking it. The
-  port locks on purpose, because the maintainer chose swayidle with swaylock.
+  port locks on purpose.
 * Mod-Shift-l runs @swaylock@ instead of @xscreensaver-command --lock@.
 * Mod-grave toggles a terminal scratchpad that xmonad.hs does not have.
   alacritty's @--class@ sets the Wayland app_id the pad matches.
@@ -83,7 +83,8 @@ portedConfig =
 
 dailyConfig :: FilePath -> Either String (Config StdLayouts)
 dailyConfig keymap = do
-  padRect <- first show (mkSize 1280 800 >>= mkRect (Point ((1920 - 1280) `div` 2) ((1200 - 800) `div` 2)))
+  let (padWidth, padHeight) = (1280, 800)
+  padRect <- first show (mkSize padWidth padHeight >>= mkRect (Point ((1920 - padWidth) `div` 2) ((1200 - padHeight) `div` 2)))
   anyKeyboard <- first show (compileDevicePattern "*")
   touchpad <- first show (compileDevicePattern "ELAN06C7:00 04F3:3193 Touchpad")
   pure $
