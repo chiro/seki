@@ -116,6 +116,7 @@ dailyEnvironment home extra = overrides <> filter ((`notElem` map fst overrides)
       <> extra
   inheritedWithoutConfigHome = filter ((/= "XDG_CONFIG_HOME") . fst) base
 
+-- | Every startup command must have run exactly once when the body starts and again when it ends, so a restart that replays the startup hook fails the lane.
 runDaily :: String -> DailyHome -> [(String, String)] -> (DailySession -> IO a) -> IO a
 runDaily name home extra body =
   bracket (startManagedProcess name (dailyEnvironment home extra) (proc (homeExecutable home) [])) stopManagedProcess $ \process ->
@@ -175,7 +176,7 @@ sekictl session = runProcessCapture (clientEnvironment session) (homeCli (sessio
 snapshot :: DailySession -> IO Snapshot
 snapshot session = sekictl session ["snapshot"] >>= requireRight "sekictl snapshot reply" . replySnapshot
 
--- | Poll until a snapshot satisfies the predicate. sekictl makes one attempt, so a call that fails while a restart replaces the IPC socket only means not yet.
+-- | sekictl makes one attempt, so a call that fails while a restart replaces the IPC socket only means not yet.
 waitSnapshot :: DailySession -> String -> (Snapshot -> Bool) -> IO Snapshot
 waitSnapshot session phase ready = waitUntil phase assertionTimeoutMicroseconds attempt (either (const False) ready) >>= either failIntegration pure
  where
@@ -396,7 +397,6 @@ buildHandover = withDailyHome (dailyOptions 2) $ \home -> do
     capture session "daily-build-pad-hidden"
     runInputDriver (clientEnvironment session) ["-k", "XF86AudioRaiseVolume"]
     launchedOnce session "XF86AudioRaiseVolume works in the new image" "amixer -D pulse sset Master 2%+"
-    startupRanOnce session "no startup command ran again after the handover"
 
 barReconnect :: IO ()
 barReconnect = withDailySession "m3-daily-bar" (dailyOptions 1) $ \session -> withSubscription session "daily-bar-subscription.jsonl" $ \stream -> do
@@ -674,6 +674,7 @@ subscriberStall flood = do
   threadDelay 200000
   (,,,) before <$> unreadBacklog flood <*> pure from <*> floodRevision flood
 
+-- | Polls every 1 ms, because waitUntil's 20 ms poll is too coarse for a key-to-focus sample.
 wtypeKeyToFocus :: DailySession -> String -> Maybe ProbeWindow -> IO (Integer, Maybe ProbeWindow)
 wtypeKeyToFocus session keyName from = do
   started <- getMonotonicTimeNSec
