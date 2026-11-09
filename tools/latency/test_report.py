@@ -16,6 +16,31 @@ RTS = """1,024 bytes allocated in the heap
 """
 
 
+def driver_for(workload):
+    driver = dict(valid=True, native_checks=True, observed_actions=1, steps=1, action_codes=[0], start_ns=10, end_ns=20,
+                  workload=workload, exercised={name: 1 for name in runner.WORKLOADS[workload]["exercised"]})
+    endpoints = runner.WORKLOADS[workload].get("endpoints", {})
+    if endpoints:
+        driver |= dict(endpoints={name: [1_000_000, 2_000_000] for name in endpoints}, endpoint_steps={name: 2 for name in endpoints})
+    return driver
+
+
+def pure_for(workload, checksum=123):
+    return dict(valid=True, steps=1, checksum=checksum, samples_ns=[3], workload=workload)
+
+
+def revision(sha):
+    return dict(git_sha=sha, compiler="ghc 9.10", binary_sha256="b" + sha, linked_seki_libraries={"/lib/" + sha: "l" + sha})
+
+
+def manifest(trials, revisions, unsupported=(), runtime_sources=None):
+    workloads = list(dict.fromkeys(w for _, _, w in trials))
+    return dict(schema=3, workloads=workloads, machine="m", uname="Linux host", cpu_count=12, cpu_model="cpu", river="0.5.0", renderer="pixman",
+                revisions=revisions, unsupported=list(unsupported), runtime_sources=runtime_sources,
+                seed=1, live_steps={w: 1 for w in workloads}, pure_steps=1, pure_windows=2,
+                trials=[dict(directory=d, revision=r, workload=w, collector="normal", load_before=[0.5], load_after=[0.6]) for d, r, w in trials])
+
+
 class ReportTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -23,13 +48,14 @@ class ReportTest(unittest.TestCase):
         self.path = Path(self.temp.name)
         self.wm = dict(clean_exit=True, successful=4, failed=0, dropped=0, major_gcs=1,
                        samples=[dict(kind=k, start_ns=s, end_ns=s+1) for k,s in [("manage",1),("manage",11),("render",13),("render",21)]])
-        self.driver = dict(valid=True, native_checks=True, observed_actions=1, steps=1, action_codes=[0], start_ns=10,end_ns=20,
-                           workload="m2", exercised={name: 1 for name in runner.WORKLOADS["m2"]["exercised"]})
-        self.pure = dict(valid=True,steps=1,checksum=123,samples_ns=[3],workload="m2")
+        self.use("m2")
         for name in ["wm", "pure"]:
             (self.path/f"{name}.rts").write_text(RTS)
         for n in [0,1]:
             runner.write(self.path/f"wm-checkpoint-{n}.json",dict(major_gcs=n,gcs=n,allocated_bytes=n))
+
+    def use(self, workload):
+        self.driver, self.pure = driver_for(workload), pure_for(workload)
 
     def summarize(self, workload="m2"):
         for name in ["wm","driver","pure"]:
@@ -113,27 +139,21 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(runner.read(self.path/"summary.json")["trials"][0]["budgets"], summary["trials"][0]["budgets"])
 
 
-    def m3_driver(self):
-        self.driver["workload"] = self.pure["workload"] = "m3"
-        self.driver["exercised"] = {}
-        self.driver["endpoints"] = {name: [1_000_000, 2_000_000] for name in runner.WORKLOADS["m3"]["endpoints"]}
-        self.driver["endpoint_steps"] = {name: 2 for name in runner.WORKLOADS["m3"]["endpoints"]}
-
     def test_m3_endpoints_summarized(self):
-        self.m3_driver()
+        self.use("m3")
         result = self.summarize("m3")
         self.assertEqual(sorted(result["endpoints"]), sorted(runner.WORKLOADS["m3"]["endpoints"]))
         self.assertEqual(result["endpoints"]["ipc_update"]["count"], 2)
         self.assertEqual(result["endpoints"]["ipc_update"]["p99_ms"], 2.0)
 
     def test_m3_missing_endpoint_rejected(self):
-        self.m3_driver()
+        self.use("m3")
         del self.driver["endpoints"]["scratchpad_toggle"]
         with self.assertRaisesRegex(ValueError, "endpoints"):
             self.summarize("m3")
 
     def test_m3_short_endpoint_rejected(self):
-        self.m3_driver()
+        self.use("m3")
         self.driver["endpoints"]["recompile_completion"] = [1_000_000]
         with self.assertRaisesRegex(ValueError, "recompile_completion"):
             self.summarize("m3")
@@ -144,7 +164,7 @@ class ReportTest(unittest.TestCase):
             self.summarize()
 
     def test_m3_endpoint_targets_are_budgets_except_recompile(self):
-        self.m3_driver()
+        self.use("m3")
         self.driver["endpoints"]["scratchpad_toggle"] = [1_000_000, 60_000_000]
         self.driver["endpoints"]["recompile_completion"] = [1_000_000, 900_000_000]
         trial = self.summarize("m3")
@@ -152,13 +172,8 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(outcomes["scratchpad_toggle_p99"], False)
         self.assertEqual(outcomes["external_wake_p99"], True)
         self.assertNotIn("recompile_completion_p99", outcomes)
-        self.assertEqual(sorted(runner.budget_outcomes(self.summarize_m2(), "m2")), sorted(runner.BUDGETS))
-
-    def summarize_m2(self):
-        self.driver = dict(valid=True, native_checks=True, observed_actions=1, steps=1, action_codes=[0], start_ns=10, end_ns=20,
-                           workload="m2", exercised={name: 1 for name in runner.WORKLOADS["m2"]["exercised"]})
-        self.pure["workload"] = "m2"
-        return self.summarize()
+        self.use("m2")
+        self.assertEqual(sorted(runner.budget_outcomes(self.summarize(), "m2")), sorted(runner.BUDGETS))
 
     def test_trial_plan_interleaves_revisions_and_alternates_who_goes_first(self):
         plan = runner.trial_plan(2, ["trunk", "head"], ["m2"], {"trunk": {"m2"}, "head": {"m2"}})
@@ -188,16 +203,11 @@ class ReportTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not found"):
             runner.linked_seki_libraries("\tlibHSseki-x.so => not found\n")
 
-    def write_trial(self, name, workload, checksum=123):
+    def write_trial(self, name, workload, checksum=123, driver=None):
         trial = self.path / name
         trial.mkdir()
-        if workload == "m3":
-            self.m3_driver()
-        else:
-            self.summarize_m2()
-        self.pure["checksum"] = checksum
-        for item in ["wm", "driver", "pure"]:
-            runner.write(trial / f"{item}.json", getattr(self, item))
+        for item, value in [("wm", self.wm), ("driver", driver or driver_for(workload)), ("pure", pure_for(workload, checksum))]:
+            runner.write(trial / f"{item}.json", value)
         for item in ["wm.rts", "pure.rts", "wm-checkpoint-0.json", "wm-checkpoint-1.json"]:
             (trial / item).write_text((self.path / item).read_text())
 
@@ -205,15 +215,11 @@ class ReportTest(unittest.TestCase):
         self.write_trial("00-trunk-m2-normal", "m2")
         self.write_trial("01-head-m2-normal", "m2", head_m2_checksum)
         self.write_trial("02-head-m3-normal", "m3", 456)
-        revision = lambda sha: dict(git_sha=sha, compiler="ghc 9.10", binary_sha256="b" + sha, linked_seki_libraries={"/lib/" + sha: "l" + sha})
-        trials = [dict(directory=d, revision=r, workload=w, collector="normal", load_before=[0.5], load_after=[0.6])
-                  for d, r, w in [("00-trunk-m2-normal", "trunk", "m2"), ("01-head-m2-normal", "head", "m2"), ("02-head-m3-normal", "head", "m3")]]
-        runner.write(self.path / "manifest.json", dict(
-            schema=3, workloads=["m2", "m3"], machine="m", uname="Linux host", cpu_count=12, cpu_model="cpu", river="0.5.0", renderer="pixman",
+        runner.write(self.path / "manifest.json", manifest(
+            [("00-trunk-m2-normal", "trunk", "m2"), ("01-head-m2-normal", "head", "m2"), ("02-head-m3-normal", "head", "m3")],
             revisions={"trunk": revision("c2b7851"), "head": revision("abc1234")},
             unsupported=[dict(revision="trunk", workload="m3", reason="invalid workload: m3")],
-            runtime_sources=dict(paths=["src", "src-core", "src-public"], identical=identical),
-            seed=1, live_steps={"m2": 1, "m3": 2}, pure_steps=1, pure_windows=2, trials=trials))
+            runtime_sources=dict(paths=["src", "src-core", "src-public"], identical=identical)))
         return runner.report(self.path)
 
     def test_campaign_report_groups_by_revision_and_names_the_noise_floor(self):
@@ -250,14 +256,10 @@ class ReportTest(unittest.TestCase):
 
 
     def test_campaign_report_marks_a_failing_trial(self):
-        self.write_trial("00-head-m3-normal", "m3", 456)
-        self.driver["endpoints"]["external_wake"] = [1_000_000, 70_000_000]
-        runner.write(self.path / "00-head-m3-normal" / "driver.json", self.driver)
-        runner.write(self.path / "manifest.json", dict(
-            schema=3, workloads=["m3"], machine="m", uname="Linux host", cpu_count=12, cpu_model="cpu", river="0.5.0", renderer="pixman",
-            revisions={"head": dict(git_sha="abc1234", compiler="ghc 9.10", binary_sha256="b", linked_seki_libraries={})},
-            unsupported=[], runtime_sources=None, seed=1, live_steps={"m3": 2}, pure_steps=1, pure_windows=2,
-            trials=[dict(directory="00-head-m3-normal", revision="head", workload="m3", collector="normal", load_before=[0.5], load_after=[0.6])]))
+        driver = driver_for("m3")
+        driver["endpoints"]["external_wake"] = [1_000_000, 70_000_000]
+        self.write_trial("00-head-m3-normal", "m3", 456, driver)
+        runner.write(self.path / "manifest.json", manifest([("00-head-m3-normal", "head", "m3")], revisions={"head": revision("abc1234")}))
         runner.report(self.path)
         text = (self.path / "report.md").read_text()
         self.assertIn("One revision ran", text)
