@@ -23,7 +23,7 @@ import GHC.Clock (getMonotonicTimeNSec)
 import Network.Socket (Family (AF_UNIX), SockAddr (SockAddrUnix), SocketType (Stream), close, connect, defaultProtocol, socket)
 import Network.Socket.ByteString (recv, sendAll)
 import Seki.Fixture.Probe
-import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputOrigins, outputPicture, pictureErrorWith, placeOutputs, png, portedBorders, withHeldLogoIn, withKeyboard, withNestedRiverUsing)
+import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputOrigins, outputPicture, pictureErrorWith, placeOutputs, portedBorders, saveOutputsSideBySide, withHeldLogoIn, withKeyboard, withNestedRiverUsing)
 import Seki.Integration.Harness
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable, listDirectory, removeFile)
 import System.Environment (lookupEnv)
@@ -204,23 +204,12 @@ report label value = announce ("M3_DAILY_" <> label <> " " <> value)
 
 capture :: DailySession -> String -> IO ()
 capture session label = do
-  outputs <- sort . map snd <$> outputNames (sessionSocket session)
-  frames <- mapM (captureOutput (sessionSocket session)) outputs
-  stamp <- getMonotonicTimeNSec
   artifacts <- lookupEnv "SEKI_INTEGRATION_ARTIFACT_DIR"
   forM_ artifacts $ \directory -> do
     createDirectoryIfMissing True directory
-    BS.writeFile (directory </> label <> ".png") (png (sideBySide frames))
+    saveOutputsSideBySide (sessionSocket session) (directory </> label <> ".png")
+  stamp <- getMonotonicTimeNSec
   report "CAPTURE" (label <> " " <> show stamp)
-
-sideBySide :: [Image] -> Image
-sideBySide frames = Image width height (BS.concat [BS.concat (map (row y) frames) | y <- [0 .. height - 1]])
- where
-  width = sum (map imageWidth frames)
-  height = maximum (0 : map imageHeight frames)
-  row y frame
-    | y < imageHeight frame = BS.take (imageWidth frame * 3) (BS.drop (y * imageWidth frame * 3) (imageRgb frame))
-    | otherwise = BS.replicate (imageWidth frame * 3) 0
 
 withSubscription :: DailySession -> String -> (IO [Snapshot] -> IO a) -> IO a
 withSubscription session file action =
