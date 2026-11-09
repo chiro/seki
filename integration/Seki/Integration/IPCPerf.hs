@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Seki.Integration.IPCPerf (ipcPerfScenarios, appliedRevision, bufferedLine) where
+module Seki.Integration.IPCPerf (ipcPerfScenarios) where
 
 import Control.Concurrent (forkFinally, killThread)
 import Control.Concurrent.Chan (newChan, readChan, writeChan)
@@ -10,12 +10,12 @@ import Control.Monad (forM_, replicateM)
 import Data.Aeson (eitherDecodeStrict', withObject, (.:))
 import Data.Aeson.Types (parseEither)
 import Data.ByteString qualified as BS
-import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import GHC.Clock (getMonotonicTimeNSec)
 import Network.Socket
-import Network.Socket.ByteString (recv, sendAll)
+import Network.Socket.ByteString (sendAll)
 import Seki.Integration.Fixture
 import Seki.Integration.Harness
 import Seki.Internal.Config (def)
@@ -27,7 +27,6 @@ import Seki.Run.IPC (withIPCAt)
 import Seki.Run.Policy
 import Seki.Run.Runtime
 import System.FilePath ((</>))
-import System.Timeout (timeout)
 
 ipcPerfScenarios :: [(String, IO ())]
 ipcPerfScenarios = [("m3-ipc-perf", ipcPerf)]
@@ -109,26 +108,6 @@ ipcPerf = do
               )
               `finally` stop
       saveCapture fixture "ipc-perf"
-
-bufferedLine :: Socket -> IO (IO BS.ByteString)
-bufferedLine client = do
-  pending <- newIORef BS.empty
-  let readOne = do
-        bytes <- readIORef pending
-        case BS.elemIndex 10 bytes of
-          Just n -> do
-            writeIORef pending (BS.drop (n + 1) bytes)
-            pure (BS.take n bytes)
-          Nothing | BS.length bytes > 65536 -> failIntegration "oversized response"
-          Nothing -> do
-            chunk <- recv client 4096
-            if BS.null chunk then failIntegration "unexpected IPC disconnect" else writeIORef pending (bytes <> chunk) >> readOne
-  pure (timeout assertionTimeoutMicroseconds readOne >>= maybe (failIntegration "IPC perf timeout") pure)
-
-appliedRevision :: BS.ByteString -> IO Integer
-appliedRevision bytes = do
-  value <- requireRight "command JSON" (eitherDecodeStrict' bytes)
-  requireRight "application revision" (parseEither (withObject "envelope" (\o -> o .: "result" >>= withObject "result" (.: "revision"))) value)
 
 snapshotObservation :: BS.ByteString -> IO (Integer, Text.Text)
 snapshotObservation bytes = do

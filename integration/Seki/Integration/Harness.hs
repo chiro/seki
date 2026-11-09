@@ -48,6 +48,8 @@ module Seki.Integration.Harness (
   requireSetting,
   IntegrationFailure,
   socketQueuedBytes,
+  bufferedLine,
+  appliedRevision,
 ) where
 
 import Control.Concurrent (forkIO, threadDelay)
@@ -74,11 +76,12 @@ import Control.Exception (
  )
 import Control.Monad (filterM, forM, forM_, forever, unless, void, when)
 import Data.Aeson (FromJSON (parseJSON), eitherDecodeStrict', withObject, (.:))
+import Data.Aeson.Types (parseEither)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.Char (ord)
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intercalate, nub, sort)
 import Data.Maybe (fromMaybe, isJust)
 import Data.Text qualified as Text
@@ -280,6 +283,26 @@ assertionTimeoutMicroseconds = 10 * 1000 * 1000
 
 foreign import ccall unsafe "ioctl"
   c_ioctl :: CInt -> CULong -> Ptr () -> IO CInt
+
+bufferedLine :: Socket -> IO (IO ByteString)
+bufferedLine client = do
+  pending <- newIORef ByteString.empty
+  let readOne = do
+        bytes <- readIORef pending
+        case ByteString.elemIndex 10 bytes of
+          Just n -> do
+            writeIORef pending (ByteString.drop (n + 1) bytes)
+            pure (ByteString.take n bytes)
+          Nothing | ByteString.length bytes > 65536 -> failIntegration "oversized response"
+          Nothing -> do
+            chunk <- SocketByteString.recv client 4096
+            if ByteString.null chunk then failIntegration "unexpected IPC disconnect" else writeIORef pending (bytes <> chunk) >> readOne
+  pure (timeout assertionTimeoutMicroseconds readOne >>= maybe (failIntegration "IPC perf timeout") pure)
+
+appliedRevision :: ByteString -> IO Integer
+appliedRevision bytes = do
+  value <- requireRight "command JSON" (eitherDecodeStrict' bytes)
+  requireRight "application revision" (parseEither (withObject "envelope" (\o -> o .: "result" >>= withObject "result" (.: "revision"))) value)
 
 socketQueuedBytes :: Socket -> IO Int
 socketQueuedBytes client = withFdSocket client $ \fd -> allocaBytes 4 $ \pointer -> do

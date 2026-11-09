@@ -25,7 +25,6 @@ import Network.Socket.ByteString (sendAll)
 import Seki.Fixture.Probe
 import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputOrigins, outputPicture, pictureErrorWith, placeOutputs, portedBorders, saveOutputsSideBySide, withHeldLogoIn, withKeyboard, withNestedRiverUsing)
 import Seki.Integration.Harness
-import Seki.Integration.IPCPerf (appliedRevision, bufferedLine)
 import Seki.Integration.M2 (drag)
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable, listDirectory, removeFile)
 import System.Environment (lookupEnv)
