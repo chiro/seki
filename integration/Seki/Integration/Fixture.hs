@@ -5,7 +5,7 @@ module Seki.Integration.Fixture (
   NestedRiver (..),
   withNestedRiver,
   withNestedRiverEnvironment,
-  withNestedXwaylandRiver,
+  withNestedRiverUsing,
   placeOutputs,
   Fixture (..),
   Box (..),
@@ -107,9 +107,6 @@ withNestedRiver = withNestedRiverEnvironment []
 
 withNestedRiverEnvironment :: [(String, String)] -> Int -> (NestedRiver -> IO a) -> IO a
 withNestedRiverEnvironment = withNestedRiverUsing False
-
-withNestedXwaylandRiver :: [(String, String)] -> Int -> (NestedRiver -> IO a) -> IO a
-withNestedXwaylandRiver = withNestedRiverUsing True
 
 withNestedRiverUsing :: Bool -> [(String, String)] -> Int -> (NestedRiver -> IO a) -> IO a
 withNestedRiverUsing xwayland extra outputCount action = do
