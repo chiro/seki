@@ -239,36 +239,12 @@ runLive directory workload seed steps collector = do
                           EnterFullscreen -> requestFullscreen probe (byIndex Map.! modelFocus model)
                           ExitFullscreen -> mapM_ (requestExitFullscreen probe . (byIndex Map.!)) (modelFullscreen model)
                           _ -> key (stepCode step + 1)
-                        issue c next step = do
-                          threadDelay idleGapMicroseconds
-                          (operation, endpoints) <- maybe (fail ("m3 has no command for " <> show step)) pure (stepCommand step)
-                          Receipt started revision <- command c operation
-                          forM endpoints $ \endpoint -> do
-                            ended <- case endpoint of
-                              ExternalWake -> observed next
-                              ScratchpadToggle -> observed next
-                              IPCUpdate -> publishedAt <$> (awaitPublished c assertionTimeoutMicroseconds ((>= revision) . publishedRevision) >>= publishes next)
-                              RecompileCompletion -> publishedAt <$> (awaitPublished c assertionTimeoutMicroseconds (finished (publishedFinishedBuilds (expectedPublication next))) >>= failedByStub)
-                            pure (endpoint, ended - started)
-                        observed model = do
-                          seen <- observe
-                          if seen == expectedObservation model
-                            then getMonotonicTimeNSec
-                            else threadDelay pollMicroseconds >> observed model
-                        publishes model p = do
-                          unless (Text.unpack (publishedFocus p) == publishedFocusedTag (expectedPublication model)) (fail ("subscriber published " <> show p <> " for " <> show model))
-                          pure p
-                        finished generation p = maybe False (\b -> reportedGeneration b == fromIntegral generation && reportedState b /= "building") (publishedBuild p)
-                        failedByStub p = do
-                          let report = publishedBuild p
-                          unless (fmap reportedState report == Just "failed" && maybe False (Text.isInfixOf (Text.pack checkFailure)) (report >>= reportedError)) (fail ("build did not fail at the stub check: " <> show report))
-                          pure p
                         withDriver body = case workloadDriver workload of
                           KeyDriver -> body (\model step _ -> [] <$ drive model step)
                           IPCDriver -> do
                             let path = runtime </> "seki" </> "ipc.sock"
                             _ <- waitUntil "WM IPC socket" assertionTimeoutMicroseconds (doesFileExist path) id
-                            withCommands path (\c -> body (\_ step next -> issue c next step))
+                            withCommands path (\c -> body (\_ step next -> timeCommand c observe next step))
                     withDriver $ \act -> do
                       let perform (model, timed) step = do
                             let next = stepModel model step
@@ -338,6 +314,34 @@ runLive directory workload seed steps collector = do
     maybe (fail "WM PID unavailable") (signalProcess sigUSR2) pid
     let path = directory </> ("wm-checkpoint-" <> show (index :: Int) <> ".json")
     void (waitUntil "WM RTS checkpoint" assertionTimeoutMicroseconds (doesFileExist path) id)
+
+timeCommand :: Commands -> IO Observation -> Model -> Step -> IO [(Endpoint, Word64)]
+timeCommand commands observe next step = do
+  threadDelay idleGapMicroseconds
+  (operation, endpoints) <- maybe (fail ("m3 has no command for " <> show step)) pure (stepCommand step)
+  Receipt started revision <- command commands operation
+  forM endpoints $ \endpoint -> do
+    ended <- case endpoint of
+      ExternalWake -> observed
+      ScratchpadToggle -> observed
+      IPCUpdate -> publishedAt <$> (awaitPublished commands assertionTimeoutMicroseconds ((>= revision) . publishedRevision) >>= publishes)
+      RecompileCompletion -> publishedAt <$> (awaitPublished commands assertionTimeoutMicroseconds (finished (publishedFinishedBuilds expected)) >>= failedByStub)
+    pure (endpoint, ended - started)
+ where
+  expected = expectedPublication next
+  observed = do
+    seen <- observe
+    if seen == expectedObservation next
+      then getMonotonicTimeNSec
+      else threadDelay pollMicroseconds >> observed
+  publishes p = do
+    unless (Text.unpack (publishedFocus p) == publishedFocusedTag expected) (fail ("subscriber published " <> show p <> " for " <> show next))
+    pure p
+  finished generation p = maybe False (\b -> reportedGeneration b == fromIntegral generation && reportedState b /= "building") (publishedBuild p)
+  failedByStub p = do
+    let report = publishedBuild p
+    unless (fmap reportedState report == Just "failed" && maybe False (Text.isInfixOf (Text.pack checkFailure)) (report >>= reportedError)) (fail ("build did not fail at the stub check: " <> show report))
+    pure p
 
 idleGapMicroseconds :: Int
 idleGapMicroseconds = 1000
