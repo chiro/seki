@@ -29,6 +29,7 @@ import Seki.Integration.IPCPerf (appliedRevision, bufferedLine)
 import Seki.Integration.M2 (drag)
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable, listDirectory, removeFile)
 import System.Environment (lookupEnv)
+import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, takeFileName, (</>))
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Files (readSymbolicLink)
@@ -118,7 +119,6 @@ dailyEnvironment home extra = overrides <> filter ((`notElem` map fst overrides)
       <> extra
   inheritedWithoutConfigHome = filter ((/= "XDG_CONFIG_HOME") . fst) base
 
--- | Every startup command must have run exactly once when the body starts and again when it ends, so a restart that replays the startup hook fails the lane.
 runDaily :: String -> DailyHome -> [(String, String)] -> (DailySession -> IO a) -> IO a
 runDaily name home extra body =
   bracket (startManagedProcess name (dailyEnvironment home extra) (proc (homeExecutable home) [])) stopManagedProcess $ \process ->
@@ -178,11 +178,18 @@ sekictl session = runProcessCapture (clientEnvironment session) (homeCli (sessio
 snapshot :: DailySession -> IO Snapshot
 snapshot session = sekictl session ["snapshot"] >>= requireRight "sekictl snapshot reply" . replySnapshot
 
--- | sekictl makes one attempt, so a call that fails while a restart replaces the IPC socket only means not yet.
 waitSnapshot :: DailySession -> String -> (Snapshot -> Bool) -> IO Snapshot
 waitSnapshot session phase ready = waitUntil phase assertionTimeoutMicroseconds attempt (either (const False) ready) >>= either failIntegration pure
  where
-  attempt = either (\(IntegrationFailure failure) -> Left failure) replySnapshot <$> try @IntegrationFailure (sekictl session ["snapshot"])
+  attempt = do
+    (code, reply, failure) <- runProcessOutcome (clientEnvironment session) (homeCli (sessionHome session)) ["snapshot"]
+    case code of
+      ExitSuccess -> pure (replySnapshot reply)
+      _ | code == sekictlTransportError -> pure (Left ("sekictl could not reach seki: " <> BS8.unpack failure))
+      _ -> failIntegration ("sekictl snapshot failed with " <> show code <> ": " <> BS8.unpack failure)
+
+sekictlTransportError :: ExitCode
+sekictlTransportError = ExitFailure 69
 
 waitFocus :: DailySession -> String -> Maybe ProbeWindow -> IO ()
 waitFocus session phase wanted = void (waitUntil phase assertionTimeoutMicroseconds (keyboardSnapshot (sessionProbe session)) ((== wanted) . keyboardOwner))
@@ -669,7 +676,9 @@ subscriberStall flood = do
   threadDelay 200000
   (,,,) before <$> unreadBacklog flood <*> pure from <*> floodRevision flood
 
--- | Polls every 1 ms, because waitUntil's 20 ms poll is too coarse for a key-to-focus sample.
+keyToFocusPollMicroseconds :: Int
+keyToFocusPollMicroseconds = 1000
+
 wtypeKeyToFocus :: DailySession -> String -> Maybe ProbeWindow -> IO (Integer, Maybe ProbeWindow)
 wtypeKeyToFocus session keyName from = do
   started <- getMonotonicTimeNSec
@@ -680,7 +689,7 @@ wtypeKeyToFocus session keyName from = do
           now <- getMonotonicTimeNSec
           if owner /= from
             then pure (toInteger (now - started), owner)
-            else if now >= deadline then failIntegration ("Mod-" <> keyName <> " did not move keyboard focus from " <> show from) else threadDelay 1000 >> poll
+            else if now >= deadline then failIntegration ("Mod-" <> keyName <> " did not move keyboard focus from " <> show from) else threadDelay keyToFocusPollMicroseconds >> poll
     poll
 
 loadResponsive :: IO ()
