@@ -91,7 +91,7 @@ tests =
         windowRoles M3 @?= [TileRole Red, TileRole Blue, PadRole Green]
         let m0 = initialModel M3
         (modelFocus m0, modelPadShown m0, observedOwner (expectedObservation m0)) @?= (1, True, Just 0)
-        expectedLayers m0 @?= zipWith (\c b -> Layer c b 2) [Blue, Red] (tileBoxes Half 2) ++ [Layer Green padBox 2]
+        expectedLayers m0 @?= zipWith (\c b -> Layer c b 2) [Blue, Red] (tileBoxes Half 2) ++ [Layer Green padContentBox 2]
     , testCase "hiding the pad returns the keyboard to the focused tile and keeps every size" $ do
         let m0 = initialModel M3
             hidden = stepModel m0 TogglePad
@@ -110,9 +110,9 @@ tests =
     , testCase "a recompile publishes one more finished build and leaves the probe's view alone" $ do
         let m0 = stepModel (initialModel M3) TogglePad
             built = stepModel m0 Recompile
-        (publishedTag (expectedPublication built), publishedBuilds (expectedPublication built)) @?= ("1", 1)
+        (publishedFocusedTag (expectedPublication built), publishedFinishedBuilds (expectedPublication built)) @?= ("1", 1)
         expectedObservation built @?= expectedObservation m0
-        publishedTag (expectedPublication (stepModel m0 ViewEmpty)) @?= "2"
+        publishedFocusedTag (expectedPublication (stepModel m0 ViewEmpty)) @?= "2"
     , testCase "24 warmup steps leave the pad shown, so 2500 measured m3 steps time 1001 toggles and 499 recompiles" $ do
         let m0 = initialModel M3
             warmed = foldl stepModel m0 (take 24 (plan M3 1909 m0))
