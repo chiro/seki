@@ -36,6 +36,7 @@ module Seki.Integration.Harness (
   runProcessCapture,
   runProcessCaptureWithin,
   runInputDriver,
+  modKeys,
   waitUntil,
   assertionTimeoutMicroseconds,
   pollIntervalMicroseconds,
@@ -1415,6 +1416,9 @@ runInputDriver childEnvironment arguments =
       unless (exitCode == ExitSuccess) $ do
         logs <- renderManagedProcessLogs inputProcess
         failIntegration ("wtype failed with " <> show exitCode <> logs)
+
+modKeys :: [(String, String)] -> [String] -> IO ()
+modKeys childEnvironment keys = runInputDriver childEnvironment (["-M", "logo"] <> concatMap (\key -> ["-k", key]) keys <> ["-m", "logo"])
 
 startManagedProcess :: String -> [(String, String)] -> CreateProcess -> IO ManagedProcess
 startManagedProcess label childEnvironment specification = do

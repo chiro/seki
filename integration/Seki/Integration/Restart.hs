@@ -57,21 +57,20 @@ restartProcess = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-re
   let base = riverEnvironment nested
       environment = [("PATH", bin <> ":" <> fromMaybe "/usr/bin:/bin" (lookup "PATH" base))] <> filter ((/= "PATH") . fst) base
       socket = riverSocket nested
-      key keys = runInputDriver environment (["-M", "logo"] <> concatMap (\k -> ["-k", k]) keys <> ["-m", "logo"])
   bracket (startManagedProcess "seki" environment (proc "/bin/sh" ["-c", "exec seki"])) stopManagedProcess $ \seki ->
     ( do
         pid <- managedProcessPid seki >>= maybe (failIntegration "seki has no pid") pure
         [(_, output)] <- waitUntil "seki shows the output" assertionTimeoutMicroseconds (outputNames socket) ((== 1) . length)
         void (runProcessCapture environment "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "800x600", "--pos", "0,0", "--scale", "1", "--transform", "normal"])
         withKeyboard environment . withProbe socket $ \probe -> do
-          _ <- waitUntil "seki's bindings switch to workspace 2" assertionTimeoutMicroseconds (key ["2"] >> focusedWorkspace environment) (== Just "2")
+          _ <- waitUntil "seki's bindings switch to workspace 2" assertionTimeoutMicroseconds (modKeys environment ["2"] >> focusedWorkspace environment) (== Just "2")
           covering <- openWindow probe Blue
           requestFullscreen probe covering
           workspace2 <- settled socket output
-          key ["1"]
+          modKeys environment ["1"]
           red <- openWindow probe Red
           _ <- openWindow probe Green
-          key ["space"]
+          modKeys environment ["space"]
           dialog <- openWindowWith probe (windowSpec Blue){specParent = Just red, specCommit = CommitFixed 300 200}
           _ <- waitUntil "the dialog has keyboard focus" assertionTimeoutMicroseconds (keyboardSnapshot probe) ((== Just dialog) . keyboardOwner)
           withHeldLogoIn environment probe . withVirtualPointer socket (800, 600) $ \pointer -> do
@@ -82,7 +81,7 @@ restartProcess = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-re
             pointerRelease pointer LeftButton
           workspace1 <- settled socket output
           ownerBefore <- keyboardOwner <$> keyboardSnapshot probe
-          key ["q"]
+          modKeys environment ["q"]
           _ <- waitUntil "seki execs itself with --restore" assertionTimeoutMicroseconds (BS8.unpack <$> BS.readFile ("/proc/" <> show pid <> "/cmdline")) ("--restore" `isInfixOf`)
           cmdline <- BS8.split '\NUL' <$> BS.readFile ("/proc/" <> show pid <> "/cmdline")
           announce ("m2-restart: restarted as " <> show cmdline)
@@ -92,9 +91,9 @@ restartProcess = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-re
           targets <- mapM (\fd -> getSymbolicLinkTarget ("/proc/" <> show pid <> "/fd/" <> fd)) descriptors
           announce ("m2-restart: descriptors after exec " <> show (zip descriptors targets))
           _ <- waitUntil "keyboard focus returns to the same window" assertionTimeoutMicroseconds (keyboardSnapshot probe) ((== ownerBefore) . keyboardOwner)
-          key ["2"]
+          modKeys environment ["2"]
           sameImage "the fullscreen window covers workspace 2 again" socket output workspace2
-          key ["1"]
+          modKeys environment ["1"]
           sameImage "workspace 1 shows again" socket output workspace1
     )
       `onException` (renderManagedProcessLogs seki >>= announce)
