@@ -53,7 +53,7 @@ import Data.Aeson (Value, encode)
 import Data.Bits (complement, (.&.))
 import Data.ByteString.Lazy.Char8 qualified as Lazy
 import Data.Foldable (find)
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, mapMaybe)
 import Data.Word (Word32)
@@ -164,41 +164,68 @@ policyBuildStatus policy = readIORef (policyBuild policy) >>= traverse buildStat
 policyValidatedTarget :: Policy i l -> IO (Maybe ValidatedTarget)
 policyValidatedTarget policy = readIORef (policyBuild policy) >>= maybe (pure Nothing) readyTarget
 
+-- Other threads write the build and observer cells while the event loop
+-- runs, so they stay out of the state cell, whose read, step, and write
+-- would drop such a write.
 data Policy i l = Policy
-  { policyBuild :: IORef (Maybe BuildSession)
-  , policyLastInput :: IORef (Maybe RiverInputSnapshot)
-  , policyRevision :: IORef Integer
-  , policyObserver :: IORef (Integer -> CoreState i l -> RiverRuntimeSnapshot -> IO ())
+  { policyConfig :: PolicyConfig i l
+  , policyState :: IORef (PolicyState i l)
+  -- ^ Only the event-loop thread writes it.
   , policyIngress :: ExternalIngress (ExternalInput i l)
-  , policyConfig :: PolicyConfig i l
-  , policyState :: IORef (CoreState i l)
-  , policyReconcile :: IORef ReconcileState
-  , policyScene :: IORef DesiredScene
-  , policyQueue :: IORef [DrainView -> CoreEvent i l]
+  , policyBuild :: IORef (Maybe BuildSession)
+  , policyObserver :: IORef (Integer -> CoreState i l -> RiverRuntimeSnapshot -> IO ())
+  }
+
+-- | What the event loop carries from one callback or sequence to the next.
+data PolicyState i l = PolicyState
+  { stateCore :: CoreState i l
+  , stateReconcile :: ReconcileState
+  , stateScene :: DesiredScene
+  , stateQueue :: [DrainView -> CoreEvent i l]
   -- ^ Newest first.
-  , policyPendingStartup :: IORef (Maybe (Action i l ()))
+  , statePendingStartup :: Maybe (Action i l ())
   -- ^ The startup hook until an output arrives.
-  , policyPendingRestore :: IORef (Maybe (RestoreState i))
+  , statePendingRestore :: Maybe (RestoreState i)
   -- ^ The saved state until the first manage sequence.
-  , policyDrainedInventory :: IORef LiveInventory
+  , stateDrainedInventory :: LiveInventory
   -- ^ The keys the last drain saw. River closes every window when it
   -- processes stop, so the inventory at the session's end has none.
+  , stateLastInput :: Maybe RiverInputSnapshot
+  , stateRevision :: !Integer
+  -- ^ Strict, so a receipt never holds a thunk of the previous state.
   }
 
 -- | Validate tags, binding identities and modifiers, border width, and premultiplied colors before connecting.
 newPolicy :: (Eq i) => PolicyConfig i l -> IO (Either (PolicyError i) (Policy i l))
-newPolicy config
-  | Left message <- validateScratchpads (policyScratchpads config) = pure (Left (PolicyInvalidScratchpads message))
-  | Left e <- mapM_ validateInputSetting (concatMap ruleSettings (policyInputRules config)) = pure (Left (PolicyInvalidInputSetting e))
-  | not validStyle = pure (Left (PolicyInvalidSceneStyle style))
-  | binding : _ <- filter invalidModifiers (map fst (policyBindings config)) = pure (Left (PolicyInvalidModifiers binding))
-  | binding : _ <- filter (invalidBits . riverPointerModifiers) (map fst (policyPointerBindings config)) = pure (Left (PolicyInvalidPointerModifiers binding))
-  | Just binding <- firstRepeat [] (map fst (policyPointerBindings config)) = pure (Left (PolicyPointerBindingConflict binding))
+newPolicy config = traverse cells (initialPolicyState config)
+ where
+  cells st = Policy config <$> newIORef st <*> newExternalIngress <*> newIORef Nothing <*> newIORef (\_ _ _ -> pure ())
+
+initialPolicyState :: (Eq i) => PolicyConfig i l -> Either (PolicyError i) (PolicyState i l)
+initialPolicyState config
+  | Left message <- validateScratchpads (policyScratchpads config) = Left (PolicyInvalidScratchpads message)
+  | Left e <- mapM_ validateInputSetting (concatMap ruleSettings (policyInputRules config)) = Left (PolicyInvalidInputSetting e)
+  | not validStyle = Left (PolicyInvalidSceneStyle style)
+  | binding : _ <- filter invalidModifiers (map fst (policyBindings config)) = Left (PolicyInvalidModifiers binding)
+  | binding : _ <- filter (invalidBits . riverPointerModifiers) (map fst (policyPointerBindings config)) = Left (PolicyInvalidPointerModifiers binding)
+  | Just binding <- firstRepeat [] (map fst (policyPointerBindings config)) = Left (PolicyPointerBindingConflict binding)
   | otherwise = case newCoreState (policyLayout config) (policyTags config) of
-      Left e -> pure (Left (PolicyTagError e))
+      Left e -> Left (PolicyTagError e)
       Right st -> case firstRepeat [] (map fst (policyBindings config)) of
-        Just binding -> pure (Left (PolicyBindingConflict binding))
-        Nothing -> Right <$> (Policy <$> newIORef Nothing <*> newIORef Nothing <*> newIORef 0 <*> newIORef (\_ _ _ -> pure ()) <*> newExternalIngress <*> pure config <*> newIORef st{coreScratchpadDefinitions = Map.fromList [(scratchpadName p, (scratchpadCommand p, FloatAt (scratchpadGeometry p))) | p <- policyScratchpads config]} <*> newIORef emptyReconcileState <*> newIORef (DesiredScene Map.empty [] [] [] Nothing Nothing Nothing) <*> newIORef [] <*> newIORef (Just (policyStartupHook config)) <*> newIORef (policyRestore config) <*> newIORef (LiveInventory Map.empty Map.empty))
+        Just binding -> Left (PolicyBindingConflict binding)
+        Nothing ->
+          Right
+            PolicyState
+              { stateCore = st{coreScratchpadDefinitions = Map.fromList [(scratchpadName p, (scratchpadCommand p, FloatAt (scratchpadGeometry p))) | p <- policyScratchpads config]}
+              , stateReconcile = emptyReconcileState
+              , stateScene = DesiredScene Map.empty [] [] [] Nothing Nothing Nothing
+              , stateQueue = []
+              , statePendingStartup = Just (policyStartupHook config)
+              , statePendingRestore = policyRestore config
+              , stateDrainedInventory = LiveInventory Map.empty Map.empty
+              , stateLastInput = Nothing
+              , stateRevision = 0
+              }
  where
   -- River excludes capslock and numlock bits from its modifier enum.
   invalidModifiers = invalidBits . riverKeyBindingModifiers
@@ -230,9 +257,7 @@ policyRuntimeHandlers policy =
               River.RiverWindowV1PointerResizeRequested seat edges
                 | Just parsed <- parseResizeEdges edges -> enqueueWith (startOp FromClient (Resize parsed) (SeatId (objectIdValue seat)) (windowIdOf window))
               _ -> pure ()
-          , handleRiverOutputCreated = \output -> do
-              enqueue (OutputCreated (outputIdOf output))
-              atomicModifyIORef' (policyPendingStartup policy) (Nothing,) >>= mapM_ (enqueue . RunAction)
+          , handleRiverOutputCreated = update . outputArrived . outputIdOf
           , handleRiverOutputEvent = \output -> \case
               River.RiverOutputV1Removed -> enqueue (OutputRemoved (outputIdOf output))
               _ -> pure ()
@@ -265,8 +290,20 @@ policyRuntimeHandlers policy =
   startOp origin kind seat window view =
     StartOp (OpRequest seat window kind origin (drainShownBox view window) (sizeBounds window (drainInventory view)))
   opInput seat input view = OpInput (seatIdOf seat) (drainRiverOp view (seatIdOf seat)) input
+  update = modifyIORef' (policyState policy)
+  enqueueWith = update . queueEvent
   enqueue = enqueueWith . const
-  enqueueWith event = atomicModifyIORef' (policyQueue policy) (\queue -> (event : queue, ()))
+
+queueEvent :: (DrainView -> CoreEvent i l) -> PolicyState i l -> PolicyState i l
+queueEvent event st = st{stateQueue = event : stateQueue st}
+
+-- | The output's event, then the startup hook the first time, so the hook sees an attached state.
+outputArrived :: OutputId -> PolicyState i l -> PolicyState i l
+outputArrived o st = case statePendingStartup st of
+  Nothing -> arrived
+  Just hook -> (queueEvent (const (RunAction hook)) arrived){statePendingStartup = Nothing}
+ where
+  arrived = queueEvent (const (OutputCreated o)) st
 
 {- | Drain the queue and plan the sequence. The first sequence restores the
 saved state before its drain, so the queued creation events of restored
@@ -276,45 +313,47 @@ running.
 -}
 prepareManagePlan :: (Eq i, Show i, LayoutClass l) => Policy i l -> RiverRuntimeSnapshot -> IO (ManageM ManageOutcome)
 prepareManagePlan policy snapshot = do
-  let input = riverRuntimeInput snapshot
-  previousInput <- atomicModifyIORef' (policyLastInput policy) (\old -> (Just input, old))
-  when (not (null (policyInputRules (policyConfig policy))) && previousInput /= Just input) (policyLog (policyConfig policy) ("input: " <> Lazy.unpack (encode (inputStatusValue input))))
-  current <- readIORef (policyState policy)
-  pending <- atomicModifyIORef' (policyPendingRestore policy) (Nothing,)
-  before <- case pending of
-    Nothing -> pure current
-    Just saved -> do
-      let (restored, notes) = restoreCore (liveInventoryOf inventory) saved current
-      mapM_ (policyLog (policyConfig policy) . ("restore: " <>) . describeRestoreNote) notes
-      pure restored
-  previous <- readIORef (policyReconcile policy)
-  let view = DrainView inventory (shownBox before previous) (`Map.lookup` reconciledOps previous)
-  events <- map ($ view) . reverse <$> atomicModifyIORef' (policyQueue policy) ([],)
+  stored <- readIORef (policyState policy)
   external <- drainExternal (policyIngress policy)
-  let externalEvent (ExternalInput action _) = RunAction action
+  let input = riverRuntimeInput snapshot
+      pending = statePendingRestore stored
+      (before, notes) = maybe (stateCore stored, []) (\saved -> restoreCore (liveInventoryOf inventory) saved (stateCore stored)) pending
+      previous = stateReconcile stored
+      view = DrainView inventory (shownBox before previous) (`Map.lookup` reconciledOps previous)
+      events = map ($ view) (reverse (stateQueue stored))
+      externalEvent (ExternalInput action _) = RunAction action
       (st, intents) = drainCoreWithScratchpads (policyScratchpads (policyConfig policy)) (policyManageHook (policyConfig policy)) (events <> map externalEvent external) before
-  writeIORef (policyState policy) st
-  writeIORef (policyDrainedInventory policy) (liveInventoryOf inventory)
-  let effects = interpretIntents intents
-  buildSession <- readIORef (policyBuild policy)
-  when (planRestart effects) $ mapM_ requestBuild buildSession
-  mapM_ (policyLaunch (policyConfig policy)) (planLaunch effects)
-  mapM_ (policyLog (policyConfig policy)) (planNotices effects)
-  mapM_ (\(_, _, command) -> policyLaunch (policyConfig policy) command) (planPads effects)
-  revision <- atomicModifyIORef' (policyRevision policy) (\n -> (n + 1, n + 1))
-  observer <- readIORef (policyObserver policy)
-  observer revision st snapshot
-  mapM_ (\(ExternalInput _ receipt) -> mapM_ (\cell -> void (atomically (tryPutTMVar cell revision))) receipt) external
-  let scene =
+      effects = interpretIntents intents
+      revision = stateRevision stored + 1
+      scene =
         planScene
           (policySceneStyle (policyConfig policy))
           st
           (Map.fromList [(outputIdOf (riverOutputObject o), OutputArea bounds area) | o <- riverInventoryOutputs inventory, Just bounds <- [outputRect o], Just area <- [riverOutputUsableArea o]])
           (Map.fromList [(windowIdOf (riverWindowObject w), WindowId . objectIdValue <$> riverWindowParent w) | w <- riverInventoryWindows inventory])
       reclaim = planReclaim effects || any isInteraction events || isJust pending
-  writeIORef (policyScene policy) scene
-  let (next, plan) = reconcileManage reclaim scene snapshot previous
-  writeIORef (policyReconcile policy) next
+      (next, plan) = reconcileManage reclaim scene snapshot previous
+  writeIORef (policyState policy) $!
+    stored
+      { stateCore = st
+      , stateReconcile = next
+      , stateScene = scene
+      , stateQueue = []
+      , statePendingRestore = Nothing
+      , stateDrainedInventory = liveInventoryOf inventory
+      , stateLastInput = Just input
+      , stateRevision = revision
+      }
+  when (not (null (policyInputRules (policyConfig policy))) && stateLastInput stored /= Just input) (policyLog (policyConfig policy) ("input: " <> Lazy.unpack (encode (inputStatusValue input))))
+  mapM_ (policyLog (policyConfig policy) . ("restore: " <>) . describeRestoreNote) notes
+  buildSession <- readIORef (policyBuild policy)
+  when (planRestart effects) $ mapM_ requestBuild buildSession
+  mapM_ (policyLaunch (policyConfig policy)) (planLaunch effects)
+  mapM_ (policyLog (policyConfig policy)) (planNotices effects)
+  mapM_ (\(_, _, command) -> policyLaunch (policyConfig policy) command) (planPads effects)
+  observer <- readIORef (policyObserver policy)
+  observer revision st snapshot
+  mapM_ (\(ExternalInput _ receipt) -> mapM_ (\cell -> void (atomically (tryPutTMVar cell revision))) receipt) external
   target <- policyValidatedTarget policy
   outcome <-
     if isJust target || (planRestart effects && not (isJust buildSession))
@@ -397,21 +436,20 @@ parseResizeEdges (River.RiverWindowV1EdgesFlags bits)
 
 prepareRenderPlan :: Policy i l -> RiverRuntimeSnapshot -> IO (RenderM RenderOutcome)
 prepareRenderPlan policy snapshot = do
-  scene <- readIORef (policyScene policy)
-  previous <- readIORef (policyReconcile policy)
-  let (next, plan) = reconcileRender (policySceneStyle (policyConfig policy)) scene snapshot previous
-  writeIORef (policyReconcile policy) next
+  stored <- readIORef (policyState policy)
+  let (next, plan) = reconcileRender (policySceneStyle (policyConfig policy)) (stateScene stored) snapshot (stateReconcile stored)
+  writeIORef (policyState policy) $! stored{stateReconcile = next}
   pure plan
 
 readPolicyState :: Policy i l -> IO (CoreState i l)
-readPolicyState = readIORef . policyState
+readPolicyState policy = stateCore <$> readIORef (policyState policy)
 
 {- | The state to carry over, keyed by the inventory of the last drain: the
 core holds exactly the windows that drain knew, while later events stay
 queued.
 -}
 readRestoreState :: (Show l) => Policy i l -> IO (RestoreState i)
-readRestoreState policy = saveCore <$> readIORef (policyDrainedInventory policy) <*> readPolicyState policy
+readRestoreState policy = (\stored -> saveCore (stateDrainedInventory stored) (stateCore stored)) <$> readIORef (policyState policy)
 
 {- | The windows that have an identifier and the outputs that have a
 @wl_output@ name. An identifier two windows share names neither, so both
