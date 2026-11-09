@@ -23,7 +23,7 @@ import GHC.Clock (getMonotonicTimeNSec)
 import Network.Socket (Family (AF_UNIX), SockAddr (SockAddrUnix), SocketType (Stream), close, connect, defaultProtocol, socket)
 import Network.Socket.ByteString (recv, sendAll)
 import Seki.Fixture.Probe
-import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, placeOutputs, png, portedBorders, withHeldLogoIn, withKeyboard, withNestedRiverEnvironment, withNestedXwaylandRiver)
+import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, placeOutputs, png, portedBorders, withHeldLogoIn, withKeyboard, withNestedRiverUsing)
 import Seki.Integration.Harness
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable, listDirectory, removeFile)
 import System.Environment (getExecutablePath, lookupEnv)
@@ -80,7 +80,7 @@ withDailySession name options body = do
   executable <- requireSetting "SEKI_DAILY_CONFIG_EXECUTABLE"
   cli <- requireSetting "SEKICTL_EXECUTABLE"
   backend <- requireSetting "SEKI_INPUT_BACKEND"
-  (if optionXwayland options then withNestedXwaylandRiver else withNestedRiverEnvironment) (optionRiverEnvironment options) (optionOutputs options) $ \nested -> withSystemTempDirectory "seki-daily-home" $ \home -> do
+  withNestedRiverUsing (optionXwayland options) (optionRiverEnvironment options) (optionOutputs options) $ \nested -> withSystemTempDirectory "seki-daily-home" $ \home -> do
     let bin = home </> "bin"
         launches = home </> "launches"
         keymap = home </> ".config" </> "seki" </> "keymap.xkb"
