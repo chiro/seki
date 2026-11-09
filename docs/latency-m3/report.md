@@ -170,7 +170,7 @@ Each sample runs from the driver's send of one IPC command to the outcome named 
 - `scratchpad_toggle`: IPC scratchpad toggle to the probe's keyboard owner change.
 - `recompile_completion`: IPC recompile to the subscriber line that publishes the build generation's result.
 - `input_result` is unsupported: river 0.5.0 lists no input device for the fixture's wtype virtual keyboard, so no input rule has a device to report on; integration/input/backend.so creates devices only when preloaded into river, which m3-input-perf measures.
-- `recompile_handover` is unsupported: a validated build makes the WM stop managing and exec its target, which ends the process that owns the trial's samples; the stub candidate fails its check instead, so the m3-recompile integration lane covers the handover.
+- `recompile_handover` is unsupported: a validated build makes the WM stop managing and exec its target, which ends the process that owns the trial's samples; the stub candidate fails its check instead, and the m3-daily-build integration lane covers the exec into a copied candidate and the restore.
 
 | Trial | Endpoint | Samples | p50 ms | p95 ms | p99 ms | Max ms | Target p99 |
 |---|---|---:|---:|---:|---:|---:|---|

@@ -156,8 +156,9 @@ picture; `test/Seki/Run/LatencyWorkloadTest.hs` checks it without river.
   keyboard, so input rule results have no device to report on;
   `m3-input-perf` measures them with the preloaded fixture backend. A
   validated build makes the WM exec its target, which ends the process that
-  owns the trial's samples; the `m3-recompile` integration lane covers that
-  handover.
+  owns the trial's samples. The `m3-daily-build` integration lane covers the
+  exec into a copied candidate and the restore; `m3-recompile` only holds and
+  fails builds.
 
 Every action waits until the probe observes the expected keyboard owner and the
 size every window last committed. The plan's tests prove that each action
