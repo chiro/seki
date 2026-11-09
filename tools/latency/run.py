@@ -405,6 +405,40 @@ def compare_sources(revisions):
     return {name: {"paths": paths, "identical": same(paths)} for name, paths in SOURCES.items()}
 
 
+def run_trial(trial, binary, workload, collector, steps, args):
+    with (trial / "driver.log").open("w") as log:
+        command = [str(binary),"live",str(trial),str(args.seed),str(steps),collector,workload,"+RTS","-N1","-RTS"]
+        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        cpu = []
+        deadline = time.monotonic() + max(120, steps)
+        try:
+            while process.poll() is None:
+                require(time.monotonic() < deadline, "live trial timed out")
+                if args.profile:
+                    snapshot = process_cpu(trial)
+                    if snapshot:
+                        cpu.append(snapshot)
+                time.sleep(.1)
+            require(process.returncode == 0, f"live trial failed; see {trial / 'driver.log'}")
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            cleanup_groups(trial)
+            if args.profile:
+                write(trial / "cpu.json", cpu)
+    if args.profile:
+        return
+    with (trial / "pure.rts").open("w") as log:
+        flags = ["-N1","-T","-s"] + (["--nonmoving-gc"] if collector == "nonmoving" else [])
+        subprocess.run([str(binary),"pure",str(trial/"pure.json"),str(args.seed),str(args.pure_windows),str(args.pure_steps),workload,"+RTS",*flags,"-RTS"], stdout=log, stderr=subprocess.STDOUT, check=True, timeout=120)
+    summarize_trial(trial, workload)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Collect opt-in latency and collector evidence")
     parser.add_argument("directory", type=Path)
@@ -467,48 +501,17 @@ def main():
                 "clock_ticks_per_second": os.sysconf("SC_CLK_TCK"), "trials": []}
     write(directory / "manifest.json", manifest)
     for index, (name, workload, collector) in enumerate(order):
-        binary, steps = revisions[name]["binary"], live_steps[workload]
         trial = directory / f"{index:02d}-{name}-{workload}-{collector}"
         trial.mkdir()
         item = {"directory": trial.name, "revision": name, "workload": workload, "collector": collector,
                 "load_before": os.getloadavg(), "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime())}
         manifest["trials"].append(item)
         write(directory / "manifest.json", manifest)
-        with (trial / "driver.log").open("w") as log:
-            command = [str(binary),"live",str(trial),str(args.seed),str(steps),collector,workload,"+RTS","-N1","-RTS"]
-            process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-            cpu = []
-            deadline = time.monotonic() + max(120, steps)
-            try:
-                while process.poll() is None:
-                    require(time.monotonic() < deadline, "live trial timed out")
-                    if args.profile:
-                        snapshot = process_cpu(trial)
-                        if snapshot:
-                            cpu.append(snapshot)
-                    time.sleep(.1)
-                require(process.returncode == 0, f"live trial failed; see {trial / 'driver.log'}")
-            finally:
-                if process.poll() is None:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=30)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait()
-                cleanup_groups(trial)
-                if args.profile:
-                    write(trial / "cpu.json", cpu)
-        if args.profile:
-            item["load_after"] = os.getloadavg()
-            write(directory / "manifest.json", manifest)
-            return
-        with (trial / "pure.rts").open("w") as log:
-            flags = ["-N1","-T","-s"] + (["--nonmoving-gc"] if collector == "nonmoving" else [])
-            subprocess.run([str(binary),"pure",str(trial/"pure.json"),str(args.seed),str(args.pure_windows),str(args.pure_steps),workload,"+RTS",*flags,"-RTS"], stdout=log, stderr=subprocess.STDOUT, check=True, timeout=120)
+        run_trial(trial, revisions[name]["binary"], workload, collector, live_steps[workload], args)
         item["load_after"] = os.getloadavg()
-        summarize_trial(trial, workload)
         write(directory / "manifest.json", manifest)
+        if args.profile:
+            return
         print(f"validated {trial.name}", flush=True)
     for name, r in revisions.items():
         require(sha256(r["binary"]) == r["binary_sha256"] and all(sha256(path) == digest for path, digest in r["linked_seki_libraries"].items()),
