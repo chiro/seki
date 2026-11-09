@@ -201,6 +201,17 @@ class ReportTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not found"):
             runner.linked_seki_libraries("\tlibHSseki-x.so => not found\n")
 
+    def test_a_revision_with_cabal_project_local_is_refused(self):
+        clean, local = self.path / "clean", self.path / "local"
+        for worktree in (clean, local):
+            worktree.mkdir()
+        (local / "cabal.project.local").write_text("optimization: False\n")
+        self.assertEqual(runner.parse_revisions([f"trunk={clean}"]), {"trunk": clean.resolve()})
+        with self.assertRaisesRegex(ValueError, "cabal.project.local"):
+            runner.parse_revisions([f"trunk={clean}", f"head={local}"])
+        with self.assertRaisesRegex(ValueError, "invalid revision"):
+            runner.parse_revisions([f"trunk={clean}", f"trunk={clean}"])
+
     def write_trial(self, name, workload, checksum=123, driver=None):
         trial = self.path / name
         trial.mkdir()
