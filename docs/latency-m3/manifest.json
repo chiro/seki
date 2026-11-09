@@ -1,0 +1,607 @@
+{
+  "schema": 3,
+  "workloads": [
+    "m2",
+    "m3"
+  ],
+  "machine": "Linux-7.2.11-arch1-1-x86_64-with-glibc2.44",
+  "uname": "Linux thrush 7.2.11-arch1-1 #1 SMP PREEMPT_DYNAMIC Fri, 16 Oct 2026 00:28:58 +0000 x86_64",
+  "cpu_count": 12,
+  "cpu_model": "AMD Ryzen 5 7535HS with Radeon Graphics",
+  "river": "0.5.0 +xwayland",
+  "renderer": "pixman",
+  "revisions": {
+    "trunk": {
+      "worktree": "/home/chir/.t3/worktrees/seki/pr2-trunk",
+      "build_command": [
+        "cabal",
+        "build",
+        "seki-latency",
+        "-w",
+        "ghc-9.10.3",
+        "--offline",
+        "--enable-optimization=2",
+        "--builddir=dist-newstyle/latency"
+      ],
+      "build_provenance": "built by runner",
+      "compiler": "9.10.3",
+      "git_sha": "c2b785132058f44242d23def90f7a242ba675da5",
+      "dirty_paths": [],
+      "binary": "/home/chir/.t3/worktrees/seki/pr2-trunk/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/x/seki-latency/opt/build/seki-latency/seki-latency",
+      "binary_sha256": "a6a1f4e56a92abd297b482ac1a6abbe1f71ee7de194f9d8c9fe60d0536f2a8aa",
+      "binary_reported_compiler": "ghc 9.10",
+      "linked_seki_libraries": {
+        "/home/chir/.t3/worktrees/seki/pr2-trunk/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/layer-surface-fixture/opt/build/layer-surface-fixture/libHSseki-0.1.0.0-inplace-layer-surface-fixture-ghc9.10.3.so": "f4464b48e0cf70fdcb5bd50b7240548f26a57d6ff6b4adc3980ca6323583e964",
+        "/home/chir/.t3/worktrees/seki/pr2-trunk/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-wire/opt/build/seki-wire/libHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so": "1d8fa21bb5645a48eaefef25a024119d297eb5d3f2aabe9ea0572e0714bbd306",
+        "/home/chir/.t3/worktrees/seki/pr2-trunk/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-core/opt/build/seki-core/libHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so": "377a4cfc5d9d49f30fc13c75d5e7253c578c63046b94bd57bf8a9d447c1c6eba"
+      }
+    },
+    "head": {
+      "worktree": "/home/chir/.t3/worktrees/seki/pr2-head",
+      "build_command": [
+        "cabal",
+        "build",
+        "seki-latency",
+        "-w",
+        "ghc-9.10.3",
+        "--offline",
+        "--enable-optimization=2",
+        "--builddir=dist-newstyle/latency"
+      ],
+      "build_provenance": "built by runner",
+      "compiler": "9.10.3",
+      "git_sha": "a34e564ab44bcba91537938065f6b0ab4c67e378",
+      "dirty_paths": [],
+      "binary": "/home/chir/.t3/worktrees/seki/pr2-head/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/x/seki-latency/opt/build/seki-latency/seki-latency",
+      "binary_sha256": "eee52dfc47adbd3664bd1038dfc2816b22ead5f2a42f6c18b6234268b96416dd",
+      "binary_reported_compiler": "ghc 9.10",
+      "linked_seki_libraries": {
+        "/home/chir/.t3/worktrees/seki/pr2-head/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/layer-surface-fixture/opt/build/layer-surface-fixture/libHSseki-0.1.0.0-inplace-layer-surface-fixture-ghc9.10.3.so": "bc6bee518f9f291cecb6f2a11eac2f82e5d217fe79e40feaa7ad4e1d6c6f7a53",
+        "/home/chir/.t3/worktrees/seki/pr2-head/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-wire/opt/build/seki-wire/libHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so": "3dcb4778707fc2946a81e09e33288962aaef48bd9b4289101370177326a41e12",
+        "/home/chir/.t3/worktrees/seki/pr2-head/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-core/opt/build/seki-core/libHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so": "377a4cfc5d9d49f30fc13c75d5e7253c578c63046b94bd57bf8a9d447c1c6eba"
+      }
+    }
+  },
+  "unsupported": [
+    {
+      "revision": "trunk",
+      "workload": "m3",
+      "reason": "invalid workload: m3"
+    }
+  ],
+  "runtime_sources": {
+    "paths": [
+      "src",
+      "src-core",
+      "src-public"
+    ],
+    "identical": true
+  },
+  "seed": 1909,
+  "live_steps": {
+    "m2": 1023,
+    "m3": 2500
+  },
+  "pure_steps": 20000,
+  "pure_windows": 32,
+  "rts_common": [
+    "-N1",
+    "-T",
+    "-s"
+  ],
+  "rts_difference": "--nonmoving-gc",
+  "profile": false,
+  "clock_ticks_per_second": 100,
+  "trials": [
+    {
+      "directory": "00-trunk-m2-normal",
+      "revision": "trunk",
+      "workload": "m2",
+      "collector": "normal",
+      "load_before": [
+        1.16259765625,
+        1.1337890625,
+        1.17724609375
+      ],
+      "started_utc": "2026-11-09T05:14:54Z",
+      "load_after": [
+        1.3974609375,
+        1.1865234375,
+        1.19384765625
+      ]
+    },
+    {
+      "directory": "01-head-m2-normal",
+      "revision": "head",
+      "workload": "m2",
+      "collector": "normal",
+      "load_before": [
+        1.3974609375,
+        1.1865234375,
+        1.19384765625
+      ],
+      "started_utc": "2026-11-09T05:15:28Z",
+      "load_after": [
+        1.072265625,
+        1.13134765625,
+        1.173828125
+      ]
+    },
+    {
+      "directory": "02-head-m3-normal",
+      "revision": "head",
+      "workload": "m3",
+      "collector": "normal",
+      "load_before": [
+        1.072265625,
+        1.13134765625,
+        1.173828125
+      ],
+      "started_utc": "2026-11-09T05:16:02Z",
+      "load_after": [
+        0.787109375,
+        1.05419921875,
+        1.146484375
+      ]
+    },
+    {
+      "directory": "03-trunk-m2-nonmoving",
+      "revision": "trunk",
+      "workload": "m2",
+      "collector": "nonmoving",
+      "load_before": [
+        0.787109375,
+        1.05419921875,
+        1.146484375
+      ],
+      "started_utc": "2026-11-09T05:16:31Z",
+      "load_after": [
+        0.6171875,
+        0.9833984375,
+        1.1181640625
+      ]
+    },
+    {
+      "directory": "04-head-m2-nonmoving",
+      "revision": "head",
+      "workload": "m2",
+      "collector": "nonmoving",
+      "load_before": [
+        0.6171875,
+        0.9833984375,
+        1.1181640625
+      ],
+      "started_utc": "2026-11-09T05:17:05Z",
+      "load_after": [
+        0.658203125,
+        0.95458984375,
+        1.1005859375
+      ]
+    },
+    {
+      "directory": "05-head-m3-nonmoving",
+      "revision": "head",
+      "workload": "m3",
+      "collector": "nonmoving",
+      "load_before": [
+        0.658203125,
+        0.95458984375,
+        1.1005859375
+      ],
+      "started_utc": "2026-11-09T05:17:39Z",
+      "load_after": [
+        0.478515625,
+        0.87939453125,
+        1.06982421875
+      ]
+    },
+    {
+      "directory": "06-head-m2-normal",
+      "revision": "head",
+      "workload": "m2",
+      "collector": "normal",
+      "load_before": [
+        0.478515625,
+        0.87939453125,
+        1.06982421875
+      ],
+      "started_utc": "2026-11-09T05:18:09Z",
+      "load_after": [
+        0.76318359375,
+        0.90966796875,
+        1.072265625
+      ]
+    },
+    {
+      "directory": "07-trunk-m2-normal",
+      "revision": "trunk",
+      "workload": "m2",
+      "collector": "normal",
+      "load_before": [
+        0.76318359375,
+        0.90966796875,
+        1.072265625
+      ],
+      "started_utc": "2026-11-09T05:18:43Z",
+      "load_after": [
+        0.919921875,
+        0.93603515625,
+        1.0751953125
+      ]
+    },
+    {
+      "directory": "08-head-m3-normal",
+      "revision": "head",
+      "workload": "m3",
+      "collector": "normal",
+      "load_before": [
+        0.919921875,
+        0.93603515625,
+        1.0751953125
+      ],
+      "started_utc": "2026-11-09T05:19:17Z",
+      "load_after": [
+        0.89599609375,
+        0.927734375,
+        1.0673828125
+      ]
+    },
+    {
+      "directory": "09-head-m2-nonmoving",
+      "revision": "head",
+      "workload": "m2",
+      "collector": "nonmoving",
+      "load_before": [
+        0.89599609375,
+        0.927734375,
+        1.0673828125
+      ],
+      "started_utc": "2026-11-09T05:19:47Z",
+      "load_after": [
+        0.82080078125,
+        0.904296875,
+        1.0537109375
+      ]
+    },
+    {
+      "directory": "10-trunk-m2-nonmoving",
+      "revision": "trunk",
+      "workload": "m2",
+      "collector": "nonmoving",
+      "load_before": [
+        0.82080078125,
+        0.904296875,
+        1.0537109375
+      ],
+      "started_utc": "2026-11-09T05:20:21Z",
+      "load_after": [
+        0.7109375,
+        0.86767578125,
+        1.03466796875
+      ]
+    },
+    {
+      "directory": "11-head-m3-nonmoving",
+      "revision": "head",
+      "workload": "m3",
+      "collector": "nonmoving",
+      "load_before": [
+        0.7109375,
+        0.86767578125,
+        1.03466796875
+      ],
+      "started_utc": "2026-11-09T05:20:55Z",
+      "load_after": [
+        0.8154296875,
+        0.880859375,
+        1.0322265625
+      ]
+    },
+    {
+      "directory": "12-trunk-m2-normal",
+      "revision": "trunk",
+      "workload": "m2",
+      "collector": "normal",
+      "load_before": [
+        0.8154296875,
+        0.880859375,
+        1.0322265625
+      ],
+      "started_utc": "2026-11-09T05:21:25Z",
+      "load_after": [
+        0.7236328125,
+        0.84765625,
+        1.0126953125
+      ]
+    },
+    {
+      "directory": "13-head-m2-normal",
+      "revision": "head",
+      "workload": "m2",
+      "collector": "normal",
+      "load_before": [
+        0.7236328125,
+        0.84765625,
+        1.0126953125
+      ],
+      "started_utc": "2026-11-09T05:21:59Z",
+      "load_after": [
+        0.853515625,
+        0.86572265625,
+        1.009765625
+      ]
+    },
+    {
+      "directory": "14-head-m3-normal",
+      "revision": "head",
+      "workload": "m3",
+      "collector": "normal",
+      "load_before": [
+        0.853515625,
+        0.86572265625,
+        1.009765625
+      ],
+      "started_utc": "2026-11-09T05:22:33Z",
+      "load_after": [
+        0.6982421875,
+        0.828125,
+        0.99267578125
+      ]
+    },
+    {
+      "directory": "15-trunk-m2-nonmoving",
+      "revision": "trunk",
+      "workload": "m2",
+      "collector": "nonmoving",
+      "load_before": [
+        0.6982421875,
+        0.828125,
+        0.99267578125
+      ],
+      "started_utc": "2026-11-09T05:23:03Z",
+      "load_after": [
+        0.65283203125,
+        0.80029296875,
+        0.97802734375
+      ]
+    },
+    {
+      "directory": "16-head-m2-nonmoving",
+      "revision": "head",
+      "workload": "m2",
+      "collector": "nonmoving",
+      "load_before": [
+        0.65283203125,
+        0.80029296875,
+        0.97802734375
+      ],
+      "started_utc": "2026-11-09T05:23:37Z",
+      "load_after": [
+        0.76806640625,
+        0.82080078125,
+        0.97998046875
+      ]
+    },
+    {
+      "directory": "17-head-m3-nonmoving",
+      "revision": "head",
+      "workload": "m3",
+      "collector": "nonmoving",
+      "load_before": [
+        0.76806640625,
+        0.82080078125,
+        0.97998046875
+      ],
+      "started_utc": "2026-11-09T05:24:11Z",
+      "load_after": [
+        0.6064453125,
+        0.77490234375,
+        0.95947265625
+      ]
+    },
+    {
+      "directory": "18-head-m2-normal",
+      "revision": "head",
+      "workload": "m2",
+      "collector": "normal",
+      "load_before": [
+        0.6064453125,
+        0.77490234375,
+        0.95947265625
+      ],
+      "started_utc": "2026-11-09T05:24:40Z",
+      "load_after": [
+        0.94189453125,
+        0.84521484375,
+        0.978515625
+      ]
+    },
+    {
+      "directory": "19-trunk-m2-normal",
+      "revision": "trunk",
+      "workload": "m2",
+      "collector": "normal",
+      "load_before": [
+        0.94189453125,
+        0.84521484375,
+        0.978515625
+      ],
+      "started_utc": "2026-11-09T05:25:13Z",
+      "load_after": [
+        0.8203125,
+        0.83056640625,
+        0.97021484375
+      ]
+    },
+    {
+      "directory": "20-head-m3-normal",
+      "revision": "head",
+      "workload": "m3",
+      "collector": "normal",
+      "load_before": [
+        0.8203125,
+        0.83056640625,
+        0.97021484375
+      ],
+      "started_utc": "2026-11-09T05:25:47Z",
+      "load_after": [
+        0.7607421875,
+        0.8154296875,
+        0.96142578125
+      ]
+    },
+    {
+      "directory": "21-head-m2-nonmoving",
+      "revision": "head",
+      "workload": "m2",
+      "collector": "nonmoving",
+      "load_before": [
+        0.7607421875,
+        0.8154296875,
+        0.96142578125
+      ],
+      "started_utc": "2026-11-09T05:26:16Z",
+      "load_after": [
+        0.75146484375,
+        0.80517578125,
+        0.953125
+      ]
+    },
+    {
+      "directory": "22-trunk-m2-nonmoving",
+      "revision": "trunk",
+      "workload": "m2",
+      "collector": "nonmoving",
+      "load_before": [
+        0.75146484375,
+        0.80517578125,
+        0.953125
+      ],
+      "started_utc": "2026-11-09T05:26:50Z",
+      "load_after": [
+        0.85888671875,
+        0.8271484375,
+        0.95556640625
+      ]
+    },
+    {
+      "directory": "23-head-m3-nonmoving",
+      "revision": "head",
+      "workload": "m3",
+      "collector": "nonmoving",
+      "load_before": [
+        0.85888671875,
+        0.8271484375,
+        0.95556640625
+      ],
+      "started_utc": "2026-11-09T05:27:24Z",
+      "load_after": [
+        0.78515625,
+        0.81201171875,
+        0.94677734375
+      ]
+    },
+    {
+      "directory": "24-trunk-m2-normal",
+      "revision": "trunk",
+      "workload": "m2",
+      "collector": "normal",
+      "load_before": [
+        0.78515625,
+        0.81201171875,
+        0.94677734375
+      ],
+      "started_utc": "2026-11-09T05:27:54Z",
+      "load_after": [
+        0.58544921875,
+        0.76513671875,
+        0.92626953125
+      ]
+    },
+    {
+      "directory": "25-head-m2-normal",
+      "revision": "head",
+      "workload": "m2",
+      "collector": "normal",
+      "load_before": [
+        0.58544921875,
+        0.76513671875,
+        0.92626953125
+      ],
+      "started_utc": "2026-11-09T05:28:28Z",
+      "load_after": [
+        0.61767578125,
+        0.75830078125,
+        0.91748046875
+      ]
+    },
+    {
+      "directory": "26-head-m3-normal",
+      "revision": "head",
+      "workload": "m3",
+      "collector": "normal",
+      "load_before": [
+        0.61767578125,
+        0.75830078125,
+        0.91748046875
+      ],
+      "started_utc": "2026-11-09T05:29:02Z",
+      "load_after": [
+        0.54150390625,
+        0.7314453125,
+        0.90283203125
+      ]
+    },
+    {
+      "directory": "27-trunk-m2-nonmoving",
+      "revision": "trunk",
+      "workload": "m2",
+      "collector": "nonmoving",
+      "load_before": [
+        0.54150390625,
+        0.7314453125,
+        0.90283203125
+      ],
+      "started_utc": "2026-11-09T05:29:32Z",
+      "load_after": [
+        0.740234375,
+        0.76171875,
+        0.90869140625
+      ]
+    },
+    {
+      "directory": "28-head-m2-nonmoving",
+      "revision": "head",
+      "workload": "m2",
+      "collector": "nonmoving",
+      "load_before": [
+        0.740234375,
+        0.76171875,
+        0.90869140625
+      ],
+      "started_utc": "2026-11-09T05:30:05Z",
+      "load_after": [
+        0.970703125,
+        0.81982421875,
+        0.9228515625
+      ]
+    },
+    {
+      "directory": "29-head-m3-nonmoving",
+      "revision": "head",
+      "workload": "m3",
+      "collector": "nonmoving",
+      "load_before": [
+        0.970703125,
+        0.81982421875,
+        0.9228515625
+      ],
+      "started_utc": "2026-11-09T05:30:39Z",
+      "load_after": [
+        0.935546875,
+        0.82275390625,
+        0.91943359375
+      ]
+    }
+  ]
+}
