@@ -350,7 +350,7 @@ stepCommand = \case
 withCommandsFor :: WorkloadName -> FilePath -> (Maybe Commands -> IO a) -> IO a
 withCommandsFor M3 path body = do
   _ <- waitUntil "WM IPC socket" assertionTimeoutMicroseconds (doesFileExist path) id
-  withCommands path assertionTimeoutMicroseconds (body . Just)
+  withCommands path (body . Just)
 withCommandsFor _ _ body = body Nothing
 
 endpointFields :: WorkloadName -> [Step] -> Map Endpoint [Word64] -> [Pair]
