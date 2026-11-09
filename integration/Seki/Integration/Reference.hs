@@ -10,9 +10,8 @@ import Data.ByteString.Char8 qualified as BS8
 import Data.List (isInfixOf, sort)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
-import Data.Text qualified as Text
 import Seki.Fixture.Probe
-import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, portedBorders, withKeyboard, withNestedRiver)
+import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, placeOutputs, portedBorders, withKeyboard, withNestedRiver)
 import Seki.Integration.Harness
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.FilePath (takeDirectory, (</>))
@@ -47,7 +46,7 @@ referenceConfig = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-r
     ( do
         pid <- managedProcessPid seki >>= maybe (failIntegration "seki-reference-config has no pid") pure
         [(_, output)] <- waitUntil "seki shows the output" assertionTimeoutMicroseconds (outputNames socket) ((== 1) . length)
-        void (runProcessCapture base "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "800x600", "--pos", "0,0", "--scale", "1", "--transform", "normal"])
+        placeOutputs base [output]
         let onOutput phase = outputPicture "m2-reference-config" socket output phase . pictureErrorWith portedBorders
             startedOnce = (== sort startupCommands) . sort . take (length startupCommands)
         _ <- waitUntil "each startup command runs once after the first output" assertionTimeoutMicroseconds recorded startedOnce

@@ -6,6 +6,7 @@ module Seki.Integration.Fixture (
   withNestedRiver,
   withNestedRiverEnvironment,
   withNestedXwaylandRiver,
+  placeOutputs,
   Fixture (..),
   Box (..),
   Paint (..),
@@ -168,7 +169,7 @@ withFixtureEnvironment extra transform policyConfig name outputCount action =
           HeadlessState _ -> failIntegration "initial core unexpectedly headless"
         firstOutput <- maybe (failIntegration "current wl_output has no native name") pure (lookup currentGlobal namesByGlobal)
         let outputs = firstOutput : filter (/= firstOutput) (map snd namesByGlobal)
-        forM_ (zip [0 :: Int ..] outputs) $ \(index, output) -> void (runProcessCapture environment "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "800x600", "--pos", show (index * 800) <> ",0", "--scale", "1", "--transform", "normal"])
+        placeOutputs environment outputs
         let fixture = Fixture socketPath dispatcher environment session policy outputs name requests
         bracket (startManagedProcess "virtual keyboard lifetime" environment (proc "wtype" ["-s", if lookup "SEKI_FIXTURE_LONG_KEYBOARD" extra == Just "1" then "180000" else "60000"])) stopManagedProcess $ \keeper ->
           withProbe
@@ -192,6 +193,12 @@ withFixtureEnvironment extra transform policyConfig name outputCount action =
                         renderManagedProcessLogs river >>= announce
                     )
       `finally` cleanup
+
+outputOrigins :: [Text] -> [(Text, Word32)]
+outputOrigins outputs = zip outputs [0, 800 ..]
+
+placeOutputs :: [(String, String)] -> [Text] -> IO ()
+placeOutputs environment outputs = forM_ (outputOrigins outputs) $ \(output, x) -> void (runProcessCapture environment "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "800x600", "--pos", show x <> ",0", "--scale", "1", "--transform", "normal"])
 
 withHeldLogo :: Fixture l -> Probe -> IO a -> IO a
 withHeldLogo fixture = withHeldLogoIn (mEnvironment fixture)
