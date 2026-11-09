@@ -196,18 +196,15 @@ sideBySide frames = Image width height (BS.concat [BS.concat (map (row y) frames
     | otherwise = BS.replicate (imageWidth frame * 3) 0
 
 withSubscription :: DailySession -> String -> (IO [Snapshot] -> IO a) -> IO a
-withSubscription session file action = do
-  let path = riverRuntimeDirectory (sessionRiver session) </> file
-      received = do
-        exists <- doesFileExist path
-        complete <- if exists then reverse . drop 1 . reverse . BS.split 10 <$> BS.readFile path else pure []
-        forM (filter (not . BS.null) complete) (requireRight "subscription snapshot" . replySnapshot)
-      keep = do
-        artifacts <- lookupEnv "SEKI_INTEGRATION_ARTIFACT_DIR"
-        exists <- doesFileExist path
-        forM_ artifacts $ \directory -> when exists (createDirectoryIfMissing True directory >> copyFile path (directory </> file))
-  bracket (startManagedProcess "sekictl subscribe" (clientEnvironment session) (proc "/bin/sh" ["-c", "exec \"$1\" subscribe > \"$2\"", "seki-subscribe", sessionCli session, path])) stopManagedProcess $ \_ ->
-    action received `finally` keep
+withSubscription session file action =
+  withSekictlSubscription (clientEnvironment session) (sessionCli session) path $ \received ->
+    action (received >>= mapM (requireRight "subscription snapshot" . replySnapshot)) `finally` keep
+ where
+  path = riverRuntimeDirectory (sessionRiver session) </> file
+  keep = do
+    artifacts <- lookupEnv "SEKI_INTEGRATION_ARTIFACT_DIR"
+    exists <- doesFileExist path
+    forM_ artifacts $ \directory -> when exists (createDirectoryIfMissing True directory >> copyFile path (directory </> file))
 
 barShows :: IO [Snapshot] -> String -> BarView -> IO ()
 barShows stream phase expected = do

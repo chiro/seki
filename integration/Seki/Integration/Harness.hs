@@ -14,6 +14,7 @@ module Seki.Integration.Harness (
   ManagedProcess,
   startManagedProcess,
   withPrivateDbus,
+  withSekictlSubscription,
   prepareFcitxEnvironment,
   preflightFootIme,
   withFcitxVirtualKeyboardOwner,
@@ -945,6 +946,16 @@ withPrivateDbus childEnvironment action = do
           (privateDbusReady busPath dbusProcess)
           id
       action dbusEnvironment `onException` printManagedProcessDiagnostics dbusProcess
+
+withSekictlSubscription :: [(String, String)] -> FilePath -> FilePath -> (IO [ByteString] -> IO value) -> IO value
+withSekictlSubscription childEnvironment cli path action =
+  bracket (startManagedProcess "sekictl subscribe" childEnvironment (proc "/bin/sh" ["-c", "exec \"$1\" subscribe > \"$2\"", "seki-subscribe", cli, path])) stopManagedProcess $ \_ ->
+    action received
+ where
+  received = do
+    exists <- doesFileExist path
+    complete <- if exists then reverse . drop 1 . reverse . ByteString.split 10 <$> ByteString.readFile path else pure []
+    pure (filter (not . ByteString.null) complete)
 
 -- Nix builds dbus to read its session configuration from /etc, which a CI
 -- runner may lack, so prefer the copy installed beside the daemon.

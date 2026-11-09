@@ -372,16 +372,13 @@ ipcReconnect = withNestedRiver 1 $ \nested -> do
       marker = runtime </> "spawn-count"
       logFile = runtime </> "subscription.jsonl"
       readLines path = doesFileExist path >>= \exists -> if exists then BS.split 10 <$> BS.readFile path else pure []
-      sessions = do
-        bytes <- readLines logFile
-        let complete = reverse (drop 1 (reverse bytes))
-        mapM snapshotSession (filter (not . BS.null) complete)
       key = runInputDriver environment ["-M", "logo", "-k", "q", "-m", "logo"]
   bracket (startManagedProcess "seki" environment (proc executable [])) stopManagedProcess $ \manager -> do
     [(_, output)] <- waitUntil "one output" assertionTimeoutMicroseconds (outputNames (riverSocket nested)) ((== 1) . length)
     withKeyboard environment . withProbe (riverSocket nested) $ \probe -> do
       _ <- openWindow probe Red
-      bracket (startManagedProcess "sekictl subscribe" environment (proc "/bin/sh" ["-c", "exec \"$1\" subscribe > \"$2\"", "seki-subscribe", cli, logFile])) stopManagedProcess $ \_ -> do
+      withSekictlSubscription environment cli logFile $ \received -> do
+        let sessions = received >>= mapM snapshotSession
         first <- waitUntil "initial CLI subscription" assertionTimeoutMicroseconds sessions (not . null)
         _ <- runProcessCapture environment cli ["spawn", "printf 'once\n' >> '" <> marker <> "'"]
         _ <- waitUntil "spawn executed once" assertionTimeoutMicroseconds (readLines marker) ((== ["once"]) . filter (not . BS.null))
