@@ -39,7 +39,10 @@ WORKLOADS = {
            }},
 }
 
-SCHEMA = 3
+SCHEMA = 4
+
+SOURCES = {"runtime": ["src", "src-core", "src-public", "src-generated", "cbits"],
+           "driver": ["tools/latency", "integration/Seki/Integration/Harness.hs"]}
 
 BUDGETS = {"pure_p99": ("pure", "p99_ms", 2), "manage_p99": ("manage", "p99_ms", 10),
            "render_p99": ("render", "p99_ms", 10), "wm_gc_max": ("wm_rts", "max_stw_pause_ms", 10)}
@@ -200,15 +203,25 @@ def revision_section(manifest, checksums):
     for name, r in manifest["revisions"].items():
         libraries = "<br>".join(f"`{Path(path).name}` `{digest}`" for path, digest in r["linked_seki_libraries"].items()) or "not recorded"
         lines.append(f"| {name} | `{r['git_sha']}` | {r['compiler']} | `{r['binary_sha256']}` | {libraries} |")
-    sources = manifest["runtime_sources"]
+    sources = manifest["sources"]
     lines.append("")
     if sources is None:
-        lines.append("One revision ran, so no runtime sources were compared.")
-    elif sources["identical"]:
-        lines.append(f"Runtime sources under {', '.join(sources['paths'])} are identical across the revisions, so the m2 differences between them are a noise floor. "
-                     "This report claims no speedup or regression.")
+        lines.append("One revision ran, so no sources were compared.")
     else:
-        lines.append(f"Runtime sources under {', '.join(sources['paths'])} differ across the revisions.")
+        runtime, driver = sources["runtime"], sources["driver"]
+        if runtime["identical"]:
+            lines.append(f"Runtime sources under {listed(runtime['paths'])} are identical across the revisions, so their m2 manage and render differences are a noise floor.")
+        else:
+            lines.append(f"Runtime sources under {listed(runtime['paths'])} differ across the revisions.")
+        if not driver["identical"]:
+            lines.append(f"Latency driver sources under {listed(driver['paths'])} differ across the revisions. The pure interval includes the driver's checksum fold, "
+                         "so matching pure checksums show the same output, not the same cost.")
+        elif runtime["identical"]:
+            lines.append(f"Latency driver sources under {listed(driver['paths'])} are identical across the revisions, so their pure m2 differences are a noise floor too.")
+        else:
+            lines.append(f"Latency driver sources under {listed(driver['paths'])} are identical across the revisions.")
+        if runtime["identical"]:
+            lines.append("This report claims no speedup or regression.")
     for workload, by_revision in checksums.items():
         if len(by_revision) > 1:
             same = len(set(by_revision.values())) == 1
@@ -216,6 +229,11 @@ def revision_section(manifest, checksums):
     for item in manifest["unsupported"]:
         lines.append(f"{item['revision']} does not run {item['workload']}: {item['reason']}.")
     return lines
+
+
+def listed(paths):
+    quoted = [f"`{path}`" for path in paths]
+    return quoted[0] if len(quoted) == 1 else ", ".join(quoted[:-1]) + (" and " if len(quoted) == 2 else ", and ") + quoted[-1]
 
 
 def endpoint_section(trials):
@@ -373,14 +391,14 @@ def probe_support(binary, workload, scratch):
     return workload_support(result.returncode, result.stdout)
 
 
-def runtime_sources(revisions):
-    paths = ["src", "src-core", "src-public"]
+def compare_sources(revisions):
     named = [r for r in revisions.values() if r["git_sha"]]
     if len(named) < 2:
         return None
     first = named[0]
-    identical = all(subprocess.run(["git", "diff", "--quiet", first["git_sha"], r["git_sha"], "--", *paths], cwd=first["worktree"]).returncode == 0 for r in named[1:])
-    return {"paths": paths, "identical": identical}
+    same = lambda paths: all(subprocess.run(["git", "diff", "--quiet", first["git_sha"], r["git_sha"], "--", *paths], cwd=first["worktree"]).returncode == 0
+                             for r in named[1:])
+    return {name: {"paths": paths, "identical": same(paths)} for name, paths in SOURCES.items()}
 
 
 def main():
@@ -439,7 +457,7 @@ def main():
     manifest = {"schema": SCHEMA, "workloads": workloads, "machine": platform.platform(), "uname": " ".join(os.uname()), "cpu_count": os.cpu_count(),
                 "cpu_model": next((l.split(":",1)[1].strip() for l in Path("/proc/cpuinfo").read_text().splitlines() if l.startswith("model name")), "unknown"),
                 "river": output(["river", "-version"], stderr=subprocess.STDOUT), "renderer": "pixman",
-                "revisions": revisions, "unsupported": unsupported, "runtime_sources": runtime_sources(revisions),
+                "revisions": revisions, "unsupported": unsupported, "sources": compare_sources(revisions),
                 "seed": args.seed, "live_steps": live_steps, "pure_steps": args.pure_steps, "pure_windows": args.pure_windows,
                 "rts_common": ["-N1","-T","-s"], "rts_difference": "--nonmoving-gc", "profile": args.profile,
                 "clock_ticks_per_second": os.sysconf("SC_CLK_TCK"), "trials": []}
