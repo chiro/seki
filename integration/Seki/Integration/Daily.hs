@@ -542,9 +542,8 @@ imeHandover = withDailyHome (dailyOptions 1) $ \home -> do
   daemon <- findExecutable "fcitx5" >>= maybe (failIntegration "fcitx5 is not installed") pure
   imeBase <- prepareFcitxEnvironment (riverEnvironment (homeRiver home))
   withPrivateDbus imeBase $ \ime -> do
-    let carried = [(name, value) | (name, value) <- ime, name `elem` imeVariables]
+    let carried = [(name, value) | (name, value) <- ime, lookup name (dailyEnvironment home []) /= Just value]
         quote value = "'" <> concatMap (\c -> if c == '\'' then "'\\''" else [c]) value <> "'"
-        imeVariables = ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "LANG", "LC_ALL", "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP", "GTK_IM_MODULE", "QT_IM_MODULE", "XMODIFIERS", "SDL_IM_MODULE", "DBUS_SESSION_BUS_ADDRESS"]
     writeExecutable (homeBin home </> "fcitx5") (loggingStub (homeLaunchLog home) <> "exec env " <> unwords [name <> "=" <> quote value | (name, value) <- carried] <> " " <> quote daemon <> " -D -k\n")
     runDaily "m3-daily-ime" home [] $ \session -> do
       let client = clientEnvironment session
