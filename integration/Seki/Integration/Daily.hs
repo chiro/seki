@@ -23,7 +23,7 @@ import GHC.Clock (getMonotonicTimeNSec)
 import Network.Socket (Family (AF_UNIX), SockAddr (SockAddrUnix), SocketType (Stream), close, connect, defaultProtocol, socket)
 import Network.Socket.ByteString (recv, sendAll)
 import Seki.Fixture.Probe
-import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, placeOutputs, png, portedBorders, withHeldLogoIn, withKeyboard, withNestedRiverUsing)
+import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputOrigins, outputPicture, pictureErrorWith, placeOutputs, png, portedBorders, withHeldLogoIn, withKeyboard, withNestedRiverUsing)
 import Seki.Integration.Harness
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable, listDirectory, removeFile)
 import System.Environment (lookupEnv)
@@ -69,8 +69,11 @@ data DailySession = DailySession
   { sessionName :: String
   , sessionHome :: DailyHome
   , sessionPid :: Int
+  , sessionOutputs :: [Placement]
   , sessionProbe :: Probe
   }
+
+data Placement = Placement {placedOutput :: Text, placedX :: Word32, placedWorkspace :: Text} deriving (Show)
 
 withDailySession :: String -> DailyOptions -> (DailySession -> IO a) -> IO a
 withDailySession name options body = withDailyHome options $ \home -> runDaily name home [] body
@@ -121,8 +124,9 @@ runDaily name home extra body =
         outputs <- sort . map snd <$> waitUntil "seki shows every output" assertionTimeoutMicroseconds (outputNames surface) ((== count) . length)
         placeOutputs base outputs
         withKeyboard base . withProbe surface $ \probe -> do
-          let session = DailySession name home pid probe
-          _ <- waitSnapshot session "IPC shows a workspace on every output" (\s -> length (snapOutputs s) == count && all (isJust . outputWorkspace) (snapOutputs s))
+          let unplaced = DailySession name home pid [] probe
+          shown <- waitSnapshot unplaced "IPC shows a workspace on every output" (\s -> length (snapOutputs s) == count && all (isJust . outputWorkspace) (snapOutputs s))
+          let session = unplaced{sessionOutputs = [Placement output x tag | (output, x) <- outputOrigins outputs, OutputView (Just shownOutput) (Just tag) <- snapOutputs shown, shownOutput == output]}
           startupRanOnce session "each startup command runs once after the first output"
           result <- body session
           startupRanOnce session "each startup command still ran exactly once at the end of the lane"
@@ -186,8 +190,11 @@ receiptRevision bytes = eitherDecodeStrict' bytes >>= parseEither (withObject "r
 processImage :: Int -> IO (FilePath, [String])
 processImage pid = (,) <$> readSymbolicLink ("/proc/" <> show pid <> "/exe") <*> (map BS8.unpack . filter (not . BS.null) . BS.split 0 <$> BS.readFile ("/proc/" <> show pid <> "/cmdline"))
 
-shownOn :: Snapshot -> Text -> IO Text
-shownOn shot tag = maybe (failIntegration ("no output shows " <> Text.unpack tag <> ": " <> show (snapOutputs shot))) pure (find ((== Just tag) . outputWorkspace) (snapOutputs shot) >>= outputName)
+startedOn :: DailySession -> Text -> IO Placement
+startedOn session tag = maybe (failIntegration ("no output showed " <> Text.unpack tag <> " when the session started: " <> show (sessionOutputs session))) pure (find ((== tag) . placedWorkspace) (sessionOutputs session))
+
+sessionExtent :: DailySession -> (Word32, Word32)
+sessionExtent session = (800 * fromIntegral (length (sessionOutputs session)), 600)
 
 picture :: DailySession -> Text -> String -> [Paint] -> IO ()
 picture session output phase = outputPicture (sessionName session) (sessionSocket session) output phase . pictureErrorWith portedBorders
@@ -310,9 +317,8 @@ parseSnapshot = withObject "snapshot" $ \o -> do
 twoOutput :: IO ()
 twoOutput = withDailySession "m3-daily-two-output" (dailyOptions 2) $ \session -> withSubscription session "daily-two-output-subscription.jsonl" $ \stream -> do
   let probe = sessionProbe session
-  initial <- waitSnapshot session "term and emacs are shown on the two outputs" (\s -> all (\tag -> any ((== Just tag) . outputWorkspace) (snapOutputs s)) ["term", "emacs"])
-  termOutput <- shownOn initial "term"
-  emacsOutput <- shownOn initial "emacs"
+  termOutput <- placedOutput <$> startedOn session "term"
+  emacsOutput <- placedOutput <$> startedOn session "emacs"
   let outputs = [(termOutput, "term"), (emacsOutput, "emacs")]
       shown pads title = bar outputs [workspace "term" [Occupied, Visible, Focused] "Mirror Tall", workspace "emacs" [Occupied, Visible] "Tall"] title pads
   report "OUTPUTS" (show outputs)
@@ -358,9 +364,8 @@ buildHandover = withDailyHome (dailyOptions 2) $ \home -> do
   runDaily "m3-daily-build" home resources $ \session -> withSubscription session "daily-build-subscription.jsonl" $ \stream -> do
     let probe = sessionProbe session
         stateDirectory = homeStateDirectory home </> "seki"
-    initial <- waitSnapshot session "term and emacs are shown on the two outputs" (\s -> all (\tag -> any ((== Just tag) . outputWorkspace) (snapOutputs s)) ["term", "emacs"])
-    termOutput <- shownOn initial "term"
-    emacsOutput <- shownOn initial "emacs"
+    termOutput <- placedOutput <$> startedOn session "term"
+    emacsOutput <- placedOutput <$> startedOn session "emacs"
     let windows title pads = bar [(termOutput, "term"), (emacsOutput, "emacs")] [workspace "term" [Occupied, Visible, Focused] "Tall", workspace "emacs" [Occupied, Visible] "Tall"] title pads
         restored phase = do
           picture session termOutput (phase <> ": the pad covers term") [Paint Green (Box 1 1 798 598) True]
@@ -408,8 +413,7 @@ barReconnect = withDailySession "m3-daily-bar" (dailyOptions 1) $ \session -> wi
   let probe = sessionProbe session
       marker = homeDirectory (sessionHome session) </> "spawn-marker"
       markerLines = doesFileExist marker >>= \exists -> if exists then lines <$> readFile marker else pure []
-  initial <- waitSnapshot session "term is shown" (any ((== Just "term") . outputWorkspace) . snapOutputs)
-  output <- shownOn initial "term"
+  output <- placedOutput <$> startedOn session "term"
   let onTerm title = bar [(output, "term")] [workspace "term" [Occupied, Visible, Focused] "Tall"] title []
       onEmacs = bar [(output, "emacs")] [workspace "term" [Occupied] "Tall", workspace "emacs" [Visible, Focused] "Tall"] Nothing []
       restartShows phase expected = do
@@ -469,9 +473,9 @@ hotplug = do
           settled names shot = sort [(deviceName d, sort (deviceResults d), deviceKeymap d) | d <- namedDevices names shot, deviceLifecycle d == "ready"]
           dailyKeyboard name = (Just name, keyboardResults, Just (homeKeymap (sessionHome session)))
           projected project phase = waitUntil phase assertionTimeoutMicroseconds (project <$> snapshot session)
-      initial <- waitSnapshot session "term and emacs are shown on the two outputs" (\s -> all (\tag -> any ((== Just tag) . outputWorkspace) (snapOutputs s)) ["term", "emacs"])
-      termOutput <- shownOn initial "term"
-      emacsOutput <- shownOn initial "emacs"
+      termOutput <- placedOutput <$> startedOn session "term"
+      emacs <- startedOn session "emacs"
+      let emacsOutput = placedOutput emacs
       ready <- projected (settled backendKeyboards) "the daily keyboard rule's results reach both backend keyboards" (== map dailyKeyboard backendKeyboards)
       report "BACKEND_KEYBOARDS" (show ready)
       pointer <- projected (\shot -> [filter ((`elem` touchpadSettings) . fst) (deviceResults d) | d <- namedDevices ["seki-private-backend-pointer"] shot]) "the backend pointer is in the inventory" (not . null)
@@ -487,11 +491,10 @@ hotplug = do
       projected (settled backendKeyboards) "the backend keyboards keep their results after the unplug" (== map dailyKeyboard backendKeyboards) >>= report "BACKEND_KEYBOARDS_AFTER_UNPLUG" . show
       tile <- openWindow probe Green
       editor <- openWindowWith probe (windowSpec Green){specAppId = CustomAppId "Emacs"}
-      let emacsX = if emacsOutput > termOutput then 800 else 0 :: Word32
-          bothShown :: [(Text, Text)] -> Text -> BarView
+      let bothShown :: [(Text, Text)] -> Text -> BarView
           bothShown pads focused = bar [(termOutput, "term"), (emacsOutput, "emacs")] [workspace "term" ([Occupied, Visible] <> [Focused | focused == "term"]) "Tall", workspace "emacs" ([Occupied, Visible] <> [Focused | focused == "emacs"]) "Tall"] Nothing pads
           remaining shown = bar [(termOutput, shown)] [workspace "term" ([Occupied] <> [Visible | shown == "term"] <> [Focused | shown == "term"]) "Tall", workspace "emacs" ([Occupied] <> [Visible | shown == "emacs"] <> [Focused | shown == "emacs"]) "Tall"] Nothing [("term", "shown")]
-      click (sessionSocket session) (1600, 600) (emacsX + 400, 300)
+      click (sessionSocket session) (sessionExtent session) (placedX emacs + 400, 300)
       waitFocus session "a click focuses the Emacs window on the other output" (Just editor)
       modKeys (clientEnvironment session) ["grave"]
       launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty --class seki-scratchpad"
@@ -513,7 +516,7 @@ hotplug = do
       capture session "daily-hotplug-moved"
       modKeys (clientEnvironment session) ["1"]
       snapshotShows session "Mod-1 shows term again" (remaining "term")
-      randr ["--output", Text.unpack emacsOutput, "--on", "--custom-mode", "800x600", "--pos", show emacsX <> ",0"]
+      randr ["--output", Text.unpack emacsOutput, "--on", "--custom-mode", "800x600", "--pos", show (placedX emacs) <> ",0"]
       snapshotShows session "the re-added output shows emacs again" (bothShown [("term", "shown")] "term")
       picture session emacsOutput "the pad is back inside the re-added output" [Paint Blue (Box 1 1 798 598) False]
       picture session termOutput "term keeps the focused tile" [Paint Green (Box 1 1 798 598) True]
@@ -581,8 +584,7 @@ xwaylandManagement = withDailySession "m3-daily-xwayland" (dailyOptions 1){optio
       xGeometry = do
         found <- runProcessCapture client "xdotool" ["search", "--name", Text.unpack xtermTitle, "getwindowgeometry", "--shell"]
         pure (sort [line | line <- lines (BS8.unpack found), any (`isPrefixOf` line) ["X=", "Y=", "WIDTH=", "HEIGHT="]])
-  initial <- waitSnapshot session "term is shown" (any ((== Just "term") . outputWorkspace) . snapOutputs)
-  output <- shownOn initial "term"
+  output <- placedOutput <$> startedOn session "term"
   let onTerm title others = bar [(output, "term")] (workspace "term" [Occupied, Visible, Focused] "Tall" : others) title []
   native <- openWindow probe Green
   waitFocus session "the native window has keyboard focus" (Just native)
@@ -597,7 +599,7 @@ xwaylandManagement = withDailySession "m3-daily-xwayland" (dailyOptions 1){optio
     modKeys (clientEnvironment session) ["j"]
     waitFocus session "Mod-j moves keyboard focus to the native window" (Just native)
     picture session output "the native window takes the focused border" [Paint Green (Box 401 1 398 598) True]
-    click (sessionSocket session) (800, 600) (200, 300)
+    click (sessionSocket session) (sessionExtent session) (200, 300)
     xFocus "a click gives the xterm X input focus"
     waitFocus session "the click takes keyboard focus from the native window" Nothing
     picture session output "the clicked xterm takes the focused border" [Paint Green (Box 401 1 398 598) False]
@@ -695,8 +697,7 @@ loadResponsive :: IO ()
 loadResponsive = withDailySession "m3-daily-load" (dailyOptions 1) $ \session -> do
   let probe = sessionProbe session
       surface = sessionSocket session
-  initial <- waitSnapshot session "term is shown" (any ((== Just "term") . outputWorkspace) . snapOutputs)
-  output <- shownOn initial "term"
+  output <- placedOutput <$> startedOn session "term"
   dragged <- openWindow probe Blue
   stacked <- openWindow probe Green
   master <- openWindow probe Red
@@ -714,7 +715,7 @@ loadResponsive = withDailySession "m3-daily-load" (dailyOptions 1) $ \session ->
     stall <- waitUntil "the never-reading subscriber holds 32 unread snapshots and stops growing while the flood advances the revision" assertionTimeoutMicroseconds (subscriberStall flood) (\(before, after, from, to) -> before >= 32 * unreadFirst flood && before == after && to > from)
     report "SUBSCRIBER_STALL" (show (unreadFirst flood, stall))
     first <- captureOutput surface output
-    (moved, resized) <- withHeldLogoIn (clientEnvironment session) probe . withVirtualPointer surface (800, 600) $ \pointer -> do
+    (moved, resized) <- withHeldLogoIn (clientEnvironment session) probe . withVirtualPointer surface (sessionExtent session) $ \pointer -> do
       let drag button from to = do
             pointerMoveTo pointer from
             _ <- waitUntil ("the pointer is over the dragged window at " <> show from) assertionTimeoutMicroseconds (pointerSnapshot probe) ((== Just dragged) . pointerOwner)
