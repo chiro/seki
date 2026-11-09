@@ -7,14 +7,16 @@ virtual pointer, and the native probe.
 -}
 module Seki.Integration.Daily (dailyScenarios) where
 
-import Control.Exception (bracket, finally, onException)
+import Control.Exception (IOException, SomeException, bracket, finally, onException, try)
 import Control.Monad (forM, forM_, void)
 import Data.Aeson (Value, eitherDecodeStrict', withObject, (.:), (.:?))
 import Data.Aeson.Types (Parser, parseEither)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
+import Data.Char (isDigit)
+import Data.Either (isRight)
 import Data.List (find, isPrefixOf, nub, sort)
-import Data.Maybe (fromMaybe, isJust, listToMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Word (Word32)
@@ -22,9 +24,10 @@ import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Fixture.Probe
 import Seki.Integration.Fixture (BorderStyle (..), Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, png, withKeyboard, withNestedRiverEnvironment)
 import Seki.Integration.Harness
-import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, removeFile)
-import System.Environment (lookupEnv)
+import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable, listDirectory, removeFile)
+import System.Environment (getExecutablePath, lookupEnv)
 import System.FilePath (takeDirectory, takeFileName, (</>))
+import System.IO (hClose)
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Files (readSymbolicLink, setFileMode)
 import System.Process (proc)
@@ -35,6 +38,7 @@ dailyScenarios =
   , ("m3-daily-build", buildHandover)
   , ("m3-daily-bar", barReconnect)
   , ("m3-daily-hotplug", hotplug)
+  , ("m3-daily-ime", imeHandover)
   ]
 
 -- | What a lane needs before the daily process starts, held for the session's lifetime.
@@ -570,3 +574,63 @@ snapshotShows :: DailySession -> String -> BarView -> IO ()
 snapshotShows session phase expected = do
   _ <- waitSnapshot session phase ((== expected) . barView)
   report "BAR" (phase <> ": " <> show expected)
+
+{- | The daily configuration's own @fcitx5@ starts the real daemon on a
+private D-Bus: the PATH entry logs the launch like the stubs and then execs
+fcitx5 with the fixture's IME environment.
+-}
+realFcitx :: Around
+realFcitx = Around $ \nested home use -> do
+  daemon <- findExecutable "fcitx5" >>= maybe (failIntegration "fcitx5 is not installed") pure
+  imeBase <- prepareFcitxEnvironment (riverEnvironment nested)
+  withPrivateDbus imeBase $ \ime -> do
+    let carried = [(name, value) | (name, value) <- ime, name `elem` imeVariables]
+        quote value = "'" <> concatMap (\c -> if c == '\'' then "'\\''" else [c]) value <> "'"
+        wrapper = loggingStub (home </> "launches") <> "exec env " <> unwords [name <> "=" <> quote value | (name, value) <- carried] <> " " <> quote daemon <> " -D -k\n"
+    use (Additions [("fcitx5", wrapper)] [] ime)
+ where
+  imeVariables = ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "LANG", "LC_ALL", "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP", "GTK_IM_MODULE", "QT_IM_MODULE", "XMODIFIERS", "SDL_IM_MODULE", "DBUS_SESSION_BUS_ADDRESS"]
+
+-- | The pids of processes with the command name whose environment holds the variable, so only this fixture's processes count.
+fixtureProcesses :: String -> (String, String) -> IO [Int]
+fixtureProcesses command (name, value) = do
+  entries <- listDirectory "/proc"
+  fmap catMaybes . forM [read entry | entry <- entries, not (null entry), all isDigit entry] $ \pid -> do
+    found <- try @IOException ((,) <$> BS.readFile ("/proc/" <> show pid <> "/comm") <*> BS.readFile ("/proc/" <> show pid <> "/environ"))
+    pure $ case found of
+      Right (comm, environ) | BS8.unpack (BS8.takeWhile (/= '\n') comm) == command && BS8.pack (name <> "=" <> value) `elem` BS.split 0 environ -> Just pid
+      _ -> Nothing
+
+{- | After a Mod-q handover, Mozc commits exactly @日本語@ into native foot
+through the fcitx5 the daily startup hook launched once.
+-}
+imeHandover :: IO ()
+imeHandover = withDailySession "m3-daily-ime" (dailyOptions 1){optionAround = realFcitx} $ \session -> do
+  let ime = additionClient (sessionAdditions session)
+      client = clientEnvironment session
+  bus <- maybe (failIntegration "the IME environment has no private D-Bus") pure (lookup "DBUS_SESSION_BUS_ADDRESS" ime)
+  preflightFootIme client
+  _ <- waitUntil "the daily startup hook's fcitx5 serves the private D-Bus" assertionTimeoutMicroseconds (isRight <$> try @SomeException (runProcessCapture ime "fcitx5-remote" ["--check"])) id
+  before <- snapshot session
+  key session ["q"]
+  after <- waitSnapshot session "Mod-q hands over to a fresh IPC session" ((/= snapSession before) . snapSession)
+  report "HANDOVER" (Text.unpack (snapSession before) <> " -> " <> Text.unpack (snapSession after))
+  (_, arguments) <- processImage (sessionPid session)
+  assertEqual "the daily process keeps its pid and restores" True ("--restore" `elem` arguments)
+  executable <- getExecutablePath
+  withSystemTempDirectory "seki-daily-ime" $ \directory -> do
+    let probeSocket = directory </> "probe.sock"
+        footConfig = directory </> "foot.ini"
+    writeFootConfig footConfig
+    withUnixListener probeSocket $ \listener ->
+      bracket (startManagedProcess "foot" client (proc "foot" ["-c", footConfig, "-a", "seki-integration-probe", executable, "--ime-terminal-probe", probeSocket])) stopManagedProcess $ \foot -> do
+        terminal <- waitForProbe listener foot
+        flip finally (hClose terminal) $ do
+          _ <- waitSnapshot session "foot is managed on term with keyboard focus" (\s -> snapKeyboard s && any (\w -> wsTag w == "term" && wsOccupied w && wsFocused w) (snapWorkspaces s))
+          committed <- withFcitxVirtualKeyboardOwner ime $ \owner -> commitMozcText "m3-daily-ime" ime client owner terminal
+          report "IME_COMMIT" committed
+          assertEqual "foot receives exactly the Mozc commit after the handover" "日本語" committed
+          capture session "daily-ime"
+  daemons <- fixtureProcesses "fcitx5" ("DBUS_SESSION_BUS_ADDRESS", bus)
+  report "FCITX5_PROCESSES" (show daemons)
+  assertEqual "one fcitx5 process from this fixture exists" 1 (length daemons)
