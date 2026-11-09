@@ -12,8 +12,8 @@ the public API alone. It differs from the original in these ways:
 * @avoidStruts@, @docks@, and @manageDocks@ are dropped. Layouts tile river's
   non-exclusive area, so a bar's exclusive zone is already avoided, and bars
   are layer surfaces that seki never manages.
-* @ewmh@ and @disableEwmhManageDesktopViewport@ are dropped. Workspace output
-  for bars is M3's IPC work.
+* @ewmh@ and @disableEwmhManageDesktopViewport@ are dropped. Bars read
+  workspace state from seki's IPC instead, as @examples/waybar@ does.
 * @ewmhFullscreen@ needs nothing: seki honors client fullscreen requests
   natively.
 * 'defaultManageHook' stays last to float dialogs, as xmonad floats transient
@@ -30,20 +30,19 @@ everything above and differs from xmonad.hs in these further ways:
 * @nitrogen --restore@ becomes @swaybg@ with the same wallpaper. Nitrogen's
   saved mode 5, zoom fill, is swaybg's @fill@ mode.
 * @xscreensaver --no-splash@ becomes @swayidle@, which runs @swaylock@ after
-  10 minutes idle. xscreensaver blanked after 10 minutes with locking off.
+  10 minutes idle. xscreensaver blanked the screen without locking it. The
+  port locks on purpose, because the maintainer chose swayidle with swaylock.
 * Mod-Shift-l runs @swaylock@ instead of @xscreensaver-command --lock@.
-* Mod-grave toggles a terminal scratchpad that xmonad.hs does not have. It runs
-  @alacritty --class seki-scratchpad@, which sets the Wayland app_id the pad
-  matches. It floats at 1280 by 800, centered on a 1920 by 1200 output, and
-  floating rules keep it inside a smaller output.
-* The keyboard and touchpad settings from xorg.conf.d and xset move into input
-  rules. Every keyboard loads the keymap file 'dailyConfig' is given and
-  repeats at 25 Hz after 660 ms. Compile that file from the X11 settings with
-  @xkbcli compile-keymap --rules evdev --model pc105 --layout us --options
-  ctrl:nocaps@. The ELAN touchpad taps to click, clicks by finger count, and
-  scrolls naturally.
+* Mod-grave toggles a terminal scratchpad that xmonad.hs does not have.
+  alacritty's @--class@ sets the Wayland app_id the pad matches. The pad's
+  origin centers it on the maintainer's 1920 by 1200 panel, and floating rules
+  keep it inside a smaller output.
+* The keyboard and touchpad settings come from xorg.conf.d and xset and move
+  into input rules. Compile the keymap file 'dailyConfig' is given from the
+  X11 settings with @xkbcli compile-keymap --rules evdev --model pc105 --layout
+  us --options ctrl:nocaps@.
 * Automatic client urgency is unavailable. seki has no compositor signal for
-  it, and it is deferred past M3.
+  it.
 -}
 module PortedConfig (portedConfig, dailyConfig) where
 
