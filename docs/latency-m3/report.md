@@ -12,102 +12,102 @@ Seed 1909. Pure mode uses 32 windows, 20000 events, and 128 warmup events.
 
 | Workload | Revision | Collector | Metric | Trials | Median | Min | Max |
 |---|---|---|---|---:|---:|---:|---:|
-| m2 | trunk | normal | pure p50_ms | 5 | 0.0163 | 0.0163 | 0.0163 |
-| m2 | trunk | normal | pure p95_ms | 5 | 0.0443 | 0.0439 | 0.0444 |
-| m2 | trunk | normal | pure p99_ms | 5 | 0.0525 | 0.0509 | 0.0530 |
-| m2 | trunk | normal | pure max_ms | 5 | 0.1129 | 0.0891 | 2.7763 |
-| m2 | trunk | normal | manage p50_ms | 5 | 0.0673 | 0.0663 | 0.0701 |
-| m2 | trunk | normal | manage p95_ms | 5 | 0.1502 | 0.1479 | 0.1525 |
-| m2 | trunk | normal | manage p99_ms | 5 | 0.1864 | 0.1819 | 0.1979 |
-| m2 | trunk | normal | manage max_ms | 5 | 0.3565 | 0.3232 | 0.4369 |
-| m2 | trunk | normal | render p50_ms | 5 | 0.0440 | 0.0432 | 0.0453 |
-| m2 | trunk | normal | render p95_ms | 5 | 0.1864 | 0.1821 | 0.1888 |
-| m2 | trunk | normal | render p99_ms | 5 | 0.2228 | 0.2182 | 0.2560 |
-| m2 | trunk | normal | render max_ms | 5 | 0.4146 | 0.3598 | 0.4299 |
-| m2 | trunk | normal | WM allocated_bytes | 5 | 1372841792.0000 | 1369122984.0000 | 1374367024.0000 |
-| m2 | trunk | normal | WM max_residency_bytes | 5 | 2141288.0000 | 2137048.0000 | 2297832.0000 |
-| m2 | trunk | normal | WM max_stw_pause_ms | 5 | 2.1000 | 1.7000 | 3.7000 |
+| m2 | trunk | normal | pure p50_ms | 5 | 0.0163 | 0.0161 | 0.0164 |
+| m2 | trunk | normal | pure p95_ms | 5 | 0.0444 | 0.0443 | 0.0448 |
+| m2 | trunk | normal | pure p99_ms | 5 | 0.0524 | 0.0514 | 0.0539 |
+| m2 | trunk | normal | pure max_ms | 5 | 0.1459 | 0.1056 | 3.1012 |
+| m2 | trunk | normal | manage p50_ms | 5 | 0.0663 | 0.0657 | 0.0686 |
+| m2 | trunk | normal | manage p95_ms | 5 | 0.1483 | 0.1471 | 0.1503 |
+| m2 | trunk | normal | manage p99_ms | 5 | 0.1889 | 0.1840 | 0.1918 |
+| m2 | trunk | normal | manage max_ms | 5 | 0.3600 | 0.3033 | 0.4460 |
+| m2 | trunk | normal | render p50_ms | 5 | 0.0438 | 0.0430 | 0.0450 |
+| m2 | trunk | normal | render p95_ms | 5 | 0.1874 | 0.1777 | 0.1895 |
+| m2 | trunk | normal | render p99_ms | 5 | 0.2360 | 0.2134 | 0.2463 |
+| m2 | trunk | normal | render max_ms | 5 | 0.4000 | 0.3468 | 1.9507 |
+| m2 | trunk | normal | WM allocated_bytes | 5 | 1371389920.0000 | 1367783984.0000 | 1376278776.0000 |
+| m2 | trunk | normal | WM max_residency_bytes | 5 | 2146000.0000 | 2101008.0000 | 2156248.0000 |
+| m2 | trunk | normal | WM max_stw_pause_ms | 5 | 1.7000 | 1.7000 | 1.8000 |
 | m2 | trunk | normal | WM nonmoving_sync_max_pause_ms | 5 | 0.0000 | 0.0000 | 0.0000 |
-| m2 | head | normal | pure p50_ms | 5 | 0.0163 | 0.0161 | 0.0166 |
-| m2 | head | normal | pure p95_ms | 5 | 0.0440 | 0.0439 | 0.0448 |
-| m2 | head | normal | pure p99_ms | 5 | 0.0514 | 0.0509 | 0.0521 |
-| m2 | head | normal | pure max_ms | 5 | 0.0987 | 0.0835 | 0.1080 |
-| m2 | head | normal | manage p50_ms | 5 | 0.0677 | 0.0673 | 0.0695 |
-| m2 | head | normal | manage p95_ms | 5 | 0.1502 | 0.1497 | 0.1519 |
-| m2 | head | normal | manage p99_ms | 5 | 0.1900 | 0.1843 | 0.1944 |
-| m2 | head | normal | manage max_ms | 5 | 0.3915 | 0.3491 | 1.8269 |
-| m2 | head | normal | render p50_ms | 5 | 0.0447 | 0.0430 | 0.0453 |
-| m2 | head | normal | render p95_ms | 5 | 0.1888 | 0.1871 | 0.1901 |
-| m2 | head | normal | render p99_ms | 5 | 0.2424 | 0.2325 | 0.2604 |
-| m2 | head | normal | render max_ms | 5 | 0.4296 | 0.3774 | 0.4658 |
-| m2 | head | normal | WM allocated_bytes | 5 | 1373478720.0000 | 1367805736.0000 | 1375306176.0000 |
-| m2 | head | normal | WM max_residency_bytes | 5 | 2120016.0000 | 2066592.0000 | 2145536.0000 |
-| m2 | head | normal | WM max_stw_pause_ms | 5 | 1.7000 | 1.7000 | 1.9000 |
+| m2 | head | normal | pure p50_ms | 5 | 0.0163 | 0.0161 | 0.0169 |
+| m2 | head | normal | pure p95_ms | 5 | 0.0443 | 0.0438 | 0.0453 |
+| m2 | head | normal | pure p99_ms | 5 | 0.0520 | 0.0509 | 0.0545 |
+| m2 | head | normal | pure max_ms | 5 | 0.1212 | 0.0842 | 0.2288 |
+| m2 | head | normal | manage p50_ms | 5 | 0.0659 | 0.0649 | 0.0696 |
+| m2 | head | normal | manage p95_ms | 5 | 0.1499 | 0.1445 | 0.1503 |
+| m2 | head | normal | manage p99_ms | 5 | 0.1866 | 0.1840 | 0.1938 |
+| m2 | head | normal | manage max_ms | 5 | 0.3297 | 0.3028 | 1.8188 |
+| m2 | head | normal | render p50_ms | 5 | 0.0428 | 0.0418 | 0.0443 |
+| m2 | head | normal | render p95_ms | 5 | 0.1863 | 0.1838 | 0.1880 |
+| m2 | head | normal | render p99_ms | 5 | 0.2351 | 0.2261 | 0.2676 |
+| m2 | head | normal | render max_ms | 5 | 0.3915 | 0.3278 | 2.5260 |
+| m2 | head | normal | WM allocated_bytes | 5 | 1373526264.0000 | 1365393728.0000 | 1374684112.0000 |
+| m2 | head | normal | WM max_residency_bytes | 5 | 2099616.0000 | 2060464.0000 | 2157008.0000 |
+| m2 | head | normal | WM max_stw_pause_ms | 5 | 2.1000 | 1.7000 | 2.5000 |
 | m2 | head | normal | WM nonmoving_sync_max_pause_ms | 5 | 0.0000 | 0.0000 | 0.0000 |
-| m3 | head | normal | pure p50_ms | 5 | 0.0202 | 0.0200 | 0.0204 |
-| m3 | head | normal | pure p95_ms | 5 | 0.0439 | 0.0425 | 0.0441 |
-| m3 | head | normal | pure p99_ms | 5 | 0.0507 | 0.0494 | 0.0523 |
-| m3 | head | normal | pure max_ms | 5 | 0.1137 | 0.0800 | 0.1514 |
-| m3 | head | normal | manage p50_ms | 5 | 0.0846 | 0.0810 | 0.0847 |
-| m3 | head | normal | manage p95_ms | 5 | 0.1893 | 0.1773 | 0.1923 |
-| m3 | head | normal | manage p99_ms | 5 | 0.2524 | 0.2468 | 0.2757 |
-| m3 | head | normal | manage max_ms | 5 | 3.4147 | 2.5026 | 4.2923 |
-| m3 | head | normal | render p50_ms | 5 | 0.0510 | 0.0500 | 0.0520 |
-| m3 | head | normal | render p95_ms | 5 | 0.1391 | 0.1311 | 0.1397 |
-| m3 | head | normal | render p99_ms | 5 | 0.2222 | 0.2098 | 0.2446 |
-| m3 | head | normal | render max_ms | 5 | 3.0420 | 0.7213 | 4.9929 |
-| m3 | head | normal | WM allocated_bytes | 5 | 3109502896.0000 | 3104739280.0000 | 3116370360.0000 |
-| m3 | head | normal | WM max_residency_bytes | 5 | 4984672.0000 | 4359224.0000 | 6553736.0000 |
-| m3 | head | normal | WM max_stw_pause_ms | 5 | 4.9000 | 4.6000 | 6.0000 |
+| m3 | head | normal | pure p50_ms | 5 | 0.0205 | 0.0200 | 0.0212 |
+| m3 | head | normal | pure p95_ms | 5 | 0.0439 | 0.0434 | 0.0464 |
+| m3 | head | normal | pure p99_ms | 5 | 0.0517 | 0.0506 | 0.0539 |
+| m3 | head | normal | pure max_ms | 5 | 0.0961 | 0.0870 | 0.1718 |
+| m3 | head | normal | manage p50_ms | 5 | 0.0849 | 0.0843 | 0.0849 |
+| m3 | head | normal | manage p95_ms | 5 | 0.1908 | 0.1874 | 0.1928 |
+| m3 | head | normal | manage p99_ms | 5 | 0.2516 | 0.2439 | 0.2704 |
+| m3 | head | normal | manage max_ms | 5 | 2.7035 | 0.7074 | 3.3461 |
+| m3 | head | normal | render p50_ms | 5 | 0.0534 | 0.0525 | 0.0549 |
+| m3 | head | normal | render p95_ms | 5 | 0.1541 | 0.1455 | 0.1553 |
+| m3 | head | normal | render p99_ms | 5 | 0.2176 | 0.2078 | 0.2430 |
+| m3 | head | normal | render max_ms | 5 | 2.9026 | 2.7498 | 5.2563 |
+| m3 | head | normal | WM allocated_bytes | 5 | 3110289960.0000 | 3108719816.0000 | 3115678640.0000 |
+| m3 | head | normal | WM max_residency_bytes | 5 | 3673944.0000 | 3562840.0000 | 5836464.0000 |
+| m3 | head | normal | WM max_stw_pause_ms | 5 | 5.3000 | 4.9000 | 6.3000 |
 | m3 | head | normal | WM nonmoving_sync_max_pause_ms | 5 | 0.0000 | 0.0000 | 0.0000 |
-| m2 | trunk | nonmoving | pure p50_ms | 5 | 0.0165 | 0.0161 | 0.0173 |
-| m2 | trunk | nonmoving | pure p95_ms | 5 | 0.0448 | 0.0440 | 0.0466 |
-| m2 | trunk | nonmoving | pure p99_ms | 5 | 0.0550 | 0.0524 | 0.0582 |
-| m2 | trunk | nonmoving | pure max_ms | 5 | 0.2161 | 0.2058 | 0.4653 |
-| m2 | trunk | nonmoving | manage p50_ms | 5 | 0.0673 | 0.0662 | 0.0691 |
-| m2 | trunk | nonmoving | manage p95_ms | 5 | 0.1492 | 0.1477 | 0.1516 |
-| m2 | trunk | nonmoving | manage p99_ms | 5 | 0.1847 | 0.1798 | 0.1921 |
-| m2 | trunk | nonmoving | manage max_ms | 5 | 0.4694 | 0.3961 | 3.0896 |
-| m2 | trunk | nonmoving | render p50_ms | 5 | 0.0437 | 0.0420 | 0.0448 |
-| m2 | trunk | nonmoving | render p95_ms | 5 | 0.1878 | 0.1842 | 0.1894 |
-| m2 | trunk | nonmoving | render p99_ms | 5 | 0.2452 | 0.2308 | 0.2514 |
-| m2 | trunk | nonmoving | render max_ms | 5 | 0.3932 | 0.3608 | 0.5910 |
-| m2 | trunk | nonmoving | WM allocated_bytes | 5 | 1371206304.0000 | 1370411096.0000 | 1373940096.0000 |
-| m2 | trunk | nonmoving | WM max_residency_bytes | 5 | 4610776.0000 | 4559024.0000 | 4656064.0000 |
-| m2 | trunk | nonmoving | WM max_stw_pause_ms | 5 | 0.6000 | 0.6000 | 0.7000 |
-| m2 | trunk | nonmoving | WM nonmoving_sync_max_pause_ms | 5 | 0.0000 | 0.0000 | 0.0000 |
-| m2 | head | nonmoving | pure p50_ms | 5 | 0.0163 | 0.0162 | 0.0166 |
-| m2 | head | nonmoving | pure p95_ms | 5 | 0.0443 | 0.0442 | 0.0451 |
-| m2 | head | nonmoving | pure p99_ms | 5 | 0.0525 | 0.0515 | 0.0529 |
-| m2 | head | nonmoving | pure max_ms | 5 | 0.1318 | 0.1057 | 0.1425 |
-| m2 | head | nonmoving | manage p50_ms | 5 | 0.0672 | 0.0663 | 0.0705 |
-| m2 | head | nonmoving | manage p95_ms | 5 | 0.1512 | 0.1481 | 0.1526 |
-| m2 | head | nonmoving | manage p99_ms | 5 | 0.1860 | 0.1831 | 0.1918 |
-| m2 | head | nonmoving | manage max_ms | 5 | 0.3452 | 0.3301 | 0.4392 |
-| m2 | head | nonmoving | render p50_ms | 5 | 0.0434 | 0.0426 | 0.0453 |
-| m2 | head | nonmoving | render p95_ms | 5 | 0.1874 | 0.1855 | 0.1883 |
-| m2 | head | nonmoving | render p99_ms | 5 | 0.2305 | 0.2204 | 0.2473 |
-| m2 | head | nonmoving | render max_ms | 5 | 0.3987 | 0.3663 | 3.1866 |
-| m2 | head | nonmoving | WM allocated_bytes | 5 | 1372926816.0000 | 1368398352.0000 | 1374938616.0000 |
-| m2 | head | nonmoving | WM max_residency_bytes | 5 | 4490728.0000 | 4434528.0000 | 4780104.0000 |
-| m2 | head | nonmoving | WM max_stw_pause_ms | 5 | 0.6000 | 0.6000 | 0.9000 |
+| m2 | trunk | nonmoving | pure p50_ms | 5 | 0.0162 | 0.0162 | 0.0163 |
+| m2 | trunk | nonmoving | pure p95_ms | 5 | 0.0443 | 0.0443 | 0.0443 |
+| m2 | trunk | nonmoving | pure p99_ms | 5 | 0.0525 | 0.0510 | 0.0535 |
+| m2 | trunk | nonmoving | pure max_ms | 5 | 0.2105 | 0.1894 | 0.2303 |
+| m2 | trunk | nonmoving | manage p50_ms | 5 | 0.0693 | 0.0677 | 0.0702 |
+| m2 | trunk | nonmoving | manage p95_ms | 5 | 0.1497 | 0.1445 | 0.1536 |
+| m2 | trunk | nonmoving | manage p99_ms | 5 | 0.1837 | 0.1740 | 0.1908 |
+| m2 | trunk | nonmoving | manage max_ms | 5 | 0.3308 | 0.3085 | 0.4090 |
+| m2 | trunk | nonmoving | render p50_ms | 5 | 0.0443 | 0.0435 | 0.0448 |
+| m2 | trunk | nonmoving | render p95_ms | 5 | 0.1865 | 0.1845 | 0.1890 |
+| m2 | trunk | nonmoving | render p99_ms | 5 | 0.2353 | 0.2299 | 0.2404 |
+| m2 | trunk | nonmoving | render max_ms | 5 | 0.4274 | 0.3895 | 0.4561 |
+| m2 | trunk | nonmoving | WM allocated_bytes | 5 | 1371124296.0000 | 1366493808.0000 | 1373345600.0000 |
+| m2 | trunk | nonmoving | WM max_residency_bytes | 5 | 4629552.0000 | 4515264.0000 | 4708424.0000 |
+| m2 | trunk | nonmoving | WM max_stw_pause_ms | 5 | 0.7000 | 0.6000 | 0.7000 |
+| m2 | trunk | nonmoving | WM nonmoving_sync_max_pause_ms | 5 | 0.0000 | 0.0000 | 0.2000 |
+| m2 | head | nonmoving | pure p50_ms | 5 | 0.0162 | 0.0161 | 0.0163 |
+| m2 | head | nonmoving | pure p95_ms | 5 | 0.0444 | 0.0440 | 0.0446 |
+| m2 | head | nonmoving | pure p99_ms | 5 | 0.0515 | 0.0513 | 0.0538 |
+| m2 | head | nonmoving | pure max_ms | 5 | 0.1254 | 0.1203 | 0.1318 |
+| m2 | head | nonmoving | manage p50_ms | 5 | 0.0677 | 0.0663 | 0.0682 |
+| m2 | head | nonmoving | manage p95_ms | 5 | 0.1490 | 0.1487 | 0.1496 |
+| m2 | head | nonmoving | manage p99_ms | 5 | 0.1832 | 0.1803 | 0.1915 |
+| m2 | head | nonmoving | manage max_ms | 5 | 0.3601 | 0.3306 | 0.4115 |
+| m2 | head | nonmoving | render p50_ms | 5 | 0.0434 | 0.0432 | 0.0448 |
+| m2 | head | nonmoving | render p95_ms | 5 | 0.1861 | 0.1828 | 0.1902 |
+| m2 | head | nonmoving | render p99_ms | 5 | 0.2308 | 0.2278 | 0.2509 |
+| m2 | head | nonmoving | render max_ms | 5 | 0.4271 | 0.3996 | 0.5321 |
+| m2 | head | nonmoving | WM allocated_bytes | 5 | 1372820208.0000 | 1368156856.0000 | 1374858336.0000 |
+| m2 | head | nonmoving | WM max_residency_bytes | 5 | 4564800.0000 | 4446360.0000 | 4711256.0000 |
+| m2 | head | nonmoving | WM max_stw_pause_ms | 5 | 0.7000 | 0.6000 | 0.9000 |
 | m2 | head | nonmoving | WM nonmoving_sync_max_pause_ms | 5 | 0.0000 | 0.0000 | 0.0000 |
-| m3 | head | nonmoving | pure p50_ms | 5 | 0.0200 | 0.0200 | 0.0202 |
-| m3 | head | nonmoving | pure p95_ms | 5 | 0.0437 | 0.0433 | 0.0441 |
-| m3 | head | nonmoving | pure p99_ms | 5 | 0.0515 | 0.0498 | 0.0539 |
-| m3 | head | nonmoving | pure max_ms | 5 | 0.1187 | 0.0833 | 0.1920 |
-| m3 | head | nonmoving | manage p50_ms | 5 | 0.0847 | 0.0844 | 0.0851 |
-| m3 | head | nonmoving | manage p95_ms | 5 | 0.1930 | 0.1881 | 0.1956 |
-| m3 | head | nonmoving | manage p99_ms | 5 | 0.2547 | 0.2386 | 0.2891 |
-| m3 | head | nonmoving | manage max_ms | 5 | 0.9514 | 0.6782 | 3.0486 |
-| m3 | head | nonmoving | render p50_ms | 5 | 0.0522 | 0.0506 | 0.0533 |
-| m3 | head | nonmoving | render p95_ms | 5 | 0.1464 | 0.1333 | 0.1516 |
-| m3 | head | nonmoving | render p99_ms | 5 | 0.2209 | 0.2181 | 0.2343 |
-| m3 | head | nonmoving | render max_ms | 5 | 0.8375 | 0.7958 | 2.8761 |
-| m3 | head | nonmoving | WM allocated_bytes | 5 | 3111257944.0000 | 3108062336.0000 | 3117755272.0000 |
-| m3 | head | nonmoving | WM max_residency_bytes | 5 | 8187712.0000 | 7889136.0000 | 8722176.0000 |
-| m3 | head | nonmoving | WM max_stw_pause_ms | 5 | 1.7000 | 1.0000 | 4.2000 |
-| m3 | head | nonmoving | WM nonmoving_sync_max_pause_ms | 5 | 1.7000 | 0.1000 | 4.2000 |
+| m3 | head | nonmoving | pure p50_ms | 5 | 0.0200 | 0.0198 | 0.0204 |
+| m3 | head | nonmoving | pure p95_ms | 5 | 0.0435 | 0.0428 | 0.0443 |
+| m3 | head | nonmoving | pure p99_ms | 5 | 0.0511 | 0.0499 | 0.0538 |
+| m3 | head | nonmoving | pure max_ms | 5 | 0.1512 | 0.0886 | 0.1729 |
+| m3 | head | nonmoving | manage p50_ms | 5 | 0.0846 | 0.0795 | 0.0854 |
+| m3 | head | nonmoving | manage p95_ms | 5 | 0.1918 | 0.1668 | 0.1937 |
+| m3 | head | nonmoving | manage p99_ms | 5 | 0.2685 | 0.2255 | 0.2961 |
+| m3 | head | nonmoving | manage max_ms | 5 | 3.6649 | 0.7125 | 4.0979 |
+| m3 | head | nonmoving | render p50_ms | 5 | 0.0534 | 0.0499 | 0.0539 |
+| m3 | head | nonmoving | render p95_ms | 5 | 0.1421 | 0.1306 | 0.1541 |
+| m3 | head | nonmoving | render p99_ms | 5 | 0.2274 | 0.2025 | 0.2501 |
+| m3 | head | nonmoving | render max_ms | 5 | 3.0482 | 0.8806 | 3.5494 |
+| m3 | head | nonmoving | WM allocated_bytes | 5 | 3111426648.0000 | 3104275144.0000 | 3117546840.0000 |
+| m3 | head | nonmoving | WM max_residency_bytes | 5 | 8399712.0000 | 7921104.0000 | 8431416.0000 |
+| m3 | head | nonmoving | WM max_stw_pause_ms | 5 | 1.1000 | 1.1000 | 1.8000 |
+| m3 | head | nonmoving | WM nonmoving_sync_max_pause_ms | 5 | 0.7000 | 0.1000 | 0.9000 |
 
 ## Budgets
 
@@ -115,36 +115,36 @@ Budgets are pure p99 < 2 ms, manage and render sequence p99 < 10 ms, and maximum
 
 | Trial | Revision | Workload | Collector | Pure p99 | Manage p99 | Render p99 | Max STW | Endpoint p99 | Pass |
 |---|---|---|---|---:|---:|---:|---:|---|---|
-| 00-trunk-m2-normal | trunk | m2 | normal | 0.0525 | 0.1819 | 0.2560 | 2.3 | none | pass |
-| 01-head-m2-normal | head | m2 | normal | 0.0509 | 0.1900 | 0.2325 | 1.7 | none | pass |
-| 02-head-m3-normal | head | m3 | normal | 0.0494 | 0.2518 | 0.2446 | 5.3 | external_wake 2.12, ipc_update 1.28, recompile_completion 46.84, scratchpad_toggle 1.98 | pass |
-| 03-trunk-m2-nonmoving | trunk | m2 | nonmoving | 0.0524 | 0.1921 | 0.2452 | 0.6 | none | pass |
-| 04-head-m2-nonmoving | head | m2 | nonmoving | 0.0529 | 0.1872 | 0.2385 | 0.6 | none | pass |
-| 05-head-m3-nonmoving | head | m3 | nonmoving | 0.0498 | 0.2891 | 0.2336 | 4.2 | external_wake 2.11, ipc_update 1.23, recompile_completion 46.19, scratchpad_toggle 1.99 | pass |
-| 06-head-m2-normal | head | m2 | normal | 0.0514 | 0.1944 | 0.2344 | 1.7 | none | pass |
-| 07-trunk-m2-normal | trunk | m2 | normal | 0.0509 | 0.1861 | 0.2228 | 2.1 | none | pass |
-| 08-head-m3-normal | head | m3 | normal | 0.0507 | 0.2468 | 0.2098 | 6.0 | external_wake 2.10, ipc_update 1.12, recompile_completion 47.13, scratchpad_toggle 1.87 | pass |
-| 09-head-m2-nonmoving | head | m2 | nonmoving | 0.0524 | 0.1831 | 0.2473 | 0.6 | none | pass |
-| 10-trunk-m2-nonmoving | trunk | m2 | nonmoving | 0.0582 | 0.1847 | 0.2308 | 0.6 | none | pass |
-| 11-head-m3-nonmoving | head | m3 | nonmoving | 0.0518 | 0.2386 | 0.2209 | 2.8 | external_wake 2.11, ipc_update 1.02, recompile_completion 46.78, scratchpad_toggle 2.27 | pass |
-| 12-trunk-m2-normal | trunk | m2 | normal | 0.0519 | 0.1864 | 0.2214 | 1.7 | none | pass |
-| 13-head-m2-normal | head | m2 | normal | 0.0514 | 0.1843 | 0.2446 | 1.7 | none | pass |
-| 14-head-m3-normal | head | m3 | normal | 0.0523 | 0.2757 | 0.2238 | 4.7 | external_wake 2.04, ipc_update 1.26, recompile_completion 46.90, scratchpad_toggle 1.99 | pass |
-| 15-trunk-m2-nonmoving | trunk | m2 | nonmoving | 0.0550 | 0.1833 | 0.2514 | 0.6 | none | pass |
-| 16-head-m2-nonmoving | head | m2 | nonmoving | 0.0515 | 0.1856 | 0.2294 | 0.6 | none | pass |
-| 17-head-m3-nonmoving | head | m3 | nonmoving | 0.0515 | 0.2755 | 0.2181 | 1.0 | external_wake 2.02, ipc_update 1.00, recompile_completion 46.14, scratchpad_toggle 2.08 | pass |
-| 18-head-m2-normal | head | m2 | normal | 0.0513 | 0.1859 | 0.2604 | 1.9 | none | pass |
-| 19-trunk-m2-normal | trunk | m2 | normal | 0.0530 | 0.1900 | 0.2182 | 3.7 | none | pass |
-| 20-head-m3-normal | head | m3 | normal | 0.0520 | 0.2562 | 0.2132 | 4.6 | external_wake 2.03, ipc_update 1.11, recompile_completion 46.21, scratchpad_toggle 2.17 | pass |
-| 21-head-m2-nonmoving | head | m2 | nonmoving | 0.0527 | 0.1918 | 0.2305 | 0.7 | none | pass |
-| 22-trunk-m2-nonmoving | trunk | m2 | nonmoving | 0.0555 | 0.1906 | 0.2353 | 0.6 | none | pass |
-| 23-head-m3-nonmoving | head | m3 | nonmoving | 0.0539 | 0.2480 | 0.2343 | 1.7 | external_wake 2.09, ipc_update 1.10, recompile_completion 46.10, scratchpad_toggle 2.00 | pass |
-| 24-trunk-m2-normal | trunk | m2 | normal | 0.0529 | 0.1979 | 0.2237 | 2.0 | none | pass |
-| 25-head-m2-normal | head | m2 | normal | 0.0521 | 0.1928 | 0.2424 | 1.7 | none | pass |
-| 26-head-m3-normal | head | m3 | normal | 0.0506 | 0.2524 | 0.2222 | 4.9 | external_wake 2.36, ipc_update 1.16, recompile_completion 47.78, scratchpad_toggle 2.13 | pass |
-| 27-trunk-m2-nonmoving | trunk | m2 | nonmoving | 0.0530 | 0.1798 | 0.2472 | 0.7 | none | pass |
-| 28-head-m2-nonmoving | head | m2 | nonmoving | 0.0525 | 0.1860 | 0.2204 | 0.9 | none | pass |
-| 29-head-m3-nonmoving | head | m3 | nonmoving | 0.0506 | 0.2547 | 0.2188 | 1.0 | external_wake 2.08, ipc_update 1.13, recompile_completion 46.15, scratchpad_toggle 2.17 | pass |
+| 00-trunk-m2-normal | trunk | m2 | normal | 0.0522 | 0.1856 | 0.2463 | 1.7 | none | pass |
+| 01-head-m2-normal | head | m2 | normal | 0.0525 | 0.1938 | 0.2296 | 1.8 | none | pass |
+| 02-head-m3-normal | head | m3 | normal | 0.0507 | 0.2517 | 0.2173 | 4.9 | external_wake 2.22, ipc_update 1.10, recompile_completion 46.68, scratchpad_toggle 2.03 | pass |
+| 03-trunk-m2-nonmoving | trunk | m2 | nonmoving | 0.0534 | 0.1740 | 0.2299 | 0.6 | none | pass |
+| 04-head-m2-nonmoving | head | m2 | nonmoving | 0.0515 | 0.1832 | 0.2307 | 0.6 | none | pass |
+| 05-head-m3-nonmoving | head | m3 | nonmoving | 0.0505 | 0.2495 | 0.2274 | 1.1 | external_wake 2.09, ipc_update 1.02, recompile_completion 46.58, scratchpad_toggle 2.24 | pass |
+| 06-head-m2-normal | head | m2 | normal | 0.0520 | 0.1908 | 0.2676 | 2.1 | none | pass |
+| 07-trunk-m2-normal | trunk | m2 | normal | 0.0524 | 0.1918 | 0.2407 | 1.8 | none | pass |
+| 08-head-m3-normal | head | m3 | normal | 0.0517 | 0.2704 | 0.2176 | 5.8 | external_wake 2.26, ipc_update 1.31, recompile_completion 48.35, scratchpad_toggle 1.94 | pass |
+| 09-head-m2-nonmoving | head | m2 | nonmoving | 0.0513 | 0.1830 | 0.2509 | 0.9 | none | pass |
+| 10-trunk-m2-nonmoving | trunk | m2 | nonmoving | 0.0535 | 0.1908 | 0.2375 | 0.7 | none | pass |
+| 11-head-m3-nonmoving | head | m3 | nonmoving | 0.0511 | 0.2255 | 0.2312 | 1.1 | external_wake 2.05, ipc_update 1.10, recompile_completion 46.80, scratchpad_toggle 1.96 | pass |
+| 12-trunk-m2-normal | trunk | m2 | normal | 0.0514 | 0.1840 | 0.2134 | 1.8 | none | pass |
+| 13-head-m2-normal | head | m2 | normal | 0.0545 | 0.1840 | 0.2477 | 2.5 | none | pass |
+| 14-head-m3-normal | head | m3 | normal | 0.0518 | 0.2516 | 0.2078 | 6.3 | external_wake 2.10, ipc_update 1.12, recompile_completion 47.02, scratchpad_toggle 1.95 | pass |
+| 15-trunk-m2-nonmoving | trunk | m2 | nonmoving | 0.0510 | 0.1855 | 0.2353 | 0.7 | none | pass |
+| 16-head-m2-nonmoving | head | m2 | nonmoving | 0.0515 | 0.1915 | 0.2278 | 0.6 | none | pass |
+| 17-head-m3-nonmoving | head | m3 | nonmoving | 0.0499 | 0.2834 | 0.2200 | 1.1 | external_wake 2.12, ipc_update 1.21, recompile_completion 46.29, scratchpad_toggle 2.02 | pass |
+| 18-head-m2-normal | head | m2 | normal | 0.0509 | 0.1857 | 0.2351 | 2.3 | none | pass |
+| 19-trunk-m2-normal | trunk | m2 | normal | 0.0539 | 0.1908 | 0.2360 | 1.7 | none | pass |
+| 20-head-m3-normal | head | m3 | normal | 0.0539 | 0.2451 | 0.2430 | 5.3 | external_wake 2.13, ipc_update 1.13, recompile_completion 46.12, scratchpad_toggle 1.99 | pass |
+| 21-head-m2-nonmoving | head | m2 | nonmoving | 0.0514 | 0.1841 | 0.2308 | 0.8 | none | pass |
+| 22-trunk-m2-nonmoving | trunk | m2 | nonmoving | 0.0524 | 0.1831 | 0.2345 | 0.6 | none | pass |
+| 23-head-m3-nonmoving | head | m3 | nonmoving | 0.0538 | 0.2961 | 0.2501 | 1.8 | external_wake 2.21, ipc_update 1.25, recompile_completion 46.21, scratchpad_toggle 2.01 | pass |
+| 24-trunk-m2-normal | trunk | m2 | normal | 0.0529 | 0.1889 | 0.2248 | 1.7 | none | pass |
+| 25-head-m2-normal | head | m2 | normal | 0.0511 | 0.1866 | 0.2261 | 1.7 | none | pass |
+| 26-head-m3-normal | head | m3 | normal | 0.0506 | 0.2439 | 0.2303 | 5.1 | external_wake 2.27, ipc_update 1.06, recompile_completion 47.25, scratchpad_toggle 2.16 | pass |
+| 27-trunk-m2-nonmoving | trunk | m2 | nonmoving | 0.0525 | 0.1837 | 0.2404 | 0.7 | none | pass |
+| 28-head-m2-nonmoving | head | m2 | nonmoving | 0.0538 | 0.1803 | 0.2387 | 0.7 | none | pass |
+| 29-head-m3-nonmoving | head | m3 | nonmoving | 0.0511 | 0.2685 | 0.2025 | 1.1 | external_wake 2.10, ipc_update 1.04, recompile_completion 46.63, scratchpad_toggle 2.01 | pass |
 
 All 30 trials met every budget.
 
@@ -152,10 +152,12 @@ All 30 trials met every budget.
 
 | Revision | Commit | Compiler | Binary SHA-256 | Linked seki libraries (SHA-256) |
 |---|---|---|---|---|
-| trunk | `c2b785132058f44242d23def90f7a242ba675da5` | 9.10.3 | `a6a1f4e56a92abd297b482ac1a6abbe1f71ee7de194f9d8c9fe60d0536f2a8aa` | `libHSseki-0.1.0.0-inplace-layer-surface-fixture-ghc9.10.3.so` `f4464b48e0cf70fdcb5bd50b7240548f26a57d6ff6b4adc3980ca6323583e964`<br>`libHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so` `1d8fa21bb5645a48eaefef25a024119d297eb5d3f2aabe9ea0572e0714bbd306`<br>`libHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so` `377a4cfc5d9d49f30fc13c75d5e7253c578c63046b94bd57bf8a9d447c1c6eba` |
-| head | `a34e564ab44bcba91537938065f6b0ab4c67e378` | 9.10.3 | `eee52dfc47adbd3664bd1038dfc2816b22ead5f2a42f6c18b6234268b96416dd` | `libHSseki-0.1.0.0-inplace-layer-surface-fixture-ghc9.10.3.so` `bc6bee518f9f291cecb6f2a11eac2f82e5d217fe79e40feaa7ad4e1d6c6f7a53`<br>`libHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so` `3dcb4778707fc2946a81e09e33288962aaef48bd9b4289101370177326a41e12`<br>`libHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so` `377a4cfc5d9d49f30fc13c75d5e7253c578c63046b94bd57bf8a9d447c1c6eba` |
+| trunk | `3c3037369eed28e5dc59528046afa4b7a1309cae` | 9.10.3 | `47c3269edab5dd4455b0e742b6764816c94d9e26aac31123795c24f5ebc5a354` | `libHSseki-0.1.0.0-inplace-layer-surface-fixture-ghc9.10.3.so` `5b4398a6e2dbe724b2e8eee821d753d9c012931fff04545e1b6691d590a87703`<br>`libHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so` `2d86dec6f516cd264129458591f2c935e0180bf2fe6d6ac1b731ce3743c2343c`<br>`libHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so` `377a4cfc5d9d49f30fc13c75d5e7253c578c63046b94bd57bf8a9d447c1c6eba` |
+| head | `82a31cc298f9f5200788b2898a36dd248cfefdd0` | 9.10.3 | `9df3839cd62f480d8d7cbdb503595c9b61453660f4308b73bc4194db91248fb8` | `libHSseki-0.1.0.0-inplace-layer-surface-fixture-ghc9.10.3.so` `01a441aace501b6441dd8e355a3992bdf57362c646afcd73c87c1fb5fdfec152`<br>`libHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so` `99ff735438a64e5bcdf1792439a464333c64967c8ee7569c799d2e380d14fba4`<br>`libHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so` `377a4cfc5d9d49f30fc13c75d5e7253c578c63046b94bd57bf8a9d447c1c6eba` |
 
-Runtime sources under src, src-core, src-public are identical across the revisions, so the m2 differences between them are a noise floor. This report claims no speedup or regression.
+Runtime sources under `src`, `src-core`, `src-public`, `src-generated`, and `cbits` are identical across the revisions, so their m2 manage and render differences are a noise floor.
+Latency driver sources under `tools/latency` and `integration/Seki/Integration/Harness.hs` differ across the revisions. The pure interval includes the driver's checksum fold, so matching pure checksums show the same output, not the same cost.
+This report claims no speedup or regression.
 m2 pure checksums agree across revisions.
 trunk does not run m3: invalid workload: m3.
 
@@ -172,46 +174,46 @@ Each sample runs from the driver's send of one IPC command to the outcome named 
 
 | Trial | Endpoint | Samples | p50 ms | p95 ms | p99 ms | Max ms | Target p99 |
 |---|---|---:|---:|---:|---:|---:|---|
-| 02-head-m3-normal | external_wake | 1000 | 1.4218 | 1.8443 | 2.1191 | 6.1299 | < 50 ms |
-| 02-head-m3-normal | ipc_update | 1000 | 0.5064 | 0.8285 | 1.2805 | 6.0637 | < 50 ms |
-| 02-head-m3-normal | recompile_completion | 499 | 43.5294 | 45.6194 | 46.8424 | 47.5404 | none |
-| 02-head-m3-normal | scratchpad_toggle | 1001 | 1.4454 | 1.7472 | 1.9823 | 13.3364 | < 50 ms |
-| 05-head-m3-nonmoving | external_wake | 1000 | 1.4417 | 1.8300 | 2.1115 | 3.2248 | < 50 ms |
-| 05-head-m3-nonmoving | ipc_update | 1000 | 0.5029 | 0.8338 | 1.2307 | 2.8164 | < 50 ms |
-| 05-head-m3-nonmoving | recompile_completion | 499 | 43.4810 | 45.1738 | 46.1910 | 58.9904 | none |
-| 05-head-m3-nonmoving | scratchpad_toggle | 1001 | 1.4421 | 1.7260 | 1.9870 | 12.8057 | < 50 ms |
-| 08-head-m3-normal | external_wake | 1000 | 1.3675 | 1.7893 | 2.1025 | 7.0369 | < 50 ms |
-| 08-head-m3-normal | ipc_update | 1000 | 0.4917 | 0.8510 | 1.1227 | 5.7619 | < 50 ms |
-| 08-head-m3-normal | recompile_completion | 499 | 43.3770 | 45.2536 | 47.1308 | 48.7216 | none |
-| 08-head-m3-normal | scratchpad_toggle | 1001 | 1.4322 | 1.7497 | 1.8726 | 13.2006 | < 50 ms |
-| 11-head-m3-nonmoving | external_wake | 1000 | 1.3943 | 1.8645 | 2.1092 | 9.8514 | < 50 ms |
-| 11-head-m3-nonmoving | ipc_update | 1000 | 0.5027 | 0.8446 | 1.0165 | 9.8088 | < 50 ms |
-| 11-head-m3-nonmoving | recompile_completion | 499 | 43.5969 | 45.5310 | 46.7777 | 60.3074 | none |
-| 11-head-m3-nonmoving | scratchpad_toggle | 1001 | 1.4153 | 1.7492 | 2.2670 | 3.8723 | < 50 ms |
-| 14-head-m3-normal | external_wake | 1000 | 1.4118 | 1.8333 | 2.0392 | 5.6961 | < 50 ms |
-| 14-head-m3-normal | ipc_update | 1000 | 0.5061 | 0.8261 | 1.2601 | 5.6552 | < 50 ms |
-| 14-head-m3-normal | recompile_completion | 499 | 43.6335 | 45.6019 | 46.9009 | 47.4966 | none |
-| 14-head-m3-normal | scratchpad_toggle | 1001 | 1.4372 | 1.7280 | 1.9903 | 14.5783 | < 50 ms |
-| 17-head-m3-nonmoving | external_wake | 1000 | 1.3558 | 1.8006 | 2.0175 | 4.3994 | < 50 ms |
-| 17-head-m3-nonmoving | ipc_update | 1000 | 0.4929 | 0.8303 | 1.0030 | 3.2106 | < 50 ms |
-| 17-head-m3-nonmoving | recompile_completion | 499 | 43.5047 | 45.1101 | 46.1359 | 47.5697 | none |
-| 17-head-m3-nonmoving | scratchpad_toggle | 1001 | 1.4374 | 1.7419 | 2.0781 | 12.9222 | < 50 ms |
-| 20-head-m3-normal | external_wake | 1000 | 1.3545 | 1.7375 | 2.0290 | 4.6214 | < 50 ms |
-| 20-head-m3-normal | ipc_update | 1000 | 0.4383 | 0.7880 | 1.1095 | 3.4697 | < 50 ms |
-| 20-head-m3-normal | recompile_completion | 499 | 42.2804 | 44.5281 | 46.2069 | 58.5351 | none |
-| 20-head-m3-normal | scratchpad_toggle | 1001 | 1.3885 | 1.7465 | 2.1726 | 13.5367 | < 50 ms |
-| 23-head-m3-nonmoving | external_wake | 1000 | 1.4093 | 1.8504 | 2.0929 | 4.3889 | < 50 ms |
-| 23-head-m3-nonmoving | ipc_update | 1000 | 0.5133 | 0.8348 | 1.1046 | 3.1028 | < 50 ms |
-| 23-head-m3-nonmoving | recompile_completion | 499 | 43.4997 | 45.1300 | 46.1000 | 61.2114 | none |
-| 23-head-m3-nonmoving | scratchpad_toggle | 1001 | 1.4000 | 1.7537 | 2.0033 | 4.7040 | < 50 ms |
-| 26-head-m3-normal | external_wake | 1000 | 1.3901 | 1.8369 | 2.3568 | 13.0641 | < 50 ms |
-| 26-head-m3-normal | ipc_update | 1000 | 0.4994 | 0.8257 | 1.1610 | 13.0279 | < 50 ms |
-| 26-head-m3-normal | recompile_completion | 499 | 43.5171 | 45.4704 | 47.7785 | 58.4032 | none |
-| 26-head-m3-normal | scratchpad_toggle | 1001 | 1.4362 | 1.7780 | 2.1291 | 6.2284 | < 50 ms |
-| 29-head-m3-nonmoving | external_wake | 1000 | 1.3747 | 1.8120 | 2.0763 | 4.2856 | < 50 ms |
-| 29-head-m3-nonmoving | ipc_update | 1000 | 0.5077 | 0.8250 | 1.1262 | 2.3139 | < 50 ms |
-| 29-head-m3-nonmoving | recompile_completion | 499 | 43.6477 | 45.2147 | 46.1455 | 115.8831 | none |
-| 29-head-m3-nonmoving | scratchpad_toggle | 1001 | 1.4267 | 1.7461 | 2.1674 | 13.7536 | < 50 ms |
+| 02-head-m3-normal | external_wake | 1000 | 1.4124 | 1.8469 | 2.2210 | 13.4704 | < 50 ms |
+| 02-head-m3-normal | ipc_update | 1000 | 0.5103 | 0.8394 | 1.0995 | 3.1480 | < 50 ms |
+| 02-head-m3-normal | recompile_completion | 499 | 43.5718 | 45.4505 | 46.6829 | 48.6031 | none |
+| 02-head-m3-normal | scratchpad_toggle | 1001 | 1.4517 | 1.7829 | 2.0327 | 6.1513 | < 50 ms |
+| 05-head-m3-nonmoving | external_wake | 1000 | 1.4042 | 1.8498 | 2.0873 | 13.8736 | < 50 ms |
+| 05-head-m3-nonmoving | ipc_update | 1000 | 0.5024 | 0.8413 | 1.0245 | 1.7289 | < 50 ms |
+| 05-head-m3-nonmoving | recompile_completion | 499 | 43.6174 | 45.3151 | 46.5816 | 48.1357 | none |
+| 05-head-m3-nonmoving | scratchpad_toggle | 1001 | 1.4222 | 1.7888 | 2.2445 | 4.0007 | < 50 ms |
+| 08-head-m3-normal | external_wake | 1000 | 1.4365 | 1.9049 | 2.2623 | 14.0121 | < 50 ms |
+| 08-head-m3-normal | ipc_update | 1000 | 0.5178 | 0.8606 | 1.3127 | 3.5530 | < 50 ms |
+| 08-head-m3-normal | recompile_completion | 499 | 43.7161 | 45.8916 | 48.3506 | 60.6234 | none |
+| 08-head-m3-normal | scratchpad_toggle | 1001 | 1.4371 | 1.7603 | 1.9419 | 2.5084 | < 50 ms |
+| 11-head-m3-nonmoving | external_wake | 1000 | 1.3623 | 1.7410 | 2.0548 | 13.6214 | < 50 ms |
+| 11-head-m3-nonmoving | ipc_update | 1000 | 0.4392 | 0.7604 | 1.1017 | 2.9236 | < 50 ms |
+| 11-head-m3-nonmoving | recompile_completion | 499 | 42.2496 | 45.1367 | 46.8040 | 47.3774 | none |
+| 11-head-m3-nonmoving | scratchpad_toggle | 1001 | 1.3790 | 1.7444 | 1.9628 | 2.6433 | < 50 ms |
+| 14-head-m3-normal | external_wake | 1000 | 1.3805 | 1.7962 | 2.0971 | 13.5619 | < 50 ms |
+| 14-head-m3-normal | ipc_update | 1000 | 0.5024 | 0.8495 | 1.1227 | 4.3719 | < 50 ms |
+| 14-head-m3-normal | recompile_completion | 499 | 43.5847 | 45.4925 | 47.0234 | 49.9692 | none |
+| 14-head-m3-normal | scratchpad_toggle | 1001 | 1.4057 | 1.7624 | 1.9545 | 4.2878 | < 50 ms |
+| 17-head-m3-nonmoving | external_wake | 1000 | 1.4445 | 1.8930 | 2.1163 | 13.6302 | < 50 ms |
+| 17-head-m3-nonmoving | ipc_update | 1000 | 0.5145 | 0.8592 | 1.2148 | 2.7433 | < 50 ms |
+| 17-head-m3-nonmoving | recompile_completion | 499 | 43.6423 | 45.4573 | 46.2871 | 58.9582 | none |
+| 17-head-m3-nonmoving | scratchpad_toggle | 1001 | 1.4522 | 1.7733 | 2.0153 | 4.9476 | < 50 ms |
+| 20-head-m3-normal | external_wake | 1000 | 1.3735 | 1.8863 | 2.1311 | 6.2183 | < 50 ms |
+| 20-head-m3-normal | ipc_update | 1000 | 0.5147 | 0.8618 | 1.1336 | 4.8399 | < 50 ms |
+| 20-head-m3-normal | recompile_completion | 499 | 43.6289 | 45.2989 | 46.1199 | 57.5480 | none |
+| 20-head-m3-normal | scratchpad_toggle | 1001 | 1.4183 | 1.7615 | 1.9936 | 14.1751 | < 50 ms |
+| 23-head-m3-nonmoving | external_wake | 1000 | 1.4326 | 1.8675 | 2.2079 | 10.6610 | < 50 ms |
+| 23-head-m3-nonmoving | ipc_update | 1000 | 0.5043 | 0.8592 | 1.2526 | 3.5090 | < 50 ms |
+| 23-head-m3-nonmoving | recompile_completion | 499 | 43.5305 | 45.3846 | 46.2079 | 48.1865 | none |
+| 23-head-m3-nonmoving | scratchpad_toggle | 1001 | 1.4220 | 1.7708 | 2.0118 | 3.4904 | < 50 ms |
+| 26-head-m3-normal | external_wake | 1000 | 1.4302 | 1.8934 | 2.2650 | 13.2610 | < 50 ms |
+| 26-head-m3-normal | ipc_update | 1000 | 0.5235 | 0.8279 | 1.0555 | 5.8184 | < 50 ms |
+| 26-head-m3-normal | recompile_completion | 499 | 43.8420 | 45.8853 | 47.2543 | 48.6949 | none |
+| 26-head-m3-normal | scratchpad_toggle | 1001 | 1.4481 | 1.8081 | 2.1568 | 4.9497 | < 50 ms |
+| 29-head-m3-nonmoving | external_wake | 1000 | 1.4250 | 1.8500 | 2.1045 | 13.5556 | < 50 ms |
+| 29-head-m3-nonmoving | ipc_update | 1000 | 0.5147 | 0.8229 | 1.0417 | 3.3984 | < 50 ms |
+| 29-head-m3-nonmoving | recompile_completion | 499 | 43.7507 | 45.5943 | 46.6308 | 58.2476 | none |
+| 29-head-m3-nonmoving | scratchpad_toggle | 1001 | 1.4427 | 1.7732 | 2.0137 | 4.6060 | < 50 ms |
 
 ## Work and validity
 
@@ -219,36 +221,36 @@ Sequences per action count the manage and render sequences inside the interval f
 
 | Trial | Manage | Render | Manage per action | Render per action | Pure | Major GC in workload | Load before / after |
 |---|---:|---:|---:|---:|---:|---|---|
-| 00-trunk-m2-normal | 2910 | 2910 | 2.84 | 2.84 | 20000 | True | [1.16259765625, 1.1337890625, 1.17724609375] / [1.3974609375, 1.1865234375, 1.19384765625] |
-| 01-head-m2-normal | 2908 | 2908 | 2.84 | 2.84 | 20000 | True | [1.3974609375, 1.1865234375, 1.19384765625] / [1.072265625, 1.13134765625, 1.173828125] |
-| 02-head-m3-normal | 5463 | 5463 | 2.19 | 2.19 | 20000 | True | [1.072265625, 1.13134765625, 1.173828125] / [0.787109375, 1.05419921875, 1.146484375] |
-| 03-trunk-m2-nonmoving | 2908 | 2908 | 2.84 | 2.84 | 20000 | True | [0.787109375, 1.05419921875, 1.146484375] / [0.6171875, 0.9833984375, 1.1181640625] |
-| 04-head-m2-nonmoving | 2909 | 2909 | 2.84 | 2.84 | 20000 | True | [0.6171875, 0.9833984375, 1.1181640625] / [0.658203125, 0.95458984375, 1.1005859375] |
-| 05-head-m3-nonmoving | 5465 | 5465 | 2.19 | 2.19 | 20000 | True | [0.658203125, 0.95458984375, 1.1005859375] / [0.478515625, 0.87939453125, 1.06982421875] |
-| 06-head-m2-normal | 2918 | 2918 | 2.85 | 2.85 | 20000 | True | [0.478515625, 0.87939453125, 1.06982421875] / [0.76318359375, 0.90966796875, 1.072265625] |
-| 07-trunk-m2-normal | 2908 | 2908 | 2.84 | 2.84 | 20000 | True | [0.76318359375, 0.90966796875, 1.072265625] / [0.919921875, 0.93603515625, 1.0751953125] |
-| 08-head-m3-normal | 5453 | 5453 | 2.18 | 2.18 | 20000 | True | [0.919921875, 0.93603515625, 1.0751953125] / [0.89599609375, 0.927734375, 1.0673828125] |
-| 09-head-m2-nonmoving | 2904 | 2904 | 2.84 | 2.84 | 20000 | True | [0.89599609375, 0.927734375, 1.0673828125] / [0.82080078125, 0.904296875, 1.0537109375] |
-| 10-trunk-m2-nonmoving | 2913 | 2913 | 2.85 | 2.85 | 20000 | True | [0.82080078125, 0.904296875, 1.0537109375] / [0.7109375, 0.86767578125, 1.03466796875] |
-| 11-head-m3-nonmoving | 5460 | 5460 | 2.18 | 2.18 | 20000 | True | [0.7109375, 0.86767578125, 1.03466796875] / [0.8154296875, 0.880859375, 1.0322265625] |
-| 12-trunk-m2-normal | 2903 | 2903 | 2.84 | 2.84 | 20000 | True | [0.8154296875, 0.880859375, 1.0322265625] / [0.7236328125, 0.84765625, 1.0126953125] |
-| 13-head-m2-normal | 2904 | 2904 | 2.84 | 2.84 | 20000 | True | [0.7236328125, 0.84765625, 1.0126953125] / [0.853515625, 0.86572265625, 1.009765625] |
-| 14-head-m3-normal | 5471 | 5471 | 2.19 | 2.19 | 20000 | True | [0.853515625, 0.86572265625, 1.009765625] / [0.6982421875, 0.828125, 0.99267578125] |
-| 15-trunk-m2-nonmoving | 2907 | 2907 | 2.84 | 2.84 | 20000 | True | [0.6982421875, 0.828125, 0.99267578125] / [0.65283203125, 0.80029296875, 0.97802734375] |
-| 16-head-m2-nonmoving | 2901 | 2901 | 2.84 | 2.84 | 20000 | True | [0.65283203125, 0.80029296875, 0.97802734375] / [0.76806640625, 0.82080078125, 0.97998046875] |
-| 17-head-m3-nonmoving | 5461 | 5461 | 2.18 | 2.18 | 20000 | True | [0.76806640625, 0.82080078125, 0.97998046875] / [0.6064453125, 0.77490234375, 0.95947265625] |
-| 18-head-m2-normal | 2895 | 2895 | 2.83 | 2.83 | 20000 | True | [0.6064453125, 0.77490234375, 0.95947265625] / [0.94189453125, 0.84521484375, 0.978515625] |
-| 19-trunk-m2-normal | 2899 | 2899 | 2.83 | 2.83 | 20000 | True | [0.94189453125, 0.84521484375, 0.978515625] / [0.8203125, 0.83056640625, 0.97021484375] |
-| 20-head-m3-normal | 5468 | 5468 | 2.19 | 2.19 | 20000 | True | [0.8203125, 0.83056640625, 0.97021484375] / [0.7607421875, 0.8154296875, 0.96142578125] |
-| 21-head-m2-nonmoving | 2908 | 2908 | 2.84 | 2.84 | 20000 | True | [0.7607421875, 0.8154296875, 0.96142578125] / [0.75146484375, 0.80517578125, 0.953125] |
-| 22-trunk-m2-nonmoving | 2904 | 2904 | 2.84 | 2.84 | 20000 | True | [0.75146484375, 0.80517578125, 0.953125] / [0.85888671875, 0.8271484375, 0.95556640625] |
-| 23-head-m3-nonmoving | 5463 | 5463 | 2.19 | 2.19 | 20000 | True | [0.85888671875, 0.8271484375, 0.95556640625] / [0.78515625, 0.81201171875, 0.94677734375] |
-| 24-trunk-m2-normal | 2912 | 2912 | 2.85 | 2.85 | 20000 | True | [0.78515625, 0.81201171875, 0.94677734375] / [0.58544921875, 0.76513671875, 0.92626953125] |
-| 25-head-m2-normal | 2913 | 2913 | 2.85 | 2.85 | 20000 | True | [0.58544921875, 0.76513671875, 0.92626953125] / [0.61767578125, 0.75830078125, 0.91748046875] |
-| 26-head-m3-normal | 5462 | 5462 | 2.18 | 2.18 | 20000 | True | [0.61767578125, 0.75830078125, 0.91748046875] / [0.54150390625, 0.7314453125, 0.90283203125] |
-| 27-trunk-m2-nonmoving | 2902 | 2902 | 2.84 | 2.84 | 20000 | True | [0.54150390625, 0.7314453125, 0.90283203125] / [0.740234375, 0.76171875, 0.90869140625] |
-| 28-head-m2-nonmoving | 2915 | 2915 | 2.85 | 2.85 | 20000 | True | [0.740234375, 0.76171875, 0.90869140625] / [0.970703125, 0.81982421875, 0.9228515625] |
-| 29-head-m3-nonmoving | 5480 | 5480 | 2.19 | 2.19 | 20000 | True | [0.970703125, 0.81982421875, 0.9228515625] / [0.935546875, 0.82275390625, 0.91943359375] |
+| 00-trunk-m2-normal | 2906 | 2906 | 2.84 | 2.84 | 20000 | True | [0.97216796875, 0.73828125, 0.55712890625] / [0.77392578125, 0.71875, 0.556640625] |
+| 01-head-m2-normal | 2893 | 2893 | 2.83 | 2.83 | 20000 | True | [0.77392578125, 0.71875, 0.556640625] / [0.83203125, 0.7353515625, 0.5673828125] |
+| 02-head-m3-normal | 5473 | 5473 | 2.19 | 2.19 | 20000 | True | [0.83203125, 0.7353515625, 0.5673828125] / [0.78369140625, 0.72998046875, 0.5703125] |
+| 03-trunk-m2-nonmoving | 2907 | 2907 | 2.84 | 2.84 | 20000 | True | [0.78369140625, 0.72998046875, 0.5703125] / [0.69580078125, 0.712890625, 0.56982421875] |
+| 04-head-m2-nonmoving | 2900 | 2900 | 2.83 | 2.83 | 20000 | True | [0.69580078125, 0.712890625, 0.56982421875] / [0.552734375, 0.67578125, 0.56103515625] |
+| 05-head-m3-nonmoving | 5465 | 5465 | 2.19 | 2.19 | 20000 | True | [0.552734375, 0.67578125, 0.56103515625] / [0.552734375, 0.65966796875, 0.5576171875] |
+| 06-head-m2-normal | 2910 | 2910 | 2.84 | 2.84 | 20000 | True | [0.552734375, 0.65966796875, 0.5576171875] / [0.67822265625, 0.681640625, 0.56787109375] |
+| 07-trunk-m2-normal | 2917 | 2917 | 2.85 | 2.85 | 20000 | True | [0.67822265625, 0.681640625, 0.56787109375] / [0.6201171875, 0.6689453125, 0.5673828125] |
+| 08-head-m3-normal | 5460 | 5460 | 2.18 | 2.18 | 20000 | True | [0.6201171875, 0.6689453125, 0.5673828125] / [0.70849609375, 0.6845703125, 0.5751953125] |
+| 09-head-m2-nonmoving | 2914 | 2914 | 2.85 | 2.85 | 20000 | True | [0.70849609375, 0.6845703125, 0.5751953125] / [0.52734375, 0.64013671875, 0.56298828125] |
+| 10-trunk-m2-nonmoving | 2908 | 2908 | 2.84 | 2.84 | 20000 | True | [0.52734375, 0.64013671875, 0.56298828125] / [0.6181640625, 0.6572265625, 0.57080078125] |
+| 11-head-m3-nonmoving | 5452 | 5452 | 2.18 | 2.18 | 20000 | True | [0.6181640625, 0.6572265625, 0.57080078125] / [0.5068359375, 0.62548828125, 0.56201171875] |
+| 12-trunk-m2-normal | 2902 | 2902 | 2.84 | 2.84 | 20000 | True | [0.5068359375, 0.62548828125, 0.56201171875] / [0.392578125, 0.58642578125, 0.5498046875] |
+| 13-head-m2-normal | 2890 | 2890 | 2.83 | 2.83 | 20000 | True | [0.392578125, 0.58642578125, 0.5498046875] / [0.52685546875, 0.6005859375, 0.5546875] |
+| 14-head-m3-normal | 5458 | 5458 | 2.18 | 2.18 | 20000 | True | [0.52685546875, 0.6005859375, 0.5546875] / [0.640625, 0.62353515625, 0.5634765625] |
+| 15-trunk-m2-nonmoving | 2909 | 2909 | 2.84 | 2.84 | 20000 | True | [0.640625, 0.62353515625, 0.5634765625] / [1.0556640625, 0.71630859375, 0.595703125] |
+| 16-head-m2-nonmoving | 2910 | 2910 | 2.84 | 2.84 | 20000 | True | [1.0556640625, 0.71630859375, 0.595703125] / [1.09521484375, 0.76025390625, 0.615234375] |
+| 17-head-m3-nonmoving | 5463 | 5463 | 2.19 | 2.19 | 20000 | True | [1.09521484375, 0.76025390625, 0.615234375] / [0.9912109375, 0.76806640625, 0.62353515625] |
+| 18-head-m2-normal | 2914 | 2914 | 2.85 | 2.85 | 20000 | True | [0.9912109375, 0.76806640625, 0.62353515625] / [0.8056640625, 0.74658203125, 0.623046875] |
+| 19-trunk-m2-normal | 2895 | 2895 | 2.83 | 2.83 | 20000 | True | [0.8056640625, 0.74658203125, 0.623046875] / [0.76318359375, 0.74365234375, 0.62841796875] |
+| 20-head-m3-normal | 5477 | 5477 | 2.19 | 2.19 | 20000 | True | [0.76318359375, 0.74365234375, 0.62841796875] / [0.7119140625, 0.7353515625, 0.6298828125] |
+| 21-head-m2-nonmoving | 2909 | 2909 | 2.84 | 2.84 | 20000 | True | [0.7119140625, 0.7353515625, 0.6298828125] / [0.78076171875, 0.7490234375, 0.63916015625] |
+| 22-trunk-m2-nonmoving | 2894 | 2894 | 2.83 | 2.83 | 20000 | True | [0.78076171875, 0.7490234375, 0.63916015625] / [0.810546875, 0.76220703125, 0.64697265625] |
+| 23-head-m3-nonmoving | 5463 | 5463 | 2.19 | 2.19 | 20000 | True | [0.810546875, 0.76220703125, 0.64697265625] / [0.70751953125, 0.73828125, 0.64111328125] |
+| 24-trunk-m2-normal | 2908 | 2908 | 2.84 | 2.84 | 20000 | True | [0.70751953125, 0.73828125, 0.64111328125] / [0.80126953125, 0.7490234375, 0.64697265625] |
+| 25-head-m2-normal | 2911 | 2911 | 2.85 | 2.85 | 20000 | True | [0.80126953125, 0.7490234375, 0.64697265625] / [0.81982421875, 0.7607421875, 0.65380859375] |
+| 26-head-m3-normal | 5463 | 5463 | 2.19 | 2.19 | 20000 | True | [0.81982421875, 0.7607421875, 0.65380859375] / [0.79931640625, 0.76708984375, 0.6591796875] |
+| 27-trunk-m2-nonmoving | 2911 | 2911 | 2.85 | 2.85 | 20000 | True | [0.79931640625, 0.76708984375, 0.6591796875] / [0.8994140625, 0.7939453125, 0.671875] |
+| 28-head-m2-nonmoving | 2899 | 2899 | 2.83 | 2.83 | 20000 | True | [0.8994140625, 0.7939453125, 0.671875] / [0.712890625, 0.767578125, 0.66748046875] |
+| 29-head-m3-nonmoving | 5471 | 5471 | 2.19 | 2.19 | 20000 | True | [0.712890625, 0.767578125, 0.66748046875] / [0.6220703125, 0.7412109375, 0.66162109375] |
 
 ## Exercised M2 features
 
@@ -290,25 +292,3 @@ Each native action waits until the probe observes the expected keyboard owner an
 Scheduling, GC, and waiting remain possible limiters. Separate profile mode records a WM eventlog and Linux process CPU snapshots for WM, river, and driver; it is excluded from these trials. These observations do not identify source-level hotspots. No collector winner is inferred from noisy distributions or an unproven limiter.
 
 The local compiler may differ from the repository's pinned GHC 9.10.3. Consult manifest.json for the exact compiler, build flags, platform, tools, trial order, and workloads. Reproduction commands and limitations are in docs/latency.md.
-
-## Campaign notes
-
-This section is written by hand. `run.py` generated everything above it.
-
-Trunk is main at `c2b7851`. Head is `a34e564`, the PR head when the campaign ran on 2026-11-09. Later commits on the branch add only this directory.
-
-No PR in the M3-07 stack changes `src/`, `src-core/`, or `src-public/`, so trunk and head run the same seki runtime code. The m2 comparison is therefore a noise floor, and this report claims no speedup and no regression. The seki-core libraries of both revisions have the same SHA-256. The seki-wire and layer-surface-fixture libraries differ only in their RUNPATH, which names each revision's worktree. Their `.text` sections have the same SHA-256.
-
-For each collector, the trunk and head medians of m2 pure p99 differ by at most 0.003 ms, manage p99 by at most 0.004 ms, and render p99 by at most 0.020 ms. Every trunk range overlaps the head range for the same metric. Head render p99 is higher under the normal collector and lower under the nonmoving collector. Both revisions produce the m2 pure checksum 18376811445310300599, which is also the checksum in the retained M2 report.
-
-All 30 trials meet every budget. The worst values are pure p99 0.058 ms, manage p99 0.289 ms, render p99 0.260 ms, and a 6.0 ms stop-the-world pause in `08-head-m3-normal`. The worst m2 pause is 3.7 ms in `19-trunk-m2-normal`. The M3-06 baseline exception applied to PR 46 only. This campaign did not need it.
-
-The host has no nix. The campaign used the GHC 9.10.3 bindist on `PATH`, the system river 0.5.0, wtype, and wlr-randr. River ran headless with `-no-xwayland` and `WLR_RENDERER=pixman`. A 5 s host monitor saw no other river process during the campaign, and its 1-minute load ranged from 0.43 to 1.40. The retained M2 report used GHC 9.6.7 on kernel 7.2.9, so this report makes no comparison with it.
-
-The m3 pauses are longer than the m2 pauses because the m3 WM keeps more live data. Its maximum residency is 4.4 to 8.7 MB, against 2.1 to 4.8 MB for m2, and a copying Gen 1 collection takes longer as live data grows. The longest nonmoving m3 pause, 4.2 ms in `05-head-m3-nonmoving`, is a nonmoving sync. The m3 WM also allocates 3.1 GB against 1.4 GB for m2. Its mutator time in `08-head-m3-normal` is 6.2 s, against 1.1 s in `06-head-m2-normal`. That cost was not profiled to source.
-
-The build worker's 10 ms subprocess poll bounds `recompile_completion`. A separate diagnostic run that is not part of this report sampled the WM's children from `/proc` every 0.2 ms. Each build runs three subprocesses. Each one ran for a median 2.5 ms and then waited a median 9.1 ms (8.1 to 9.8 ms) as a zombie until the worker's next poll reaped it. The next spawn followed 1.1 ms later. Those three cycles account for about 38 ms of the 40.5 ms median in that run.
-
-For the IPC commands, the subscriber line arrives a median 0.50 ms after the send. The probe sees the keyboard owner change a median 1.39 ms after a workspace command and 1.43 ms after a toggle. The fixture does not time the path between those two outcomes. It is inferred to be river's work from the WM's sequence to the keyboard enter event, plus the 0.1 ms probe poll. Single samples reach 14.6 ms for the IPC commands and 116 ms for one recompile. These were not traced. Every p99 stays at or below 2.4 ms for the IPC commands and 47.8 ms for recompiles.
-
-The full trial directories, the host log, and the limiter analysis stay in the ignored `artifacts/m3/M3-07/perf/` directory of the run host.

@@ -1,5 +1,5 @@
 {
-  "schema": 3,
+  "schema": 4,
   "workloads": [
     "m2",
     "m3"
@@ -12,7 +12,7 @@
   "renderer": "pixman",
   "revisions": {
     "trunk": {
-      "worktree": "/home/chir/.t3/worktrees/seki/pr2-trunk",
+      "worktree": "/tmp/m3-07-trunk",
       "build_command": [
         "cabal",
         "build",
@@ -25,19 +25,19 @@
       ],
       "build_provenance": "built by runner",
       "compiler": "9.10.3",
-      "git_sha": "c2b785132058f44242d23def90f7a242ba675da5",
+      "git_sha": "3c3037369eed28e5dc59528046afa4b7a1309cae",
       "dirty_paths": [],
-      "binary": "/home/chir/.t3/worktrees/seki/pr2-trunk/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/x/seki-latency/opt/build/seki-latency/seki-latency",
-      "binary_sha256": "a6a1f4e56a92abd297b482ac1a6abbe1f71ee7de194f9d8c9fe60d0536f2a8aa",
+      "binary": "/tmp/m3-07-trunk/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/x/seki-latency/opt/build/seki-latency/seki-latency",
+      "binary_sha256": "47c3269edab5dd4455b0e742b6764816c94d9e26aac31123795c24f5ebc5a354",
       "binary_reported_compiler": "ghc 9.10",
       "linked_seki_libraries": {
-        "/home/chir/.t3/worktrees/seki/pr2-trunk/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/layer-surface-fixture/opt/build/layer-surface-fixture/libHSseki-0.1.0.0-inplace-layer-surface-fixture-ghc9.10.3.so": "f4464b48e0cf70fdcb5bd50b7240548f26a57d6ff6b4adc3980ca6323583e964",
-        "/home/chir/.t3/worktrees/seki/pr2-trunk/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-wire/opt/build/seki-wire/libHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so": "1d8fa21bb5645a48eaefef25a024119d297eb5d3f2aabe9ea0572e0714bbd306",
-        "/home/chir/.t3/worktrees/seki/pr2-trunk/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-core/opt/build/seki-core/libHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so": "377a4cfc5d9d49f30fc13c75d5e7253c578c63046b94bd57bf8a9d447c1c6eba"
+        "/tmp/m3-07-trunk/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/layer-surface-fixture/opt/build/layer-surface-fixture/libHSseki-0.1.0.0-inplace-layer-surface-fixture-ghc9.10.3.so": "5b4398a6e2dbe724b2e8eee821d753d9c012931fff04545e1b6691d590a87703",
+        "/tmp/m3-07-trunk/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-wire/opt/build/seki-wire/libHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so": "2d86dec6f516cd264129458591f2c935e0180bf2fe6d6ac1b731ce3743c2343c",
+        "/tmp/m3-07-trunk/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-core/opt/build/seki-core/libHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so": "377a4cfc5d9d49f30fc13c75d5e7253c578c63046b94bd57bf8a9d447c1c6eba"
       }
     },
     "head": {
-      "worktree": "/home/chir/.t3/worktrees/seki/pr2-head",
+      "worktree": "/home/chir/.t3/worktrees/seki/t3-af48a817",
       "build_command": [
         "cabal",
         "build",
@@ -50,15 +50,15 @@
       ],
       "build_provenance": "built by runner",
       "compiler": "9.10.3",
-      "git_sha": "a34e564ab44bcba91537938065f6b0ab4c67e378",
+      "git_sha": "82a31cc298f9f5200788b2898a36dd248cfefdd0",
       "dirty_paths": [],
-      "binary": "/home/chir/.t3/worktrees/seki/pr2-head/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/x/seki-latency/opt/build/seki-latency/seki-latency",
-      "binary_sha256": "eee52dfc47adbd3664bd1038dfc2816b22ead5f2a42f6c18b6234268b96416dd",
+      "binary": "/home/chir/.t3/worktrees/seki/t3-af48a817/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/x/seki-latency/opt/build/seki-latency/seki-latency",
+      "binary_sha256": "9df3839cd62f480d8d7cbdb503595c9b61453660f4308b73bc4194db91248fb8",
       "binary_reported_compiler": "ghc 9.10",
       "linked_seki_libraries": {
-        "/home/chir/.t3/worktrees/seki/pr2-head/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/layer-surface-fixture/opt/build/layer-surface-fixture/libHSseki-0.1.0.0-inplace-layer-surface-fixture-ghc9.10.3.so": "bc6bee518f9f291cecb6f2a11eac2f82e5d217fe79e40feaa7ad4e1d6c6f7a53",
-        "/home/chir/.t3/worktrees/seki/pr2-head/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-wire/opt/build/seki-wire/libHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so": "3dcb4778707fc2946a81e09e33288962aaef48bd9b4289101370177326a41e12",
-        "/home/chir/.t3/worktrees/seki/pr2-head/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-core/opt/build/seki-core/libHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so": "377a4cfc5d9d49f30fc13c75d5e7253c578c63046b94bd57bf8a9d447c1c6eba"
+        "/home/chir/.t3/worktrees/seki/t3-af48a817/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/layer-surface-fixture/opt/build/layer-surface-fixture/libHSseki-0.1.0.0-inplace-layer-surface-fixture-ghc9.10.3.so": "01a441aace501b6441dd8e355a3992bdf57362c646afcd73c87c1fb5fdfec152",
+        "/home/chir/.t3/worktrees/seki/t3-af48a817/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-wire/opt/build/seki-wire/libHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so": "99ff735438a64e5bcdf1792439a464333c64967c8ee7569c799d2e380d14fba4",
+        "/home/chir/.t3/worktrees/seki/t3-af48a817/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-core/opt/build/seki-core/libHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so": "377a4cfc5d9d49f30fc13c75d5e7253c578c63046b94bd57bf8a9d447c1c6eba"
       }
     }
   },
@@ -69,13 +69,24 @@
       "reason": "invalid workload: m3"
     }
   ],
-  "runtime_sources": {
-    "paths": [
-      "src",
-      "src-core",
-      "src-public"
-    ],
-    "identical": true
+  "sources": {
+    "runtime": {
+      "paths": [
+        "src",
+        "src-core",
+        "src-public",
+        "src-generated",
+        "cbits"
+      ],
+      "identical": true
+    },
+    "driver": {
+      "paths": [
+        "tools/latency",
+        "integration/Seki/Integration/Harness.hs"
+      ],
+      "identical": false
+    }
   },
   "seed": 1909,
   "live_steps": {
@@ -99,15 +110,15 @@
       "workload": "m2",
       "collector": "normal",
       "load_before": [
-        1.16259765625,
-        1.1337890625,
-        1.17724609375
+        0.97216796875,
+        0.73828125,
+        0.55712890625
       ],
-      "started_utc": "2026-11-09T05:14:54Z",
+      "started_utc": "2026-11-09T09:47:36Z",
       "load_after": [
-        1.3974609375,
-        1.1865234375,
-        1.19384765625
+        0.77392578125,
+        0.71875,
+        0.556640625
       ]
     },
     {
@@ -116,15 +127,15 @@
       "workload": "m2",
       "collector": "normal",
       "load_before": [
-        1.3974609375,
-        1.1865234375,
-        1.19384765625
+        0.77392578125,
+        0.71875,
+        0.556640625
       ],
-      "started_utc": "2026-11-09T05:15:28Z",
+      "started_utc": "2026-11-09T09:48:09Z",
       "load_after": [
-        1.072265625,
-        1.13134765625,
-        1.173828125
+        0.83203125,
+        0.7353515625,
+        0.5673828125
       ]
     },
     {
@@ -133,15 +144,15 @@
       "workload": "m3",
       "collector": "normal",
       "load_before": [
-        1.072265625,
-        1.13134765625,
-        1.173828125
+        0.83203125,
+        0.7353515625,
+        0.5673828125
       ],
-      "started_utc": "2026-11-09T05:16:02Z",
+      "started_utc": "2026-11-09T09:48:43Z",
       "load_after": [
-        0.787109375,
-        1.05419921875,
-        1.146484375
+        0.78369140625,
+        0.72998046875,
+        0.5703125
       ]
     },
     {
@@ -150,15 +161,15 @@
       "workload": "m2",
       "collector": "nonmoving",
       "load_before": [
-        0.787109375,
-        1.05419921875,
-        1.146484375
+        0.78369140625,
+        0.72998046875,
+        0.5703125
       ],
-      "started_utc": "2026-11-09T05:16:31Z",
+      "started_utc": "2026-11-09T09:49:13Z",
       "load_after": [
-        0.6171875,
-        0.9833984375,
-        1.1181640625
+        0.69580078125,
+        0.712890625,
+        0.56982421875
       ]
     },
     {
@@ -167,15 +178,15 @@
       "workload": "m2",
       "collector": "nonmoving",
       "load_before": [
-        0.6171875,
-        0.9833984375,
-        1.1181640625
+        0.69580078125,
+        0.712890625,
+        0.56982421875
       ],
-      "started_utc": "2026-11-09T05:17:05Z",
+      "started_utc": "2026-11-09T09:49:46Z",
       "load_after": [
-        0.658203125,
-        0.95458984375,
-        1.1005859375
+        0.552734375,
+        0.67578125,
+        0.56103515625
       ]
     },
     {
@@ -184,15 +195,15 @@
       "workload": "m3",
       "collector": "nonmoving",
       "load_before": [
-        0.658203125,
-        0.95458984375,
-        1.1005859375
+        0.552734375,
+        0.67578125,
+        0.56103515625
       ],
-      "started_utc": "2026-11-09T05:17:39Z",
+      "started_utc": "2026-11-09T09:50:20Z",
       "load_after": [
-        0.478515625,
-        0.87939453125,
-        1.06982421875
+        0.552734375,
+        0.65966796875,
+        0.5576171875
       ]
     },
     {
@@ -201,15 +212,15 @@
       "workload": "m2",
       "collector": "normal",
       "load_before": [
-        0.478515625,
-        0.87939453125,
-        1.06982421875
+        0.552734375,
+        0.65966796875,
+        0.5576171875
       ],
-      "started_utc": "2026-11-09T05:18:09Z",
+      "started_utc": "2026-11-09T09:50:50Z",
       "load_after": [
-        0.76318359375,
-        0.90966796875,
-        1.072265625
+        0.67822265625,
+        0.681640625,
+        0.56787109375
       ]
     },
     {
@@ -218,15 +229,15 @@
       "workload": "m2",
       "collector": "normal",
       "load_before": [
-        0.76318359375,
-        0.90966796875,
-        1.072265625
+        0.67822265625,
+        0.681640625,
+        0.56787109375
       ],
-      "started_utc": "2026-11-09T05:18:43Z",
+      "started_utc": "2026-11-09T09:51:24Z",
       "load_after": [
-        0.919921875,
-        0.93603515625,
-        1.0751953125
+        0.6201171875,
+        0.6689453125,
+        0.5673828125
       ]
     },
     {
@@ -235,15 +246,15 @@
       "workload": "m3",
       "collector": "normal",
       "load_before": [
-        0.919921875,
-        0.93603515625,
-        1.0751953125
+        0.6201171875,
+        0.6689453125,
+        0.5673828125
       ],
-      "started_utc": "2026-11-09T05:19:17Z",
+      "started_utc": "2026-11-09T09:51:58Z",
       "load_after": [
-        0.89599609375,
-        0.927734375,
-        1.0673828125
+        0.70849609375,
+        0.6845703125,
+        0.5751953125
       ]
     },
     {
@@ -252,15 +263,15 @@
       "workload": "m2",
       "collector": "nonmoving",
       "load_before": [
-        0.89599609375,
-        0.927734375,
-        1.0673828125
+        0.70849609375,
+        0.6845703125,
+        0.5751953125
       ],
-      "started_utc": "2026-11-09T05:19:47Z",
+      "started_utc": "2026-11-09T09:52:28Z",
       "load_after": [
-        0.82080078125,
-        0.904296875,
-        1.0537109375
+        0.52734375,
+        0.64013671875,
+        0.56298828125
       ]
     },
     {
@@ -269,15 +280,15 @@
       "workload": "m2",
       "collector": "nonmoving",
       "load_before": [
-        0.82080078125,
-        0.904296875,
-        1.0537109375
+        0.52734375,
+        0.64013671875,
+        0.56298828125
       ],
-      "started_utc": "2026-11-09T05:20:21Z",
+      "started_utc": "2026-11-09T09:53:02Z",
       "load_after": [
-        0.7109375,
-        0.86767578125,
-        1.03466796875
+        0.6181640625,
+        0.6572265625,
+        0.57080078125
       ]
     },
     {
@@ -286,15 +297,15 @@
       "workload": "m3",
       "collector": "nonmoving",
       "load_before": [
-        0.7109375,
-        0.86767578125,
-        1.03466796875
+        0.6181640625,
+        0.6572265625,
+        0.57080078125
       ],
-      "started_utc": "2026-11-09T05:20:55Z",
+      "started_utc": "2026-11-09T09:53:36Z",
       "load_after": [
-        0.8154296875,
-        0.880859375,
-        1.0322265625
+        0.5068359375,
+        0.62548828125,
+        0.56201171875
       ]
     },
     {
@@ -303,15 +314,15 @@
       "workload": "m2",
       "collector": "normal",
       "load_before": [
-        0.8154296875,
-        0.880859375,
-        1.0322265625
+        0.5068359375,
+        0.62548828125,
+        0.56201171875
       ],
-      "started_utc": "2026-11-09T05:21:25Z",
+      "started_utc": "2026-11-09T09:54:05Z",
       "load_after": [
-        0.7236328125,
-        0.84765625,
-        1.0126953125
+        0.392578125,
+        0.58642578125,
+        0.5498046875
       ]
     },
     {
@@ -320,15 +331,15 @@
       "workload": "m2",
       "collector": "normal",
       "load_before": [
-        0.7236328125,
-        0.84765625,
-        1.0126953125
+        0.392578125,
+        0.58642578125,
+        0.5498046875
       ],
-      "started_utc": "2026-11-09T05:21:59Z",
+      "started_utc": "2026-11-09T09:54:39Z",
       "load_after": [
-        0.853515625,
-        0.86572265625,
-        1.009765625
+        0.52685546875,
+        0.6005859375,
+        0.5546875
       ]
     },
     {
@@ -337,15 +348,15 @@
       "workload": "m3",
       "collector": "normal",
       "load_before": [
-        0.853515625,
-        0.86572265625,
-        1.009765625
+        0.52685546875,
+        0.6005859375,
+        0.5546875
       ],
-      "started_utc": "2026-11-09T05:22:33Z",
+      "started_utc": "2026-11-09T09:55:13Z",
       "load_after": [
-        0.6982421875,
-        0.828125,
-        0.99267578125
+        0.640625,
+        0.62353515625,
+        0.5634765625
       ]
     },
     {
@@ -354,15 +365,15 @@
       "workload": "m2",
       "collector": "nonmoving",
       "load_before": [
-        0.6982421875,
-        0.828125,
-        0.99267578125
+        0.640625,
+        0.62353515625,
+        0.5634765625
       ],
-      "started_utc": "2026-11-09T05:23:03Z",
+      "started_utc": "2026-11-09T09:55:43Z",
       "load_after": [
-        0.65283203125,
-        0.80029296875,
-        0.97802734375
+        1.0556640625,
+        0.71630859375,
+        0.595703125
       ]
     },
     {
@@ -371,15 +382,15 @@
       "workload": "m2",
       "collector": "nonmoving",
       "load_before": [
-        0.65283203125,
-        0.80029296875,
-        0.97802734375
+        1.0556640625,
+        0.71630859375,
+        0.595703125
       ],
-      "started_utc": "2026-11-09T05:23:37Z",
+      "started_utc": "2026-11-09T09:56:17Z",
       "load_after": [
-        0.76806640625,
-        0.82080078125,
-        0.97998046875
+        1.09521484375,
+        0.76025390625,
+        0.615234375
       ]
     },
     {
@@ -388,15 +399,15 @@
       "workload": "m3",
       "collector": "nonmoving",
       "load_before": [
-        0.76806640625,
-        0.82080078125,
-        0.97998046875
+        1.09521484375,
+        0.76025390625,
+        0.615234375
       ],
-      "started_utc": "2026-11-09T05:24:11Z",
+      "started_utc": "2026-11-09T09:56:51Z",
       "load_after": [
-        0.6064453125,
-        0.77490234375,
-        0.95947265625
+        0.9912109375,
+        0.76806640625,
+        0.62353515625
       ]
     },
     {
@@ -405,15 +416,15 @@
       "workload": "m2",
       "collector": "normal",
       "load_before": [
-        0.6064453125,
-        0.77490234375,
-        0.95947265625
+        0.9912109375,
+        0.76806640625,
+        0.62353515625
       ],
-      "started_utc": "2026-11-09T05:24:40Z",
+      "started_utc": "2026-11-09T09:57:21Z",
       "load_after": [
-        0.94189453125,
-        0.84521484375,
-        0.978515625
+        0.8056640625,
+        0.74658203125,
+        0.623046875
       ]
     },
     {
@@ -422,15 +433,15 @@
       "workload": "m2",
       "collector": "normal",
       "load_before": [
-        0.94189453125,
-        0.84521484375,
-        0.978515625
+        0.8056640625,
+        0.74658203125,
+        0.623046875
       ],
-      "started_utc": "2026-11-09T05:25:13Z",
+      "started_utc": "2026-11-09T09:57:55Z",
       "load_after": [
-        0.8203125,
-        0.83056640625,
-        0.97021484375
+        0.76318359375,
+        0.74365234375,
+        0.62841796875
       ]
     },
     {
@@ -439,15 +450,15 @@
       "workload": "m3",
       "collector": "normal",
       "load_before": [
-        0.8203125,
-        0.83056640625,
-        0.97021484375
+        0.76318359375,
+        0.74365234375,
+        0.62841796875
       ],
-      "started_utc": "2026-11-09T05:25:47Z",
+      "started_utc": "2026-11-09T09:58:29Z",
       "load_after": [
-        0.7607421875,
-        0.8154296875,
-        0.96142578125
+        0.7119140625,
+        0.7353515625,
+        0.6298828125
       ]
     },
     {
@@ -456,15 +467,15 @@
       "workload": "m2",
       "collector": "nonmoving",
       "load_before": [
-        0.7607421875,
-        0.8154296875,
-        0.96142578125
+        0.7119140625,
+        0.7353515625,
+        0.6298828125
       ],
-      "started_utc": "2026-11-09T05:26:16Z",
+      "started_utc": "2026-11-09T09:58:59Z",
       "load_after": [
-        0.75146484375,
-        0.80517578125,
-        0.953125
+        0.78076171875,
+        0.7490234375,
+        0.63916015625
       ]
     },
     {
@@ -473,15 +484,15 @@
       "workload": "m2",
       "collector": "nonmoving",
       "load_before": [
-        0.75146484375,
-        0.80517578125,
-        0.953125
+        0.78076171875,
+        0.7490234375,
+        0.63916015625
       ],
-      "started_utc": "2026-11-09T05:26:50Z",
+      "started_utc": "2026-11-09T09:59:33Z",
       "load_after": [
-        0.85888671875,
-        0.8271484375,
-        0.95556640625
+        0.810546875,
+        0.76220703125,
+        0.64697265625
       ]
     },
     {
@@ -490,15 +501,15 @@
       "workload": "m3",
       "collector": "nonmoving",
       "load_before": [
-        0.85888671875,
-        0.8271484375,
-        0.95556640625
+        0.810546875,
+        0.76220703125,
+        0.64697265625
       ],
-      "started_utc": "2026-11-09T05:27:24Z",
+      "started_utc": "2026-11-09T10:00:07Z",
       "load_after": [
-        0.78515625,
-        0.81201171875,
-        0.94677734375
+        0.70751953125,
+        0.73828125,
+        0.64111328125
       ]
     },
     {
@@ -507,15 +518,15 @@
       "workload": "m2",
       "collector": "normal",
       "load_before": [
-        0.78515625,
-        0.81201171875,
-        0.94677734375
+        0.70751953125,
+        0.73828125,
+        0.64111328125
       ],
-      "started_utc": "2026-11-09T05:27:54Z",
+      "started_utc": "2026-11-09T10:00:37Z",
       "load_after": [
-        0.58544921875,
-        0.76513671875,
-        0.92626953125
+        0.80126953125,
+        0.7490234375,
+        0.64697265625
       ]
     },
     {
@@ -524,15 +535,15 @@
       "workload": "m2",
       "collector": "normal",
       "load_before": [
-        0.58544921875,
-        0.76513671875,
-        0.92626953125
+        0.80126953125,
+        0.7490234375,
+        0.64697265625
       ],
-      "started_utc": "2026-11-09T05:28:28Z",
+      "started_utc": "2026-11-09T10:01:11Z",
       "load_after": [
-        0.61767578125,
-        0.75830078125,
-        0.91748046875
+        0.81982421875,
+        0.7607421875,
+        0.65380859375
       ]
     },
     {
@@ -541,15 +552,15 @@
       "workload": "m3",
       "collector": "normal",
       "load_before": [
-        0.61767578125,
-        0.75830078125,
-        0.91748046875
+        0.81982421875,
+        0.7607421875,
+        0.65380859375
       ],
-      "started_utc": "2026-11-09T05:29:02Z",
+      "started_utc": "2026-11-09T10:01:45Z",
       "load_after": [
-        0.54150390625,
-        0.7314453125,
-        0.90283203125
+        0.79931640625,
+        0.76708984375,
+        0.6591796875
       ]
     },
     {
@@ -558,15 +569,15 @@
       "workload": "m2",
       "collector": "nonmoving",
       "load_before": [
-        0.54150390625,
-        0.7314453125,
-        0.90283203125
+        0.79931640625,
+        0.76708984375,
+        0.6591796875
       ],
-      "started_utc": "2026-11-09T05:29:32Z",
+      "started_utc": "2026-11-09T10:02:15Z",
       "load_after": [
-        0.740234375,
-        0.76171875,
-        0.90869140625
+        0.8994140625,
+        0.7939453125,
+        0.671875
       ]
     },
     {
@@ -575,15 +586,15 @@
       "workload": "m2",
       "collector": "nonmoving",
       "load_before": [
-        0.740234375,
-        0.76171875,
-        0.90869140625
+        0.8994140625,
+        0.7939453125,
+        0.671875
       ],
-      "started_utc": "2026-11-09T05:30:05Z",
+      "started_utc": "2026-11-09T10:02:50Z",
       "load_after": [
-        0.970703125,
-        0.81982421875,
-        0.9228515625
+        0.712890625,
+        0.767578125,
+        0.66748046875
       ]
     },
     {
@@ -592,15 +603,15 @@
       "workload": "m3",
       "collector": "nonmoving",
       "load_before": [
-        0.970703125,
-        0.81982421875,
-        0.9228515625
+        0.712890625,
+        0.767578125,
+        0.66748046875
       ],
-      "started_utc": "2026-11-09T05:30:39Z",
+      "started_utc": "2026-11-09T10:03:24Z",
       "load_after": [
-        0.935546875,
-        0.82275390625,
-        0.91943359375
+        0.6220703125,
+        0.7412109375,
+        0.66162109375
       ]
     }
   ]
