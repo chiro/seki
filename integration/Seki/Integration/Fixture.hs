@@ -15,6 +15,7 @@ module Seki.Integration.Fixture (
   withInputFixture,
   saveCapture,
   saveOutputCapture,
+  png,
   withHeldLogo,
   withHeldLogoIn,
   windowRequests,

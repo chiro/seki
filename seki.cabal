@@ -412,7 +412,7 @@ test-suite seki-integration
   hs-source-dirs: integration
   main-is:        Main.hs
   ghc-options:    -threaded
-  build-tool-depends: seki:seki, seki:seki-default, seki:seki-reference-config, seki:sekictl
+  build-tool-depends: seki:seki, seki:seki-default, seki:seki-reference-config, seki:seki-daily-config, seki:sekictl
   other-modules:
     Seki.Integration.Fixture
     Seki.Integration.Harness
@@ -426,6 +426,7 @@ test-suite seki-integration
     Seki.Integration.Restart
     Seki.Integration.Scratchpad
     Seki.Integration.ScratchpadRestore
+    Seki.Integration.Daily
   build-depends:
     containers >=0.7 && <0.8,
     seki:layer-surface-fixture,

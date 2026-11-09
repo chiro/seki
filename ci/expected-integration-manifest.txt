@@ -59,3 +59,4 @@ m3-scratchpad-restart=passed
 m3-scratchpad-config-restore=passed
 m3-scratchpad-restore-missing-float=passed
 m3-scratchpad-sink-restart=passed
+m3-daily-two-output=passed
