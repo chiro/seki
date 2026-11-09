@@ -121,19 +121,29 @@ data Model = Model
   deriving (Eq, Show)
 
 initialModel :: WorkloadName -> Model
-initialModel name = Model name newestUnpadded True Half Nothing (reverse (filter (isDialog name) indices)) (any (isPad name) indices) 0
+initialModel name =
+  Model
+    { modelWorkload = name
+    , modelFocus = newestNonPad
+    , modelShown = True
+    , modelRatio = Half
+    , modelFullscreen = Nothing
+    , modelRaise = reverse (filter (isDialog name) indices)
+    , modelPadShown = any (isPad name) indices
+    , modelFinishedBuilds = 0
+    }
  where
   indices = [0 .. length (windowRoles name) - 1]
-  newestUnpadded = length (takeWhile (isPad name) indices)
+  newestNonPad = length (takeWhile (isPad name) indices)
 
 roleAt :: WorkloadName -> Int -> WindowRole
 roleAt name i = let roles = windowRoles name in roles !! (length roles - 1 - i)
 
 isDialog :: WorkloadName -> Int -> Bool
-isDialog name i = case roleAt name i of DialogRole{} -> True; _ -> False
+isDialog name i = case roleAt name i of DialogRole{} -> True; TileRole _ -> False; PadRole _ -> False
 
 isPad :: WorkloadName -> Int -> Bool
-isPad name i = case roleAt name i of PadRole _ -> True; _ -> False
+isPad name i = case roleAt name i of PadRole _ -> True; TileRole _ -> False; DialogRole{} -> False
 
 -- | Codes 0 to 3 keep the meaning of the retained M1 action codes.
 data Step

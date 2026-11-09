@@ -37,13 +37,18 @@ initialState name count = withPad (fst (drainCore idHook [RunAction (windows (S.
  where
   attached = overWorkspaces (\ws -> foldl' (flip (manageWindow id)) (addOutput (S.OutputId 1) ws) [S.WindowId (fromIntegral i) | i <- [1 .. count]]) (either (error . show) id (newCoreState layout ["1", "2", "3"]))
   withPad st = case name of
+    M1 -> st
+    M2 -> st
     M3 -> st{coreScratchpadDefinitions = Map.singleton padName (padName, padGeometry), coreScratchpads = Map.singleton padName (HiddenPad (S.WindowId (fromIntegral count + 1)) padGeometry)}
-    _ -> st
   padGeometry = S.FloatAt (OutputRect (either (error . show) id (mkSize 960 540 >>= mkRect (Point 480 270))))
 
 planParents :: WorkloadName -> Int -> Map.Map S.WindowId (Maybe S.WindowId)
-planParents M1 _ = Map.empty
-planParents _ count = Map.fromList [(S.WindowId (fromIntegral w), Just (S.WindowId 1)) | w <- [count - 1, count]]
+planParents name count = case name of
+  M1 -> Map.empty
+  M2 -> dialogs
+  M3 -> dialogs
+ where
+  dialogs = Map.fromList [(S.WindowId (fromIntegral w), Just (S.WindowId 1)) | w <- [count - 1, count]]
 
 planFor :: WorkloadName -> Int -> CoreState String BenchLayout -> DesiredScene
 planFor name count st = planScene defaultSceneStyle st (Map.singleton (S.OutputId 1) (OutputArea area area)) (planParents name count)
