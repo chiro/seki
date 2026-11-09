@@ -54,7 +54,7 @@ import Data.Bits (complement, (.&.))
 import Data.Bool (bool)
 import Data.ByteString.Lazy.Char8 qualified as Lazy
 import Data.Foldable (find)
-import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, mapMaybe)
 import Data.Word (Word32)
@@ -165,19 +165,14 @@ policyBuildStatus policy = readIORef (policyBuild policy) >>= traverse buildStat
 policyValidatedTarget :: Policy i l -> IO (Maybe ValidatedTarget)
 policyValidatedTarget policy = readIORef (policyBuild policy) >>= maybe (pure Nothing) readyTarget
 
--- Other threads write the build and observer cells while the event loop
--- runs, so they stay out of the state cell, whose read, step, and write
--- would drop such a write.
 data Policy i l = Policy
   { policyConfig :: PolicyConfig i l
   , policyState :: IORef (PolicyState i l)
-  -- ^ Only the event-loop thread writes it.
   , policyIngress :: ExternalIngress (ExternalInput i l)
   , policyBuild :: IORef (Maybe BuildSession)
   , policyObserver :: IORef (Integer -> CoreState i l -> RiverRuntimeSnapshot -> IO ())
   }
 
--- | What the event loop carries from one callback or sequence to the next.
 data PolicyState i l = PolicyState
   { stateCore :: CoreState i l
   , stateReconcile :: ReconcileState
@@ -193,7 +188,6 @@ data PolicyState i l = PolicyState
   -- processes stop, so the inventory at the session's end has none.
   , stateLastInput :: Maybe RiverInputSnapshot
   , stateRevision :: !Integer
-  -- ^ Strict, so a receipt never holds a thunk of the previous state.
   }
 
 -- | Validate tags, binding identities and modifiers, border width, and premultiplied colors before connecting.
@@ -291,7 +285,7 @@ policyRuntimeHandlers policy =
   startOp origin kind seat window view =
     StartOp (OpRequest seat window kind origin (drainShownBox view window) (sizeBounds window (drainInventory view)))
   opInput seat input view = OpInput (seatIdOf seat) (drainRiverOp view (seatIdOf seat)) input
-  update = modifyIORef' (policyState policy)
+  update f = atomicModifyIORef' (policyState policy) (\st -> (f st, ()))
   enqueueWith = update . queueEvent
   enqueue = enqueueWith . const
 
@@ -307,12 +301,11 @@ outputArrived o st = case statePendingStartup st of
 
 prepareManagePlan :: (Eq i, Show i, LayoutClass l) => Policy i l -> RiverRuntimeSnapshot -> IO (ManageM ManageOutcome)
 prepareManagePlan policy snapshot = do
-  stored <- readIORef (policyState policy)
   external <- drainExternal (policyIngress policy)
   build <- readIORef (policyBuild policy)
-  let (next, step) = stepManage config (isJust build) snapshot [action | ExternalInput action _ <- external] stored
-      revision = stateRevision next
-  writeIORef (policyState policy) $! next
+  (next, step) <- atomicModifyIORef' (policyState policy) $ \stored ->
+    let result@(next, _) = stepManage config (isJust build) snapshot [action | ExternalInput action _ <- external] stored in (next, result)
+  let revision = stateRevision next
   mapM_ (runEffect build) (stepEffects step)
   observer <- readIORef (policyObserver policy)
   observer revision (stateCore next) snapshot
@@ -465,10 +458,9 @@ parseResizeEdges (River.RiverWindowV1EdgesFlags bits)
 
 prepareRenderPlan :: Policy i l -> RiverRuntimeSnapshot -> IO (RenderM RenderOutcome)
 prepareRenderPlan policy snapshot = do
-  stored <- readIORef (policyState policy)
-  let (next, plan) = reconcileRender (policySceneStyle (policyConfig policy)) (stateScene stored) snapshot (stateReconcile stored)
-  writeIORef (policyState policy) $! stored{stateReconcile = next}
-  pure plan
+  atomicModifyIORef' (policyState policy) $ \stored ->
+    let (next, plan) = reconcileRender (policySceneStyle (policyConfig policy)) (stateScene stored) snapshot (stateReconcile stored)
+     in (stored{stateReconcile = next}, plan)
 
 readPolicyState :: Policy i l -> IO (CoreState i l)
 readPolicyState policy = stateCore <$> readIORef (policyState policy)
