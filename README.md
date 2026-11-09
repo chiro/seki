@@ -37,8 +37,9 @@ implementation provides:
 - a JSON Lines IPC socket and the `sekictl` client, which publish bar state
   and accept workspace, layout, spawn, scratchpad, and recompile commands,
   with a Waybar module in `examples/waybar`;
-- ordered input rules for keyboards, pointers, and touchpads, with each
-  device's setting results and keyboard layout reported over IPC;
+- ordered input rules matched by device name and type, such as a keyboard or
+  a touchpad pointer, with each device's setting results and keyboard layout
+  reported over IPC;
 - named scratchpads that hide outside workspace navigation and survive
   restarts;
 - asynchronous configuration builds through the installed `seki` launcher,
