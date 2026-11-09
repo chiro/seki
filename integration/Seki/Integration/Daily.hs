@@ -75,9 +75,7 @@ dailyOptions outputs = DailyOptions outputs False [] (Around (\_ _ use -> use (A
 data DailySession = DailySession
   { sessionName :: String
   , sessionRiver :: NestedRiver
-  , sessionProcess :: ManagedProcess
   , sessionPid :: Int
-  , sessionEnvironment :: [(String, String)]
   , sessionHome :: FilePath
   , sessionLaunchLog :: FilePath
   , sessionKeymap :: FilePath
@@ -117,16 +115,16 @@ withDailySession name options body = do
               <> additionEnvironment additions
           -- Without XDG_CONFIG_HOME the daily executable takes the keymap from $HOME/.config, as on the maintainer's desktop.
           environment = overrides <> filter ((`notElem` ("XDG_CONFIG_HOME" : map fst overrides)) . fst) base
-          socket = riverSocket nested
+          surface = riverSocket nested
           count = optionOutputs options
       bracket (startManagedProcess name environment (proc executable [])) stopManagedProcess $ \process ->
         ( do
             pid <- managedProcessPid process >>= maybe (failIntegration (name <> ": the daily process has no pid")) pure
-            outputs <- sort . map snd <$> waitUntil "seki shows every output" assertionTimeoutMicroseconds (outputNames socket) ((== count) . length)
+            outputs <- sort . map snd <$> waitUntil "seki shows every output" assertionTimeoutMicroseconds (outputNames surface) ((== count) . length)
             forM_ (zip [0 :: Int ..] outputs) $ \(index, output) ->
               void (runProcessCapture base "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "800x600", "--pos", show (index * 800) <> ",0", "--scale", "1", "--transform", "normal"])
-            withKeyboard base . withProbe socket $ \probe -> do
-              let session = DailySession name nested process pid environment home launches keymap cli additions probe
+            withKeyboard base . withProbe surface $ \probe -> do
+              let session = DailySession name nested pid home launches keymap cli additions probe
               _ <- waitSnapshot session "IPC shows a workspace on every output" (\s -> length (snapOutputs s) == count && all (isJust . outputWorkspace) (snapOutputs s))
               startupRanOnce session "each startup command runs once after the first output"
               result <- body session
@@ -260,13 +258,8 @@ barShows stream phase expected = do
 lastOf :: [a] -> Maybe a
 lastOf = listToMaybe . reverse
 
--- | The snapshot fields a bar renders.
-data BarView = BarView
-  { barOutputs :: [(Maybe Text, Maybe Text)]
-  , barWorkspaces :: [WorkspaceView]
-  , barTitle :: Maybe Text
-  , barPads :: [(Text, Text)]
-  }
+-- | The snapshot fields a bar renders: outputs with their workspaces, every workspace, the focused title, and the scratchpads.
+data BarView = BarView [(Maybe Text, Maybe Text)] [WorkspaceView] (Maybe Text) [(Text, Text)]
   deriving (Eq)
 
 -- | Outputs, then every workspace that is not empty, hidden, and Tall, as a bar would draw them.
@@ -405,11 +398,11 @@ buildHandover = withDailySession "m3-daily-build" (dailyOptions 2){optionAround 
   initial <- waitSnapshot session "term and emacs are shown on the two outputs" (\s -> all (\tag -> any ((== Just tag) . outputWorkspace) (snapOutputs s)) ["term", "emacs"])
   termOutput <- shownOn initial "term"
   emacsOutput <- shownOn initial "emacs"
-  let windows pads = bar [(termOutput, "term"), (emacsOutput, "emacs")] [workspace "term" [Occupied, Visible, Focused] "Tall", workspace "emacs" [Occupied, Visible] "Tall"] (Just "daily build pad") pads
+  let windows title pads = bar [(termOutput, "term"), (emacsOutput, "emacs")] [workspace "term" [Occupied, Visible, Focused] "Tall", workspace "emacs" [Occupied, Visible] "Tall"] title pads
       restored phase = do
         picture session termOutput (phase <> ": the pad covers term") [Paint Green (Box 1 1 798 598) True]
         picture session emacsOutput (phase <> ": the Emacs window covers its output fullscreen") [Paint Blue (Box 0 0 800 600) False]
-        barShows stream (phase <> ": the bar shows the pad and both workspaces") (windows [("term", "shown")])
+        barShows stream (phase <> ": the bar shows the pad and both workspaces") (windows (Just "daily build pad") [("term", "shown")])
   _ <- openWindow probe Blue
   editor <- openWindowWith probe (windowSpec Blue){specAppId = CustomAppId "Emacs"}
   requestFullscreen probe editor
@@ -443,7 +436,7 @@ buildHandover = withDailySession "m3-daily-build" (dailyOptions 2){optionAround 
   capture session "daily-build"
   key session ["grave"]
   picture session termOutput "the hidden pad uncovers term's own tile" [Paint Blue (Box 1 1 798 598) True]
-  barShows stream "the restored pad hides with Mod-grave" (windows [("term", "hidden")]){barTitle = Nothing}
+  barShows stream "the restored pad hides with Mod-grave" (windows Nothing [("term", "hidden")])
   capture session "daily-build-pad-hidden"
   runInputDriver (clientEnvironment session) ["-k", "XF86AudioRaiseVolume"]
   launchedOnce session "XF86AudioRaiseVolume works in the new image" "amixer -D pulse sset Master 2%+"
@@ -545,7 +538,8 @@ hotplug = do
       tile <- openWindow probe Green
       editor <- openWindowWith probe (windowSpec Green){specAppId = CustomAppId "Emacs"}
       let emacsX = if emacsOutput > termOutput then 800 else 0 :: Word32
-          shows' pads focused = bar [(termOutput, "term"), (emacsOutput, "emacs")] [workspace "term" ([Occupied, Visible] <> [Focused | focused == "term"]) "Tall", workspace "emacs" ([Occupied, Visible] <> [Focused | focused == "emacs"]) "Tall"] Nothing pads
+          bothShown :: [(Text, Text)] -> Text -> BarView
+          bothShown pads focused = bar [(termOutput, "term"), (emacsOutput, "emacs")] [workspace "term" ([Occupied, Visible] <> [Focused | focused == "term"]) "Tall", workspace "emacs" ([Occupied, Visible] <> [Focused | focused == "emacs"]) "Tall"] Nothing pads
           remaining shown = bar [(termOutput, shown)] [workspace "term" ([Occupied] <> [Visible | shown == "term"] <> [Focused | shown == "term"]) "Tall", workspace "emacs" ([Occupied] <> [Visible | shown == "emacs"] <> [Focused | shown == "emacs"]) "Tall"] Nothing [("term", "shown")]
       click (sessionSocket session) (1600, 600) (emacsX + 400, 300)
       waitFocus session "a click focuses the Emacs window on the other output" (Just editor)
@@ -555,7 +549,7 @@ hotplug = do
       waitFocus session "the shown pad has keyboard focus" (Just pad)
       picture session emacsOutput "the pad shows on emacs's output" [Paint Blue (Box 1 1 798 598) True]
       picture session termOutput "term keeps its tile on the other output" [Paint Green (Box 1 1 798 598) False]
-      snapshotShows session "the pad is shown on emacs" (shows' [("term", "shown")] "emacs")
+      snapshotShows session "the pad is shown on emacs" (bothShown [("term", "shown")] "emacs")
       capture session "daily-hotplug-before"
       randr ["--output", Text.unpack emacsOutput, "--off"]
       snapshotShows session "the removed output's workspace returns to hidden with the pad still shown on it" (remaining "term")
@@ -570,7 +564,7 @@ hotplug = do
       key session ["1"]
       snapshotShows session "Mod-1 shows term again" (remaining "term")
       randr ["--output", Text.unpack emacsOutput, "--on", "--custom-mode", "800x600", "--pos", show emacsX <> ",0"]
-      snapshotShows session "the re-added output shows emacs again" (shows' [("term", "shown")] "term")
+      snapshotShows session "the re-added output shows emacs again" (bothShown [("term", "shown")] "term")
       picture session emacsOutput "the pad is back inside the re-added output" [Paint Blue (Box 1 1 798 598) False]
       picture session termOutput "term keeps the focused tile" [Paint Green (Box 1 1 798 598) True]
       capture session "daily-hotplug"
