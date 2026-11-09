@@ -91,14 +91,11 @@ def manifest_workload(manifest):
     return manifest["workload"] if manifest["schema"] >= 2 else "m1"
 
 
-def manifest_revisions(manifest):
-    if manifest["schema"] >= 3:
-        return manifest["revisions"]
-    return {"local": {"git_sha": None, "compiler": manifest["compiler"], "binary_sha256": manifest["binary_sha256"], "linked_seki_libraries": {}}}
+def reversed_on_odd_rounds(names, index):
+    return names[::-1] if index % 2 else names
 
 
 def trial_plan(rounds, revisions, workloads, supported):
-    """Each round runs both collectors; each workload runs at every revision that supports it, and odd rounds reverse who goes first."""
     for workload in workloads:
         require(any(workload in supported[name] for name in revisions), f"no revision supports workload {workload}")
     order = []
@@ -106,12 +103,11 @@ def trial_plan(rounds, revisions, workloads, supported):
         for collector in ("normal", "nonmoving"):
             for workload in workloads:
                 names = [name for name in revisions if workload in supported[name]]
-                order += [(name, workload, collector) for name in (names[::-1] if index % 2 else names)]
+                order += [(name, workload, collector) for name in reversed_on_odd_rounds(names, index)]
     return order
 
 
 def workload_support(returncode, output):
-    """None when a binary's pure probe ran; otherwise the reason it rejected the workload."""
     if returncode == 0:
         return None
     match = re.search(r"invalid workload: \S+", output)
@@ -187,7 +183,7 @@ def budget_section(trials):
     lines = ["", "## Budgets", "",
              "Budgets are pure p99 < 2 ms, manage and render sequence p99 < 10 ms, and maximum observed WM stop-the-world pause < 10 ms. "
              "An m3 trial must also meet each command target that names one."]
-    if any("revision" in t for t in trials):
+    if all("revision" in t for t in trials):
         lines += ["", "| Trial | Revision | Workload | Collector | Pure p99 | Manage p99 | Render p99 | Max STW | Endpoint p99 | Pass |",
                   "|---|---|---|---|---:|---:|---:|---:|---|---|"]
         for t in trials:
@@ -201,11 +197,11 @@ def budget_section(trials):
     return lines
 
 
-def revision_section(manifest, revisions, checksums):
+def revision_section(manifest, checksums):
     lines = ["", "## Revisions", "",
              "| Revision | Commit | Compiler | Binary SHA-256 | Linked seki libraries (SHA-256) |", "|---|---|---|---|---|"]
-    for name, r in revisions.items():
-        libraries = "<br>".join(f"`{path}` `{digest}`" for path, digest in r["linked_seki_libraries"].items()) or "not recorded"
+    for name, r in manifest["revisions"].items():
+        libraries = "<br>".join(f"`{Path(path).name}` `{digest}`" for path, digest in r["linked_seki_libraries"].items()) or "not recorded"
         lines.append(f"| {name} | `{r['git_sha']}` | {r['compiler']} | `{r['binary_sha256']}` | {libraries} |")
     sources = manifest["runtime_sources"]
     lines.append("")
@@ -250,7 +246,6 @@ def report(directory):
     directory = Path(directory)
     manifest = read(directory / "manifest.json")
     campaign = manifest["schema"] >= 3
-    revisions = manifest_revisions(manifest)
     trials = []
     for item in manifest["trials"]:
         workload = item["workload"] if campaign else manifest_workload(manifest)
@@ -277,7 +272,7 @@ def report(directory):
         workload = manifest_workload(manifest)
         lines += [f"Trials per collector: {per_group}. Fewer than five is exploratory evidence only.",
                   f"Machine: {manifest['machine']}. Compiler: {manifest['compiler']}. Binary SHA-256: `{manifest['binary_sha256']}`.",
-                  f"Seed {manifest['seed']}; workload {workload}: {WORKLOADS[workload]['text']}; {manifest['live_steps']} acknowledged actions after 24 warmup actions."]
+                  f"Workload {workload}: {WORKLOADS[workload]['text']}; {manifest['live_steps']} acknowledged actions after 24 warmup actions."]
     lines += [f"Seed {manifest['seed']}. Pure mode uses {manifest['pure_windows']} windows, {manifest['pure_steps']} events, and 128 warmup events.", "",
               "| Workload | Revision | Collector | Metric | Trials | Median | Min | Max |", "|---|---|---|---|---:|---:|---:|---:|"]
     for (workload, revision, collector), group in groups.items():
@@ -287,7 +282,7 @@ def report(directory):
             lines.append(f"| {workload} | {revision} | {collector} | {name} | {len(values)} | {statistics.median(values):.4f} | {min(values):.4f} | {max(values):.4f} |")
     lines += budget_section(trials)
     if campaign:
-        lines += revision_section(manifest, revisions, checksums)
+        lines += revision_section(manifest, checksums)
     lines += endpoint_section(trials)
     lines += ["", "## Work and validity", "",
               "Sequences per action count the manage and render sequences inside the interval for each measured action. A rise against the same workload points at repeated proposals.", "",
@@ -363,7 +358,6 @@ def output(command, cwd=None, stderr=None):
 
 
 def prepare_revision(worktree, binary, compiler, build_flags):
-    """Build in the revision's own worktree, so its binary loads that worktree's seki libraries."""
     record = {"worktree": str(worktree) if worktree else None}
     if binary is None:
         subprocess.run(["cabal", "build", "seki-latency", *build_flags], cwd=worktree, check=True)

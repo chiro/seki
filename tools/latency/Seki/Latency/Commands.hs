@@ -1,11 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | The M3 driver's IPC side: one connection sends commands and reads their
-receipts, and a subscriber thread stamps every published snapshot as it
-arrives.
--}
 module Seki.Latency.Commands (
   Commands,
+  Receipt (..),
   Published (..),
   BuildReport (..),
   withCommands,
@@ -43,6 +40,12 @@ data Published = Published
   }
   deriving (Eq, Show)
 
+data Receipt = Receipt
+  { sentAt :: Word64
+  , appliedRevision :: Integer
+  }
+  deriving (Eq, Show)
+
 data Commands = Commands Socket (IO BS.ByteString) (Chan (Either String Published))
 
 withCommands :: FilePath -> Int -> (Commands -> IO a) -> IO a
@@ -72,18 +75,16 @@ connectTo path = do
 sendLine :: Socket -> Operation -> IO ()
 sendLine client operation = either fail (sendAll client) (encodeLine (toJSON (Request "latency" operation)))
 
--- | Send a command and wait for its receipt; returns the send time and the revision that applied it.
-command :: Commands -> Operation -> IO (Word64, Integer)
+command :: Commands -> Operation -> IO Receipt
 command (Commands client readReply _) operation = do
   started <- getMonotonicTimeNSec
   sendLine client operation
   line <- readReply
   revision <- either fail pure (eitherDecodeStrict' line >>= parseEither receipt)
-  pure (started, revision)
+  pure (Receipt started revision)
  where
   receipt = withObject "receipt" $ \o -> o .: "result" >>= withObject "result" (.: "revision")
 
--- | Drop publications until one satisfies the predicate.
 awaitPublished :: Commands -> Int -> (Published -> Bool) -> IO Published
 awaitPublished (Commands _ _ published) limit wanted = loop
  where

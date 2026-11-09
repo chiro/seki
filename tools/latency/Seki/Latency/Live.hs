@@ -54,14 +54,11 @@ import System.Posix.Signals (Handler (Catch), installHandler, sigUSR1, sigUSR2, 
 import System.Process (CreateProcess (..), StdStream (UseHandle), createProcess, getPid, proc, terminateProcess, waitForProcess)
 import System.Timeout (timeout)
 
-{- | The M3 WM adds the pad, the IPC socket, and a build whose stub
-candidate fails its check, so a recompile finishes without a handover.
--}
 runWM :: WorkloadName -> FilePath -> FilePath -> IO ()
 runWM workload socket directory = do
   recorder <- newRecorder 100000
   policy <- newPolicy config >>= requireRight "latency policy"
-  when (workload == M3) (getEnv "XDG_RUNTIME_DIR" >>= stubBuild . (</> "build") >>= configureBuild policy)
+  when (workload == M3) (getEnv "XDG_RUNTIME_DIR" >>= buildFailingCheck . (</> "build") >>= configureBuild policy)
   let handlers = (policyRuntimeHandlers policy){riverSequenceRecorder = Just recorder}
   session <- openRiverSessionAt (UnixSocketPath socket) defaultObjectLimit handlers >>= requireRight "latency WM open"
   pid <- getProcessID
@@ -165,19 +162,18 @@ runWM workload socket directory = do
       }
 
 padRect :: OutputRect
-padRect = let (x, y, w, h) = padBox in either (error . show) OutputRect (mkSize (fromIntegral w) (fromIntegral h) >>= mkRect (Point (fromIntegral x) (fromIntegral y)))
+padRect = let (x, y, w, h) = padContentBox in either (error . show) OutputRect (mkSize (fromIntegral w) (fromIntegral h) >>= mkRect (Point (fromIntegral x) (fromIntegral y)))
 
-stubFailure :: String
-stubFailure = "seki-latency stub: the built configuration fails its check"
+checkFailure :: String
+checkFailure = "seki-latency stub: the built configuration fails its check"
 
--- | A configuration project whose build succeeds and whose candidate fails @--check@.
-stubBuild :: FilePath -> IO BuildContext
-stubBuild directory = do
+buildFailingCheck :: FilePath -> IO BuildContext
+buildFailingCheck directory = do
   createDirectoryIfMissing True directory
   mapM_ (\name -> writeFile (directory </> name) "") ["Main.hs", "seki-user.cabal", "cabal.project"]
   let compiler = directory </> "compiler"
       candidate = directory </> "built"
-  writeFile candidate ("#!/bin/sh\necho '" <> stubFailure <> "' >&2\nexit 1\n")
+  writeFile candidate ("#!/bin/sh\necho '" <> checkFailure <> "' >&2\nexit 1\n")
   writeFile compiler ("#!/bin/sh\ncase \"$3\" in\n  build) exit 0 ;;\n  list-bin) echo '" <> candidate <> "' ;;\n  *) exit 2 ;;\nesac\n")
   mapM_ (`setFileMode` 0o700) [compiler, candidate]
   pure (BuildContext (Resources "/unused" "/unused" "cabal" compiler directory) directory directory)
@@ -252,13 +248,13 @@ runLive directory workload seed steps collector = do
                           issue c next step = do
                             threadDelay idleGapMicroseconds
                             operation <- maybe (fail ("m3 has no command for " <> show step)) pure (stepCommand step)
-                            (started, revision) <- command c operation
+                            Receipt started revision <- command c operation
                             forM (stepEndpoints workload step) $ \endpoint -> do
                               ended <- case endpoint of
                                 ExternalWake -> observed next
                                 ScratchpadToggle -> observed next
                                 IPCUpdate -> publishedAt <$> (awaitPublished c assertionTimeoutMicroseconds ((>= revision) . publishedRevision) >>= publishes next)
-                                RecompileCompletion -> publishedAt <$> (awaitPublished c assertionTimeoutMicroseconds (finished (publishedBuilds (expectedPublication next))) >>= failedByStub)
+                                RecompileCompletion -> publishedAt <$> (awaitPublished c assertionTimeoutMicroseconds (finished (publishedFinishedBuilds (expectedPublication next))) >>= failedByStub)
                               pure (endpoint, ended - started)
                           observed model = do
                             seen <- observe
@@ -266,12 +262,12 @@ runLive directory workload seed steps collector = do
                               then getMonotonicTimeNSec
                               else threadDelay pollMicroseconds >> observed model
                           publishes model p = do
-                            unless (Text.unpack (publishedFocus p) == publishedTag (expectedPublication model)) (fail ("subscriber published " <> show p <> " for " <> show model))
+                            unless (Text.unpack (publishedFocus p) == publishedFocusedTag (expectedPublication model)) (fail ("subscriber published " <> show p <> " for " <> show model))
                             pure p
                           finished generation p = maybe False (\b -> reportedGeneration b == fromIntegral generation && reportedState b /= "building") (publishedBuild p)
                           failedByStub p = do
                             let report = publishedBuild p
-                            unless (fmap reportedState report == Just "failed" && maybe False (Text.isInfixOf (Text.pack stubFailure)) (report >>= reportedError)) (fail ("build did not fail at the stub check: " <> show report))
+                            unless (fmap reportedState report == Just "failed" && maybe False (Text.isInfixOf (Text.pack checkFailure)) (report >>= reportedError)) (fail ("build did not fail at the stub check: " <> show report))
                             pure p
                           awaitPicture model =
                             void (waitUntil "native picture" assertionTimeoutMicroseconds (pictureMismatch (expectedLayers model) <$> captureOutput socket name) (== Nothing))
@@ -351,16 +347,12 @@ stepCommand = \case
   Recompile -> Just IPC.Recompile
   _ -> Nothing
 
--- | Only M3 sends commands, so only its driver connects to the WM's IPC socket.
 withCommandsFor :: WorkloadName -> FilePath -> (Maybe Commands -> IO a) -> IO a
 withCommandsFor M3 path body = do
   _ <- waitUntil "WM IPC socket" assertionTimeoutMicroseconds (doesFileExist path) id
   withCommands path assertionTimeoutMicroseconds (body . Just)
 withCommandsFor _ _ body = body Nothing
 
-{- | Each endpoint's measured command-to-outcome samples, with the sample
-count the plan implies and the method's fixed delays.
--}
 endpointFields :: WorkloadName -> [Step] -> Map Endpoint [Word64] -> [Pair]
 endpointFields workload measured timings
   | Map.null planned = []

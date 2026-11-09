@@ -32,10 +32,6 @@ type BenchLayout = Choose Tall (Choose (Mirror Tall) Full)
 layout :: BenchLayout
 layout = Tall 1 (1 / 10) (1 / 2) ||| Mirror (Tall 1 (1 / 10) (1 / 2)) ||| Full
 
-{- | Every window managed on workspace 1, the newest focused. In M2 and M3
-the two newest windows are client-sized floats, as dialogs of window 1 are.
-M3 also holds window @count + 1@ as the hidden pad.
--}
 initialState :: WorkloadName -> Int -> CoreState String BenchLayout
 initialState name count = withPad (fst (drainCore idHook [RunAction (windows (S.float w S.ClientSized)) | w <- Map.keys (planParents name count)] attached))
  where
@@ -64,7 +60,6 @@ operationCodes name seed count = take count [fromIntegral ((x `shiftR` 32) `mod`
 {- | Codes 0 to 15 are the M1 operations. M2 adds a fullscreen toggle on the
 focus, a client fullscreen request that the core drops unless window 2 is
 focused, a click that focuses and raises a dialog, and floating window 3.
-M3 adds a pad toggle and a restart request.
 -}
 eventFor :: WorkloadName -> Int -> Int -> CoreEvent String BenchLayout
 eventFor M3 _ 20 = RunAction (toggleScratchpad "pad")
@@ -124,10 +119,6 @@ floats = Map.foldlWithKey' (\a w g -> mix a (mix (window w) (geometry g))) 0
 geometry :: S.FloatGeom -> Word64
 geometry S.ClientSized = 0
 geometry (S.FloatAt (OutputRect r)) = mix 1 (rect r)
-
-{- | An empty pad map adds no term, so M1 and M2 keep the checksums of the
-reports retained before M3.
--}
 state :: CoreState String BenchLayout -> Word64
 state st =
   many id $
@@ -140,8 +131,9 @@ state st =
         HeadlessState (HeadlessWorkspaces c hs fs) -> many id [0, workspace c, many workspace hs, floats fs]
         AttachedState (S.StackSet c vs hs fs) os -> many id [1, screen c, many screen vs, many workspace hs, floats fs, many output os]
     ]
-      ++ [Map.foldlWithKey' (\a name slot -> mix a (mix (command name) (pad slot))) 0 (coreScratchpads st) | not (Map.null (coreScratchpads st))]
+      ++ [pads | not (Map.null (coreScratchpads st))]
  where
+  pads = Map.foldlWithKey' (\a name slot -> mix a (mix (command name) (pad slot))) 0 (coreScratchpads st)
   pad (LaunchPending generation) = mix 1 (fromInteger generation)
   pad (HiddenPad w g) = mix 2 (mix (window w) (geometry g))
   pad (ShownPad w prior) = mix 3 (mix (window w) (optional window prior))
@@ -190,7 +182,6 @@ scene (DesiredScene ws order raised stacking focus out op) =
 forceResult :: CoreState String BenchLayout -> [Intent] -> DesiredScene -> Word64
 forceResult st intents desired = many id [state st, many intent intents, scene desired]
 
--- | A shown pad joins the workspaces, and a hidden one leaves them.
 validateResult :: Int -> CoreState String BenchLayout -> DesiredScene -> Bool
 validateResult count st desired = case coreWorkspaces st of
   HeadlessState _ -> False
