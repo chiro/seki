@@ -85,8 +85,9 @@ M3-03 adds generated input-configuration bindings pinned to river v0.5.0,
 commit `cc4a291b2b9375fe3d5fe5a64b6f510b463f888b`. Their generated maxima
 are input management v2, libinput configuration v2 and XKB configuration v3.
 The v1 wire signatures remain compatible with river 0.4.5. These bindings alone
-do not enable runtime input rules. Arrays remain opaque bytes; libinput Double
-validation belongs in its adapter. Input and libinput `done` events require v2;
+do not enable runtime input rules. The input adapters under `src/Seki/Run/`,
+such as `Input.hs`, `Libinput.hs`, and `XkbConfig.hs`, apply them. Arrays remain
+opaque bytes; libinput Double validation belongs in its adapter. Input and libinput `done` events require v2;
 XKB `done` requires v2 and scrolllock requests/events require v3.
 Integration-only sources
 include wlr-layer-shell, xdg-shell, and the image-capture protocols. See
@@ -209,8 +210,8 @@ missing `interface` attribute; it is not a name-based special case for
 Strings MUST have a terminating NUL, contain no interior NUL, fit inside their
 frame, and use zero padding when encoded. Decoding rejects invalid UTF-8 at the
 generated string boundary. Arrays remain byte arrays in the generic layer;
-for example, the later libinput binding will add a native-endian `Double`
-array helper.
+for example, `Seki.Run.Libinput` converts libinput's arrays to and from
+native-endian `Double` values.
 
 Unknown enum values MUST remain representable. Non-bitfield enums are generated
 as newtypes with patterns or conversion functions rather than closed sum types
@@ -634,6 +635,13 @@ retain the pure window ID selected when the action ran and are resolved
 against live inventory before submission. A window that closed meanwhile
 receives no request. Runtime binding initialization precedes the policy's
 manage plan. The runtime has no second deferred-action queue.
+
+External commands, such as IPC requests, enter a bounded session ingress in
+`Seki.Run.External` instead. It holds at most 256 inputs and wakes the
+runtime's single wake worker, which sends `manage_dirty`. Each `manage_start`
+drains at most 32 inputs and reduces them after the queued protocol events, in
+the same pass. A result kept outside the ingress, such as a finished build,
+only signals the same wake.
 
 ### 7.13 Configurable default policy
 
