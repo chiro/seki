@@ -3,10 +3,10 @@
 The opt-in `seki-latency` diagnostic and the `tools/latency/run.py` runner
 measure manage/render sequence latency and GC behavior in repeated trials and
 generate a report. They do not change production configuration or the
-executable's RTS defaults. Two reviewed reports keep compact evidence of five
-alternating trials per collector: the M1 [reference report](latency-baseline/report.md)
-of 2026-10-18 and the M2 [workload report](latency-m2/report.md) of
-2026-10-25. The M3 [campaign report](latency-m3/report.md) interleaves five
+executable's RTS defaults. Three reviewed reports keep compact evidence. The
+M1 [reference report](latency-baseline/report.md) of 2026-10-18 and the M2
+[workload report](latency-m2/report.md) of 2026-10-25 alternate five trials
+per collector. The M3 [campaign report](latency-m3/report.md) interleaves five
 trunk and head m2 trials per collector and adds the m3 workload at head.
 Ordinary unit CI does not enforce timing budgets.
 
@@ -25,9 +25,10 @@ nix develop --no-write-lock-file .#ci --command python3 tools/latency/run.py art
 `--workload` is required to collect trials, and you can repeat it. `m2` is the
 M2 gate. `m3` times the M3 command paths. `m1` is the M1 workload, still
 runnable on current code for comparison. Report-only mode reads the workloads
-from `manifest.json`; a schema 1 manifest, written before workloads existed,
-reads as `m1`. It needs the full trial directories, so it cannot regenerate a
-retained compact report.
+from `manifest.json` and accepts only the schema the runner writes, schema 4.
+It needs the full trial directories, so it cannot regenerate a retained
+compact report. It rewrites `report.md` and `summary.json` and leaves any
+other file in the directory alone.
 
 ## Compare two revisions
 
@@ -44,21 +45,30 @@ The runner builds `seki-latency` in each worktree before the first trial. The
 executables link the seki libraries dynamically, so a binary copied out of its
 worktree still loads the libraries of the last build there. Building in place
 keeps each revision's code separate. The runner refuses a revision with
-uncommitted tracked changes, and refuses a binary that loads a seki library
-from outside its worktree. It records each revision's commit, binary hash,
-and the hash of every linked seki library, and checks those hashes again after
-the last trial.
+uncommitted tracked changes or a `cabal.project.local`, which would change the
+build without appearing in the manifest. It also refuses a binary that loads a
+seki library from outside its worktree. It records each revision's commit,
+binary hash, and the hash of every linked seki library, and checks those
+hashes again after the last trial.
 
 Before any trial, the runner runs a one-event pure probe of each requested
 workload on each binary. A binary that rejects the workload name skips that
 workload, and `manifest.json` records the rejection under `unsupported`. Each
 round runs the normal collector and then the nonmoving collector. Each
 collector runs every workload at each revision that supports it. Odd rounds
-reverse the order of the revisions. When the revisions have identical
-`src/`, `src-core/`, and `src-public/` trees, the report states that their
-difference is a noise floor and claims no speedup or regression.
+reverse the order of the revisions.
 
-Both retained reports used local GHC 9.6.7 and Cabal 3.10. The M2 report ran
+The runner compares two groups of sources across the revisions with `git
+diff`. The runtime group is `src`, `src-core`, `src-public`, `src-generated`,
+and `cbits`. The latency driver group is `tools/latency` and
+`integration/Seki/Integration/Harness.hs`. When the runtime group is
+identical, the report calls the m2 manage and render differences a noise
+floor and claims no speedup or regression. The pure interval also runs the
+driver's checksum fold, so the report extends the noise floor to pure m2 only
+when both groups are identical. Matching pure checksums show that the output
+is the same, not that the cost is.
+
+The M1 and M2 reports used local GHC 9.6.7 and Cabal 3.10. The M2 report ran
 `WLR_RENDERER=pixman python3 tools/latency/run.py artifacts/latency/m2-2026-10-25 --workload m2 --compiler ghc-9.6.7`
 with system-installed runtime dependencies. This is a local command, not the
 pinned release toolchain.
@@ -68,17 +78,19 @@ report ran on a host without nix. It used the GHC 9.10.3 bindist on `PATH`,
 the system river 0.5.0, wtype, and wlr-randr. The live driver always starts
 river with `WLR_RENDERER=pixman`.
 
-The runner builds once with `--enable-optimization=2` into
-`dist-newstyle/latency`. It alternates normal/nonmoving trials five times using
-the identical binary and `+RTS -N1 -T -s`; only the nonmoving side adds
-`--nonmoving-gc`. Unlike the production executable, the diagnostic is
+The runner builds each revision once with `--enable-optimization=2` into
+`dist-newstyle/latency` of that revision's worktree, or of the checkout when no
+revision is named. Every trial runs `+RTS -N1 -T -s`; only the nonmoving side
+adds `--nonmoving-gc`. Unlike the production executable, the diagnostic is
 threaded and accepts RTS options. GHC 9.10 needs no `-eventlog` link option for
 eventlog output. Do not compile concurrently with trials.
 
 For a short feasibility check, use a new directory and
-`--trials 1 --live-steps 3 --pure-steps 512` with `--workload m1`, or
+`--trials 1 --live-steps 3 --pure-steps 512` with `--workload m1`,
 `--live-steps 120` with `--workload m2`, since an M2 trial is valid only when it
-exercised every M2 feature. A supplied `--binary PATH` skips
+exercised every M2 feature, or `--live-steps 6` with `--workload m3`, the
+shortest measured slice that reaches a recompile and so times every m3
+endpoint. A supplied `--binary PATH` skips
 building, records its hash and embedded compiler family, and marks its
 compiler patch version and dependency optimization flags as unverified. A
 short check is exploratory, not the five-trial report gate. Existing artifact directories are never replaced.
@@ -127,8 +139,11 @@ picture; `test/Seki/Run/LatencyWorkloadTest.hs` checks it without river.
     build worker polls each of its subprocesses every 10 ms, so this endpoint
     measures that polling as well.
 
-  Probe outcomes are polled every 0.1 ms. Subscriber lines are stamped when
-  they arrive. Wakes, IPC updates, and toggles must meet a p99 below 50 ms,
+  Probe outcomes are polled every 0.1 ms and fail the trial after 10 s.
+  Subscriber lines are stamped when they arrive. Each `driver.json` records
+  the idle gap and the poll interval, and the report prints them from there.
+  The WM writes the socket path it serves to `wm.ipc`, and the driver connects
+  to that path. Wakes, IPC updates, and toggles must meet a p99 below 50 ms,
   the ceiling M3-01 set. No earlier target covers a failed build. The report
   gives no ratio between m2 sequences and m3 endpoints.
 
@@ -195,8 +210,8 @@ Each trial retains `wm.json`, `wm.rts`, `driver.json`, `pure.json`, `pure.rts`,
 process identities, two WM RTS checkpoints, and process logs. An m3
 `driver.json` also keeps every endpoint sample. `manifest.json`
 records machine/CPU, each revision's commit, binary and library hashes,
-compiler, and build command, the river version, RTS flags, seed, workloads,
-unsupported workloads, trial order and host load. `summary.json` contains
+compiler, and build command, the source comparison, the river version, RTS
+flags, seed, workloads, unsupported workloads, trial order and host load. `summary.json` contains
 per-trial quantiles, counts, collector statistics, exercise counts, endpoint
 quantiles and budget outcomes; `report.md` gives medians and ranges for each
 workload, revision, and collector, a per-trial budget table, a generated
