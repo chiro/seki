@@ -16,12 +16,12 @@ import Control.Exception (bracket, displayException)
 import Data.Aeson (Value, eitherDecodeStrict', toJSON, withObject, (.:), (.:?))
 import Data.Aeson.Types (Parser, parseEither)
 import Data.ByteString qualified as BS
-import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import Network.Socket
-import Network.Socket.ByteString (recv, sendAll)
+import Network.Socket.ByteString (sendAll)
+import Seki.Integration.Harness (appliedRevision, bufferedLine)
 import Seki.Run.IPCSchema (Operation (Subscribe), Request (..), encodeLine)
 import System.Timeout (timeout)
 
@@ -42,19 +42,19 @@ data Published = Published
 
 data Receipt = Receipt
   { sentAt :: Word64
-  , appliedRevision :: Integer
+  , receiptRevision :: Integer
   }
   deriving (Eq, Show)
 
 data Commands = Commands Socket (IO BS.ByteString) (Chan (Either String Published))
 
-withCommands :: FilePath -> Int -> (Commands -> IO a) -> IO a
-withCommands path limit body =
+withCommands :: FilePath -> (Commands -> IO a) -> IO a
+withCommands path body =
   bracket (connectTo path) close $ \commander ->
     bracket (connectTo path) close $ \subscriber -> do
       sendLine subscriber Subscribe
-      readReply <- lineReader commander
-      readSnapshot <- lineReader subscriber
+      readReply <- bufferedLine commander
+      readSnapshot <- bufferedLine subscriber
       published <- newChan
       let loop = do
             line <- readSnapshot
@@ -64,7 +64,7 @@ withCommands path limit body =
       bracket
         (forkFinally loop (either (writeChan published . Left . displayException) pure))
         killThread
-        (\_ -> body (Commands commander (bounded limit "IPC receipt" readReply) published))
+        (\_ -> body (Commands commander readReply published))
 
 connectTo :: FilePath -> IO Socket
 connectTo path = do
@@ -79,11 +79,7 @@ command :: Commands -> Operation -> IO Receipt
 command (Commands client readReply _) operation = do
   started <- getMonotonicTimeNSec
   sendLine client operation
-  line <- readReply
-  revision <- either fail pure (eitherDecodeStrict' line >>= parseEither receipt)
-  pure (Receipt started revision)
- where
-  receipt = withObject "receipt" $ \o -> o .: "result" >>= withObject "result" (.: "revision")
+  Receipt started <$> (readReply >>= appliedRevision)
 
 awaitPublished :: Commands -> Int -> (Published -> Bool) -> IO Published
 awaitPublished (Commands _ _ published) limit wanted = loop
@@ -105,18 +101,6 @@ decodeSnapshot line = eitherDecodeStrict' line >>= parseEither envelope
       _ -> fail "snapshot must focus one workspace"
     build <- s .:? "build" >>= traverse (withObject "build" (\b -> BuildReport <$> b .: "state" <*> b .: "generation" <*> b .:? "error"))
     pure (revision, focus, build)
-
-lineReader :: Socket -> IO (IO BS.ByteString)
-lineReader client = do
-  pending <- newIORef BS.empty
-  let readOne = do
-        bytes <- readIORef pending
-        case BS.elemIndex 10 bytes of
-          Just n -> writeIORef pending (BS.drop (n + 1) bytes) >> pure (BS.take n bytes)
-          Nothing -> do
-            chunk <- recv client 65536
-            if BS.null chunk then fail "IPC connection closed" else writeIORef pending (bytes <> chunk) >> readOne
-  pure readOne
 
 bounded :: Int -> String -> IO a -> IO a
 bounded limit what action = timeout limit action >>= maybe (fail ("timed out waiting for " <> what)) pure
