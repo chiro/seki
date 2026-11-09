@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -33,10 +34,10 @@ def revision(sha):
     return dict(git_sha=sha, compiler="ghc 9.10", binary_sha256="b" + sha, linked_seki_libraries={"/lib/" + sha: "l" + sha})
 
 
-def manifest(trials, revisions, unsupported=(), runtime_sources=None):
+def manifest(trials, revisions, unsupported=(), sources=None):
     workloads = list(dict.fromkeys(w for _, _, w in trials))
-    return dict(schema=3, workloads=workloads, machine="m", uname="Linux host", cpu_count=12, cpu_model="cpu", river="0.5.0", renderer="pixman",
-                revisions=revisions, unsupported=list(unsupported), runtime_sources=runtime_sources,
+    return dict(schema=runner.SCHEMA, workloads=workloads, machine="m", uname="Linux host", cpu_count=12, cpu_model="cpu", river="0.5.0", renderer="pixman",
+                revisions=revisions, unsupported=list(unsupported), sources=sources,
                 seed=1, live_steps={w: 1 for w in workloads}, pure_steps=1, pure_windows=2,
                 trials=[dict(directory=d, revision=r, workload=w, collector="normal", load_before=[0.5], load_after=[0.6]) for d, r, w in trials])
 
@@ -207,7 +208,7 @@ class ReportTest(unittest.TestCase):
         for item in ["wm.rts", "pure.rts", "wm-checkpoint-0.json", "wm-checkpoint-1.json"]:
             (trial / item).write_text((self.path / item).read_text())
 
-    def campaign(self, identical=True, head_m2_checksum=123):
+    def campaign(self, runtime=True, driver=True, head_m2_checksum=123):
         self.write_trial("00-trunk-m2-normal", "m2")
         self.write_trial("01-head-m2-normal", "m2", head_m2_checksum)
         self.write_trial("02-head-m3-normal", "m3", 456)
@@ -215,7 +216,7 @@ class ReportTest(unittest.TestCase):
             [("00-trunk-m2-normal", "trunk", "m2"), ("01-head-m2-normal", "head", "m2"), ("02-head-m3-normal", "head", "m3")],
             revisions={"trunk": revision("c2b7851"), "head": revision("abc1234")},
             unsupported=[dict(revision="trunk", workload="m3", reason="invalid workload: m3")],
-            runtime_sources=dict(paths=["src", "src-core", "src-public"], identical=identical)))
+            sources={name: dict(paths=paths, identical=same) for (name, paths), same in zip(runner.SOURCES.items(), [runtime, driver])}))
         return runner.report(self.path)
 
     def test_campaign_report_groups_by_revision_and_names_the_noise_floor(self):
@@ -242,8 +243,43 @@ class ReportTest(unittest.TestCase):
         self.assertIn("| 02-head-m3-normal | recompile_completion | 2 | 1.0000 | 2.0000 | 2.0000 | 2.0000 | none |", text)
 
     def test_campaign_report_without_identical_runtime_claims_no_noise_floor(self):
-        self.campaign(identical=False)
+        self.campaign(runtime=False)
         self.assertNotIn("noise floor", (self.path / "report.md").read_text())
+
+    def test_campaign_report_names_every_compared_path(self):
+        self.campaign()
+        text = (self.path / "report.md").read_text()
+        self.assertIn("Runtime sources under `src`, `src-core`, `src-public`, `src-generated`, and `cbits` are identical across the revisions, "
+                      "so their m2 manage and render differences are a noise floor.", text)
+        self.assertIn("Latency driver sources under `tools/latency` and `integration/Seki/Integration/Harness.hs` are identical across the revisions, "
+                      "so their pure m2 differences are a noise floor too.", text)
+
+    def test_a_driver_difference_keeps_pure_m2_out_of_the_noise_floor(self):
+        self.campaign(driver=False)
+        text = (self.path / "report.md").read_text()
+        self.assertIn("their m2 manage and render differences are a noise floor", text)
+        self.assertIn("Latency driver sources under `tools/latency` and `integration/Seki/Integration/Harness.hs` differ across the revisions.", text)
+        self.assertNotIn("pure m2 differences are a noise floor", text)
+
+    def test_source_comparison_reads_each_group_from_git(self):
+        repo = self.path / "repo"
+        repo.mkdir()
+        git = lambda *args: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+        git("init", "-q")
+        def commit(path):
+            (repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (repo / path).write_text(path)
+            git("add", "-A")
+            git("commit", "-q", "-m", path)
+            return git("rev-parse", "HEAD")
+        base = commit("README")
+        wire = commit("cbits/transport.c")
+        latency = commit("tools/latency/Seki/Latency/Live.hs")
+        compare = lambda a, b: {name: group["identical"] for name, group in
+                                runner.compare_sources({"trunk": dict(git_sha=a, worktree=str(repo)), "head": dict(git_sha=b, worktree=str(repo))}).items()}
+        self.assertEqual(compare(base, wire), {"runtime": False, "driver": True})
+        self.assertEqual(compare(wire, latency), {"runtime": True, "driver": False})
+        self.assertIsNone(runner.compare_sources({"local": dict(git_sha=None, worktree=None)}))
 
     def test_checksums_must_agree_within_a_workload_and_revision_only(self):
         summary = self.campaign(head_m2_checksum=789)
