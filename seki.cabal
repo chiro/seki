@@ -453,6 +453,7 @@ executable seki-latency
     Seki.Latency.Commands
     Seki.Latency.Pure
     Seki.Latency.Live
+    Seki.Latency.Snapshot
     Seki.Latency.Workload
     Seki.Integration.Harness
   build-depends:

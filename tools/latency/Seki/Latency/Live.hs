@@ -29,6 +29,7 @@ import Seki.Internal.Core.StackSet qualified as S
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Latency.Commands
+import Seki.Latency.Snapshot (BuildReport (..))
 import Seki.Latency.Workload
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.ConfigBuild (BuildContext (..), Resources (..))

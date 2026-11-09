@@ -4,7 +4,6 @@ module Seki.Latency.Commands (
   Commands,
   Receipt (..),
   Published (..),
-  BuildReport (..),
   withCommands,
   command,
   awaitPublished,
@@ -13,8 +12,7 @@ module Seki.Latency.Commands (
 import Control.Concurrent (forkFinally, killThread)
 import Control.Concurrent.Chan (Chan, newChan, readChan, writeChan)
 import Control.Exception (bracket, displayException)
-import Data.Aeson (Value, eitherDecodeStrict', toJSON, withObject, (.:), (.:?))
-import Data.Aeson.Types (Parser, parseEither)
+import Data.Aeson (toJSON)
 import Data.ByteString qualified as BS
 import Data.Text (Text)
 import Data.Word (Word64)
@@ -22,15 +20,9 @@ import GHC.Clock (getMonotonicTimeNSec)
 import Network.Socket
 import Network.Socket.ByteString (sendAll)
 import Seki.Integration.Harness (appliedRevision, bufferedLine)
+import Seki.Latency.Snapshot (BuildReport, decodeSnapshot)
 import Seki.Run.IPCSchema (Operation (Subscribe), Request (..), encodeLine)
 import System.Timeout (timeout)
-
-data BuildReport = BuildReport
-  { reportedState :: Text
-  , reportedGeneration :: Integer
-  , reportedError :: Maybe Text
-  }
-  deriving (Eq, Show)
 
 data Published = Published
   { publishedAt :: Word64
@@ -87,20 +79,6 @@ awaitPublished (Commands _ _ published) limit wanted = loop
   loop = do
     next <- bounded limit "IPC publication" (readChan published) >>= either fail pure
     if wanted next then pure next else loop
-
-decodeSnapshot :: BS.ByteString -> Either String (Integer, Text, Maybe BuildReport)
-decodeSnapshot line = eitherDecodeStrict' line >>= parseEither envelope
- where
-  envelope = withObject "envelope" $ \o -> o .: "result" >>= withObject "result" (\r -> r .: "snapshot" >>= snapshot)
-  snapshot :: Value -> Parser (Integer, Text, Maybe BuildReport)
-  snapshot = withObject "snapshot" $ \s -> do
-    revision <- s .: "revision"
-    workspaces <- s .: "workspaces" >>= mapM (withObject "workspace" (\w -> (,) <$> w .: "tag" <*> w .: "focused"))
-    focus <- case [tag | (tag, True) <- workspaces] of
-      [tag] -> pure tag
-      _ -> fail "snapshot must focus one workspace"
-    build <- s .:? "build" >>= traverse (withObject "build" (\b -> BuildReport <$> b .: "state" <*> b .: "generation" <*> b .:? "error"))
-    pure (revision, focus, build)
 
 bounded :: Int -> String -> IO a -> IO a
 bounded limit what action = timeout limit action >>= maybe (fail ("timed out waiting for " <> what)) pure
