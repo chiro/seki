@@ -143,8 +143,31 @@ def prove(command, root, env, archive, provisioned=False):
                 process.communicate(timeout=10)
 
 
+def prove_client(client):
+    """The shipped sekictl sends one version 1 request to the runtime endpoint."""
+    with tempfile.TemporaryDirectory(prefix="seki-client-") as runtime:
+        endpoint = Path(runtime) / "seki"
+        endpoint.mkdir(mode=0o700)
+        reply = '{"version":1,"id":"sekictl","result":{"revision":7}}'
+        with socket.socket(socket.AF_UNIX) as server:
+            server.bind(str(endpoint / "ipc.sock"))
+            server.listen(1)
+            server.settimeout(10)
+            with subprocess.Popen([str(client), "workspace", "3"], env={"XDG_RUNTIME_DIR": runtime},
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as process:
+                connection, _ = server.accept()
+                with connection, connection.makefile("rwb") as stream:
+                    request = json.loads(stream.readline())
+                    stream.write(reply.encode() + b"\n")
+                out, err = process.communicate(timeout=10)
+    print("CLIENT", process.returncode, request, out, err, flush=True)
+    assert request == {"version": 1, "id": "sekictl", "op": "workspace", "tag": "3"}
+    assert process.returncode == 0 and out.splitlines() == [reply]
+
+
 if __name__ == "__main__":
     delivery = Path(sys.argv[1]).resolve(strict=True)
+    prove_client(delivery / "bin/sekictl")
     with tempfile.TemporaryDirectory(prefix="seki-smoke-") as temporary:
         home = Path(temporary) / "home"
         home.mkdir()
