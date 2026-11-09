@@ -89,7 +89,7 @@ tests =
         let shown = fst (drainCore idHook [eventFor M3 8 20] (initialState M3 8))
             lost = shown{coreScratchpads = Map.insert "pad" (ShownPad (S.WindowId 10) Nothing) (coreScratchpads shown)}
         assertBool "the pad's window is not managed" (not (validateResult 8 lost (planFor M3 8 lost)))
-    , testCase "m2 keeps the pure checksum of trunk c2b7851, from before m3" $
+    , testCase "m2 keeps trunk c2b7851's pure checksum over 512 steps of seed 1909 on 32 windows" $
         withSystemTempDirectory "seki-pure" $ \directory -> do
           runPure (directory </> "pure.json") M2 1909 32 512
           decoded <- eitherDecodeFileStrict' (directory </> "pure.json")
