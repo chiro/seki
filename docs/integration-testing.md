@@ -22,11 +22,16 @@ nix develop --no-write-lock-file .#ci --command ci/run-integration.sh
 
 This command:
 
-1. builds `seki-integration`;
-2. explicitly enables the real-compositor scenarios;
-3. applies a 480-second suite timeout;
-4. requires the exact completion manifest; and
-5. writes `manifest.txt` and a log limited to the last 1 MiB beneath
+1. runs the Waybar example's unit test, `examples/waybar/test_seki.py`;
+2. builds the private input fixture, with the headless-river guard before and
+   after the run;
+3. builds `seki-integration`;
+4. explicitly enables the real-compositor scenarios;
+5. passes the built `seki-default`, `seki`, `sekictl`, `seki-reference-config`,
+   and `seki-daily-config` executables and the input fixture to the suite;
+6. applies a 480-second suite timeout;
+7. requires the exact completion manifest; and
+8. writes `manifest.txt` and a log limited to the last 1 MiB beneath
    `artifacts/integration/`.
 
 Set `SEKI_INTEGRATION_ARTIFACT_DIR` to place those artifacts elsewhere.
@@ -39,6 +44,12 @@ WLR_RENDERER=pixman SEKI_RUN_INTEGRATION=1 cabal test seki-integration
 ```
 
 An enabled run treats every missing prerequisite as a failure, not a skip.
+A direct run does not set the executable and fixture paths that
+`ci/run-integration.sh` passes in `SEKI_EXECUTABLE`, `SEKI_LAUNCHER_EXECUTABLE`,
+`SEKICTL_EXECUTABLE`, `SEKI_REFERENCE_CONFIG_EXECUTABLE`,
+`SEKI_DAILY_CONFIG_EXECUTABLE`, and `SEKI_INPUT_BACKEND`. A scenario that needs
+one of them fails when it is unset. To run such a scenario, use
+`ci/run-integration.sh` with `SEKI_INTEGRATION_SCENARIOS`.
 Without `SEKI_RUN_INTEGRATION=1`, the component prints a disabled message and
 exits successfully so that ordinary `cabal test all` remains usable on systems
 without river.
@@ -448,6 +459,12 @@ immutable prior projections, and title-only updates with adversarial text.
 connection capacity, and idle subscription EOF cleanup. `m3-ipc-reconnect`
 drives real exec restart through a private virtual keyboard, observes a fresh
 CLI subscription session, and checks that a real spawn runs exactly once.
+`m3-ipc-limits` first runs `integration/ipc-stream.py`, which checks that
+`sekictl subscribe` keeps its stream after a `snapshot_too_large` error. It then
+configures 128 workspace tags of over 1 KiB each, so that the full projection
+exceeds the line limit. A snapshot request and a subscription each receive
+`snapshot_too_large` with their request IDs, and a spawn request still receives
+its applied reply and runs once.
 
 `m3-ipc-perf` runs 1000 acknowledged workspace changes per load condition at
 1, 2, and 32 total connections. At the cap, 30 subscriptions remain unread.
@@ -525,6 +542,34 @@ probe explicitly selects only `hold.so` and asserts that separate scope. These
 checks prevent a Nix-built backend from leaking dependencies into a host `/bin/sh`
 or unrelated clients; no libc path override or longer init timeout is used.
 
+## Scratchpads
+
+Most scratchpad scenarios define one `term` pad, a foot terminal with app ID
+`seki-scratchpad` and a 520 by 360 box at 80,60, beside an ordinary probe window.
+They submit actions through the session ingress and check the actual keyboard
+owner after each render. Every scenario counts the pad's launches.
+
+| Manifest entry | What it verifies | Additional programs |
+| --- | --- | --- |
+| `m3-scratchpad-lifecycle` | The pad opens and the ordinary window loses keyboard focus. A hide gives the ordinary window focus again, and the pad returns through `sekictl scratchpad term` as the same window without a second launch. Set `SEKI_SCRATCHPAD_RECORD` to a directory to save 60 frames of both outputs for review | `wlr-randr` |
+| `m3-scratchpad-pending` | The launch command sleeps for 1 second before it starts the terminal. The first toggle and 100 more toggles while the launch is pending start one launch | `wlr-randr` |
+| `m3-scratchpad-focus` | After a hide, the ordinary tile receives a real key press. The next toggle shows the pad, and the ordinary tile loses keyboard focus again | `wlr-randr` |
+| `m3-scratchpad-bring` | After the second output shrinks to 400 by 300, viewing workspace 2 and toggling brings the same window to workspace 2, clamped to fit the smaller output, without a new launch | `wlr-randr` |
+| `m3-scratchpad-layouts` | The pad stays floating through three layout changes | `wlr-randr` |
+| `m3-scratchpad-fullscreen` | Hiding a fullscreen pad clears its fullscreen state, and the next toggle shows it again | `wlr-randr` |
+| `m3-scratchpad-close` | Closing the pad clears its ownership; the next toggle launches a second window with a new river identifier | `wlr-randr` |
+| `m3-scratchpad-duplicates` | A second window with the pad's app ID cannot replace the owner | `wlr-randr` |
+| `m3-scratchpad-perf` | With 32 subscribers connected, five trials of 1000 toggles each complete at the expected keyboard owner, with increasing applied revisions and one pad identity, and every subscriber receives more than 1000 snapshot lines. Set `SEKI_SCRATCHPAD_PROFILE=1` for one trial of 100 toggles | `wlr-randr` |
+
+`m3-scratchpad-restart` and `m3-scratchpad-config-restore` run two pads, `term`
+and `other`, on a nested river with two outputs. Each stops the first manager
+with one pad hidden and the other shown, then starts a second manager from the
+saved state. `m3-scratchpad-restart` checks that both pads' identifiers,
+visibility, and geometry survive, that nothing launches again, and that the
+ordinary window still receives input. `m3-scratchpad-config-restore` removes
+the `term` definition and turns one output off before the restore. The removed
+pad's hidden window moves to an ordinary workspace, and nothing launches again.
+
 `m3-scratchpad-restore-missing-float` restores a v2 state whose ordinary float
 list is empty while the scratchpad records still contain valid boxes. It checks
 shown and hidden ownership, geometry, launch counts, and ordinary keyboard input
@@ -539,6 +584,17 @@ intent and has separate pure restore coverage.
 
 `m3-scratchpad-reset` checks pending launch coalescing, explicit reset, and a
 late matching window. It has no launch deadline or timer wait.
+
+## Configuration builds
+
+`m3-recompile` gives the policy a build context whose compiler is a script
+that waits for a release file and then fails. `seki --recompile` receives an
+applied receipt while the compiler is held. Eight more `sekictl recompile`
+requests, eight Mod-j and Mod-space presses, and a `sekictl workspace` command
+all take effect before the release. Exactly one compiler runs while it is held,
+and one queued rebuild runs after the release. Both fail. The profile target
+stays unchanged, the full build logs remain, and a later workspace command
+still applies. Captures include `build-responsive` and `build-error`.
 
 ## Daily configuration
 
