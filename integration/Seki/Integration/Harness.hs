@@ -40,6 +40,7 @@ module Seki.Integration.Harness (
   waitForMVar,
   failIntegration,
   IntegrationFailure (..),
+  socketQueuedBytes,
 ) where
 
 import Control.Concurrent (forkIO, threadDelay)
@@ -94,6 +95,7 @@ import Network.Socket (
   listen,
   socket,
   socketToHandle,
+  withFdSocket,
  )
 import Network.Socket.ByteString qualified as SocketByteString
 import Seki.Internal.Core.Action (kill, spawn)
@@ -271,6 +273,12 @@ assertionTimeoutMicroseconds = 10 * 1000 * 1000
 
 foreign import ccall unsafe "ioctl"
   c_ioctl :: CInt -> CULong -> Ptr () -> IO CInt
+
+socketQueuedBytes :: Socket -> IO Int
+socketQueuedBytes client = withFdSocket client $ \fd -> allocaBytes 4 $ \pointer -> do
+  result <- c_ioctl fd 0x541B (castPtr pointer)
+  when (result /= 0) (failIntegration "FIONREAD failed")
+  fromIntegral <$> (peekByteOff pointer 0 :: IO CInt)
 
 mainWith :: [(String, IO ())] -> IO ()
 mainWith additionalScenarios = do
