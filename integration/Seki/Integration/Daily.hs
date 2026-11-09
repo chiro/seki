@@ -26,9 +26,8 @@ import Seki.Fixture.Probe
 import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, placeOutputs, png, portedBorders, withHeldLogoIn, withKeyboard, withNestedRiverUsing)
 import Seki.Integration.Harness
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable, listDirectory, removeFile)
-import System.Environment (getExecutablePath, lookupEnv)
+import System.Environment (lookupEnv)
 import System.FilePath (takeDirectory, takeFileName, (</>))
-import System.IO (hClose)
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Files (readSymbolicLink)
 import System.Process (proc)
@@ -542,21 +541,13 @@ imeHandover = withDailySession "m3-daily-ime" (dailyOptions 1){optionSetup = rea
   (_, arguments) <- processImage (sessionPid session)
   assertEqual "the daily process keeps its pid and restores" True ("--restore" `elem` arguments)
   capture session "daily-ime-handover"
-  executable <- getExecutablePath
-  withSystemTempDirectory "seki-daily-ime" $ \directory -> do
-    let probeSocket = directory </> "probe.sock"
-        footConfig = directory </> "foot.ini"
-    writeFootConfig footConfig
-    withUnixListener probeSocket $ \listener ->
-      bracket (startManagedProcess "foot" client (proc "foot" ["-c", footConfig, "-a", "seki-integration-probe", executable, "--ime-terminal-probe", probeSocket])) stopManagedProcess $ \foot -> do
-        terminal <- waitForProbe listener foot
-        flip finally (hClose terminal) $ do
-          _ <- waitSnapshot session "foot is managed on term with keyboard focus" (\s -> snapKeyboard s && any (\w -> wsTag w == "term" && wsOccupied w && wsFocused w) (snapWorkspaces s))
-          capture session "daily-ime-foot"
-          committed <- withFcitxVirtualKeyboardOwner ime $ \owner -> commitMozcText "m3-daily-ime" ime client owner terminal
-          report "IME_COMMIT" committed
-          assertEqual "foot receives exactly the Mozc commit after the handover" "日本語" committed
-          capture session "daily-ime"
+  withImeFootProbe client $ \terminal -> do
+    _ <- waitSnapshot session "foot is managed on term with keyboard focus" (\s -> snapKeyboard s && any (\w -> wsTag w == "term" && wsOccupied w && wsFocused w) (snapWorkspaces s))
+    capture session "daily-ime-foot"
+    committed <- withFcitxVirtualKeyboardOwner ime $ \owner -> commitMozcText "m3-daily-ime" ime client owner terminal
+    report "IME_COMMIT" committed
+    assertEqual "foot receives exactly the Mozc commit after the handover" "日本語" committed
+    capture session "daily-ime"
   daemons <- fixtureProcesses "fcitx5" ("DBUS_SESSION_BUS_ADDRESS", bus)
   report "FCITX5_PROCESSES" (show daemons)
   assertEqual "one fcitx5 process from this fixture exists" 1 (length daemons)
