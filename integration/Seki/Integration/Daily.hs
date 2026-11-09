@@ -30,7 +30,7 @@ import System.Environment (getExecutablePath, lookupEnv)
 import System.FilePath (takeDirectory, takeFileName, (</>))
 import System.IO (hClose)
 import System.IO.Temp (withSystemTempDirectory)
-import System.Posix.Files (readSymbolicLink, setFileMode)
+import System.Posix.Files (readSymbolicLink)
 import System.Process (proc)
 import System.Timeout (timeout)
 
@@ -121,12 +121,6 @@ withDailySession name options body = do
 
 stubPrograms :: [String]
 stubPrograms = ["waybar", "swaybg", "fcitx5", "swayidle", "swaylock", "alacritty", "amixer", "brightnessctl"]
-
-loggingStub :: FilePath -> String
-loggingStub launches = "#!/bin/sh\nline=${0##*/}\nfor argument in \"$@\"; do line=\"$line $argument\"; done\nprintf '%s\\n' \"$line\" >> '" <> launches <> "'\n"
-
-writeExecutable :: FilePath -> String -> IO ()
-writeExecutable path script = writeFile path script >> setFileMode path 0o755
 
 startupCommands :: [String]
 startupCommands = ["waybar", "swaybg -i /usr/share/backgrounds/archlinux/wave.png -m fill", "fcitx5", "swayidle -w timeout 600 swaylock -f"]

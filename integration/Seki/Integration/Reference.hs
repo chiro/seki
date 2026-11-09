@@ -17,7 +17,6 @@ import Seki.Integration.Harness
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.FilePath (takeDirectory, (</>))
 import System.IO.Temp (withSystemTempDirectory)
-import System.Posix.Files (setFileMode)
 import System.Process (proc)
 
 referenceScenarios :: [(String, IO ())]
@@ -44,8 +43,7 @@ referenceConfig = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-r
       launched phase expected = void (waitUntil phase assertionTimeoutMicroseconds recorded ((== expected) . drop (length startupCommands)))
   forM_ (map (bin </>) ["nitrogen", "fcitx5", "xscreensaver", "xscreensaver-command", "alacritty", "amixer", "brightnessctl"] <> [home </> ".config/polybar/launch.sh"]) $ \stub -> do
     createDirectoryIfMissing True (takeDirectory stub)
-    writeFile stub ("#!/bin/sh\nline=${0##*/}\nfor argument in \"$@\"; do line=\"$line $argument\"; done\nprintf '%s\\n' \"$line\" >> '" <> launches <> "'\n")
-    setFileMode stub 0o755
+    writeExecutable stub (loggingStub launches)
   bracket (startManagedProcess "seki-reference-config" sekiEnvironment (proc executable [])) stopManagedProcess $ \seki ->
     ( do
         pid <- managedProcessPid seki >>= maybe (failIntegration "seki-reference-config has no pid") pure
