@@ -23,7 +23,7 @@ import GHC.Clock (getMonotonicTimeNSec)
 import Network.Socket (Family (AF_UNIX), SockAddr (SockAddrUnix), SocketType (Stream), close, connect, defaultProtocol, socket)
 import Network.Socket.ByteString (recv, sendAll)
 import Seki.Fixture.Probe
-import Seki.Integration.Fixture (BorderStyle (..), Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, png, withHeldLogoIn, withKeyboard, withNestedRiverEnvironment, withNestedXwaylandRiver)
+import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, png, portedBorders, withHeldLogoIn, withKeyboard, withNestedRiverEnvironment, withNestedXwaylandRiver)
 import Seki.Integration.Harness
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable, listDirectory, removeFile)
 import System.Environment (getExecutablePath, lookupEnv)
@@ -170,10 +170,7 @@ shownOn :: Snapshot -> Text -> IO Text
 shownOn shot tag = maybe (failIntegration ("no output shows " <> Text.unpack tag <> ": " <> show (snapOutputs shot))) pure (find ((== Just tag) . outputWorkspace) (snapOutputs shot) >>= outputName)
 
 picture :: DailySession -> Text -> String -> [Paint] -> IO ()
-picture session output phase = outputPicture (sessionName session) (sessionSocket session) output phase . pictureErrorWith dailyBorders
-
-dailyBorders :: BorderStyle
-dailyBorders = BorderStyle 1 (BS.pack [255, 0, 0]) (BS.pack [0, 0, 221])
+picture session output phase = outputPicture (sessionName session) (sessionSocket session) output phase . pictureErrorWith portedBorders
 
 report :: String -> String -> IO ()
 report label value = announce ("M3_DAILY_" <> label <> " " <> value)

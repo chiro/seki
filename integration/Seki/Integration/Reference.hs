@@ -12,7 +12,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
 import Seki.Fixture.Probe
-import Seki.Integration.Fixture (BorderStyle (..), Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, withKeyboard, withNestedRiver)
+import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, portedBorders, withKeyboard, withNestedRiver)
 import Seki.Integration.Harness
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.FilePath (takeDirectory, (</>))
@@ -98,7 +98,6 @@ referenceConfig = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-r
     )
       `onException` (renderManagedProcessLogs seki >>= announce)
  where
-  portedBorders = BorderStyle 1 (BS.pack [255, 0, 0]) (BS.pack [0, 0, 221])
   leftTile = Box 1 1 398 598
   rightTile = Box 401 1 398 598
   fullTile = Box 1 1 798 598
