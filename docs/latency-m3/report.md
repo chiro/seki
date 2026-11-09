@@ -155,15 +155,15 @@ All 30 trials met every budget.
 | trunk | `3c3037369eed28e5dc59528046afa4b7a1309cae` | 9.10.3 | `47c3269edab5dd4455b0e742b6764816c94d9e26aac31123795c24f5ebc5a354` | `libHSseki-0.1.0.0-inplace-layer-surface-fixture-ghc9.10.3.so` `5b4398a6e2dbe724b2e8eee821d753d9c012931fff04545e1b6691d590a87703`<br>`libHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so` `2d86dec6f516cd264129458591f2c935e0180bf2fe6d6ac1b731ce3743c2343c`<br>`libHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so` `377a4cfc5d9d49f30fc13c75d5e7253c578c63046b94bd57bf8a9d447c1c6eba` |
 | head | `82a31cc298f9f5200788b2898a36dd248cfefdd0` | 9.10.3 | `9df3839cd62f480d8d7cbdb503595c9b61453660f4308b73bc4194db91248fb8` | `libHSseki-0.1.0.0-inplace-layer-surface-fixture-ghc9.10.3.so` `01a441aace501b6441dd8e355a3992bdf57362c646afcd73c87c1fb5fdfec152`<br>`libHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so` `99ff735438a64e5bcdf1792439a464333c64967c8ee7569c799d2e380d14fba4`<br>`libHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so` `377a4cfc5d9d49f30fc13c75d5e7253c578c63046b94bd57bf8a9d447c1c6eba` |
 
-Runtime sources under `src`, `src-core`, `src-public`, `src-generated`, and `cbits` are identical across the revisions, so their m2 manage and render differences are a noise floor.
-Latency driver sources under `tools/latency` and `integration/Seki/Integration/Harness.hs` differ across the revisions. The pure interval includes the driver's checksum fold, so matching pure checksums show the same output, not the same cost.
+Runtime sources under `src`, `src-core`, `src-public`, `src-generated`, and `cbits` are identical across the revisions.
+Latency driver sources under `tools/latency` and `integration/Seki/Integration/Harness.hs` differ across the revisions. The WM runs the driver's policy setup, and the pure interval includes the driver's checksum fold, so this report draws no conclusion from differences between revisions. Matching pure checksums show the same output, not the same cost.
 This report claims no speedup or regression.
 m2 pure checksums agree across revisions.
 trunk does not run m3: invalid workload: m3.
 
 ## M3 command endpoints
 
-Each sample runs from the driver's send of one IPC command to the outcome named below, on idle river after a 1 ms gap, with no physical input. Probe outcomes are polled every 0.1 ms; subscriber lines are stamped on arrival. No ratio compares these with the m2 sequences.
+Each sample runs from the driver's send of one IPC command to the outcome named below, on idle river after a 1 ms gap, with no physical input. Probe outcomes are polled every 0.1 ms; subscriber lines are stamped when the driver's reader thread takes them. No ratio compares these with the m2 sequences.
 
 - `external_wake`: IPC workspace command sent to the probe's keyboard owner change.
 - `ipc_update`: the same command to the subscriber line that publishes the new focused workspace.
