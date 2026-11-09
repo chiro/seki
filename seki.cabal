@@ -300,6 +300,16 @@ executable seki-reference-config
     base >=4.20 && <4.21,
     seki
 
+executable seki-daily-config
+  import:         warnings
+  hs-source-dirs: test-public
+  main-is:        DailyConfigMain.hs
+  other-modules:  PortedConfig
+  ghc-options:    -Werror
+  build-depends:
+    base >=4.20 && <4.21,
+    seki
+
 test-suite seki-test
   import:         warnings
   type:           exitcode-stdio-1.0

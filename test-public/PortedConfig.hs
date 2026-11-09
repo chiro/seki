@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 {- | A port of the maintainer's xmonad.hs, the M2 acceptance oracle, against
 the public API alone. It differs from the original in these ways:
 
@@ -19,9 +21,33 @@ the public API alone. It differs from the original in these ways:
 * A held media or brightness key runs its command once and does not repeat,
   unlike xmonad on X11.
 * 'spawnOnce' history survives a restart through seki's restore file.
--}
-module PortedConfig (portedConfig) where
 
+'dailyConfig' is the port the maintainer runs every day on river. It keeps
+everything above and differs from xmonad.hs in these further ways:
+
+* @~/.config/polybar/launch.sh@ becomes @waybar@. Install
+  @examples/waybar@ as Waybar's configuration to show seki's state.
+* @nitrogen --restore@ becomes @swaybg@ with the same wallpaper. Nitrogen's
+  saved mode 5, zoom fill, is swaybg's @fill@ mode.
+* @xscreensaver --no-splash@ becomes @swayidle@, which runs @swaylock@ after
+  10 minutes idle. xscreensaver blanked after 10 minutes with locking off.
+* Mod-Shift-l runs @swaylock@ instead of @xscreensaver-command --lock@.
+* Mod-grave toggles a terminal scratchpad that xmonad.hs does not have. It runs
+  @alacritty --class seki-scratchpad@, which sets the Wayland app_id the pad
+  matches. It floats at 1280 by 800, centered on a 1920 by 1200 output, and
+  floating rules keep it inside a smaller output.
+* The keyboard and touchpad settings from xorg.conf.d and xset move into input
+  rules. Every keyboard loads the keymap file 'dailyConfig' is given and
+  repeats at 25 Hz after 660 ms. Compile that file from the X11 settings with
+  @xkbcli compile-keymap --rules evdev --model pc105 --layout us --options
+  ctrl:nocaps@. The ELAN touchpad taps to click, clicks by finger count, and
+  scrolls naturally.
+* Automatic client urgency is unavailable. seki has no compositor signal for
+  it, and it is deferred past M3.
+-}
+module PortedConfig (portedConfig, dailyConfig) where
+
+import Data.Bifunctor (first)
 import Seki
 
 portedConfig :: Config StdLayouts
@@ -57,3 +83,27 @@ portedConfig =
   tiled = Tall 1 (3 / 100) (1 / 2)
   opaque r g b = BorderColor (channel r) (channel g) (channel b) maxBound
   channel byte = byte * 0x01010101
+
+-- | The daily configuration, loading the keyboard keymap from the given path.
+dailyConfig :: FilePath -> Either String (Config StdLayouts)
+dailyConfig keymap = do
+  padRect <- first show (mkSize 1280 800 >>= mkRect (Point 320 200))
+  anyKeyboard <- first show (compileDevicePattern "*")
+  touchpad <- first show (compileDevicePattern "ELAN06C7:00 04F3:3193 Touchpad")
+  pure $
+    additionalKeys
+      portedConfig
+        { startupHook = do
+            spawnOnce "waybar"
+            spawnOnce "swaybg -i /usr/share/backgrounds/archlinux/wave.png -m fill"
+            spawnOnce "fcitx5"
+            spawnOnce "swayidle -w timeout 600 'swaylock -f'"
+        , scratchpads = [Scratchpad "term" "alacritty --class seki-scratchpad" (appId =? "seki-scratchpad") (OutputRect padRect)]
+        , inputRules =
+            [ InputRule anyKeyboard (Just Keyboard) [Keymap keymap, RepeatInfo 25 660]
+            , InputRule touchpad (Just Pointer) [Tap True, ClickMethod ClickFinger, NaturalScroll True]
+            ]
+        }
+      [ (KeyBinding (Mod4 .|. Shift) (Keysym 0x6c), spawn "swaylock")
+      , (KeyBinding Mod4 (Keysym 0x60), toggleScratchpad "term")
+      ]

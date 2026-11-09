@@ -4,7 +4,7 @@ module Main (main) where
 
 import ConfigMain (customConfig, fullConfig, mediaConfig, raiseVolume, tolerantConfig)
 import Control.Monad (unless)
-import PortedConfig (portedConfig)
+import PortedConfig (dailyConfig, portedConfig)
 import Seki
 import Seki.Core.StackSet (differentiate, integrate, integrate')
 import System.Exit (exitFailure)
@@ -46,6 +46,18 @@ main = do
   check "the port cycles Tall, Mirror Tall, and Full" (layoutHook portedConfig == layouts)
   check "the port adds its lock and media keys" (all (`elem` bound portedConfig) portedKeys)
   check "the port's added keys replace no default" (length (bound portedConfig) == length (bound def) + length portedKeys)
+  case dailyConfig "/keymaps/daily.xkb" of
+    Left err -> failWith err
+    Right daily -> do
+      check "the daily configuration keeps the port's workspaces and layouts" (workspaces daily == workspaces portedConfig && layoutHook daily == layouts)
+      check "the daily configuration keeps the port's borders" (borders daily == borders portedConfig)
+      check "the daily configuration keeps every port key" (all (`elem` bound daily) (bound portedConfig))
+      check "Mod-grave is the one added key, and Mod-Shift-l is rebound in place" (KeyBinding Mod4 (Keysym 0x60) `elem` bound daily && length (bound daily) == length (bound portedConfig) + 1)
+      check "the daily configuration has one alacritty scratchpad" (map (\p -> (scratchpadName p, scratchpadCommand p)) (scratchpads daily) == [("term", "alacritty --class seki-scratchpad")])
+      check "the scratchpad is 1280 by 800, centered on a 1920 by 1200 output" (map scratchpadGeometry (scratchpads daily) == [OutputRect padRect | Right padRect <- [mkSize 1280 800 >>= mkRect (Point 320 200)]])
+      check "the keyboard rule loads the keymap and repeats at 25 Hz after 660 ms" (map ruleSettings (filter ((== Just Keyboard) . ruleDeviceType) (inputRules daily)) == [[Keymap "/keymaps/daily.xkb", RepeatInfo 25 660]])
+      check "the touchpad rule taps, clicks by finger count, and scrolls naturally" (map ruleSettings (filter ((== Just Pointer) . ruleDeviceType) (inputRules daily)) == [[Tap True, ClickMethod ClickFinger, NaturalScroll True]])
+      check "the touchpad rule names the oracle touchpad" (map ruleDeviceName (filter ((== Just Pointer) . ruleDeviceType) (inputRules daily)) == [touchpad | Right touchpad <- [compileDevicePattern "ELAN06C7:00 04F3:3193 Touchpad"]])
  where
   check label ok = unless ok (failWith label)
   failWith message = putStrLn ("public API check failed: " <> message) >> exitFailure
