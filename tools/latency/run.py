@@ -143,6 +143,7 @@ def summarize_trial(directory, workload):
     require(sorted(timed) == sorted(planned), f"timed endpoints {sorted(timed)} differ from the workload's {sorted(planned)}")
     for name in planned:
         require(len(timed[name]) == driver["endpoint_steps"][name] > 0, f"{name} has {len(timed[name])} samples for {driver['endpoint_steps'][name]} planned steps")
+    method = {key: driver[key] for key in ["idle_gap_us", "observation_poll_us"]} if planned else None
     start, end = driver["start_ns"], driver["end_ns"]
     require(start < end, "invalid shared monotonic measurement interval")
     samples = wm["samples"]
@@ -155,7 +156,7 @@ def summarize_trial(directory, workload):
     before, after = (read(directory / f"wm-checkpoint-{i}.json") for i in [0, 1])
     delta = {key: after[key] - before[key] for key in before}
     require(all(v >= 0 for v in delta.values()), "RTS checkpoint counters moved backwards")
-    return result | {"exercised": exercised, "endpoints": {name: quantiles(samples) for name, samples in timed.items()},
+    return result | {"exercised": exercised, "endpoints": {name: quantiles(samples) for name, samples in timed.items()}, "endpoint_method": method,
                      "manage_per_action": result["manage"]["count"] / driver["steps"],
                      "render_per_action": result["render"]["count"] / driver["steps"],
                      "wm_workload_rts_delta": delta, "pure": quantiles(pure["samples_ns"]), "pure_checksum": pure["checksum"],
@@ -240,9 +241,12 @@ def endpoint_section(trials):
     rows = [(t, name, v) for t in trials for name, v in t["endpoints"].items()]
     if not rows:
         return []
+    methods = {tuple(t["endpoint_method"].items()) for t, _, _ in rows}
+    require(len(methods) == 1, f"m3 trials disagree on the idle gap and poll interval: {sorted(methods)}")
+    method = dict(methods.pop())
     lines = ["", "## M3 command endpoints", "",
-             "Each sample runs from the driver's send of one IPC command to the outcome named below, on idle river after a 1 ms gap, "
-             "with no physical input. Probe outcomes are polled every 0.1 ms; subscriber lines are stamped on arrival. "
+             f"Each sample runs from the driver's send of one IPC command to the outcome named below, on idle river after a {method['idle_gap_us'] / 1000:g} ms gap, "
+             f"with no physical input. Probe outcomes are polled every {method['observation_poll_us'] / 1000:g} ms; subscriber lines are stamped on arrival. "
              "No ratio compares these with the m2 sequences.", ""]
     for workload in dict.fromkeys(t["workload"] for t, _, _ in rows):
         for name, spec in WORKLOADS[workload]["endpoints"].items():

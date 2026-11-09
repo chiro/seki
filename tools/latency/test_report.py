@@ -22,7 +22,8 @@ def driver_for(workload):
                   workload=workload, exercised={name: 1 for name in runner.WORKLOADS[workload]["exercised"]})
     endpoints = runner.WORKLOADS[workload].get("endpoints", {})
     if endpoints:
-        driver |= dict(endpoints={name: [1_000_000, 2_000_000] for name in endpoints}, endpoint_steps={name: 2 for name in endpoints})
+        driver |= dict(endpoints={name: [1_000_000, 2_000_000] for name in endpoints}, endpoint_steps={name: 2 for name in endpoints},
+                       idle_gap_us=1000, observation_poll_us=100)
     return driver
 
 
@@ -280,6 +281,25 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(compare(base, wire), {"runtime": False, "driver": True})
         self.assertEqual(compare(wire, latency), {"runtime": True, "driver": False})
         self.assertIsNone(runner.compare_sources({"local": dict(git_sha=None, worktree=None)}))
+
+    def test_endpoint_method_comes_from_the_trials(self):
+        driver = driver_for("m3") | dict(idle_gap_us=2500, observation_poll_us=200)
+        self.write_trial("00-head-m3-normal", "m3", 456, driver)
+        self.write_trial("01-head-m3-nonmoving", "m3", 456, driver)
+        trials = [("00-head-m3-normal", "head", "m3"), ("01-head-m3-nonmoving", "head", "m3")]
+        runner.write(self.path / "manifest.json", manifest(trials, revisions={"head": revision("abc1234")}))
+        runner.report(self.path)
+        text = (self.path / "report.md").read_text()
+        self.assertIn("on idle river after a 2.5 ms gap", text)
+        self.assertIn("Probe outcomes are polled every 0.2 ms", text)
+
+    def test_trials_with_different_endpoint_methods_are_refused(self):
+        self.write_trial("00-head-m3-normal", "m3", 456)
+        self.write_trial("01-head-m3-nonmoving", "m3", 456, driver_for("m3") | dict(idle_gap_us=2000))
+        trials = [("00-head-m3-normal", "head", "m3"), ("01-head-m3-nonmoving", "head", "m3")]
+        runner.write(self.path / "manifest.json", manifest(trials, revisions={"head": revision("abc1234")}))
+        with self.assertRaisesRegex(ValueError, "idle gap and poll interval"):
+            runner.report(self.path)
 
     def test_checksums_must_agree_within_a_workload_and_revision_only(self):
         summary = self.campaign(head_m2_checksum=789)
