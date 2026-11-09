@@ -310,7 +310,7 @@ twoOutput = withDailySession "m3-daily-two-output" (dailyOptions 2) $ \session -
   termOutput <- placedOutput <$> startedOn session "term"
   emacsOutput <- placedOutput <$> startedOn session "emacs"
   let outputs = [(termOutput, "term"), (emacsOutput, "emacs")]
-      shown pads title = bar outputs [workspace "term" [Occupied, Visible, Focused] "Mirror Tall", workspace "emacs" [Occupied, Visible] "Tall"] title pads
+      shown title pads = bar outputs [workspace "term" [Occupied, Visible, Focused] "Mirror Tall", workspace "emacs" [Occupied, Visible] "Tall"] title pads
   report "OUTPUTS" (show outputs)
   _ <- openWindow probe Blue
   _ <- openWindowWith probe (windowSpec Green){specAppId = CustomAppId "Emacs"}
@@ -320,21 +320,21 @@ twoOutput = withDailySession "m3-daily-two-output" (dailyOptions 2) $ \session -
   modKeys (clientEnvironment session) ["space"]
   picture session termOutput "term tiles its two windows under Mirror Tall" [Paint Green (Box 1 1 798 298) True, Paint Blue (Box 1 301 798 298) False]
   picture session emacsOutput "emacs shows the Emacs window on the other output" [Paint Green (Box 1 1 798 598) False]
-  streamShows stream "the bar shows both outputs, the title, and the layout" (shown [] (Just "daily two-output"))
+  streamShows stream "the bar shows both outputs, the title, and the layout" (shown (Just "daily two-output") [])
   capture session "daily-two-output-windows"
   modKeys (clientEnvironment session) ["grave"]
   launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty --class seki-scratchpad"
-  streamShows stream "the launched scratchpad is pending" (shown [("term", "pending")] (Just "daily two-output"))
+  streamShows stream "the launched scratchpad is pending" (shown (Just "daily two-output") [("term", "pending")])
   pad <- openWindowWith probe (windowSpec Blue){specAppId = CustomAppId "seki-scratchpad"}
   waitFocus session "the shown pad has keyboard focus" (Just pad)
   setTitle probe pad "daily scratchpad"
   picture session termOutput "the pad floats over term clamped inside its 800 by 600 output" [Paint Blue (Box 1 1 798 598) True]
-  streamShows stream "the matching window shows the pad" (shown [("term", "shown")] (Just "daily scratchpad"))
+  streamShows stream "the matching window shows the pad" (shown (Just "daily scratchpad") [("term", "shown")])
   capture session "daily-two-output"
   modKeys (clientEnvironment session) ["grave"]
   waitFocus session "hiding the pad returns focus to the term window" (Just second)
   picture session termOutput "term tiles its two windows again with the pad hidden" [Paint Green (Box 1 1 798 298) True, Paint Blue (Box 1 301 798 298) False]
-  streamShows stream "the second Mod-grave hides the pad" (shown [("term", "hidden")] (Just "daily two-output"))
+  streamShows stream "the second Mod-grave hides the pad" (shown (Just "daily two-output") [("term", "hidden")])
   capture session "daily-two-output-hidden"
 
 stubBuildResources :: DailyHome -> FilePath -> IO [(String, String)]
@@ -441,6 +441,9 @@ barReconnect = withDailySession "m3-daily-bar" (dailyOptions 1) $ \session -> wi
 touchpadName :: Text
 touchpadName = "ELAN06C7:00 04F3:3193 Touchpad"
 
+touchpadSettings :: [Text]
+touchpadSettings = ["tap", "click_method", "natural_scroll"]
+
 backendKeyboards :: [Text]
 backendKeyboards = ["seki-private-backend-keyboard", "seki-private-second-keyboard"]
 
@@ -457,67 +460,73 @@ hotplug = do
     let plugged = directory </> "plugged"
         options = (dailyOptions 2){optionRiverEnvironment = [("LD_PRELOAD", backend), ("SEKI_FIXTURE_HOTPLUG", plugged), ("SEKI_FIXTURE_HOTPLUG_POINTER", Text.unpack touchpadName)]}
     withDailySession "m3-daily-hotplug" options $ \session -> do
-      let probe = sessionProbe session
-          randr arguments = void (runProcessCapture (clientEnvironment session) "wlr-randr" arguments)
-          keyboardResults = [("keymap", "sent"), ("repeat_info", "sent")]
-          settled names shot = sort [(deviceName d, sort (deviceResults d), deviceKeymap d) | d <- namedDevices names shot, deviceLifecycle d == "ready"]
-          dailyKeyboard name = (Just name, keyboardResults, Just (homeKeymap (sessionHome session)))
-          projected project phase = waitUntil phase assertionTimeoutMicroseconds (project <$> snapshot session)
-      termOutput <- placedOutput <$> startedOn session "term"
-      emacs <- startedOn session "emacs"
-      let emacsOutput = placedOutput emacs
-      ready <- projected (settled backendKeyboards) "the daily keyboard rule's results reach both backend keyboards" (== map dailyKeyboard backendKeyboards)
-      report "BACKEND_KEYBOARDS" (show ready)
-      pointer <- projected (\shot -> [filter ((`elem` touchpadSettings) . fst) (deviceResults d) | d <- namedDevices ["seki-private-backend-pointer"] shot]) "the backend pointer is in the inventory" (not . null)
-      assertEqual "the touchpad rule applies to no backend pointer" [[]] pointer
-      repeats <- waitUntil "river applies the rule's 25 Hz repeat after 660 ms" assertionTimeoutMicroseconds (filter ("fixture group repeat observed" `isPrefixOf`) . lines <$> renderManagedProcessLogs (riverProcess (sessionRiver session))) (elem "fixture group repeat observed 25 660")
-      report "RIVER_REPEAT" (show repeats)
-      writeFile plugged ""
-      added <- projected (settled [hotplugKeyboard, touchpadName]) "the plugged keyboard gets the daily keyboard results and the touchpad the touchpad results" (== sort [dailyKeyboard hotplugKeyboard, (Just touchpadName, [("click_method", "unavailable"), ("natural_scroll", "unavailable"), ("tap", "unavailable")], Nothing)])
-      report "PLUGGED_DEVICES" (show added)
-      removeFile plugged
-      gone <- projected (map deviceName . snapDevices) "the unplugged devices leave the inventory" (\names -> all ((`notElem` names) . Just) [hotplugKeyboard, touchpadName])
-      report "AFTER_UNPLUG" (show gone)
-      projected (settled backendKeyboards) "the backend keyboards keep their results after the unplug" (== map dailyKeyboard backendKeyboards) >>= report "BACKEND_KEYBOARDS_AFTER_UNPLUG" . show
-      tile <- openWindow probe Green
-      editor <- openWindowWith probe (windowSpec Green){specAppId = CustomAppId "Emacs"}
-      let bothShown :: [(Text, Text)] -> Text -> BarView
-          bothShown pads focused = bar [(termOutput, "term"), (emacsOutput, "emacs")] [workspace "term" ([Occupied, Visible] <> [Focused | focused == "term"]) "Tall", workspace "emacs" ([Occupied, Visible] <> [Focused | focused == "emacs"]) "Tall"] Nothing pads
-          remaining shown = bar [(termOutput, shown)] [workspace "term" ([Occupied] <> [Visible | shown == "term"] <> [Focused | shown == "term"]) "Tall", workspace "emacs" ([Occupied] <> [Visible | shown == "emacs"] <> [Focused | shown == "emacs"]) "Tall"] Nothing [("term", "shown")]
-      click (sessionSocket session) (sessionExtent session) (placedX emacs + 400, 300)
-      waitFocus session "a click focuses the Emacs window on the other output" (Just editor)
-      modKeys (clientEnvironment session) ["grave"]
-      launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty --class seki-scratchpad"
-      pad <- openWindowWith probe (windowSpec Blue){specAppId = CustomAppId "seki-scratchpad"}
-      waitFocus session "the shown pad has keyboard focus" (Just pad)
-      picture session emacsOutput "the pad shows on emacs's output" [Paint Blue (Box 1 1 798 598) True]
-      picture session termOutput "term keeps its tile on the other output" [Paint Green (Box 1 1 798 598) False]
-      polledShows session "the pad is shown on emacs" (bothShown [("term", "shown")] "emacs")
-      capture session "daily-hotplug-before"
-      randr ["--output", Text.unpack emacsOutput, "--off"]
-      polledShows session "the removed output's workspace returns to hidden with the pad still shown on it" (remaining "term")
-      waitFocus session "focus moves to the surviving output's tile" (Just tile)
-      picture session termOutput "the surviving output shows term" [Paint Green (Box 1 1 798 598) True]
-      capture session "daily-hotplug-off"
-      modKeys (clientEnvironment session) ["2"]
-      polledShows session "Mod-2 brings emacs to the remaining output" (remaining "emacs")
-      waitFocus session "the pad has keyboard focus on the remaining output" (Just pad)
-      picture session termOutput "the pad covers the Emacs window inside the remaining output" [Paint Blue (Box 1 1 798 598) True]
-      capture session "daily-hotplug-moved"
-      modKeys (clientEnvironment session) ["1"]
-      polledShows session "Mod-1 shows term again" (remaining "term")
-      randr ["--output", Text.unpack emacsOutput, "--on", "--custom-mode", "800x600", "--pos", show (placedX emacs) <> ",0"]
-      polledShows session "the re-added output shows emacs again" (bothShown [("term", "shown")] "term")
-      picture session emacsOutput "the pad is back inside the re-added output" [Paint Blue (Box 1 1 798 598) False]
-      picture session termOutput "term keeps the focused tile" [Paint Green (Box 1 1 798 598) True]
-      capture session "daily-hotplug"
+      hotplugDevices session plugged
+      hotplugOutput session
 
-touchpadSettings :: [Text]
-touchpadSettings = ["tap", "click_method", "natural_scroll"]
+hotplugDevices :: DailySession -> FilePath -> IO ()
+hotplugDevices session plugged = do
+  ready <- projected (settled backendKeyboards) "the daily keyboard rule's results reach both backend keyboards" (== map dailyKeyboard backendKeyboards)
+  report "BACKEND_KEYBOARDS" (show ready)
+  pointer <- projected (\shot -> [filter ((`elem` touchpadSettings) . fst) (deviceResults d) | d <- namedDevices ["seki-private-backend-pointer"] shot]) "the backend pointer is in the inventory" (not . null)
+  assertEqual "the touchpad rule applies to no backend pointer" [[]] pointer
+  repeats <- waitUntil "river applies the rule's 25 Hz repeat after 660 ms" assertionTimeoutMicroseconds (filter ("fixture group repeat observed" `isPrefixOf`) . lines <$> renderManagedProcessLogs (riverProcess (sessionRiver session))) (elem "fixture group repeat observed 25 660")
+  report "RIVER_REPEAT" (show repeats)
+  writeFile plugged ""
+  added <- projected (settled [hotplugKeyboard, touchpadName]) "the plugged keyboard gets the daily keyboard results and the touchpad the touchpad results" (== sort [dailyKeyboard hotplugKeyboard, (Just touchpadName, [("click_method", "unavailable"), ("natural_scroll", "unavailable"), ("tap", "unavailable")], Nothing)])
+  report "PLUGGED_DEVICES" (show added)
+  removeFile plugged
+  gone <- projected (map deviceName . snapDevices) "the unplugged devices leave the inventory" (\names -> all ((`notElem` names) . Just) [hotplugKeyboard, touchpadName])
+  report "AFTER_UNPLUG" (show gone)
+  projected (settled backendKeyboards) "the backend keyboards keep their results after the unplug" (== map dailyKeyboard backendKeyboards) >>= report "BACKEND_KEYBOARDS_AFTER_UNPLUG" . show
+ where
+  keyboardResults = [("keymap", "sent"), ("repeat_info", "sent")]
+  settled names shot = sort [(deviceName d, sort (deviceResults d), deviceKeymap d) | d <- namedDevices names shot, deviceLifecycle d == "ready"]
+  dailyKeyboard name = (Just name, keyboardResults, Just (homeKeymap (sessionHome session)))
+  projected project phase = waitUntil phase assertionTimeoutMicroseconds (project <$> snapshot session)
+
+hotplugOutput :: DailySession -> IO ()
+hotplugOutput session = do
+  let probe = sessionProbe session
+      randr arguments = void (runProcessCapture (clientEnvironment session) "wlr-randr" arguments)
+  termOutput <- placedOutput <$> startedOn session "term"
+  emacs <- startedOn session "emacs"
+  let emacsOutput = placedOutput emacs
+  tile <- openWindow probe Green
+  editor <- openWindowWith probe (windowSpec Green){specAppId = CustomAppId "Emacs"}
+  let bothShown :: [(Text, Text)] -> Text -> BarView
+      bothShown pads focused = bar [(termOutput, "term"), (emacsOutput, "emacs")] [workspace "term" ([Occupied, Visible] <> [Focused | focused == "term"]) "Tall", workspace "emacs" ([Occupied, Visible] <> [Focused | focused == "emacs"]) "Tall"] Nothing pads
+      remaining shown = bar [(termOutput, shown)] [workspace "term" ([Occupied] <> [Visible | shown == "term"] <> [Focused | shown == "term"]) "Tall", workspace "emacs" ([Occupied] <> [Visible | shown == "emacs"] <> [Focused | shown == "emacs"]) "Tall"] Nothing [("term", "shown")]
+  click (sessionSocket session) (sessionExtent session) (placedX emacs + 400, 300)
+  waitFocus session "a click focuses the Emacs window on the other output" (Just editor)
+  modKeys (clientEnvironment session) ["grave"]
+  launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty --class seki-scratchpad"
+  pad <- openWindowWith probe (windowSpec Blue){specAppId = CustomAppId "seki-scratchpad"}
+  waitFocus session "the shown pad has keyboard focus" (Just pad)
+  picture session emacsOutput "the pad shows on emacs's output" [Paint Blue (Box 1 1 798 598) True]
+  picture session termOutput "term keeps its tile on the other output" [Paint Green (Box 1 1 798 598) False]
+  polledShows session "the pad is shown on emacs" (bothShown [("term", "shown")] "emacs")
+  capture session "daily-hotplug-before"
+  randr ["--output", Text.unpack emacsOutput, "--off"]
+  polledShows session "the removed output's workspace returns to hidden with the pad still shown on it" (remaining "term")
+  waitFocus session "focus moves to the surviving output's tile" (Just tile)
+  picture session termOutput "the surviving output shows term" [Paint Green (Box 1 1 798 598) True]
+  capture session "daily-hotplug-off"
+  modKeys (clientEnvironment session) ["2"]
+  polledShows session "Mod-2 brings emacs to the remaining output" (remaining "emacs")
+  waitFocus session "the pad has keyboard focus on the remaining output" (Just pad)
+  picture session termOutput "the pad covers the Emacs window inside the remaining output" [Paint Blue (Box 1 1 798 598) True]
+  capture session "daily-hotplug-moved"
+  modKeys (clientEnvironment session) ["1"]
+  polledShows session "Mod-1 shows term again" (remaining "term")
+  randr ["--output", Text.unpack emacsOutput, "--on", "--custom-mode", "800x600", "--pos", show (placedX emacs) <> ",0"]
+  polledShows session "the re-added output shows emacs again" (bothShown [("term", "shown")] "term")
+  picture session emacsOutput "the pad is back inside the re-added output" [Paint Blue (Box 1 1 798 598) False]
+  picture session termOutput "term keeps the focused tile" [Paint Green (Box 1 1 798 598) True]
+  capture session "daily-hotplug"
 
 -- | Match argv[0], not comm: a nix wrapProgram daemon runs as .fcitx5-wrapped and keeps its argv[0].
-fixtureProcesses :: String -> (String, String) -> IO [Int]
-fixtureProcesses command (name, value) = do
+processesWithEnvironment :: String -> (String, String) -> IO [Int]
+processesWithEnvironment command (name, value) = do
   entries <- listDirectory "/proc"
   fmap catMaybes . forM [read entry | entry <- entries, not (null entry), all isDigit entry] $ \pid -> do
     found <- try @IOException ((,) <$> BS.readFile ("/proc/" <> show pid <> "/cmdline") <*> BS.readFile ("/proc/" <> show pid <> "/environ"))
@@ -552,7 +561,7 @@ imeHandover = withDailyHome (dailyOptions 1) $ \home -> do
         report "IME_COMMIT" committed
         assertEqual "foot receives exactly the Mozc commit after the handover" "日本語" committed
         capture session "daily-ime"
-      daemons <- fixtureProcesses "fcitx5" ("DBUS_SESSION_BUS_ADDRESS", bus)
+      daemons <- processesWithEnvironment "fcitx5" ("DBUS_SESSION_BUS_ADDRESS", bus)
       report "FCITX5_PROCESSES" (show daemons)
       assertEqual "one fcitx5 process from this fixture exists" 1 (length daemons)
 
