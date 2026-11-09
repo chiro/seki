@@ -1,6 +1,10 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Seki.Run.LatencyPureTest (tests) where
 
 import Control.Exception (ErrorCall, evaluate, try)
+import Data.Aeson (eitherDecodeFileStrict', withObject, (.:))
+import Data.Aeson.Types (parseEither)
 import Data.Bits (shiftR)
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
@@ -17,6 +21,8 @@ import Seki.Internal.Core.StackSet qualified as S
 import Seki.Internal.Core.State
 import Seki.Latency.Pure
 import Seki.Latency.Workload (WorkloadName (..))
+import System.FilePath ((</>))
+import System.IO.Temp (withSystemTempDirectory)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -83,6 +89,12 @@ tests =
         let shown = fst (drainCore idHook [eventFor M3 8 20] (initialState M3 8))
             lost = shown{coreScratchpads = Map.insert "pad" (ShownPad (S.WindowId 10) Nothing) (coreScratchpads shown)}
         assertBool "the pad's window is not managed" (not (validateResult 8 lost (planFor M3 8 lost)))
+    , testCase "m2 keeps the pure checksum of trunk c2b7851, from before m3" $
+        withSystemTempDirectory "seki-pure" $ \directory -> do
+          runPure (directory </> "pure.json") M2 1909 32 512
+          decoded <- eitherDecodeFileStrict' (directory </> "pure.json")
+          checksum <- either fail pure (decoded >>= parseEither (withObject "pure" (.: "checksum")))
+          checksum @?= (16867668497154443398 :: Word64)
     , testCase "the m3 digest consumes the pad state" $
         throws (forceResult (initialState M3 8){coreScratchpads = Map.singleton "pad" (ShownPad (error "unforced pad") Nothing)} [] emptyScene)
     ]
