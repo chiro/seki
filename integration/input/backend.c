@@ -19,6 +19,7 @@ __attribute__((constructor)) static void consume_preload(void) {
  fprintf(stderr,"fixture backend preload consumed before compositor startup\n");
 }
 static struct wlr_backend *backend;
+static struct wl_event_source *keytimer;
 static struct wl_event_source *timer;
 static struct wl_event_source *cycle_timer;
 static int stage;
@@ -113,7 +114,7 @@ static int hotplug(void *data) {
 struct wlr_backend *wlr_backend_autocreate(struct wl_event_loop *loop, struct wlr_session **session) {
  struct wlr_backend *(*real)(struct wl_event_loop *,struct wlr_session **) = dlsym(RTLD_NEXT,"wlr_backend_autocreate");
  backend=real(loop,session);
- struct wl_event_source *keytimer=wl_event_loop_add_timer(loop,press,NULL);
+ keytimer=wl_event_loop_add_timer(loop,press,NULL);
  wl_event_source_timer_update(keytimer,1800);
  if (getenv("SEKI_FIXTURE_LAYOUT_CYCLE")) {
   cycle_timer=wl_event_loop_add_timer(loop,cycle,NULL);
@@ -129,6 +130,10 @@ struct wlr_backend *wlr_backend_autocreate(struct wl_event_loop *loop, struct wl
 }
 void wlr_backend_destroy(struct wlr_backend *b) {
  void (*real)(struct wlr_backend *) = dlsym(RTLD_NEXT,"wlr_backend_destroy");
+ if (b==backend) {
+  struct wl_event_source **sources[]={&keytimer,&timer,&cycle_timer,&hotplug_timer};
+  for (size_t i=0;i<sizeof sources/sizeof *sources;i++) if (*sources[i]) {wl_event_source_remove(*sources[i]); *sources[i]=NULL;}
+ }
  if (b==backend && active) {wl_list_remove(&repeat.link); wlr_keyboard_finish(&keyboard); wlr_keyboard_finish(&second); wlr_pointer_finish(&pointer);}
  if (b==backend && plugged) {wlr_keyboard_finish(&hotplug_keyboard); wlr_pointer_finish(&hotplug_pointer); plugged=false;}
  real(b);
