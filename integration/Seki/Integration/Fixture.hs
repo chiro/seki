@@ -19,7 +19,7 @@ module Seki.Integration.Fixture (
   withInputFixture,
   saveCapture,
   saveOutputCapture,
-  png,
+  saveOutputsSideBySide,
   withHeldLogo,
   withHeldLogoIn,
   windowRequests,
@@ -40,7 +40,7 @@ import Data.Bits (complement, shiftR, xor, (.&.))
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
-import Data.List (find)
+import Data.List (find, sort)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
@@ -319,6 +319,21 @@ saveCapture fixture label = do
 
 saveOutputCapture :: FilePath -> Text -> FilePath -> IO ()
 saveOutputCapture socket output path = captureOutput socket output >>= BS.writeFile path . png
+
+saveOutputsSideBySide :: FilePath -> FilePath -> IO ()
+saveOutputsSideBySide socket path = do
+  outputs <- sort . map snd <$> outputNames socket
+  frames <- mapM (captureOutput socket) outputs
+  BS.writeFile path (png (sideBySide frames))
+
+sideBySide :: [Image] -> Image
+sideBySide frames = Image width height (BS.concat [BS.concat (map (row y) frames) | y <- [0 .. height - 1]])
+ where
+  width = sum (map imageWidth frames)
+  height = maximum (0 : map imageHeight frames)
+  row y frame
+    | y < imageHeight frame = BS.take (imageWidth frame * 3) (BS.drop (y * imageWidth frame * 3) (imageRgb frame))
+    | otherwise = BS.replicate (imageWidth frame * 3) 0
 
 png :: Image -> BS.ByteString
 png frame = BS.pack [137, 80, 78, 71, 13, 10, 26, 10] <> chunk "IHDR" header <> chunk "IDAT" compressed <> chunk "IEND" BS.empty
