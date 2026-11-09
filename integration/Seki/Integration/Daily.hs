@@ -470,12 +470,15 @@ barReconnect = withDailySession "m3-daily-bar" (dailyOptions 1) $ \session -> wi
   waitFocus session "the newest term window has keyboard focus" (Just second)
   setTitle probe second "daily bar first session"
   barShows stream "the bar shows the titled term window" (onTerm (Just "daily bar first session"))
+  capture session "daily-bar-first-session"
   _ <- sekictl session ["spawn", "printf 'once\\n' >> '" <> marker <> "'"]
   _ <- waitUntil "the spawned marker runs once" assertionTimeoutMicroseconds markerLines (== ["once"])
   restartShows "the first Mod-q" (onTerm (Just "daily bar first session"))
+  capture session "daily-bar-second-session"
   key session ["2"]
   barShows stream "the second session shows the empty emacs workspace" onEmacs
   restartShows "the second Mod-q" onEmacs
+  capture session "daily-bar-third-session"
   key session ["1"]
   waitFocus session "term's window has keyboard focus in the third session" (Just second)
   setTitle probe second "daily bar third session"
@@ -621,6 +624,7 @@ imeHandover = withDailySession "m3-daily-ime" (dailyOptions 1){optionAround = re
   report "HANDOVER" (Text.unpack (snapSession before) <> " -> " <> Text.unpack (snapSession after))
   (_, arguments) <- processImage (sessionPid session)
   assertEqual "the daily process keeps its pid and restores" True ("--restore" `elem` arguments)
+  capture session "daily-ime-handover"
   executable <- getExecutablePath
   withSystemTempDirectory "seki-daily-ime" $ \directory -> do
     let probeSocket = directory </> "probe.sock"
@@ -631,6 +635,7 @@ imeHandover = withDailySession "m3-daily-ime" (dailyOptions 1){optionAround = re
         terminal <- waitForProbe listener foot
         flip finally (hClose terminal) $ do
           _ <- waitSnapshot session "foot is managed on term with keyboard focus" (\s -> snapKeyboard s && any (\w -> wsTag w == "term" && wsOccupied w && wsFocused w) (snapWorkspaces s))
+          capture session "daily-ime-foot"
           committed <- withFcitxVirtualKeyboardOwner ime $ \owner -> commitMozcText "m3-daily-ime" ime client owner terminal
           report "IME_COMMIT" committed
           assertEqual "foot receives exactly the Mozc commit after the handover" "日本語" committed
@@ -778,6 +783,7 @@ loadResponsive = withDailySession "m3-daily-load" (dailyOptions 1) $ \session ->
   master <- openWindow probe Red
   waitFocus session "the newest window has keyboard focus as master" (Just master)
   picture session output "three windows tile with the newest as master" [Paint Green (Box 401 1 398 298) False, Paint Blue (Box 401 301 398 298) False]
+  capture session "daily-load-tiled"
   (idle, idleOwner) <- keyToFocus session "j" (Just master)
   assertEqual "Mod-j without the flood moves focus down the stack" (Just stacked) idleOwner
   report "KEY_TO_FOCUS_IDLE_NS" (show idle)
@@ -797,9 +803,11 @@ loadResponsive = withDailySession "m3-daily-load" (dailyOptions 1) $ \session ->
       drag LeftButton (600, 450) (400, 300)
       picture session output "a logo drag floats the bottom tile moved by the offset during the flood" [Paint Green (Box 401 1 398 598) False, Paint Blue (Box 201 151 398 298) True]
       moved <- captureOutput surface output
+      capture session "daily-load-moved"
       drag RightButton (500, 350) (560, 390)
       picture session output "a logo right drag grows the float by the offset during the flood" [Paint Green (Box 401 1 398 598) False, Paint Blue (Box 201 151 458 338) True]
       resized <- captureOutput surface output
+      capture session "daily-load-resized"
       pure (moved, resized)
     _ <- waitUntil "the float commits its resized size" assertionTimeoutMicroseconds (Map.lookup dragged <$> committedSizes probe) (== Just (458, 338))
     (latency, owner) <- keyToFocus session "j" (Just dragged)
