@@ -91,13 +91,13 @@ tests =
         windowRoles M3 @?= [TileRole Red, TileRole Blue, PadRole Green]
         let m0 = initialModel M3
         (modelFocus m0, modelPadShown m0, observedOwner (expectedObservation m0)) @?= (1, True, Just 0)
-        expectedLayers m0 @?= zipWith (\c b -> Layer c b 2) [Blue, Red] (tileBoxes Half 2) ++ [Layer Green padContent 2]
+        expectedLayers m0 @?= zipWith (\c b -> Layer c b 2) [Blue, Red] (tileBoxes Half 2) ++ [Layer Green padBox 2]
     , testCase "hiding the pad returns the keyboard to the focused tile and keeps every size" $ do
         let m0 = initialModel M3
             hidden = stepModel m0 TogglePad
         observedOwner (expectedObservation hidden) @?= Just 1
         observedSizes (expectedObservation hidden) @?= observedSizes (expectedObservation m0)
-        Map.lookup 0 (observedSizes (expectedObservation m0)) @?= Just (396, 296)
+        Map.lookup 0 (observedSizes (expectedObservation m0)) @?= Just (400, 300)
         map layerColor (expectedLayers hidden) @?= [Blue, Red]
     , testCase "the m3 plan hides the adopted pad, then cycles two views, two toggles, and a recompile" $
         take 11 (plan M3 1909 (initialModel M3))

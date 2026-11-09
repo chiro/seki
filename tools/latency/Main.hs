@@ -22,10 +22,10 @@ main = do
   case args of
     ["info"] -> putStrLn (compilerName <> " " <> showVersion compilerVersion)
     ["--river-init", _] -> mainWith []
-    ["wm", socket, directory] -> runWM socket directory
+    ["wm", socket, directory, workload] -> runWM (named workload) socket directory
     ["pure", path, seed, windows, steps, workload] -> runPure path (named workload) (number seed) (number windows) (number steps)
     ["live", directory, seed, steps, collector, workload] -> runLive directory (named workload) (number seed) (number steps) collector
-    _ -> fail "usage: seki-latency pure FILE SEED WINDOWS STEPS m1|m2 | live DIRECTORY SEED STEPS normal|nonmoving|profile m1|m2 | wm SOCKET DIRECTORY"
+    _ -> fail "usage: seki-latency pure FILE SEED WINDOWS STEPS m1|m2|m3 | live DIRECTORY SEED STEPS normal|nonmoving|profile m1|m2|m3 | wm SOCKET DIRECTORY m1|m2|m3"
  where
   number value = maybe (error ("invalid number: " <> value)) id (readMaybe value)
   named value = maybe (error ("invalid workload: " <> value)) id (parseWorkloadName value)

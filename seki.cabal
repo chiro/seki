@@ -450,6 +450,7 @@ executable seki-latency
   main-is: Main.hs
   ghc-options: -O2 -threaded -rtsopts
   other-modules:
+    Seki.Latency.Commands
     Seki.Latency.Pure
     Seki.Latency.Live
     Seki.Latency.Workload
