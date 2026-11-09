@@ -39,6 +39,7 @@ module Seki.Integration.Harness (
   pollIntervalMicroseconds,
   waitForMVar,
   failIntegration,
+  IntegrationFailure (..),
 ) where
 
 import Control.Concurrent (forkIO, threadDelay)
