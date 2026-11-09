@@ -10,7 +10,7 @@ module Seki.Integration.Daily (dailyScenarios) where
 import Control.Concurrent (forkFinally, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (IOException, SomeException, bracket, finally, onException, try)
-import Control.Monad (forM, forM_, unless, void)
+import Control.Monad (forM, forM_, unless, void, when)
 import Data.Aeson (Value, eitherDecodeStrict', withObject, (.:), (.:?))
 import Data.Aeson.Types (Parser, parseEither)
 import Data.ByteString qualified as BS
@@ -190,7 +190,6 @@ waitFocus session phase wanted = void (waitUntil phase assertionTimeoutMicroseco
 receiptRevision :: BS.ByteString -> Either String Integer
 receiptRevision bytes = eitherDecodeStrict' bytes >>= parseEither (withObject "reply" (\reply -> reply .: "result" >>= withObject "result" (.: "revision")))
 
--- | The executable path and command line of a live process.
 processImage :: Int -> IO (FilePath, [String])
 processImage pid = (,) <$> readSymbolicLink ("/proc/" <> show pid <> "/exe") <*> (map BS8.unpack . filter (not . BS.null) . BS.split 0 <$> BS.readFile ("/proc/" <> show pid <> "/cmdline"))
 
@@ -245,7 +244,7 @@ withSubscription session file action = do
       keep = do
         artifacts <- lookupEnv "SEKI_INTEGRATION_ARTIFACT_DIR"
         exists <- doesFileExist path
-        forM_ artifacts $ \directory -> if exists then createDirectoryIfMissing True directory >> copyFile path (directory </> file) else pure ()
+        forM_ artifacts $ \directory -> when exists (createDirectoryIfMissing True directory >> copyFile path (directory </> file))
   bracket (startManagedProcess "sekictl subscribe" (clientEnvironment session) (proc "/bin/sh" ["-c", "exec \"$1\" subscribe > \"$2\"", "seki-subscribe", sessionCli session, path])) stopManagedProcess $ \_ ->
     action received `finally` keep
 
@@ -572,7 +571,6 @@ hotplug = do
       picture session termOutput "term keeps the focused tile" [Paint Green (Box 1 1 798 598) True]
       capture session "daily-hotplug"
 
--- | The touchpad rule's settings.
 touchpadSettings :: [Text]
 touchpadSettings = ["tap", "click_method", "natural_scroll"]
 
