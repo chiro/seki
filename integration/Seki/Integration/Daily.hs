@@ -22,11 +22,10 @@ import Seki.Fixture.Probe
 import Seki.Integration.Fixture (BorderStyle (..), Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, png, withKeyboard, withNestedRiverEnvironment)
 import Seki.Integration.Harness
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist)
-import System.Posix.Files (readSymbolicLink)
 import System.Environment (lookupEnv)
 import System.FilePath (takeDirectory, takeFileName, (</>))
 import System.IO.Temp (withSystemTempDirectory)
-import System.Posix.Files (setFileMode)
+import System.Posix.Files (readSymbolicLink, setFileMode)
 import System.Process (proc)
 
 dailyScenarios :: [(String, IO ())]
