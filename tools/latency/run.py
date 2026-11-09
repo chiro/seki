@@ -34,8 +34,8 @@ WORKLOADS = {
                                "to report on; integration/input/backend.so creates devices only when preloaded into river, which "
                                "m3-input-perf measures",
                "recompile_handover": "a validated build makes the WM stop managing and exec its target, which ends the process that "
-                                     "owns the trial's samples; the stub candidate fails its check instead, so the m3-recompile "
-                                     "integration lane covers the handover",
+                                     "owns the trial's samples; the stub candidate fails its check instead, and the m3-daily-build "
+                                     "integration lane covers the exec into a copied candidate and the restore",
            }},
 }
 
