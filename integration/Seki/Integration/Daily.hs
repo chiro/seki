@@ -336,6 +336,8 @@ twoOutput = withDailySession "m3-daily-two-output" (dailyOptions 2) $ \session -
   picture session termOutput "term tiles its two windows again with the pad hidden" [Paint Green (Box 1 1 798 298) True, Paint Blue (Box 1 301 798 298) False]
   streamShows stream "the second Mod-grave hides the pad" (shown (Just "daily two-output") [("term", "hidden")])
   capture session "daily-two-output-hidden"
+  runInputDriver (clientEnvironment session) ["-M", "logo", "-M", "shift", "-k", "l", "-m", "shift", "-m", "logo"]
+  launchedOnce session "Mod-Shift-l locks the screen with swaylock" "swaylock"
 
 stubBuildResources :: DailyHome -> FilePath -> IO [(String, String)]
 stubBuildResources home steps = do
