@@ -23,12 +23,14 @@ IDs correlate replies within a connection. The server does not deduplicate IDs.
 {"version":1,"id":"44","op":"workspace","tag":"3"}
 {"version":1,"id":"45","op":"spawn","command":"foot"}
 {"version":1,"id":"46","op":"layout","action":"next"}
+{"version":1,"id":"47","op":"scratchpad","name":"term"}
+{"version":1,"id":"48","op":"scratchpad-reset","name":"term"}
 ```
 
 Layout actions are `next`, `shrink`, `expand`, `inc-master`, and `dec-master`.
 Unknown operations, versions, actions, and workspace tags are errors. Empty spawn
 commands are errors. Schema errors receive `invalid_request` and permit another
-request on the same connection. Unknown workspace tags receive `invalid_command`.
+request on the same connection. Unknown workspace tags and scratchpad names receive `invalid_command`.
 Fields not used by an operation are ignored.
 
 Replies contain `version`, `id`, and either `result` or `error`. Errors contain
@@ -42,6 +44,8 @@ session-local integer `revision`, an opaque `session` identifier, `outputs`, and
 Output `name` is the nullable compositor connector name obtained from `wl_output`
 version 4. Its registry global and wire ID remain session-local.
 Each workspace has `tag`, `occupied`, `visible`, `focused`, and `layout`.
+It has no urgent flag. Automatic client urgency is unavailable, and the
+maintainer deferred it from M3 on 2026-11-03.
 `focused_title` is nullable. Workspace focus expresses policy intent.
 `keyboard_available` separately describes layer focus and seat availability.
 `xkb` describes keyboard layouts; see below. Output wire IDs are session-local.
@@ -106,11 +110,14 @@ cleanup. A refused liveness probe permits stale socket replacement. A successful
 timed-out, or otherwise failed probe refuses replacement. Foreign regular files
 and symlinks are rejected. Cleanup removes only the inode this server bound.
 
-`seki-wire` adds `aeson`, `stm`, and `deepseq`. M3-06 must include these in the
-external-configuration package proof. The public Seki configuration is unchanged.
+`seki-wire` depends on `aeson`, `stm`, and `deepseq`. The compiler that the
+`config-delivery` product uses for user configurations provides them. The public
+Seki configuration is unchanged.
 The release shell includes Waybar and Python. The example invokes `sekictl` with a
 fixed argument list and escapes Pango markup independently from JSON encoding.
-Copy `examples/waybar/seki.py` to the path used in its accompanying config.
+Copy `examples/waybar/seki.py` to the path used in its accompanying config,
+`~/.config/waybar/seki.py`. The script runs `sekictl subscribe` from `PATH`, and
+the installed `config-delivery` product ships `sekictl`.
 The example handles SIGTERM and reaps its CLI child when Waybar stops.
 
 
