@@ -35,6 +35,7 @@ module Seki.Integration.Harness (
   announce,
   runProcessCapture,
   runProcessCaptureWithin,
+  runProcessOutcome,
   runInputDriver,
   modKeys,
   waitUntil,
@@ -43,7 +44,7 @@ module Seki.Integration.Harness (
   waitForMVar,
   failIntegration,
   requireSetting,
-  IntegrationFailure (..),
+  IntegrationFailure,
   socketQueuedBytes,
 ) where
 
