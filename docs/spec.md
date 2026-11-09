@@ -1,6 +1,6 @@
 # seki Specification — A river Window Manager in Haskell
 
-Status: **v1 design accepted, M2 complete** / Last updated: 2026-10-25
+Status: **v1 design accepted, M2 complete, M3 software complete with daily-work acceptance pending** / Last updated: 2026-11-09
 Legend: [DECIDED] = current design decision, [RESOLVED] = checked against the protocol or other available evidence
 
 This is the target design for v1, not a description of the currently exported
@@ -208,7 +208,7 @@ class Show l => LayoutClass l where
   - Capability-discovery event pattern: `*_support` (once, right after creation) → `*_default` → `*_current` (on every change). **This lets us check support before applying inputRules and warn the user instead of silently swallowing unsupported settings.**
   - Each configuration request returns a river_libinput_result_v1 (success / unsupported / invalid). Surface the result in logs and over IPC.
   - Coverage is the full libinput configuration surface (send_events, tap-to-click, acceleration profiles; custom acceleration curves are possible via create_accel_config + set_points).
-  - Binding implementation note: libinput's floating-point values are packed into Wayland array arguments as native-endian IEEE-754 doubles. The planned libinput adapter will decode this array as `Double` values. These input protocols are deferred. Current generated array arguments remain opaque bytes.
+  - Binding implementation note: libinput's floating-point values are packed into Wayland array arguments as native-endian IEEE-754 doubles. [IMPLEMENTED M3] The libinput adapter in `src/Seki/Run/Libinput.hs` encodes and decodes these arrays as `Double` values. The generated bindings keep array arguments as opaque bytes.
 - Keymaps are set per device through river-xkb-config-v1 by passing an fd (create_keymap). Layouts can be switched programmatically with set_layout_index / set_layout_name, and active_layout / capslock / numlock state events are available (usable for a layout indicator in the bar).
 
 ## 4. Protocol Mapping (river-window-management-v1 v4, read)
@@ -281,18 +281,21 @@ Required functionality: river_window_manager_v1 **version 3** (depends on set_co
 
 ### 5.1 Configuration = Program (the shape of the public API)
 
-M1 implements a subset of this target API. `Config l` currently has
+The shipped API implements a subset of this target API. `Config l` has
 `modMask`, `terminal`, `workspaces :: [String]`, `layoutHook`,
-`keys :: Config l -> Bindings l`, `borders`, and `bindingsUseFixedLayout`.
+`keys :: Config l -> Bindings l`, `borders`, `bindingsUseFixedLayout`,
+`manageHook`, `startupHook`, `pointerBindings`, `inputRules`, and `scratchpads`.
 `BorderConfig` contains a width and focused and unfocused premultiplied RGBA
 colors. `Action l a` is a pure action specialized to string workspace tags.
 `Bindings l` is an association list so duplicate key identities remain
-visible to validation. Hooks, pointer bindings, input rules, urgent colors,
-and size policies below describe later milestones.
+visible to validation. The `tolerant` layout wrapper selects the size policy.
+`logHook`, `focusModel`, submaps, and urgent colors below describe later work.
+Automatic client urgency is unavailable and deferred (6.2), so seki has no
+urgent color.
 
 `def` provides nine tags and `Tall ||| Mirror Tall ||| Full`. A type-changing
-layout override also replaces `keys`, as in
-`def{layoutHook = Full, keys = defaultKeys}`. The executable is a program that
+layout override also replaces the fields whose types name the layout, as the
+[README](../README.md) shows. The executable is a program that
 imports only `Seki` and runs `seki def`. See the [README](../README.md) for the
 implemented configuration and default keys.
 
@@ -346,7 +349,7 @@ data Config l = Config
   , logHook         :: Action ()           -- on every state change (IPC emission is built in; this is for extra work)
   , startupHook     :: Action ()
   , focusModel      :: FocusModel          -- ClickToFocus | FocusFollowsMouse
-  , borders         :: BorderConfig        -- width, RGBA for focused / unfocused / urgent
+  , borders         :: BorderConfig        -- width, RGBA for focused / unfocused (urgent is deferred; see 6.2)
   , bindingsUseFixedLayout :: Bool         -- layout_override from 3.8 (default True)
   , inputRules      :: [(DevicePattern, InputConfig)]  -- device settings from 3.9
   }
@@ -434,6 +437,7 @@ stop/exec mechanism.
 
 - The WM speaks JSON Lines over `$XDG_RUNTIME_DIR/seki/ipc.sock` (a UNIX domain socket).
   - **Subscribe (push)**: a state snapshot is broadcast on every state change. Contents: per-output workspace list (occupied / visible / focused / urgent), layout name, focused window title, submap name, xkb layout name (from active_layout in 3.9). The equivalent of xmonad's logHook + xmonad-log.
+  - [IMPLEMENTED M3] [IPC version 1](ipc.md) is the shipped contract. Its workspace entries have no urgent flag, because automatic client urgency is unavailable and deferred (6.2). It has no submap name, because submaps belong to M4 onwards.
   - **Command (pull)**: operations from outside (`workspace 3`, `spawn ...`, `scratchpad term`, etc.). Received → manage_dirty → the `Action` runs inside a manage sequence, riding the re-entry path from 4.3.
 - A bundled CLI, `sekictl`, makes this scriptable (our replacement for riverctl).
 - Waybar is supported for now through a custom module (subscribing to the socket). Standard protocols such as ext-workspace need compositor-side implementation, so they are out of scope for v1; we will consider following along once river supports them.
@@ -466,7 +470,7 @@ stop/exec mechanism.
 | M0 Validation | **Complete** | Haskell wire protocol implementation without libwayland; own XML code generator; connection and window/output event handling; Full placement; terminal and close bindings; Japanese input and Xwayland validation | Completed on nested river, including exact fcitx5/Mozc input and the real-river release suite |
 | M1 Core | **Complete** | StackSet port + QuickCheck properties, Tall / Mirror / Full / `\|\|\|`, greedyView, focus movement, swapMaster, borders, non_exclusive_area, the two-phase monads (ManageM/RenderM) | Tiling operations follow the intended xmonad semantics. Sequence latency and GC pauses meet the documented seki budgets; see the [M1 implementation plan](m1-plan.md) |
 | M2 Practical | **Complete** | Floating (mod+drag), ManageHook, startupHook and `spawnOnce`, fullscreen, restart + state restoration, Crop/Tolerate | The main parts of my own xmonad.hs can be ported, and the M1 latency budgets hold with floats, fullscreen, and `Crop` in the workload; see the [M2 implementation plan](m2-plan.md) |
-| M3 Daily use | Planned | Bar IPC + `sekictl`, scratchpad, urgent handling, inputRules, `--recompile` / `--check`, documentation and configuration skeleton | **Full migration from xmonad; used for daily work** |
+| M3 Daily use | Software complete; daily-work acceptance pending | Bar IPC + `sekictl`, scratchpad, inputRules, `--recompile` / `--check`, documentation and configuration skeleton. Automatic client urgency is unavailable, because river has no supported client signal for it. The maintainer deferred it from M3 on 2026-11-03 | **Full migration from xmonad; used for daily work.** The operator acceptance record in the [M3 implementation plan](m3-plan.md) is still blank |
 | M4 onwards | Planned | Submaps, binding repeat, focus-follows-mouse, prompt (shell surface + shm drawing), the contrib-equivalent extension set, IndependentScreens, further protocol integrations | — |
 
 ### 6.3 Resolved Questions and Follow-up
