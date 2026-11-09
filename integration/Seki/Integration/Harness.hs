@@ -19,8 +19,7 @@ module Seki.Integration.Harness (
   preflightFootIme,
   withFcitxVirtualKeyboardOwner,
   commitMozcText,
-  writeFootConfig,
-  waitForProbe,
+  withImeFootProbe,
   queryX11FocusedWindowName,
   waitForProcessWithTimeout,
   renderManagedProcessLogs,
@@ -510,6 +509,18 @@ integrationConfig probeMode executable footConfigPath probeSocketPath clientEnvi
       , riverKeyBindingModifiers = River.RiverSeatV1ModifiersFlags 0
       , riverKeyBindingLayoutOverride = Just 0
       }
+
+withImeFootProbe :: [(String, String)] -> (Handle -> IO value) -> IO value
+withImeFootProbe childEnvironment action = do
+  executable <- getExecutablePath
+  withSystemTempDirectory "seki-ime-foot" $ \directory -> do
+    let probeSocket = directory </> "probe.sock"
+        footConfig = directory </> "foot.ini"
+    writeFootConfig footConfig
+    withUnixListener probeSocket $ \listener ->
+      bracket (startManagedProcess "foot" childEnvironment (proc "foot" ["-c", footConfig, "-a", "seki-integration-probe", executable, terminalProbeArgument ImeTerminalProbe, probeSocket])) stopManagedProcess $ \foot -> do
+        terminal <- waitForProbe listener foot
+        action terminal `finally` hClose terminal
 
 terminalProbeArgument :: TerminalProbeMode -> String
 terminalProbeArgument PlainTerminalProbe = "--terminal-probe"
