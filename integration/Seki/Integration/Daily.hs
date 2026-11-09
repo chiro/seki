@@ -7,22 +7,28 @@ virtual pointer, and the native probe.
 -}
 module Seki.Integration.Daily (dailyScenarios) where
 
+import Control.Concurrent (forkFinally, threadDelay)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (IOException, SomeException, bracket, finally, onException, try)
-import Control.Monad (forM, forM_, void)
+import Control.Monad (forM, forM_, unless, void)
 import Data.Aeson (Value, eitherDecodeStrict', withObject, (.:), (.:?))
 import Data.Aeson.Types (Parser, parseEither)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.Char (isDigit)
 import Data.Either (isRight)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (find, isPrefixOf, nub, sort)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Word (Word32)
 import GHC.Clock (getMonotonicTimeNSec)
+import Network.Socket (Family (AF_UNIX), SockAddr (SockAddrUnix), SocketType (Stream), close, connect, defaultProtocol, socket)
+import Network.Socket.ByteString (recv, sendAll)
 import Seki.Fixture.Probe
-import Seki.Integration.Fixture (BorderStyle (..), Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, png, withKeyboard, withNestedRiverEnvironment, withNestedXwaylandRiver)
+import Seki.Integration.Fixture (BorderStyle (..), Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, png, withHeldLogoIn, withKeyboard, withNestedRiverEnvironment, withNestedXwaylandRiver)
 import Seki.Integration.Harness
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable, listDirectory, removeFile)
 import System.Environment (getExecutablePath, lookupEnv)
@@ -31,6 +37,7 @@ import System.IO (hClose)
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Files (readSymbolicLink, setFileMode)
 import System.Process (proc)
+import System.Timeout (timeout)
 
 dailyScenarios :: [(String, IO ())]
 dailyScenarios =
@@ -40,6 +47,7 @@ dailyScenarios =
   , ("m3-daily-hotplug", hotplug)
   , ("m3-daily-ime", imeHandover)
   , ("m3-daily-xwayland", xwaylandManagement)
+  , ("m3-daily-load", loadResponsive)
   ]
 
 -- | What a lane needs before the daily process starts, held for the session's lifetime.
@@ -695,3 +703,121 @@ xwaylandManagement = withDailySession "m3-daily-xwayland" (dailyOptions 1){optio
     picture session output "term shows only the native window after the close" [Paint Green (Box 1 1 798 598) True]
     snapshotShows session "the bar shows only the native window" (onTerm Nothing [])
     capture session "daily-xwayland-closed"
+
+{- | Workers that each keep one IPC connection and alternate @snapshot@ and
+@workspace term@ requests, reading every reply, while one subscriber never
+reads. The action gets the count of replies so far; every worker must end
+without an error once it returns.
+-}
+withFlood :: DailySession -> Int -> (IO Int -> IO a) -> IO a
+withFlood session workers action = do
+  let path = riverRuntimeDirectory (sessionRiver session) </> "seki" </> "ipc.sock"
+      open = do
+        client <- socket AF_UNIX Stream defaultProtocol
+        connect client (SockAddrUnix path) `onException` close client
+        pure client
+  stop <- newIORef False
+  replies <- newIORef (0 :: Int)
+  let request client pending bytes expected = do
+        sendAll client bytes
+        (reply, rest) <- replyLine client pending
+        unless (expected `BS.isInfixOf` reply) (failIntegration ("flood reply lacks " <> show expected <> ": " <> show (BS.take 200 reply)))
+        atomicModifyIORef' replies (\count -> (count + 1, ()))
+        pure rest
+      work client pending =
+        readIORef stop >>= \stopped -> unless stopped $ do
+          afterSnapshot <- request client pending "{\"version\":1,\"id\":\"flood\",\"op\":\"snapshot\"}\n" "\"snapshot\""
+          request client afterSnapshot "{\"version\":1,\"id\":\"flood\",\"op\":\"workspace\",\"tag\":\"term\"}\n" "\"revision\"" >>= work client
+  bracket open close $ \unread -> do
+    sendAll unread "{\"version\":1,\"id\":\"unread\",\"op\":\"subscribe\"}\n"
+    finished <- forM [1 .. workers] $ \_ -> do
+      done <- newEmptyMVar
+      _ <- forkFinally (bracket open close (`work` BS.empty)) (putMVar done)
+      pure done
+    result <- action (readIORef replies) `finally` writeIORef stop True
+    outcomes <- forM finished (timeout assertionTimeoutMicroseconds . takeMVar)
+    forM_ outcomes $ \outcome -> case outcome of
+      Nothing -> failIntegration "an IPC flood worker did not stop"
+      Just (Left failure) -> failIntegration ("an IPC flood worker failed: " <> show failure)
+      Just (Right ()) -> pure ()
+    pure result
+ where
+  replyLine client pending = case BS.elemIndex 10 pending of
+    Just index -> pure (BS.take index pending, BS.drop (index + 1) pending)
+    Nothing ->
+      timeout assertionTimeoutMicroseconds (recv client 65536) >>= \received -> case received of
+        Nothing -> failIntegration "an IPC flood reply timed out"
+        Just chunk | BS.null chunk -> failIntegration "IPC closed a flood connection"
+        Just chunk -> replyLine client (pending <> chunk)
+
+{- | The time from starting a Mod-key press until the probe's keyboard focus
+first differs from @from@, polled every millisecond. It includes wtype's
+own startup and Wayland connection.
+-}
+keyToFocus :: DailySession -> String -> Maybe ProbeWindow -> IO (Integer, Maybe ProbeWindow)
+keyToFocus session keyName from = do
+  started <- getMonotonicTimeNSec
+  bracket (startManagedProcess "wtype" (clientEnvironment session) (proc "wtype" ["-M", "logo", "-k", keyName, "-m", "logo"])) stopManagedProcess $ \_ -> do
+    let deadline = started + fromIntegral assertionTimeoutMicroseconds * 1000
+        poll = do
+          owner <- keyboardOwner <$> keyboardSnapshot (sessionProbe session)
+          now <- getMonotonicTimeNSec
+          if owner /= from
+            then pure (toInteger (now - started), owner)
+            else if now >= deadline then failIntegration ("Mod-" <> keyName <> " did not move keyboard focus from " <> show from) else threadDelay 1000 >> poll
+    poll
+
+{- | While eight IPC workers flood snapshot and workspace requests and one
+subscriber never reads, a logo drag floats and moves a tile and a logo
+button-3 drag resizes it to the exact geometry, captures keep changing, a
+key binding still moves keyboard focus, and a fresh sekictl request gets
+its receipt.
+-}
+loadResponsive :: IO ()
+loadResponsive = withDailySession "m3-daily-load" (dailyOptions 1) $ \session -> do
+  let probe = sessionProbe session
+      surface = sessionSocket session
+  initial <- waitSnapshot session "term is shown" (any ((== Just "term") . outputWorkspace) . snapOutputs)
+  output <- shownOn initial "term"
+  dragged <- openWindow probe Blue
+  stacked <- openWindow probe Green
+  master <- openWindow probe Red
+  waitFocus session "the newest window has keyboard focus as master" (Just master)
+  picture session output "three windows tile with the newest as master" [Paint Green (Box 401 1 398 298) False, Paint Blue (Box 401 301 398 298) False]
+  (idle, idleOwner) <- keyToFocus session "j" (Just master)
+  assertEqual "Mod-j without the flood moves focus down the stack" (Just stacked) idleOwner
+  report "KEY_TO_FOCUS_IDLE_NS" (show idle)
+  key session ["k"]
+  waitFocus session "Mod-k returns focus to the master" (Just master)
+  started <- getMonotonicTimeNSec
+  (count, loaded, frames) <- withFlood session 8 $ \replies -> do
+    _ <- waitUntil "the flood is answering requests" assertionTimeoutMicroseconds replies (>= 100)
+    first <- captureOutput surface output
+    (moved, resized) <- withHeldLogoIn (clientEnvironment session) probe . withVirtualPointer surface (800, 600) $ \pointer -> do
+      let drag button from to = do
+            pointerMoveTo pointer from
+            _ <- waitUntil ("the pointer is over the dragged window at " <> show from) assertionTimeoutMicroseconds (pointerSnapshot probe) ((== Just dragged) . pointerOwner)
+            pointerPress pointer button
+            pointerMoveTo pointer to
+            pointerRelease pointer button
+      drag LeftButton (600, 450) (400, 300)
+      picture session output "a logo drag floats the bottom tile moved by the offset during the flood" [Paint Green (Box 401 1 398 598) False, Paint Blue (Box 201 151 398 298) True]
+      moved <- captureOutput surface output
+      drag RightButton (500, 350) (560, 390)
+      picture session output "a logo right drag grows the float by the offset during the flood" [Paint Green (Box 401 1 398 598) False, Paint Blue (Box 201 151 458 338) True]
+      resized <- captureOutput surface output
+      pure (moved, resized)
+    _ <- waitUntil "the float commits its resized size" assertionTimeoutMicroseconds (Map.lookup dragged <$> committedSizes probe) (== Just (458, 338))
+    (latency, owner) <- keyToFocus session "j" (Just dragged)
+    assertEqual "Mod-j during the flood moves focus from the float to the master" (Just master) owner
+    receipt <- sekictl session ["workspace", "term"]
+    revision <- requireRight "a fresh sekictl receipt during the flood" (receiptRevision receipt)
+    report "FRESH_RECEIPT_REVISION" (show revision)
+    count <- replies
+    pure (count, latency, map imageRgb [first, moved, resized])
+  ended <- getMonotonicTimeNSec
+  assertEqual "captures keep changing while the subscriber never reads" (length frames) (length (nub frames))
+  report "KEY_TO_FOCUS_FLOOD_NS" (show loaded)
+  report "FLOOD" (show count <> " replies in " <> show ((ended - started) `div` 1000000) <> " ms")
+  picture session output "the float keeps its moved and resized geometry after the flood" [Paint Green (Box 401 1 398 598) False, Paint Blue (Box 201 151 458 338) False]
+  capture session "daily-load"
