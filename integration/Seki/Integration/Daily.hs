@@ -537,13 +537,14 @@ realFcitx = LaneSetup $ \nested home use -> do
  where
   imeVariables = ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "LANG", "LC_ALL", "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP", "GTK_IM_MODULE", "QT_IM_MODULE", "XMODIFIERS", "SDL_IM_MODULE", "DBUS_SESSION_BUS_ADDRESS"]
 
+-- | Match argv[0], not comm: a nix wrapProgram daemon runs as .fcitx5-wrapped and keeps its argv[0].
 fixtureProcesses :: String -> (String, String) -> IO [Int]
 fixtureProcesses command (name, value) = do
   entries <- listDirectory "/proc"
   fmap catMaybes . forM [read entry | entry <- entries, not (null entry), all isDigit entry] $ \pid -> do
-    found <- try @IOException ((,) <$> BS.readFile ("/proc/" <> show pid <> "/comm") <*> BS.readFile ("/proc/" <> show pid <> "/environ"))
+    found <- try @IOException ((,) <$> BS.readFile ("/proc/" <> show pid <> "/cmdline") <*> BS.readFile ("/proc/" <> show pid <> "/environ"))
     pure $ case found of
-      Right (comm, environ) | BS8.unpack (BS8.takeWhile (/= '\n') comm) == command && BS8.pack (name <> "=" <> value) `elem` BS.split 0 environ -> Just pid
+      Right (cmdline, environ) | takeFileName (BS8.unpack (BS8.takeWhile (/= '\0') cmdline)) == command && BS8.pack (name <> "=" <> value) `elem` BS.split 0 environ -> Just pid
       _ -> Nothing
 
 imeHandover :: IO ()
