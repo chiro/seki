@@ -25,6 +25,7 @@ import Network.Socket.ByteString (recv, sendAll)
 import Seki.Fixture.Probe
 import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputOrigins, outputPicture, pictureErrorWith, placeOutputs, portedBorders, saveOutputsSideBySide, withHeldLogoIn, withKeyboard, withNestedRiverUsing)
 import Seki.Integration.Harness
+import Seki.Integration.M2 (drag)
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable, listDirectory, removeFile)
 import System.Environment (lookupEnv)
 import System.FilePath (takeDirectory, takeFileName, (</>))
@@ -711,17 +712,11 @@ loadResponsive = withDailySession "m3-daily-load" (dailyOptions 1) $ \session ->
     report "SUBSCRIBER_STALL" (show (unreadFirst flood, stall))
     first <- captureOutput surface output
     (moved, resized) <- withHeldLogoIn (clientEnvironment session) probe . withVirtualPointer surface (sessionExtent session) $ \pointer -> do
-      let drag button from to = do
-            pointerMoveTo pointer from
-            _ <- waitUntil ("the pointer is over the dragged window at " <> show from) assertionTimeoutMicroseconds (pointerSnapshot probe) ((== Just dragged) . pointerOwner)
-            pointerPress pointer button
-            pointerMoveTo pointer to
-            pointerRelease pointer button
-      drag LeftButton (600, 450) (400, 300)
+      drag probe pointer dragged LeftButton (600, 450) (400, 300)
       picture session output "a logo drag floats the bottom tile moved by the offset during the flood" [Paint Green (Box 401 1 398 598) False, Paint Blue (Box 201 151 398 298) True]
       moved <- captureOutput surface output
       capture session "daily-load-moved"
-      drag RightButton (500, 350) (560, 390)
+      drag probe pointer dragged RightButton (500, 350) (560, 390)
       picture session output "a logo right drag grows the float by the offset during the flood" [Paint Green (Box 401 1 398 598) False, Paint Blue (Box 201 151 458 338) True]
       resized <- captureOutput surface output
       capture session "daily-load-resized"

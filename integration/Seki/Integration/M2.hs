@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Seki.Integration.M2 (m2Scenarios) where
+module Seki.Integration.M2 (m2Scenarios, drag) where
 
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
@@ -10,6 +10,7 @@ import Control.Monad (void)
 import Data.ByteString.Char8 qualified as BS8
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
+import Data.Word (Word32)
 import Seki.Fixture.Probe
 import Seki.Integration.Fixture hiding (Fixture)
 import Seki.Integration.Fixture qualified as Shared
@@ -265,27 +266,32 @@ pointerDrag fixture probe = do
           HeadlessState _ -> failIntegration "core unexpectedly headless"
       floatedAt x y w h = Map.singleton redCore (SS.FloatAt (OutputRect (either (error . show) id (mkSize w h >>= mkRect (Point x y)))))
   withHeldLogo fixture probe . withVirtualPointer (mSocket fixture) (800, 600) $ \pointer -> do
-    let hover point = do
-          pointerMoveTo pointer point
-          void (waitUntil ("the pointer is over the dragged window at " <> show point) assertionTimeoutMicroseconds (pointerSnapshot probe) ((== Just red) . pointerOwner))
-        drag button from to = hover from >> pointerPress pointer button >> pointerMoveTo pointer to >> pointerRelease pointer button
-    hover (600, 450)
+    let dragRed = drag probe pointer red
+    hoverOver probe pointer red (600, 450)
     pointerPress pointer LeftButton
     pointerRelease pointer LeftButton
     onFirst "a logo click with no motion focuses the window and leaves it tiled" [Paint Blue (Box 2 2 396 596) False, Paint Green (Box 402 2 396 296) False, Paint Red (Box 402 302 396 296) True]
     floats >>= assertEqual "the clicked window is still tiled" Map.empty
-    drag LeftButton (600, 450) (400, 300)
+    dragRed LeftButton (600, 450) (400, 300)
     onFirst "a logo drag floats the tile at its shown box moved by the offset" [Paint Blue (Box 2 2 396 596) False, Paint Green (Box 402 2 396 596) False, Paint Red (Box 202 152 396 296) True]
     floats >>= assertEqual "the float is stored at the dragged content box" (floatedAt 202 152 396 296)
-    drag LeftButton (400, 300) (500, 350)
+    dragRed LeftButton (400, 300) (500, 350)
     onFirst "a logo drag moves the float by the exact offset" [Paint Blue (Box 2 2 396 596) False, Paint Green (Box 402 2 396 596) False, Paint Red (Box 302 202 396 296) True]
-    drag RightButton (500, 350) (560, 390)
+    dragRed RightButton (500, 350) (560, 390)
     onFirst "a logo right drag grows the float from its bottom-right corner by the offset" [Paint Blue (Box 2 2 396 596) False, Paint Green (Box 402 2 396 596) False, Paint Red (Box 302 202 456 336) True]
-    drag RightButton (700, 500) (300, 200)
+    dragRed RightButton (700, 500) (300, 200)
     onFirst "a resize toward a smaller size stops at the 300 by 200 minimum" [Paint Blue (Box 2 2 396 596) False, Paint Green (Box 402 2 396 596) False, Paint Red (Box 302 202 300 200) True]
     floats >>= assertEqual "the stored box keeps its top-left and the minimum size" (floatedAt 302 202 300 200)
  where
   onFirst phase paints = picture fixture phase [(head (mOutputs fixture), paints)]
+
+hoverOver :: Probe -> VirtualPointer -> ProbeWindow -> (Word32, Word32) -> IO ()
+hoverOver probe pointer window point = do
+  pointerMoveTo pointer point
+  void (waitUntil ("the pointer is over the dragged window at " <> show point) assertionTimeoutMicroseconds (pointerSnapshot probe) ((== Just window) . pointerOwner))
+
+drag :: Probe -> VirtualPointer -> ProbeWindow -> Button -> (Word32, Word32) -> (Word32, Word32) -> IO ()
+drag probe pointer window button from to = hoverOver probe pointer window from >> pointerPress pointer button >> pointerMoveTo pointer to >> pointerRelease pointer button
 
 {- | A client-drawn title bar drag: the dialog requests a move while the left
 button is held, and the float follows every motion until the release.
