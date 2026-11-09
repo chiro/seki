@@ -3,8 +3,10 @@
 A tiling window manager for [river](https://codeberg.org/river/river), written
 in Haskell and aiming for xmonad's semantics and configuration model.
 
-> **Status: M2 Practical is complete.** See the [milestones](docs/spec.md#62-milestones)
-> and the [M2 latency and GC report](docs/latency-m2/report.md).
+> **Status: M2 Practical is complete. The M3 Daily use software is merged, and
+> daily-work acceptance is pending.** See the [milestones](docs/spec.md#62-milestones),
+> the [M3 plan](docs/m3-plan.md), the [M2 latency and GC report](docs/latency-m2/report.md),
+> and the [M3 latency report](docs/latency-m3/report.md).
 
 ## Current status
 
@@ -31,8 +33,24 @@ implementation provides:
 - client and key-bound fullscreen;
 - a per-layout `Crop` or `Tolerate` policy for clients that commit a size
   other than their tile;
-- in-place restart that keeps the window state; and
+- in-place restart that keeps the window state;
+- a JSON Lines IPC socket and the `sekictl` client, which publish bar state
+  and accept workspace, layout, spawn, scratchpad, and recompile commands,
+  with a Waybar module in `examples/waybar`;
+- ordered input rules for keyboards, pointers, and touchpads, with each
+  device's setting results and keyboard layout reported over IPC;
+- named scratchpads that hide outside workspace navigation and survive
+  restarts;
+- asynchronous configuration builds through the installed `seki` launcher,
+  which checks a new build before it replaces the running configuration;
+- a daily-use configuration, `dailyConfig` in
+  [`test-public/PortedConfig.hs`](test-public/PortedConfig.hs), which ports an
+  xmonad setup to Waybar, swaybg, swayidle, swaylock, and fcitx5; and
 - default key bindings, described [below](#project-direction).
+
+Automatic client urgency is unavailable. River gives a window manager no
+supported signal for it, and the maintainer deferred it from M3 on
+2026-11-03. seki has no manual substitute.
 
 The release integration suite exercises the native Wayland path, two outputs,
 Xwayland, and an exact Japanese input commit through fcitx5 and Mozc. Ten M1
@@ -40,7 +58,9 @@ scenarios check captured geometry, borders, focus, workspace visibility,
 native input, layer exclusive zones and layer focus, and complete headless
 output recovery. Ten M2 scenarios check the manage and startup hooks, floats,
 pointer drags, fullscreen, both size policies, restarts, and the ported
-reference configuration. See the
+reference configuration. The M3 scenarios check external ingress, bar IPC and
+`sekictl`, input rules, scratchpads, configuration builds, and the daily-use
+configuration. See the
 [integration testing manual](docs/integration-testing.md) for reproduction and
 maintenance instructions.
 
@@ -182,7 +202,10 @@ and colors whose RGB channels exceed alpha fail before Wayland startup.
 xmonad.hs and can serve as a starting point for your own. Its module
 documentation lists what changes in a port: `className =?` becomes
 `appId =?`, `avoidStruts` and `ewmhFullscreen` need nothing, and `docks` and
-`ewmh` have no equivalent until M3's bar IPC.
+`ewmh` are dropped because bars read seki's state over IPC instead. The same
+file's `dailyConfig` is the maintainer's daily-use configuration. See
+[start from the daily-use configuration](docs/user-configuration.md#start-from-the-daily-use-configuration)
+to run it.
 
 `Action` is pure. Use `windows`, `sendMessage`, `spawn`, `spawnOnce`, `kill`,
 `float`, `sink`, `toggleFullscreen`, `restart`, and `withFocused` to change state or record effects. Arbitrary IO is not part of the configuration API.
@@ -257,8 +280,11 @@ Run the default configuration against the display selected by the standard
 `WAYLAND_DISPLAY`/`XDG_RUNTIME_DIR` environment variables with:
 
 ```console
-cabal run seki
+cabal run exe:seki-default
 ```
+
+`exe:seki` is the installed launcher, which needs the resources that
+[User configurations](docs/user-configuration.md) lists.
 
 Validate the pinned runtime protocol set and regenerate the committed runtime
 bindings with the commands below. The integration guide covers the
@@ -285,6 +311,14 @@ Non-goals for seki itself: animations and window effects, multi-seat (v1 is sing
   design decisions, work packages, exit criteria, and regression record.
 - [`docs/m2-plan.md`](docs/m2-plan.md) — the M2 practical milestone's scope,
   design decisions, work packages, exit criteria, and regression record.
+- [`docs/m3-plan.md`](docs/m3-plan.md) — the M3 daily-use milestone's work
+  packages, design gates, coverage ledger, and operator acceptance record.
+- [`docs/user-configuration.md`](docs/user-configuration.md) — how to build,
+  check, and rebuild a configuration with the installed launcher.
+- [`docs/ipc.md`](docs/ipc.md) — the IPC socket, `sekictl`, and the snapshot
+  that bars read.
+- [`docs/input.md`](docs/input.md) and [`docs/scratchpads.md`](docs/scratchpads.md)
+  — input rules and named scratchpads.
 - [`docs/wire-protocol.md`](docs/wire-protocol.md) — the native Wayland transport, XML binding generator, and current runtime.
 - [`docs/reconciliation.md`](docs/reconciliation.md) — how layout selections
   become shown, sized, and focused windows across river's manage and render
@@ -292,8 +326,8 @@ Non-goals for seki itself: animations and window effects, multi-seat (v1 is sing
 - [`docs/integration-testing.md`](docs/integration-testing.md) — how to run,
   diagnose, and maintain the isolated real-river integration suite.
 - [`docs/latency.md`](docs/latency.md) — how to measure sequence latency and
-  GC pauses, and how to read the [M1](docs/latency-baseline/report.md) and
-  [M2](docs/latency-m2/report.md) reports.
+  GC pauses, and how to read the [M1](docs/latency-baseline/report.md),
+  [M2](docs/latency-m2/report.md), and [M3](docs/latency-m3/report.md) reports.
 
 ## Related projects
 
