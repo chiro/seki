@@ -635,7 +635,9 @@ xwaylandManagement = withDailySession "m3-daily-xwayland" (dailyOptions 1){optio
     snapshotShows session "the bar shows only the native window" (onTerm Nothing [])
     capture session "daily-xwayland-closed"
 
-withFlood :: DailySession -> Int -> (IO Int -> IO a) -> IO a
+data Flood = Flood {floodReplies :: IO Int, floodRevision :: IO Integer, unreadFirst :: Int, unreadBacklog :: IO Int}
+
+withFlood :: DailySession -> Int -> (Flood -> IO a) -> IO a
 withFlood session workers action = do
   let path = riverRuntimeDirectory (sessionRiver session) </> "seki" </> "ipc.sock"
       open = do
@@ -644,23 +646,28 @@ withFlood session workers action = do
         pure client
   stop <- newIORef False
   replies <- newIORef (0 :: Int)
+  latest <- newIORef (0 :: Integer)
   let request client pending bytes expected = do
         sendAll client bytes
         (reply, rest) <- replyLine client pending
         unless (expected `BS.isInfixOf` reply) (failIntegration ("flood reply lacks " <> show expected <> ": " <> show (BS.take 200 reply)))
         atomicModifyIORef' replies (\count -> (count + 1, ()))
-        pure rest
+        pure (reply, rest)
       work client pending =
         readIORef stop >>= \stopped -> unless stopped $ do
-          afterSnapshot <- request client pending "{\"version\":1,\"id\":\"flood\",\"op\":\"snapshot\"}\n" "\"snapshot\""
-          request client afterSnapshot "{\"version\":1,\"id\":\"flood\",\"op\":\"workspace\",\"tag\":\"term\"}\n" "\"revision\"" >>= work client
+          (_, afterSnapshot) <- request client pending "{\"version\":1,\"id\":\"flood\",\"op\":\"snapshot\"}\n" "\"snapshot\""
+          (receipt, rest) <- request client afterSnapshot "{\"version\":1,\"id\":\"flood\",\"op\":\"workspace\",\"tag\":\"term\"}\n" "\"revision\""
+          revision <- requireRight "flood receipt" (receiptRevision receipt)
+          atomicModifyIORef' latest (\seen -> (max seen revision, ()))
+          work client rest
   bracket open close $ \unread -> do
     sendAll unread "{\"version\":1,\"id\":\"unread\",\"op\":\"subscribe\"}\n"
+    first <- waitUntil "the unread subscriber receives its first snapshot" assertionTimeoutMicroseconds (socketQueuedBytes unread) (> 0)
     finished <- forM [1 .. workers] $ \_ -> do
       done <- newEmptyMVar
       _ <- forkFinally (bracket open close (`work` BS.empty)) (putMVar done)
       pure done
-    result <- action (readIORef replies) `finally` writeIORef stop True
+    result <- action (Flood (readIORef replies) (readIORef latest) first (socketQueuedBytes unread)) `finally` writeIORef stop True
     outcomes <- forM finished (timeout assertionTimeoutMicroseconds . takeMVar)
     forM_ outcomes $ \outcome -> case outcome of
       Nothing -> failIntegration "an IPC flood worker did not stop"
@@ -675,6 +682,13 @@ withFlood session workers action = do
         Nothing -> failIntegration "an IPC flood reply timed out"
         Just chunk | BS.null chunk -> failIntegration "IPC closed a flood connection"
         Just chunk -> replyLine client (pending <> chunk)
+
+subscriberStall :: Flood -> IO (Int, Int, Integer, Integer)
+subscriberStall flood = do
+  before <- unreadBacklog flood
+  from <- floodRevision flood
+  threadDelay 200000
+  (,,,) before <$> unreadBacklog flood <*> pure from <*> floodRevision flood
 
 wtypeKeyToFocus :: DailySession -> String -> Maybe ProbeWindow -> IO (Integer, Maybe ProbeWindow)
 wtypeKeyToFocus session keyName from = do
@@ -707,8 +721,10 @@ loadResponsive = withDailySession "m3-daily-load" (dailyOptions 1) $ \session ->
   modKeys session ["k"]
   waitFocus session "Mod-k returns focus to the master" (Just master)
   started <- getMonotonicTimeNSec
-  (count, loaded, frames) <- withFlood session 8 $ \replies -> do
-    _ <- waitUntil "the flood is answering requests" assertionTimeoutMicroseconds replies (>= 100)
+  (count, loaded, frames) <- withFlood session 8 $ \flood -> do
+    _ <- waitUntil "the flood is answering requests" assertionTimeoutMicroseconds (floodReplies flood) (>= 100)
+    stall <- waitUntil "the never-reading subscriber holds 32 unread snapshots and stops growing while the flood advances the revision" assertionTimeoutMicroseconds (subscriberStall flood) (\(before, after, from, to) -> before >= 32 * unreadFirst flood && before == after && to > from)
+    report "SUBSCRIBER_STALL" (show (unreadFirst flood, stall))
     first <- captureOutput surface output
     (moved, resized) <- withHeldLogoIn (clientEnvironment session) probe . withVirtualPointer surface (800, 600) $ \pointer -> do
       let drag button from to = do
@@ -732,7 +748,7 @@ loadResponsive = withDailySession "m3-daily-load" (dailyOptions 1) $ \session ->
     receipt <- sekictl session ["workspace", "term"]
     revision <- requireRight "a fresh sekictl receipt during the flood" (receiptRevision receipt)
     report "FRESH_RECEIPT_REVISION" (show revision)
-    count <- replies
+    count <- floodReplies flood
     pure (count, latency, map imageRgb [first, moved, resized])
   ended <- getMonotonicTimeNSec
   assertEqual "captures keep changing while the subscriber never reads" (length frames) (length (nub frames))
