@@ -3,6 +3,7 @@
 Install the flake's `config-delivery` output and retain its Nix root while using
 compiled configurations. `bin/seki` is the product launcher. `bin/seki-default`
 is the distinct shipped default runtime; `seki-config-env` provisions build tools.
+`bin/sekictl` is the IPC client that `sekictl recompile` and the Waybar module use.
 First acquisition requires Nix network access and trusted substitutes or a build.
 User executables depend dynamically on that retained closure.
 
@@ -72,3 +73,56 @@ skeleton offline, repeats the unchanged build, checks a valid and an invalid
 configuration, checks the compiler, state, and restore failure paths, and starts
 both the default runtime fallback and the built configuration against a sentinel
 Wayland socket.
+
+## Start from the daily-use configuration
+
+`dailyConfig` in `test-public/PortedConfig.hs` is the maintainer's daily-use
+configuration. It extends the M2 port `portedConfig` with Waybar, swaybg,
+swayidle and swaylock, fcitx5, an alacritty scratchpad on Mod-grave, and input
+rules for keyboards and one touchpad. `test-public/DailyConfigMain.hs` runs it
+with the keymap at `$XDG_CONFIG_HOME/seki/keymap.xkb`. When `XDG_CONFIG_HOME`
+is unset or relative, the keymap is `~/.config/seki/keymap.xkb`.
+
+The configuration runs `waybar`, `swaybg`, `swayidle`, `swaylock`, `fcitx5`,
+`alacritty`, `amixer`, and `brightnessctl`. It also names the maintainer's
+wallpaper and touchpad. Install those programs, or change the commands, the
+wallpaper path, and the touchpad name in your copy. Automatic client urgency is
+unavailable, so the configuration has no urgent border or bar flag.
+
+To start from it, run these steps from a seki checkout:
+
+1. Build the installed product and put its `bin` directory on `PATH`:
+
+   ```sh
+   nix build --no-write-lock-file .#config-delivery -o ~/.local/share/seki-delivery
+   export PATH="$HOME/.local/share/seki-delivery/bin:$PATH"
+   ```
+
+2. Compile the keymap from your XKB settings. These are the maintainer's
+   settings:
+
+   ```sh
+   mkdir -p ~/.config/seki
+   xkbcli compile-keymap --rules evdev --model pc105 --layout us --options ctrl:nocaps > ~/.config/seki/keymap.xkb
+   ```
+
+3. Install the Waybar module. It runs `sekictl subscribe` from `PATH`.
+
+   ```sh
+   mkdir -p ~/.config/waybar
+   cp examples/waybar/config.jsonc examples/waybar/seki.py ~/.config/waybar/
+   ```
+
+4. Run `seki --check` once. It creates `Main.hs`, `seki-user.cabal`, and
+   `cabal.project` in `~/.config/seki`.
+5. Copy `test-public/PortedConfig.hs` into `~/.config/seki/`, and copy
+   `test-public/DailyConfigMain.hs` over `~/.config/seki/Main.hs`.
+6. Add `other-modules: PortedConfig` to the `executable seki-user` stanza of
+   `~/.config/seki/seki-user.cabal`.
+7. Run `seki --check` again. It exits 0 when the configuration builds and
+   passes its policy check.
+8. Start `seki` from river's init script, as the [README](../README.md)
+   describes.
+
+To change the configuration later, edit `~/.config/seki/PortedConfig.hs` and
+run `seki --recompile`, or press Mod-q.
