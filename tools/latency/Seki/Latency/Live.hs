@@ -3,12 +3,15 @@
 
 module Seki.Latency.Live (runWM, runLive) where
 
+import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
-import Control.Monad (foldM, forM, unless, void)
+import Control.Monad (foldM, forM, unless, void, when)
 import Data.Aeson (encode, object, (.=))
 import Data.Aeson.Key qualified as Key
+import Data.Aeson.Types (Pair)
 import Data.ByteString.Lazy qualified as BL
 import Data.IORef (atomicModifyIORef', newIORef)
+import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import Data.Word (Word64)
@@ -17,14 +20,20 @@ import GHC.Stats
 import Seki.Fixture.Probe
 import Seki.Integration.Harness
 import Seki.Internal.Core.Action (sendMessage, windows)
+import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), mkRect, mkSize)
 import Seki.Internal.Core.Layout (Resize (..))
-import Seki.Internal.Core.ManageHook (doFloat, isDialog, (-->))
+import Seki.Internal.Core.ManageHook (appId, doFloat, isDialog, (-->), (=?))
 import Seki.Internal.Core.Scene (defaultSceneStyle)
+import Seki.Internal.Core.Scratchpad.Types (Scratchpad (..))
 import Seki.Internal.Core.StackSet qualified as S
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
 import Seki.Internal.Layout.Tall (Tall (..))
+import Seki.Latency.Commands
 import Seki.Latency.Workload
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Run.ConfigBuild (BuildContext (..), Resources (..))
+import Seki.Run.IPC (ipcPath, withIPCAt)
+import Seki.Run.IPCSchema qualified as IPC
 import Seki.Run.Inventory (riverInventoryWindows)
 import Seki.Run.Latency
 import Seki.Run.Policy
@@ -34,20 +43,25 @@ import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
 import Seki.Wire.Transport (ConnectionTarget (UnixSocketPath))
 import System.Directory (createDirectoryIfMissing, doesFileExist, renameFile)
-import System.Environment (getEnvironment, getExecutablePath)
+import System.Environment (getEnv, getEnvironment, getExecutablePath)
 import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
 import System.IO (IOMode (WriteMode), withFile)
 import System.IO.Temp (withSystemTempDirectory)
+import System.Posix.Files (setFileMode)
 import System.Posix.Process (getProcessID)
 import System.Posix.Signals (Handler (Catch), installHandler, sigUSR1, sigUSR2, signalProcess)
 import System.Process (CreateProcess (..), StdStream (UseHandle), createProcess, getPid, proc, terminateProcess, waitForProcess)
 import System.Timeout (timeout)
 
-runWM :: FilePath -> FilePath -> IO ()
-runWM socket directory = do
+{- | The M3 WM adds the pad, the IPC socket, and a build whose stub
+candidate fails its check, so a recompile finishes without a handover.
+-}
+runWM :: WorkloadName -> FilePath -> FilePath -> IO ()
+runWM workload socket directory = do
   recorder <- newRecorder 100000
   policy <- newPolicy config >>= requireRight "latency policy"
+  when (workload == M3) (getEnv "XDG_RUNTIME_DIR" >>= stubBuild . (</> "build") >>= configureBuild policy)
   let handlers = (policyRuntimeHandlers policy){riverSequenceRecorder = Just recorder}
   session <- openRiverSessionAt (UnixSocketPath socket) defaultObjectLimit handlers >>= requireRight "latency WM open"
   pid <- getProcessID
@@ -98,7 +112,9 @@ runWM socket directory = do
           renameFile (path <> ".tmp") path
       )
       Nothing
-  result <- runRiverSession session
+  result <- case workload of
+    M3 -> ipcPath >>= \path -> withIPCAt path policy (runRiverSession session)
+    _ -> runRiverSession session
   recording <- readRecording recorder
   stats <- getRTSStats
   BL.writeFile
@@ -129,7 +145,7 @@ runWM socket directory = do
   config :: PolicyConfig String Tall
   config =
     PolicyConfig
-      { policyScratchpads = []
+      { policyScratchpads = [Scratchpad "pad" "the driver opens the pad" (appId =? padAppId) padRect | workload == M3]
       , policyInputRules = []
       , policyLayout = Tall 1 (1 / 10) (1 / 2)
       , policyTags = ["1", "2"]
@@ -147,6 +163,24 @@ runWM socket directory = do
       , policyLog = \_ -> pure ()
       , policyLaunch = \_ -> fail "unexpected spawn"
       }
+
+padRect :: OutputRect
+padRect = let (x, y, w, h) = padBox in either (error . show) OutputRect (mkSize (fromIntegral w) (fromIntegral h) >>= mkRect (Point (fromIntegral x) (fromIntegral y)))
+
+stubFailure :: String
+stubFailure = "seki-latency stub: the built configuration fails its check"
+
+-- | A configuration project whose build succeeds and whose candidate fails @--check@.
+stubBuild :: FilePath -> IO BuildContext
+stubBuild directory = do
+  createDirectoryIfMissing True directory
+  mapM_ (\name -> writeFile (directory </> name) "") ["Main.hs", "seki-user.cabal", "cabal.project"]
+  let compiler = directory </> "compiler"
+      candidate = directory </> "built"
+  writeFile candidate ("#!/bin/sh\necho '" <> stubFailure <> "' >&2\nexit 1\n")
+  writeFile compiler ("#!/bin/sh\ncase \"$3\" in\n  build) exit 0 ;;\n  list-bin) echo '" <> candidate <> "' ;;\n  *) exit 2 ;;\nesac\n")
+  mapM_ (`setFileMode` 0o700) [compiler, candidate]
+  pure (BuildContext (Resources "/unused" "/unused" "cabal" compiler directory) directory directory)
 
 runLive :: FilePath -> WorkloadName -> Word64 -> Int -> String -> IO ()
 runLive directory workload seed steps collector = do
@@ -180,7 +214,7 @@ runLive directory workload seed steps collector = do
         withFile (directory </> "wm.stdout") WriteMode $ \out ->
           withFile (directory </> "wm.rts") WriteMode $ \err ->
             bracket
-              (createProcess (proc executable (["wm", socket, directory, "+RTS"] <> flags <> ["-RTS"])){env = Just clientEnv, std_out = UseHandle out, std_err = UseHandle err, create_group = True})
+              (createProcess (proc executable (["wm", socket, directory, workloadText workload, "+RTS"] <> flags <> ["-RTS"])){env = Just clientEnv, std_out = UseHandle out, std_err = UseHandle err, create_group = True})
               (\(_, _, _, process) -> terminateProcess process >> void (waitForProcess process))
               $ \(_, _, _, process) -> do
                 wmPid <- getPid process
@@ -195,70 +229,100 @@ runLive directory workload seed steps collector = do
                   writeProcesses directory (("keyboard", keeperPid) : wmProcesses)
                   withProbe socket $ \probe -> do
                     clients <- foldM (\opened role -> (\w -> opened <> [w]) <$> openRole probe opened role) [] (windowRoles workload)
-                    let byIndex = Map.fromList (zip [0 ..] (reverse clients))
-                        indexOf = Map.fromList (zip (reverse clients) [0 ..])
-                        observe = do
-                          owner <- keyboardOwner <$> keyboardSnapshot probe
-                          sizes <- committedSizes probe
-                          pure (Observation (owner >>= (`Map.lookup` indexOf)) (Map.fromList [(i, size) | (w, size) <- Map.toList sizes, Just i <- [Map.lookup w indexOf]]))
-                        await model = void (waitUntil "native observation" assertionTimeoutMicroseconds observe (== expectedObservation model))
-                        key number = runInputDriver clientEnv ["-k", "F" <> show (number :: Int)]
-                        drive model step = case step of
-                          EnterFullscreen -> requestFullscreen probe (byIndex Map.! modelFocus model)
-                          ExitFullscreen -> mapM_ (requestExitFullscreen probe . (byIndex Map.!)) (modelFullscreen model)
-                          _ -> key (stepCode step + 1)
-                        perform model step = do
-                          drive model step
-                          let next = stepModel model step
-                          await next
-                          pure next
-                        awaitPicture model =
-                          void (waitUntil "native picture" assertionTimeoutMicroseconds (pictureMismatch (expectedLayers model) <$> captureOutput socket name) (== Nothing))
-                        start0 = initialModel workload
-                    await start0
-                    awaitPicture start0
-                    warmed <- foldM perform start0 (take 24 (plan workload seed start0))
-                    let measured = take steps (plan workload (seed + 1) warmed)
-                    checkpoint wmPid 0
-                    start <- getMonotonicTimeNSec
-                    final <- foldM perform warmed measured
-                    checkpoint wmPid 1
-                    end <- getMonotonicTimeNSec
-                    awaitPicture final
-                    restored <- foldM perform final (restoreSteps final)
-                    keyCount <- keyboardSnapshot probe
-                    runInputDriver clientEnv ["q"]
-                    _ <- waitUntil "focused client receives q" assertionTimeoutMicroseconds (keyboardSnapshot probe) $ \after ->
-                      all (\client -> Map.findWithDefault 0 client (pressedKeys after) == Map.findWithDefault 0 client (pressedKeys keyCount) + if client == byIndex Map.! modelFocus restored then 1 else 0) clients
-                    awaitPicture restored
-                    BL.writeFile
-                      (directory </> "driver.json")
-                      ( encode
-                          ( object
-                              [ "mode" .= ("live" :: String)
-                              , "workload" .= workloadText workload
-                              , "seed" .= seed
-                              , "steps" .= steps
-                              , "observed_actions" .= steps
-                              , "windows" .= length clients
-                              , "warmup" .= (24 :: Int)
-                              , "start_ns" .= start
-                              , "end_ns" .= end
-                              , "final_model"
-                                  .= object
-                                    [ "focus" .= modelFocus final
-                                    , "shown" .= modelShown final
-                                    , "ratio" .= show (modelRatio final)
-                                    , "fullscreen" .= modelFullscreen final
-                                    , "raise" .= modelRaise final
-                                    ]
-                              , "exercised" .= object [Key.fromString n .= c | (n, c) <- exerciseCounts (exercised warmed measured)]
-                              , "native_checks" .= True
-                              , "action_codes" .= map stepCode measured
-                              , "valid" .= True
-                              ]
-                          )
-                      )
+                    withCommandsFor workload (runtime </> "seki" </> "ipc.sock") $ \commands -> do
+                      let byIndex = Map.fromList (zip [0 ..] (reverse clients))
+                          indexOf = Map.fromList (zip (reverse clients) [0 ..])
+                          observe = do
+                            owner <- keyboardOwner <$> keyboardSnapshot probe
+                            sizes <- committedSizes probe
+                            pure (Observation (owner >>= (`Map.lookup` indexOf)) (Map.fromList [(i, size) | (w, size) <- Map.toList sizes, Just i <- [Map.lookup w indexOf]]))
+                          await model = void (waitUntil "native observation" assertionTimeoutMicroseconds observe (== expectedObservation model))
+                          key number = runInputDriver clientEnv ["-k", "F" <> show (number :: Int)]
+                          drive model step = case step of
+                            EnterFullscreen -> requestFullscreen probe (byIndex Map.! modelFocus model)
+                            ExitFullscreen -> mapM_ (requestExitFullscreen probe . (byIndex Map.!)) (modelFullscreen model)
+                            _ -> key (stepCode step + 1)
+                          perform (model, timed) step = do
+                            let next = stepModel model step
+                            samples <- case commands of
+                              Nothing -> [] <$ drive model step
+                              Just c -> issue c next step
+                            await next
+                            pure (next, foldl' (\m (endpoint, ns) -> Map.insertWith (<>) endpoint [ns] m) timed samples)
+                          issue c next step = do
+                            threadDelay idleGapMicroseconds
+                            operation <- maybe (fail ("m3 has no command for " <> show step)) pure (stepCommand step)
+                            (started, revision) <- command c operation
+                            forM (stepEndpoints workload step) $ \endpoint -> do
+                              ended <- case endpoint of
+                                ExternalWake -> observed next
+                                ScratchpadToggle -> observed next
+                                IPCUpdate -> publishedAt <$> (awaitPublished c assertionTimeoutMicroseconds ((>= revision) . publishedRevision) >>= publishes next)
+                                RecompileCompletion -> publishedAt <$> (awaitPublished c assertionTimeoutMicroseconds (finished (publishedBuilds (expectedPublication next))) >>= failedByStub)
+                              pure (endpoint, ended - started)
+                          observed model = do
+                            seen <- observe
+                            if seen == expectedObservation model
+                              then getMonotonicTimeNSec
+                              else threadDelay pollMicroseconds >> observed model
+                          publishes model p = do
+                            unless (Text.unpack (publishedFocus p) == publishedTag (expectedPublication model)) (fail ("subscriber published " <> show p <> " for " <> show model))
+                            pure p
+                          finished generation p = maybe False (\b -> reportedGeneration b == fromIntegral generation && reportedState b /= "building") (publishedBuild p)
+                          failedByStub p = do
+                            let report = publishedBuild p
+                            unless (fmap reportedState report == Just "failed" && maybe False (Text.isInfixOf (Text.pack stubFailure)) (report >>= reportedError)) (fail ("build did not fail at the stub check: " <> show report))
+                            pure p
+                          awaitPicture model =
+                            void (waitUntil "native picture" assertionTimeoutMicroseconds (pictureMismatch (expectedLayers model) <$> captureOutput socket name) (== Nothing))
+                          run model = foldM perform (model, Map.empty)
+                          start0 = initialModel workload
+                      await start0
+                      awaitPicture start0
+                      (warmed, _) <- run start0 (take 24 (plan workload seed start0))
+                      let measured = take steps (plan workload (seed + 1) warmed)
+                      checkpoint wmPid 0
+                      start <- getMonotonicTimeNSec
+                      (final, timings) <- run warmed measured
+                      checkpoint wmPid 1
+                      end <- getMonotonicTimeNSec
+                      awaitPicture final
+                      (restored, _) <- run final (restoreSteps final)
+                      keyCount <- keyboardSnapshot probe
+                      runInputDriver clientEnv ["q"]
+                      _ <- waitUntil "focused client receives q" assertionTimeoutMicroseconds (keyboardSnapshot probe) $ \after ->
+                        all (\client -> Map.findWithDefault 0 client (pressedKeys after) == Map.findWithDefault 0 client (pressedKeys keyCount) + if client == byIndex Map.! modelFocus restored then 1 else 0) clients
+                      awaitPicture restored
+                      BL.writeFile
+                        (directory </> "driver.json")
+                        ( encode
+                            ( object
+                                ( [ "mode" .= ("live" :: String)
+                                  , "workload" .= workloadText workload
+                                  , "seed" .= seed
+                                  , "steps" .= steps
+                                  , "observed_actions" .= steps
+                                  , "windows" .= length clients
+                                  , "warmup" .= (24 :: Int)
+                                  , "start_ns" .= start
+                                  , "end_ns" .= end
+                                  , "final_model"
+                                      .= object
+                                        [ "focus" .= modelFocus final
+                                        , "shown" .= modelShown final
+                                        , "ratio" .= show (modelRatio final)
+                                        , "fullscreen" .= modelFullscreen final
+                                        , "raise" .= modelRaise final
+                                        ]
+                                  , "exercised" .= object [Key.fromString n .= c | (n, c) <- exerciseCounts (exercised warmed measured)]
+                                  , "native_checks" .= True
+                                  , "action_codes" .= map stepCode measured
+                                  , "valid" .= True
+                                  ]
+                                    <> endpointFields workload measured timings
+                                )
+                            )
+                        )
                 case wmPid of
                   Nothing -> fail "WM PID unavailable"
                   Just pid -> signalProcess sigUSR1 pid
@@ -272,6 +336,42 @@ runLive directory workload seed steps collector = do
     maybe (fail "WM PID unavailable") (signalProcess sigUSR2) pid
     let path = directory </> ("wm-checkpoint-" <> show (index :: Int) <> ".json")
     void (waitUntil "WM RTS checkpoint" assertionTimeoutMicroseconds (doesFileExist path) id)
+
+idleGapMicroseconds :: Int
+idleGapMicroseconds = 1000
+
+pollMicroseconds :: Int
+pollMicroseconds = 100
+
+stepCommand :: Step -> Maybe IPC.Operation
+stepCommand = \case
+  ViewEmpty -> Just (IPC.Workspace "2")
+  ViewPopulated -> Just (IPC.Workspace "1")
+  TogglePad -> Just (IPC.Scratchpad "pad")
+  Recompile -> Just IPC.Recompile
+  _ -> Nothing
+
+-- | Only M3 sends commands, so only its driver connects to the WM's IPC socket.
+withCommandsFor :: WorkloadName -> FilePath -> (Maybe Commands -> IO a) -> IO a
+withCommandsFor M3 path body = do
+  _ <- waitUntil "WM IPC socket" assertionTimeoutMicroseconds (doesFileExist path) id
+  withCommands path assertionTimeoutMicroseconds (body . Just)
+withCommandsFor _ _ body = body Nothing
+
+{- | Each endpoint's measured command-to-outcome samples, with the sample
+count the plan implies and the method's fixed delays.
+-}
+endpointFields :: WorkloadName -> [Step] -> Map Endpoint [Word64] -> [Pair]
+endpointFields workload measured timings
+  | Map.null planned = []
+  | otherwise =
+      [ "endpoints" .= object [Key.fromString (endpointText e) .= reverse (Map.findWithDefault [] e timings) | e <- Map.keys planned]
+      , "endpoint_steps" .= object [Key.fromString (endpointText e) .= n | (e, n) <- Map.toList planned]
+      , "idle_gap_us" .= idleGapMicroseconds
+      , "observation_poll_us" .= pollMicroseconds
+      ]
+ where
+  planned = Map.fromListWith (+) [(e, 1 :: Int) | s <- measured, e <- stepEndpoints workload s]
 
 openRole :: Probe -> [ProbeWindow] -> WindowRole -> IO ProbeWindow
 openRole probe _ (TileRole color) = openWindow probe color

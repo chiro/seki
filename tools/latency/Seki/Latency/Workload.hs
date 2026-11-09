@@ -29,7 +29,6 @@ module Seki.Latency.Workload (
   stepEndpoints,
   padAppId,
   padBox,
-  padContent,
   Layer (..),
   expectedLayers,
   pictureMismatch,
@@ -78,12 +77,9 @@ windowRoles M3 = [TileRole Red, TileRole Blue, PadRole Green]
 padAppId :: String
 padAppId = "seki-latency-pad"
 
--- | The pad's floating box on the output, including its 2 px border.
+-- | The pad's floating content box on the output. Its border lies outside.
 padBox :: (Int, Int, Int, Int)
 padBox = (200, 150, 400, 300)
-
-padContent :: (Int, Int, Int, Int)
-padContent = let (x, y, w, h) = padBox in (x + 2, y + 2, w - 4, h - 4)
 
 {- | The Tall master ratio. The plan only flips between these two, so the
 geometry stays a small table independent of the production layout.
@@ -217,7 +213,7 @@ expectedObservation m =
     | otherwise = Just (modelFocus m)
   size i = case roleAt name i of
     DialogRole _ fixed _ -> fixed
-    PadRole _ -> let (_, _, w, h) = padContent in (fromIntegral w, fromIntegral h)
+    PadRole _ -> let (_, _, w, h) = padBox in (fromIntegral w, fromIntegral h)
     TileRole _
       | modelFullscreen m == Just i -> (800, 600)
       | otherwise -> let (_, _, w, h) = tileBox m i in (fromIntegral w, fromIntegral h)
@@ -303,7 +299,7 @@ expectedLayers m
   | otherwise =
       [Layer (colorOf i) (tileBox m i) 2 | i <- tiles name, Just i /= modelFullscreen m]
         ++ [Layer c (centered w h) 2 | i <- modelRaise m, DialogRole c (w, h) _ <- [roleAt name i]]
-        ++ [Layer c padContent 2 | modelPadShown m, PadRole c <- windowRoles name]
+        ++ [Layer c padBox 2 | modelPadShown m, PadRole c <- windowRoles name]
         ++ [Layer (colorOf f) (0, 0, 800, 600) 0 | Just f <- [modelFullscreen m]]
  where
   name = modelWorkload m
