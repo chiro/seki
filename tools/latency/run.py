@@ -368,6 +368,17 @@ def output(command, cwd=None, stderr=None):
     return subprocess.check_output(command, cwd=cwd, stderr=stderr, text=True).strip()
 
 
+def parse_revisions(items):
+    worktrees = {}
+    for item in items:
+        name, separator, path = item.partition("=")
+        require(separator and re.fullmatch(r"[a-z][a-z0-9]*", name) and name not in worktrees, f"invalid revision {item}")
+        worktree = Path(path).resolve()
+        require(not (worktree / "cabal.project.local").exists(), f"revision {name} has {worktree / 'cabal.project.local'}, which the manifest would not record")
+        worktrees[name] = worktree
+    return worktrees
+
+
 def prepare_revision(worktree, binary, compiler, build_flags):
     record = {"worktree": str(worktree) if worktree else None}
     if binary is None:
@@ -464,11 +475,7 @@ def main():
     require(args.trials > 0 and 0 <= args.seed < 2**64, "invalid trials or seed")
     require(not (args.binary and args.revision), "--binary and --revision are exclusive")
     require(not directory.exists(), "use a fresh artifact directory; previous runs are retained")
-    worktrees = {}
-    for item in args.revision:
-        name, separator, path = item.partition("=")
-        require(separator and re.fullmatch(r"[a-z][a-z0-9]*", name) and name not in worktrees, f"invalid revision {item}")
-        worktrees[name] = Path(path).resolve()
+    worktrees = parse_revisions(args.revision)
     build_flags = ["-w", args.compiler, "--offline", "--enable-optimization=2", "--builddir=dist-newstyle/latency"]
     if worktrees:
         revisions = {name: prepare_revision(path, None, args.compiler, build_flags) for name, path in worktrees.items()}
