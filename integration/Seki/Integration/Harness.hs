@@ -12,6 +12,14 @@ module Seki.Integration.Harness (
   ManagedProcess,
   startManagedProcess,
   withPrivateDbus,
+  prepareFcitxEnvironment,
+  preflightFootIme,
+  withFcitxVirtualKeyboardOwner,
+  commitMozcText,
+  writeFootConfig,
+  waitForProbe,
+  queryX11FocusedWindowName,
+  waitForProcessWithTimeout,
   renderManagedProcessLogs,
   managedProcessPid,
   assertNoProcessPreload,
@@ -696,16 +704,9 @@ runFcitx5MozcAssertions fixture = do
   runAssertions imeEnvironment fcitxProcess = do
     waitForFcitxReady imeEnvironment fcitxProcess
     announce "fcitx5-mozc: private D-Bus and fcitx5 ready"
-    bracket
-      ( startManagedProcess
-          "fcitx5 virtual-keyboard owner"
-          imeEnvironment
-          (proc "dbus-test-tool" ["echo", "--name=org.fcitx.Fcitx5.VirtualKeyboard", "--session"])
-      )
-      stopManagedProcess
-      $ \virtualKeyboardOwner -> do
-        bracket startKeyboardKeeper stopManagedProcess $ \keyboardKeeper ->
-          (runWithKeyboard imeEnvironment virtualKeyboardOwner keyboardKeeper `onException` printManagedProcessDiagnostics keyboardKeeper)
+    withFcitxVirtualKeyboardOwner imeEnvironment $ \virtualKeyboardOwner -> do
+      bracket startKeyboardKeeper stopManagedProcess $ \keyboardKeeper ->
+        (runWithKeyboard imeEnvironment virtualKeyboardOwner keyboardKeeper `onException` printManagedProcessDiagnostics keyboardKeeper)
   startKeyboardKeeper =
     startManagedProcess
       "wtype keyboard keeper"
@@ -723,57 +724,7 @@ runFcitx5MozcAssertions fixture = do
           (fixtureRiverSession fixture)
           (fixtureSessionResult fixture)
           managedFootObservation
-      _ <- runProcessCapture imeEnvironment "fcitx5-remote" ["-s", "mozc"]
-      _ <- runProcessCapture imeEnvironment "fcitx5-remote" ["-o"]
-      currentInputMethod <- runProcessCapture imeEnvironment "fcitx5-remote" ["-n"]
-      assertEqual "fcitx5 current input method" "mozc" (trimAscii (ByteString8.unpack currentInputMethod))
-      currentState <- runProcessCapture imeEnvironment "fcitx5-remote" []
-      assertEqual "fcitx5 active state" "2" (trimAscii (ByteString8.unpack currentState))
-      announce "fcitx5-mozc: Mozc selected and active for focused foot"
-      _ <-
-        runProcessCapture
-          imeEnvironment
-          "gdbus"
-          [ "call"
-          , "--session"
-          , "--dest"
-          , "org.fcitx.Fcitx5"
-          , "--object-path"
-          , "/virtualkeyboard"
-          , "--method"
-          , "org.fcitx.Fcitx.VirtualKeyboard1.ShowVirtualKeyboard"
-          ]
-      waitForFcitxVirtualKeyboardBackend imeEnvironment virtualKeyboardOwner
-      _ <-
-        runProcessCapture
-          imeEnvironment
-          "gdbus"
-          [ "call"
-          , "--session"
-          , "--dest"
-          , "org.fcitx.Fcitx5.VirtualKeyboardBackend"
-          , "--object-path"
-          , "/virtualkeyboard"
-          , "--method"
-          , "org.fcitx.Fcitx5.VirtualKeyboardBackend1.SetVirtualKeyboardFunctionMode"
-          , "1"
-          ]
-      sendFcitxVirtualKeyboardSequence
-        imeEnvironment
-        -- Fcitx expects XKB keycodes (the evdev code plus 8).
-        [ (ord 'n', 57)
-        , (ord 'i', 31)
-        , (ord 'h', 43)
-        , (ord 'o', 32)
-        , (ord 'n', 57)
-        , (ord 'g', 42)
-        , (ord 'o', 32)
-        , (ord ' ', 65)
-        , (0xff0d, 36)
-        ]
-      -- Mozc consumes the commit Return; wtype supplies only the line delimiter.
-      runInputDriver (fixtureClientEnvironment fixture) ["-s", "100", "-k", "Return"]
-      committed <- waitForProbeInput probeHandle
+      committed <- commitMozcText "fcitx5-mozc" imeEnvironment (fixtureClientEnvironment fixture) virtualKeyboardOwner probeHandle
       assertEqual "Mozc UTF-8 commit" "日本語" committed
       announce "fcitx5-mozc: exact UTF-8 commit verified"
       runInputDriver (fixtureClientEnvironment fixture) ["-s", "100", "-k", "F2"]
@@ -785,6 +736,74 @@ runFcitx5MozcAssertions fixture = do
           (null . riverInventoryWindows . observationInventory)
       exitCode <- waitForProcessWithTimeout "IME foot exit" footProcess
       announce ("fcitx5-mozc: close lifecycle verified; foot exited with " <> show exitCode)
+
+withFcitxVirtualKeyboardOwner :: [(String, String)] -> (ManagedProcess -> IO value) -> IO value
+withFcitxVirtualKeyboardOwner imeEnvironment =
+  bracket
+    ( startManagedProcess
+        "fcitx5 virtual-keyboard owner"
+        imeEnvironment
+        (proc "dbus-test-tool" ["echo", "--name=org.fcitx.Fcitx5.VirtualKeyboard", "--session"])
+    )
+    stopManagedProcess
+
+{- | Select Mozc for the focused foot, type @nihongo@ and a space through
+fcitx5's virtual keyboard backend, press Return with wtype, and return the
+line the IME terminal probe receives.
+-}
+commitMozcText :: String -> [(String, String)] -> [(String, String)] -> ManagedProcess -> Handle -> IO String
+commitMozcText label imeEnvironment clientEnvironment virtualKeyboardOwner probeHandle = do
+  _ <- runProcessCapture imeEnvironment "fcitx5-remote" ["-s", "mozc"]
+  _ <- runProcessCapture imeEnvironment "fcitx5-remote" ["-o"]
+  currentInputMethod <- runProcessCapture imeEnvironment "fcitx5-remote" ["-n"]
+  assertEqual "fcitx5 current input method" "mozc" (trimAscii (ByteString8.unpack currentInputMethod))
+  currentState <- runProcessCapture imeEnvironment "fcitx5-remote" []
+  assertEqual "fcitx5 active state" "2" (trimAscii (ByteString8.unpack currentState))
+  announce (label <> ": Mozc selected and active for focused foot")
+  _ <-
+    runProcessCapture
+      imeEnvironment
+      "gdbus"
+      [ "call"
+      , "--session"
+      , "--dest"
+      , "org.fcitx.Fcitx5"
+      , "--object-path"
+      , "/virtualkeyboard"
+      , "--method"
+      , "org.fcitx.Fcitx.VirtualKeyboard1.ShowVirtualKeyboard"
+      ]
+  waitForFcitxVirtualKeyboardBackend imeEnvironment virtualKeyboardOwner
+  _ <-
+    runProcessCapture
+      imeEnvironment
+      "gdbus"
+      [ "call"
+      , "--session"
+      , "--dest"
+      , "org.fcitx.Fcitx5.VirtualKeyboardBackend"
+      , "--object-path"
+      , "/virtualkeyboard"
+      , "--method"
+      , "org.fcitx.Fcitx5.VirtualKeyboardBackend1.SetVirtualKeyboardFunctionMode"
+      , "1"
+      ]
+  sendFcitxVirtualKeyboardSequence
+    imeEnvironment
+    -- Fcitx expects XKB keycodes (the evdev code plus 8).
+    [ (ord 'n', 57)
+    , (ord 'i', 31)
+    , (ord 'h', 43)
+    , (ord 'o', 32)
+    , (ord 'n', 57)
+    , (ord 'g', 42)
+    , (ord 'o', 32)
+    , (ord ' ', 65)
+    , (0xff0d, 36)
+    ]
+  -- Mozc consumes the commit Return; wtype supplies only the line delimiter.
+  runInputDriver clientEnvironment ["-s", "100", "-k", "Return"]
+  waitForProbeInput probeHandle
 
 preflightImeProtocols :: RiverFixture -> IO ()
 preflightImeProtocols fixture = do
