@@ -4,7 +4,7 @@ module Seki.Integration.Daily (dailyScenarios) where
 
 import Control.Concurrent (forkFinally, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
-import Control.Exception (IOException, SomeException, bracket, finally, onException, try)
+import Control.Exception (IOException, bracket, finally, onException, try)
 import Control.Monad (forM, forM_, unless, void, when)
 import Data.Aeson (Value, eitherDecodeStrict', withObject, (.:), (.:?))
 import Data.Aeson.Types (Parser, parseEither)
@@ -179,7 +179,7 @@ snapshot session = sekictl session ["snapshot"] >>= requireRight "sekictl snapsh
 waitSnapshot :: DailySession -> String -> (Snapshot -> Bool) -> IO Snapshot
 waitSnapshot session phase ready = waitUntil phase assertionTimeoutMicroseconds attempt (either (const False) ready) >>= either failIntegration pure
  where
-  attempt = either (\(IntegrationFailure failure) -> Left failure) replySnapshot <$> try (sekictl session ["snapshot"])
+  attempt = either (\(IntegrationFailure failure) -> Left failure) replySnapshot <$> try @IntegrationFailure (sekictl session ["snapshot"])
 
 waitFocus :: DailySession -> String -> Maybe ProbeWindow -> IO ()
 waitFocus session phase wanted = void (waitUntil phase assertionTimeoutMicroseconds (keyboardSnapshot (sessionProbe session)) ((== wanted) . keyboardOwner))
@@ -537,7 +537,7 @@ imeHandover = withDailyHome (dailyOptions 1) $ \home -> do
       let client = clientEnvironment session
       bus <- maybe (failIntegration "the IME environment has no private D-Bus") pure (lookup "DBUS_SESSION_BUS_ADDRESS" ime)
       preflightFootIme client
-      _ <- waitUntil "the daily startup hook's fcitx5 serves the private D-Bus" assertionTimeoutMicroseconds (isRight <$> try @SomeException (runProcessCapture ime "fcitx5-remote" ["--check"])) id
+      _ <- waitUntil "the daily startup hook's fcitx5 serves the private D-Bus" assertionTimeoutMicroseconds (isRight <$> try @IntegrationFailure (runProcessCapture ime "fcitx5-remote" ["--check"])) id
       before <- snapshot session
       modKeys (clientEnvironment session) ["q"]
       after <- waitSnapshot session "Mod-q hands over to a fresh IPC session" ((/= snapSession before) . snapSession)
@@ -565,7 +565,7 @@ xwaylandManagement = withDailySession "m3-daily-xwayland" (dailyOptions 1){optio
       client = clientEnvironment session
       modShift k = runInputDriver client ["-M", "logo", "-M", "shift", "-k", k, "-m", "shift", "-m", "logo"]
       -- xdotool fails while X focus is still on the root window, before any X client maps.
-      xFocus phase = void (waitUntil phase assertionTimeoutMicroseconds (either (const Nothing) (Just . Text.pack) <$> try @SomeException (queryX11FocusedWindowName client)) (== Just xtermTitle))
+      xFocus phase = void (waitUntil phase assertionTimeoutMicroseconds (either (const Nothing) (Just . Text.pack) <$> try @IntegrationFailure (queryX11FocusedWindowName client)) (== Just xtermTitle))
       xGeometry = do
         found <- runProcessCapture client "xdotool" ["search", "--name", Text.unpack xtermTitle, "getwindowgeometry", "--shell"]
         pure (sort [line | line <- lines (BS8.unpack found), any (`isPrefixOf` line) ["X=", "Y=", "WIDTH=", "HEIGHT="]])
