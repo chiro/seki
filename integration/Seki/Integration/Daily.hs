@@ -44,78 +44,95 @@ dailyScenarios =
   , ("m3-daily-load", loadResponsive)
   ]
 
-newtype LaneSetup = LaneSetup (forall r. NestedRiver -> FilePath -> (Additions -> IO r) -> IO r)
-
-data Additions = Additions
-  { additionStubs :: [(String, String)]
-  , additionDailyEnvironment :: [(String, String)]
-  , additionClientEnvironment :: [(String, String)]
-  }
-
 data DailyOptions = DailyOptions
   { optionOutputs :: Int
   , optionXwayland :: Bool
   , optionRiverEnvironment :: [(String, String)]
-  , optionSetup :: LaneSetup
   }
 
 dailyOptions :: Int -> DailyOptions
-dailyOptions outputs = DailyOptions outputs False [] (LaneSetup (\_ _ use -> use (Additions [] [] [])))
+dailyOptions outputs = DailyOptions outputs False []
+
+data DailyHome = DailyHome
+  { homeRiver :: NestedRiver
+  , homeDirectory :: FilePath
+  , homeBin :: FilePath
+  , homeLaunchLog :: FilePath
+  , homeStateDirectory :: FilePath
+  , homeKeymap :: FilePath
+  , homeExecutable :: FilePath
+  , homeCli :: FilePath
+  , homeOutputCount :: Int
+  }
 
 data DailySession = DailySession
   { sessionName :: String
-  , sessionRiver :: NestedRiver
+  , sessionHome :: DailyHome
   , sessionPid :: Int
-  , sessionHome :: FilePath
-  , sessionLaunchLog :: FilePath
-  , sessionKeymap :: FilePath
-  , sessionCli :: FilePath
-  , sessionAdditions :: Additions
   , sessionProbe :: Probe
   }
 
 withDailySession :: String -> DailyOptions -> (DailySession -> IO a) -> IO a
-withDailySession name options body = do
+withDailySession name options body = withDailyHome options $ \home -> runDaily name home [] body
+
+withDailyHome :: DailyOptions -> (DailyHome -> IO a) -> IO a
+withDailyHome options use = do
   executable <- requireSetting "SEKI_DAILY_CONFIG_EXECUTABLE"
   cli <- requireSetting "SEKICTL_EXECUTABLE"
   backend <- requireSetting "SEKI_INPUT_BACKEND"
-  withNestedRiverUsing (optionXwayland options) (optionRiverEnvironment options) (optionOutputs options) $ \nested -> withSystemTempDirectory "seki-daily-home" $ \home -> do
-    let bin = home </> "bin"
-        launches = home </> "launches"
-        keymap = home </> ".config" </> "seki" </> "keymap.xkb"
-        LaneSetup around = optionSetup options
-    createDirectoryIfMissing True bin
-    createDirectoryIfMissing True (takeDirectory keymap)
-    copyFile (takeDirectory backend </> "daily.xkb") keymap
-    around nested home $ \additions -> do
-      forM_ ([(program, loggingStub launches) | program <- stubPrograms] <> additionStubs additions) $ \(program, script) -> writeExecutable (bin </> program) script
-      let base = riverEnvironment nested
-          overrides =
-            [ ("HOME", home)
-            , ("PATH", bin <> ":" <> fromMaybe "/usr/bin:/bin" (lookup "PATH" base))
-            , ("XDG_STATE_HOME", home </> ".local" </> "state")
-            , ("XDG_DATA_HOME", home </> ".local" </> "share")
-            , ("XDG_CACHE_HOME", home </> ".cache")
-            ]
-              <> additionDailyEnvironment additions
-          inheritedWithoutConfigHome = filter ((/= "XDG_CONFIG_HOME") . fst) base
-          environment = overrides <> filter ((`notElem` map fst overrides) . fst) inheritedWithoutConfigHome
-          surface = riverSocket nested
-          count = optionOutputs options
-      bracket (startManagedProcess name environment (proc executable [])) stopManagedProcess $ \process ->
-        ( do
-            pid <- managedProcessPid process >>= maybe (failIntegration (name <> ": the daily process has no pid")) pure
-            outputs <- sort . map snd <$> waitUntil "seki shows every output" assertionTimeoutMicroseconds (outputNames surface) ((== count) . length)
-            placeOutputs base outputs
-            withKeyboard base . withProbe surface $ \probe -> do
-              let session = DailySession name nested pid home launches keymap cli additions probe
-              _ <- waitSnapshot session "IPC shows a workspace on every output" (\s -> length (snapOutputs s) == count && all (isJust . outputWorkspace) (snapOutputs s))
-              startupRanOnce session "each startup command runs once after the first output"
-              result <- body session
-              startupRanOnce session "each startup command still ran exactly once at the end of the lane"
-              pure result
-        )
-          `onException` (renderManagedProcessLogs process >>= announce)
+  withNestedRiverUsing (optionXwayland options) (optionRiverEnvironment options) (optionOutputs options) $ \nested -> withSystemTempDirectory "seki-daily-home" $ \directory -> do
+    let home =
+          DailyHome
+            { homeRiver = nested
+            , homeDirectory = directory
+            , homeBin = directory </> "bin"
+            , homeLaunchLog = directory </> "launches"
+            , homeStateDirectory = directory </> ".local" </> "state"
+            , homeKeymap = directory </> ".config" </> "seki" </> "keymap.xkb"
+            , homeExecutable = executable
+            , homeCli = cli
+            , homeOutputCount = optionOutputs options
+            }
+    createDirectoryIfMissing True (homeBin home)
+    createDirectoryIfMissing True (takeDirectory (homeKeymap home))
+    copyFile (takeDirectory backend </> "daily.xkb") (homeKeymap home)
+    forM_ stubPrograms $ \program -> writeExecutable (homeBin home </> program) (loggingStub (homeLaunchLog home))
+    use home
+
+dailyEnvironment :: DailyHome -> [(String, String)] -> [(String, String)]
+dailyEnvironment home extra = overrides <> filter ((`notElem` map fst overrides) . fst) inheritedWithoutConfigHome
+ where
+  base = riverEnvironment (homeRiver home)
+  overrides =
+    [ ("HOME", homeDirectory home)
+    , ("PATH", homeBin home <> ":" <> fromMaybe "/usr/bin:/bin" (lookup "PATH" base))
+    , ("XDG_STATE_HOME", homeStateDirectory home)
+    , ("XDG_DATA_HOME", homeDirectory home </> ".local" </> "share")
+    , ("XDG_CACHE_HOME", homeDirectory home </> ".cache")
+    ]
+      <> extra
+  inheritedWithoutConfigHome = filter ((/= "XDG_CONFIG_HOME") . fst) base
+
+runDaily :: String -> DailyHome -> [(String, String)] -> (DailySession -> IO a) -> IO a
+runDaily name home extra body =
+  bracket (startManagedProcess name (dailyEnvironment home extra) (proc (homeExecutable home) [])) stopManagedProcess $ \process ->
+    ( do
+        pid <- managedProcessPid process >>= maybe (failIntegration (name <> ": the daily process has no pid")) pure
+        outputs <- sort . map snd <$> waitUntil "seki shows every output" assertionTimeoutMicroseconds (outputNames surface) ((== count) . length)
+        placeOutputs base outputs
+        withKeyboard base . withProbe surface $ \probe -> do
+          let session = DailySession name home pid probe
+          _ <- waitSnapshot session "IPC shows a workspace on every output" (\s -> length (snapOutputs s) == count && all (isJust . outputWorkspace) (snapOutputs s))
+          startupRanOnce session "each startup command runs once after the first output"
+          result <- body session
+          startupRanOnce session "each startup command still ran exactly once at the end of the lane"
+          pure result
+    )
+      `onException` (renderManagedProcessLogs process >>= announce)
+ where
+  base = riverEnvironment (homeRiver home)
+  surface = riverSocket (homeRiver home)
+  count = homeOutputCount home
 
 stubPrograms :: [String]
 stubPrograms = ["waybar", "swaybg", "fcitx5", "swayidle", "swaylock", "alacritty", "amixer", "brightnessctl"]
@@ -131,11 +148,16 @@ startupRanOnce session phase = do
 
 recordedLaunches :: DailySession -> IO [String]
 recordedLaunches session = do
-  exists <- doesFileExist (sessionLaunchLog session)
-  if exists then lines . BS8.unpack <$> BS8.readFile (sessionLaunchLog session) else pure []
+  exists <- doesFileExist launches
+  if exists then lines . BS8.unpack <$> BS8.readFile launches else pure []
+ where
+  launches = homeLaunchLog (sessionHome session)
 
 launchedOnce :: DailySession -> String -> String -> IO ()
 launchedOnce session phase command = void (waitUntil phase assertionTimeoutMicroseconds (filter (== command) <$> recordedLaunches session) (== [command]))
+
+sessionRiver :: DailySession -> NestedRiver
+sessionRiver = homeRiver . sessionHome
 
 clientEnvironment :: DailySession -> [(String, String)]
 clientEnvironment = riverEnvironment . sessionRiver
@@ -144,7 +166,7 @@ sessionSocket :: DailySession -> FilePath
 sessionSocket = riverSocket . sessionRiver
 
 sekictl :: DailySession -> [String] -> IO BS.ByteString
-sekictl session = runProcessCapture (clientEnvironment session) (sessionCli session)
+sekictl session = runProcessCapture (clientEnvironment session) (homeCli (sessionHome session))
 
 snapshot :: DailySession -> IO Snapshot
 snapshot session = sekictl session ["snapshot"] >>= requireRight "sekictl snapshot reply" . replySnapshot
@@ -195,7 +217,7 @@ sideBySide frames = Image width height (BS.concat [BS.concat (map (row y) frames
 
 withSubscription :: DailySession -> String -> (IO [Snapshot] -> IO a) -> IO a
 withSubscription session file action =
-  withSekictlSubscription (clientEnvironment session) (sessionCli session) path $ \received ->
+  withSekictlSubscription (clientEnvironment session) (homeCli (sessionHome session)) path $ \received ->
     action (received >>= mapM (requireRight "subscription snapshot" . replySnapshot)) `finally` keep
  where
   path = riverRuntimeDirectory (sessionRiver session) </> file
@@ -319,72 +341,72 @@ twoOutput = withDailySession "m3-daily-two-output" (dailyOptions 2) $ \session -
   barShows stream "the second Mod-grave hides the pad" (shown [("term", "hidden")] (Just "daily two-output"))
   capture session "daily-two-output-hidden"
 
-stubBuildResources :: LaneSetup
-stubBuildResources = LaneSetup $ \_ home use -> do
-  daily <- requireSetting "SEKI_DAILY_CONFIG_EXECUTABLE"
-  let resources = home </> "config-resources"
+stubBuildResources :: DailyHome -> FilePath -> IO [(String, String)]
+stubBuildResources home steps = do
+  let resources = homeDirectory home </> "config-resources"
       templates = resources </> "templates"
-      steps = home </> "build-steps"
   createDirectoryIfMissing True templates
   forM_ ["Main.hs", "seki-user.cabal", "cabal.project"] $ \file -> writeFile (templates </> file) ("-- " <> file <> " for @ARCHIVE@ built by @COMPILER@\n")
   forM_ ["archive", "ghc", "cabal"] $ \file -> writeFile (resources </> file) ""
-  writeExecutable (resources </> "env") ("#!/bin/sh\nprintf '%s\\n' \"$3\" >> '" <> steps <> "'\ncase \"$3\" in\n  build) exit 0 ;;\n  list-bin) printf '%s\\n' '" <> daily <> "' ;;\n  *) exit 64 ;;\nesac\n")
-  use
-    (Additions [] [("SEKI_CONFIG_" <> variable, resources </> file) | (variable, file) <- [("ARCHIVE", "archive"), ("GHC", "ghc"), ("CABAL", "cabal"), ("ENV", "env"), ("TEMPLATES", "templates")]] [])
+  writeExecutable (resources </> "env") ("#!/bin/sh\nprintf '%s\\n' \"$3\" >> '" <> steps <> "'\ncase \"$3\" in\n  build) exit 0 ;;\n  list-bin) printf '%s\\n' '" <> homeExecutable home <> "' ;;\n  *) exit 64 ;;\nesac\n")
+  pure [("SEKI_CONFIG_" <> variable, resources </> file) | (variable, file) <- [("ARCHIVE", "archive"), ("GHC", "ghc"), ("CABAL", "cabal"), ("ENV", "env"), ("TEMPLATES", "templates")]]
 
 buildHandover :: IO ()
-buildHandover = withDailySession "m3-daily-build" (dailyOptions 2){optionSetup = stubBuildResources} $ \session -> withSubscription session "daily-build-subscription.jsonl" $ \stream -> do
-  let probe = sessionProbe session
-      stateDirectory = sessionHome session </> ".local" </> "state" </> "seki"
-  initial <- waitSnapshot session "term and emacs are shown on the two outputs" (\s -> all (\tag -> any ((== Just tag) . outputWorkspace) (snapOutputs s)) ["term", "emacs"])
-  termOutput <- shownOn initial "term"
-  emacsOutput <- shownOn initial "emacs"
-  let windows title pads = bar [(termOutput, "term"), (emacsOutput, "emacs")] [workspace "term" [Occupied, Visible, Focused] "Tall", workspace "emacs" [Occupied, Visible] "Tall"] title pads
-      restored phase = do
-        picture session termOutput (phase <> ": the pad covers term") [Paint Green (Box 1 1 798 598) True]
-        picture session emacsOutput (phase <> ": the Emacs window covers its output fullscreen") [Paint Blue (Box 0 0 800 600) False]
-        barShows stream (phase <> ": the bar shows the pad and both workspaces") (windows (Just "daily build pad") [("term", "shown")])
-  _ <- openWindow probe Blue
-  editor <- openWindowWith probe (windowSpec Blue){specAppId = CustomAppId "Emacs"}
-  requestFullscreen probe editor
-  modKeys (clientEnvironment session) ["grave"]
-  launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty --class seki-scratchpad"
-  pad <- openWindowWith probe (windowSpec Green){specAppId = CustomAppId "seki-scratchpad"}
-  waitFocus session "the shown pad has keyboard focus" (Just pad)
-  setTitle probe pad "daily build pad"
-  restored "before the recompile"
-  capture session "daily-build-before"
-  oldSession <- snapSession <$> snapshot session
-  receipt <- sekictl session ["recompile"]
-  revision <- requireRight "recompile receipt" (receiptRevision receipt)
-  report "RECOMPILE_RECEIPT" (show revision)
-  sessions <- waitUntil "the checked candidate starts a fresh IPC session" assertionTimeoutMicroseconds (nub . map snapSession <$> stream) ((>= 2) . length)
-  report "SESSIONS" (show sessions)
-  (image, arguments) <- processImage (sessionPid session)
-  report "IMAGE" (show (image, arguments))
-  assertEqual "the daily process keeps its pid and restores into the new image" True ("--restore" `elem` arguments)
-  assertEqual "the new image is a checked candidate in the state directory" (stateDirectory, True) (takeDirectory image, "candidate" `isPrefixOf` takeFileName image)
-  readSymbolicLink (stateDirectory </> "profile") >>= assertEqual "the profile names the running candidate" image
-  recorded <- stream
-  let new = dropWhile ((== oldSession) . snapSession) recorded
-  report "NEW_SESSION_BUILD" (show (map snapBuild (take 1 new)))
-  assertEqual "the new session runs the candidate with no build error" [Just (BuildView "idle" 0 Nothing (Just image))] (map snapBuild (take 1 new))
-  lines <$> readFile (sessionHome session </> "build-steps") >>= assertEqual "the session ran one build and one list-bin" ["build", "list-bin"]
-  restored "after the handover"
-  waitFocus session "the pad keeps keyboard focus after the handover" (Just pad)
-  capture session "daily-build"
-  modKeys (clientEnvironment session) ["grave"]
-  picture session termOutput "the hidden pad uncovers term's own tile" [Paint Blue (Box 1 1 798 598) True]
-  barShows stream "the restored pad hides with Mod-grave" (windows Nothing [("term", "hidden")])
-  capture session "daily-build-pad-hidden"
-  runInputDriver (clientEnvironment session) ["-k", "XF86AudioRaiseVolume"]
-  launchedOnce session "XF86AudioRaiseVolume works in the new image" "amixer -D pulse sset Master 2%+"
-  startupRanOnce session "no startup command ran again after the handover"
+buildHandover = withDailyHome (dailyOptions 2) $ \home -> do
+  let steps = homeDirectory home </> "build-steps"
+  resources <- stubBuildResources home steps
+  runDaily "m3-daily-build" home resources $ \session -> withSubscription session "daily-build-subscription.jsonl" $ \stream -> do
+    let probe = sessionProbe session
+        stateDirectory = homeStateDirectory home </> "seki"
+    initial <- waitSnapshot session "term and emacs are shown on the two outputs" (\s -> all (\tag -> any ((== Just tag) . outputWorkspace) (snapOutputs s)) ["term", "emacs"])
+    termOutput <- shownOn initial "term"
+    emacsOutput <- shownOn initial "emacs"
+    let windows title pads = bar [(termOutput, "term"), (emacsOutput, "emacs")] [workspace "term" [Occupied, Visible, Focused] "Tall", workspace "emacs" [Occupied, Visible] "Tall"] title pads
+        restored phase = do
+          picture session termOutput (phase <> ": the pad covers term") [Paint Green (Box 1 1 798 598) True]
+          picture session emacsOutput (phase <> ": the Emacs window covers its output fullscreen") [Paint Blue (Box 0 0 800 600) False]
+          barShows stream (phase <> ": the bar shows the pad and both workspaces") (windows (Just "daily build pad") [("term", "shown")])
+    _ <- openWindow probe Blue
+    editor <- openWindowWith probe (windowSpec Blue){specAppId = CustomAppId "Emacs"}
+    requestFullscreen probe editor
+    modKeys (clientEnvironment session) ["grave"]
+    launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty --class seki-scratchpad"
+    pad <- openWindowWith probe (windowSpec Green){specAppId = CustomAppId "seki-scratchpad"}
+    waitFocus session "the shown pad has keyboard focus" (Just pad)
+    setTitle probe pad "daily build pad"
+    restored "before the recompile"
+    capture session "daily-build-before"
+    oldSession <- snapSession <$> snapshot session
+    receipt <- sekictl session ["recompile"]
+    revision <- requireRight "recompile receipt" (receiptRevision receipt)
+    report "RECOMPILE_RECEIPT" (show revision)
+    sessions <- waitUntil "the checked candidate starts a fresh IPC session" assertionTimeoutMicroseconds (nub . map snapSession <$> stream) ((>= 2) . length)
+    report "SESSIONS" (show sessions)
+    (image, arguments) <- processImage (sessionPid session)
+    report "IMAGE" (show (image, arguments))
+    assertEqual "the daily process keeps its pid and restores into the new image" True ("--restore" `elem` arguments)
+    assertEqual "the new image is a checked candidate in the state directory" (stateDirectory, True) (takeDirectory image, "candidate" `isPrefixOf` takeFileName image)
+    readSymbolicLink (stateDirectory </> "profile") >>= assertEqual "the profile names the running candidate" image
+    recorded <- stream
+    let new = dropWhile ((== oldSession) . snapSession) recorded
+    report "NEW_SESSION_BUILD" (show (map snapBuild (take 1 new)))
+    assertEqual "the new session runs the candidate with no build error" [Just (BuildView "idle" 0 Nothing (Just image))] (map snapBuild (take 1 new))
+    lines <$> readFile steps >>= assertEqual "the session ran one build and one list-bin" ["build", "list-bin"]
+    restored "after the handover"
+    waitFocus session "the pad keeps keyboard focus after the handover" (Just pad)
+    capture session "daily-build"
+    modKeys (clientEnvironment session) ["grave"]
+    picture session termOutput "the hidden pad uncovers term's own tile" [Paint Blue (Box 1 1 798 598) True]
+    barShows stream "the restored pad hides with Mod-grave" (windows Nothing [("term", "hidden")])
+    capture session "daily-build-pad-hidden"
+    runInputDriver (clientEnvironment session) ["-k", "XF86AudioRaiseVolume"]
+    launchedOnce session "XF86AudioRaiseVolume works in the new image" "amixer -D pulse sset Master 2%+"
+    startupRanOnce session "no startup command ran again after the handover"
 
 barReconnect :: IO ()
 barReconnect = withDailySession "m3-daily-bar" (dailyOptions 1) $ \session -> withSubscription session "daily-bar-subscription.jsonl" $ \stream -> do
   let probe = sessionProbe session
-      marker = sessionHome session </> "spawn-marker"
+      marker = homeDirectory (sessionHome session) </> "spawn-marker"
       markerLines = doesFileExist marker >>= \exists -> if exists then lines <$> readFile marker else pure []
   initial <- waitSnapshot session "term is shown" (any ((== Just "term") . outputWorkspace) . snapOutputs)
   output <- shownOn initial "term"
@@ -445,7 +467,7 @@ hotplug = do
           randr arguments = void (runProcessCapture (clientEnvironment session) "wlr-randr" arguments)
           keyboardResults = [("keymap", "sent"), ("repeat_info", "sent")]
           settled names shot = sort [(deviceName d, sort (deviceResults d), deviceKeymap d) | d <- namedDevices names shot, deviceLifecycle d == "ready"]
-          dailyKeyboard name = (Just name, keyboardResults, Just (sessionKeymap session))
+          dailyKeyboard name = (Just name, keyboardResults, Just (homeKeymap (sessionHome session)))
           projected project phase = waitUntil phase assertionTimeoutMicroseconds (project <$> snapshot session)
       initial <- waitSnapshot session "term and emacs are shown on the two outputs" (\s -> all (\tag -> any ((== Just tag) . outputWorkspace) (snapOutputs s)) ["term", "emacs"])
       termOutput <- shownOn initial "term"
@@ -505,18 +527,6 @@ snapshotShows session phase expected = do
   _ <- waitSnapshot session phase ((== expected) . barView)
   report "BAR" (phase <> ": " <> show expected)
 
-realFcitx :: LaneSetup
-realFcitx = LaneSetup $ \nested home use -> do
-  daemon <- findExecutable "fcitx5" >>= maybe (failIntegration "fcitx5 is not installed") pure
-  imeBase <- prepareFcitxEnvironment (riverEnvironment nested)
-  withPrivateDbus imeBase $ \ime -> do
-    let carried = [(name, value) | (name, value) <- ime, name `elem` imeVariables]
-        quote value = "'" <> concatMap (\c -> if c == '\'' then "'\\''" else [c]) value <> "'"
-        wrapper = loggingStub (home </> "launches") <> "exec env " <> unwords [name <> "=" <> quote value | (name, value) <- carried] <> " " <> quote daemon <> " -D -k\n"
-    use (Additions [("fcitx5", wrapper)] [] ime)
- where
-  imeVariables = ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "LANG", "LC_ALL", "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP", "GTK_IM_MODULE", "QT_IM_MODULE", "XMODIFIERS", "SDL_IM_MODULE", "DBUS_SESSION_BUS_ADDRESS"]
-
 -- | Match argv[0], not comm: a nix wrapProgram daemon runs as .fcitx5-wrapped and keeps its argv[0].
 fixtureProcesses :: String -> (String, String) -> IO [Int]
 fixtureProcesses command (name, value) = do
@@ -528,29 +538,36 @@ fixtureProcesses command (name, value) = do
       _ -> Nothing
 
 imeHandover :: IO ()
-imeHandover = withDailySession "m3-daily-ime" (dailyOptions 1){optionSetup = realFcitx} $ \session -> do
-  let ime = additionClientEnvironment (sessionAdditions session)
-      client = clientEnvironment session
-  bus <- maybe (failIntegration "the IME environment has no private D-Bus") pure (lookup "DBUS_SESSION_BUS_ADDRESS" ime)
-  preflightFootIme client
-  _ <- waitUntil "the daily startup hook's fcitx5 serves the private D-Bus" assertionTimeoutMicroseconds (isRight <$> try @SomeException (runProcessCapture ime "fcitx5-remote" ["--check"])) id
-  before <- snapshot session
-  modKeys (clientEnvironment session) ["q"]
-  after <- waitSnapshot session "Mod-q hands over to a fresh IPC session" ((/= snapSession before) . snapSession)
-  report "HANDOVER" (Text.unpack (snapSession before) <> " -> " <> Text.unpack (snapSession after))
-  (_, arguments) <- processImage (sessionPid session)
-  assertEqual "the daily process keeps its pid and restores" True ("--restore" `elem` arguments)
-  capture session "daily-ime-handover"
-  withImeFootProbe client $ \terminal -> do
-    _ <- waitSnapshot session "foot is managed on term with keyboard focus" (\s -> snapKeyboard s && any (\w -> wsTag w == "term" && wsOccupied w && wsFocused w) (snapWorkspaces s))
-    capture session "daily-ime-foot"
-    committed <- withFcitxVirtualKeyboardOwner ime $ \owner -> commitMozcText "m3-daily-ime" ime client owner terminal
-    report "IME_COMMIT" committed
-    assertEqual "foot receives exactly the Mozc commit after the handover" "日本語" committed
-    capture session "daily-ime"
-  daemons <- fixtureProcesses "fcitx5" ("DBUS_SESSION_BUS_ADDRESS", bus)
-  report "FCITX5_PROCESSES" (show daemons)
-  assertEqual "one fcitx5 process from this fixture exists" 1 (length daemons)
+imeHandover = withDailyHome (dailyOptions 1) $ \home -> do
+  daemon <- findExecutable "fcitx5" >>= maybe (failIntegration "fcitx5 is not installed") pure
+  imeBase <- prepareFcitxEnvironment (riverEnvironment (homeRiver home))
+  withPrivateDbus imeBase $ \ime -> do
+    let carried = [(name, value) | (name, value) <- ime, name `elem` imeVariables]
+        quote value = "'" <> concatMap (\c -> if c == '\'' then "'\\''" else [c]) value <> "'"
+        imeVariables = ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "LANG", "LC_ALL", "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP", "GTK_IM_MODULE", "QT_IM_MODULE", "XMODIFIERS", "SDL_IM_MODULE", "DBUS_SESSION_BUS_ADDRESS"]
+    writeExecutable (homeBin home </> "fcitx5") (loggingStub (homeLaunchLog home) <> "exec env " <> unwords [name <> "=" <> quote value | (name, value) <- carried] <> " " <> quote daemon <> " -D -k\n")
+    runDaily "m3-daily-ime" home [] $ \session -> do
+      let client = clientEnvironment session
+      bus <- maybe (failIntegration "the IME environment has no private D-Bus") pure (lookup "DBUS_SESSION_BUS_ADDRESS" ime)
+      preflightFootIme client
+      _ <- waitUntil "the daily startup hook's fcitx5 serves the private D-Bus" assertionTimeoutMicroseconds (isRight <$> try @SomeException (runProcessCapture ime "fcitx5-remote" ["--check"])) id
+      before <- snapshot session
+      modKeys (clientEnvironment session) ["q"]
+      after <- waitSnapshot session "Mod-q hands over to a fresh IPC session" ((/= snapSession before) . snapSession)
+      report "HANDOVER" (Text.unpack (snapSession before) <> " -> " <> Text.unpack (snapSession after))
+      (_, arguments) <- processImage (sessionPid session)
+      assertEqual "the daily process keeps its pid and restores" True ("--restore" `elem` arguments)
+      capture session "daily-ime-handover"
+      withImeFootProbe client $ \terminal -> do
+        _ <- waitSnapshot session "foot is managed on term with keyboard focus" (\s -> snapKeyboard s && any (\w -> wsTag w == "term" && wsOccupied w && wsFocused w) (snapWorkspaces s))
+        capture session "daily-ime-foot"
+        committed <- withFcitxVirtualKeyboardOwner ime $ \owner -> commitMozcText "m3-daily-ime" ime client owner terminal
+        report "IME_COMMIT" committed
+        assertEqual "foot receives exactly the Mozc commit after the handover" "日本語" committed
+        capture session "daily-ime"
+      daemons <- fixtureProcesses "fcitx5" ("DBUS_SESSION_BUS_ADDRESS", bus)
+      report "FCITX5_PROCESSES" (show daemons)
+      assertEqual "one fcitx5 process from this fixture exists" 1 (length daemons)
 
 xtermTitle :: Text
 xtermTitle = "seki-daily-xterm"
