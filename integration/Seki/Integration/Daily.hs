@@ -77,9 +77,9 @@ data DailySession = DailySession
 
 withDailySession :: String -> DailyOptions -> (DailySession -> IO a) -> IO a
 withDailySession name options body = do
-  executable <- setting "SEKI_DAILY_CONFIG_EXECUTABLE"
-  cli <- setting "SEKICTL_EXECUTABLE"
-  backend <- setting "SEKI_INPUT_BACKEND"
+  executable <- requireSetting "SEKI_DAILY_CONFIG_EXECUTABLE"
+  cli <- requireSetting "SEKICTL_EXECUTABLE"
+  backend <- requireSetting "SEKI_INPUT_BACKEND"
   (if optionXwayland options then withNestedXwaylandRiver else withNestedRiverEnvironment) (optionRiverEnvironment options) (optionOutputs options) $ \nested -> withSystemTempDirectory "seki-daily-home" $ \home -> do
     let bin = home </> "bin"
         launches = home </> "launches"
@@ -118,9 +118,6 @@ withDailySession name options body = do
               pure result
         )
           `onException` (renderManagedProcessLogs process >>= announce)
-
-setting :: String -> IO String
-setting variable = lookupEnv variable >>= maybe (failIntegration (variable <> " is unset; run through ci/run-integration.sh")) pure
 
 stubPrograms :: [String]
 stubPrograms = ["waybar", "swaybg", "fcitx5", "swayidle", "swaylock", "alacritty", "amixer", "brightnessctl"]
@@ -341,7 +338,7 @@ twoOutput = withDailySession "m3-daily-two-output" (dailyOptions 2) $ \session -
 
 stubBuildResources :: LaneSetup
 stubBuildResources = LaneSetup $ \_ home use -> do
-  daily <- setting "SEKI_DAILY_CONFIG_EXECUTABLE"
+  daily <- requireSetting "SEKI_DAILY_CONFIG_EXECUTABLE"
   let resources = home </> "config-resources"
       templates = resources </> "templates"
       steps = home </> "build-steps"
@@ -456,7 +453,7 @@ namedDevices names shot = [d | d <- snapDevices shot, maybe False (`elem` names)
 
 hotplug :: IO ()
 hotplug = do
-  backend <- setting "SEKI_INPUT_BACKEND"
+  backend <- requireSetting "SEKI_INPUT_BACKEND"
   withSystemTempDirectory "seki-daily-hotplug" $ \directory -> do
     let plugged = directory </> "plugged"
         options = (dailyOptions 2){optionRiverEnvironment = [("LD_PRELOAD", backend), ("SEKI_FIXTURE_HOTPLUG", plugged), ("SEKI_FIXTURE_HOTPLUG_POINTER", Text.unpack touchpadName)]}
