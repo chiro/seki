@@ -113,5 +113,157 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(runner.read(self.path/"summary.json")["trials"][0]["budgets"], summary["trials"][0]["budgets"])
 
 
+    def m3_driver(self):
+        self.driver["workload"] = self.pure["workload"] = "m3"
+        self.driver["exercised"] = {}
+        self.driver["endpoints"] = {name: [1_000_000, 2_000_000] for name in runner.WORKLOADS["m3"]["endpoints"]}
+        self.driver["endpoint_steps"] = {name: 2 for name in runner.WORKLOADS["m3"]["endpoints"]}
+
+    def test_m3_endpoints_summarized(self):
+        self.m3_driver()
+        result = self.summarize("m3")
+        self.assertEqual(sorted(result["endpoints"]), sorted(runner.WORKLOADS["m3"]["endpoints"]))
+        self.assertEqual(result["endpoints"]["ipc_update"]["count"], 2)
+        self.assertEqual(result["endpoints"]["ipc_update"]["p99_ms"], 2.0)
+
+    def test_m3_missing_endpoint_rejected(self):
+        self.m3_driver()
+        del self.driver["endpoints"]["scratchpad_toggle"]
+        with self.assertRaisesRegex(ValueError, "endpoints"):
+            self.summarize("m3")
+
+    def test_m3_short_endpoint_rejected(self):
+        self.m3_driver()
+        self.driver["endpoints"]["recompile_completion"] = [1_000_000]
+        with self.assertRaisesRegex(ValueError, "recompile_completion"):
+            self.summarize("m3")
+
+    def test_m2_with_endpoints_rejected(self):
+        self.driver["endpoints"] = {"ipc_update": [1]}
+        with self.assertRaisesRegex(ValueError, "endpoints"):
+            self.summarize()
+
+    def test_m3_endpoint_targets_are_budgets_except_recompile(self):
+        self.m3_driver()
+        self.driver["endpoints"]["scratchpad_toggle"] = [1_000_000, 60_000_000]
+        self.driver["endpoints"]["recompile_completion"] = [1_000_000, 900_000_000]
+        trial = self.summarize("m3")
+        outcomes = runner.budget_outcomes(trial, "m3")
+        self.assertEqual(outcomes["scratchpad_toggle_p99"], False)
+        self.assertEqual(outcomes["external_wake_p99"], True)
+        self.assertNotIn("recompile_completion_p99", outcomes)
+        self.assertEqual(sorted(runner.budget_outcomes(self.summarize_m2(), "m2")), sorted(runner.BUDGETS))
+
+    def summarize_m2(self):
+        self.driver = dict(valid=True, native_checks=True, observed_actions=1, steps=1, action_codes=[0], start_ns=10, end_ns=20,
+                           workload="m2", exercised={name: 1 for name in runner.WORKLOADS["m2"]["exercised"]})
+        self.pure["workload"] = "m2"
+        return self.summarize()
+
+    def test_trial_plan_interleaves_revisions_and_alternates_who_goes_first(self):
+        plan = runner.trial_plan(2, ["trunk", "head"], ["m2"], {"trunk": {"m2"}, "head": {"m2"}})
+        self.assertEqual(plan, [("trunk", "m2", "normal"), ("head", "m2", "normal"), ("trunk", "m2", "nonmoving"), ("head", "m2", "nonmoving"),
+                                ("head", "m2", "normal"), ("trunk", "m2", "normal"), ("head", "m2", "nonmoving"), ("trunk", "m2", "nonmoving")])
+
+    def test_trial_plan_runs_a_workload_only_where_supported(self):
+        plan = runner.trial_plan(1, ["trunk", "head"], ["m2", "m3"], {"trunk": {"m2"}, "head": {"m2", "m3"}})
+        self.assertEqual(plan, [("trunk", "m2", "normal"), ("head", "m2", "normal"), ("head", "m3", "normal"),
+                                ("trunk", "m2", "nonmoving"), ("head", "m2", "nonmoving"), ("head", "m3", "nonmoving")])
+        with self.assertRaisesRegex(ValueError, "m3"):
+            runner.trial_plan(1, ["trunk"], ["m3"], {"trunk": {"m2"}})
+
+    def test_support_probe_reads_an_unknown_workload_as_unsupported(self):
+        self.assertEqual(runner.workload_support(0, ""), None)
+        self.assertEqual(runner.workload_support(1, "seki-latency: invalid workload: m3\nCallStack (from HasCallStack):\n"), "invalid workload: m3")
+        with self.assertRaisesRegex(ValueError, "support probe"):
+            runner.workload_support(1, "seki-latency: pure final invariants failed")
+
+    def test_linked_seki_libraries_parsed_from_ldd(self):
+        ldd = """\tlinux-vdso.so.1 (0x00007ffd)
+\tlibHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so => /wt/dist-newstyle/latency/libHSseki-wire.so (0x00007f)
+\tlibc.so.6 => /usr/lib/libc.so.6 (0x00007f)
+\tlibHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so => /wt/dist-newstyle/latency/libHSseki-core.so (0x00007f)
+"""
+        self.assertEqual(runner.linked_seki_libraries(ldd), ["/wt/dist-newstyle/latency/libHSseki-wire.so", "/wt/dist-newstyle/latency/libHSseki-core.so"])
+        with self.assertRaisesRegex(ValueError, "not found"):
+            runner.linked_seki_libraries("\tlibHSseki-x.so => not found\n")
+
+    def write_trial(self, name, workload, checksum=123):
+        trial = self.path / name
+        trial.mkdir()
+        if workload == "m3":
+            self.m3_driver()
+        else:
+            self.summarize_m2()
+        self.pure["checksum"] = checksum
+        for item in ["wm", "driver", "pure"]:
+            runner.write(trial / f"{item}.json", getattr(self, item))
+        for item in ["wm.rts", "pure.rts", "wm-checkpoint-0.json", "wm-checkpoint-1.json"]:
+            (trial / item).write_text((self.path / item).read_text())
+
+    def campaign(self, identical=True, head_m2_checksum=123):
+        self.write_trial("00-trunk-m2-normal", "m2")
+        self.write_trial("01-head-m2-normal", "m2", head_m2_checksum)
+        self.write_trial("02-head-m3-normal", "m3", 456)
+        revision = lambda sha: dict(git_sha=sha, compiler="ghc 9.10", binary_sha256="b" + sha, linked_seki_libraries={"/lib/" + sha: "l" + sha})
+        trials = [dict(directory=d, revision=r, workload=w, collector="normal", load_before=[0.5], load_after=[0.6])
+                  for d, r, w in [("00-trunk-m2-normal", "trunk", "m2"), ("01-head-m2-normal", "head", "m2"), ("02-head-m3-normal", "head", "m3")]]
+        runner.write(self.path / "manifest.json", dict(
+            schema=3, workloads=["m2", "m3"], machine="m", uname="Linux host", cpu_count=12, cpu_model="cpu", river="0.5.0", renderer="pixman",
+            revisions={"trunk": revision("c2b7851"), "head": revision("abc1234")},
+            unsupported=[dict(revision="trunk", workload="m3", reason="invalid workload: m3")],
+            runtime_sources=dict(paths=["src", "src-core", "src-public"], identical=identical),
+            seed=1, live_steps={"m2": 1, "m3": 2}, pure_steps=1, pure_windows=2, trials=trials))
+        return runner.report(self.path)
+
+    def test_campaign_report_groups_by_revision_and_names_the_noise_floor(self):
+        summary = self.campaign()
+        text = (self.path / "report.md").read_text()
+        self.assertEqual([t["revision"] for t in summary["trials"]], ["trunk", "head", "head"])
+        self.assertIn("| m2 | trunk | normal | pure p99_ms | 1 |", text)
+        self.assertIn("| m2 | head | normal | pure p99_ms | 1 |", text)
+        self.assertIn("noise floor", text)
+        self.assertIn("| 01-head-m2-normal | head | m2 | normal |", text)
+        self.assertIn("c2b7851", text)
+
+    def test_campaign_report_names_what_it_cannot_measure(self):
+        self.campaign()
+        text = (self.path / "report.md").read_text()
+        self.assertIn("input_result", text)
+        self.assertIn("recompile_handover", text)
+        self.assertIn("trunk does not run m3: invalid workload: m3", text)
+
+    def test_campaign_report_tabulates_m3_endpoints_against_targets(self):
+        self.campaign()
+        text = (self.path / "report.md").read_text()
+        self.assertIn("| 02-head-m3-normal | external_wake | 2 | 1.0000 | 2.0000 | 2.0000 | 2.0000 | < 50 ms |", text)
+        self.assertIn("| 02-head-m3-normal | recompile_completion | 2 | 1.0000 | 2.0000 | 2.0000 | 2.0000 | none |", text)
+
+    def test_campaign_report_without_identical_runtime_claims_no_noise_floor(self):
+        self.campaign(identical=False)
+        self.assertNotIn("noise floor", (self.path / "report.md").read_text())
+
+    def test_checksums_must_agree_within_a_workload_and_revision_only(self):
+        summary = self.campaign(head_m2_checksum=789)
+        self.assertEqual(summary["pure_checksums"], {"m2": {"trunk": 123, "head": 789}, "m3": {"head": 456}})
+        self.assertIn("m2 pure checksums differ across revisions", (self.path / "report.md").read_text())
+
+
+    def test_campaign_report_marks_a_failing_trial(self):
+        self.write_trial("00-head-m3-normal", "m3", 456)
+        self.driver["endpoints"]["external_wake"] = [1_000_000, 70_000_000]
+        runner.write(self.path / "00-head-m3-normal" / "driver.json", self.driver)
+        runner.write(self.path / "manifest.json", dict(
+            schema=3, workloads=["m3"], machine="m", uname="Linux host", cpu_count=12, cpu_model="cpu", river="0.5.0", renderer="pixman",
+            revisions={"head": dict(git_sha="abc1234", compiler="ghc 9.10", binary_sha256="b", linked_seki_libraries={})},
+            unsupported=[], runtime_sources=None, seed=1, live_steps={"m3": 2}, pure_steps=1, pure_windows=2,
+            trials=[dict(directory="00-head-m3-normal", revision="head", workload="m3", collector="normal", load_before=[0.5], load_after=[0.6])]))
+        runner.report(self.path)
+        text = (self.path / "report.md").read_text()
+        self.assertIn("One revision ran", text)
+        self.assertIn("| FAIL |", text)
+        self.assertIn("00-head-m3-normal external_wake_p99 = 70.0000 ms (budget < 50 ms)", text)
+
+
 if __name__ == "__main__":
     unittest.main()

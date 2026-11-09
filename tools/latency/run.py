@@ -15,11 +15,28 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 
 WORKLOADS = {
-    "m1": {"text": "eight native tiled windows; focus and view actions", "exercised": []},
+    "m1": {"text": "eight native tiled windows; focus and view actions", "exercised": [], "live_steps": 1023},
     "m2": {"text": "six native tiled windows and two parent-hinted dialog floats under Tall with Crop; "
                    "focus, view, Shrink/Expand, and client fullscreen actions",
            "exercised": ["clip_resizes", "fullscreen_enters", "fullscreen_exits_by_focus",
-                         "fullscreen_exits_by_request", "hidden_fullscreen_views", "float_raises"]},
+                         "fullscreen_exits_by_request", "hidden_fullscreen_views", "float_raises"], "live_steps": 1023},
+    "m3": {"text": "two native tiles and a scratchpad window adopted by app ID under Tall; IPC workspace views, "
+                   "scratchpad toggles, and recompiles on idle river with no physical input",
+           "exercised": [], "live_steps": 2500,
+           "endpoints": {
+               "external_wake": {"text": "IPC workspace command sent to the probe's keyboard owner change", "target_p99_ms": 50},
+               "ipc_update": {"text": "the same command to the subscriber line that publishes the new focused workspace", "target_p99_ms": 50},
+               "scratchpad_toggle": {"text": "IPC scratchpad toggle to the probe's keyboard owner change", "target_p99_ms": 50},
+               "recompile_completion": {"text": "IPC recompile to the subscriber line that publishes the build generation's result", "target_p99_ms": None},
+           },
+           "unsupported": {
+               "input_result": "river 0.5.0 lists no input device for the fixture's wtype virtual keyboard, so no input rule has a device "
+                               "to report on; integration/input/backend.so creates devices only when preloaded into river, which "
+                               "m3-input-perf measures",
+               "recompile_handover": "a validated build makes the WM stop managing and exec its target, which ends the process that "
+                                     "owns the trial's samples; the stub candidate fails its check instead, so the m3-recompile "
+                                     "integration lane covers the handover",
+           }},
 }
 
 BUDGETS = {"pure_p99": ("pure", "p99_ms", 2), "manage_p99": ("manage", "p99_ms", 10),
@@ -74,6 +91,44 @@ def manifest_workload(manifest):
     return manifest["workload"] if manifest["schema"] >= 2 else "m1"
 
 
+def manifest_revisions(manifest):
+    if manifest["schema"] >= 3:
+        return manifest["revisions"]
+    return {"local": {"git_sha": None, "compiler": manifest["compiler"], "binary_sha256": manifest["binary_sha256"], "linked_seki_libraries": {}}}
+
+
+def trial_plan(rounds, revisions, workloads, supported):
+    """Each round runs both collectors; each workload runs at every revision that supports it, and odd rounds reverse who goes first."""
+    for workload in workloads:
+        require(any(workload in supported[name] for name in revisions), f"no revision supports workload {workload}")
+    order = []
+    for index in range(rounds):
+        for collector in ("normal", "nonmoving"):
+            for workload in workloads:
+                names = [name for name in revisions if workload in supported[name]]
+                order += [(name, workload, collector) for name in (names[::-1] if index % 2 else names)]
+    return order
+
+
+def workload_support(returncode, output):
+    """None when a binary's pure probe ran; otherwise the reason it rejected the workload."""
+    if returncode == 0:
+        return None
+    match = re.search(r"invalid workload: \S+", output)
+    require(match is not None, f"support probe failed for another reason: {output.strip()[:500]}")
+    return match[0]
+
+
+def linked_seki_libraries(ldd_output):
+    paths = []
+    for line in ldd_output.splitlines():
+        match = re.match(r"\s*(libHSseki\S*)\s+=>\s+(.*?)\s*(\(0x[0-9a-f]+\))?$", line)
+        if match:
+            require(match[2] != "not found", f"{match[1]} not found")
+            paths.append(match[2])
+    return paths
+
+
 def summarize_trial(directory, workload):
     directory = Path(directory)
     wm, driver, pure = (read(directory / f"{name}.json") for name in ["wm", "driver", "pure"])
@@ -86,6 +141,11 @@ def summarize_trial(directory, workload):
     require(wm["successful"] == len(wm["samples"]), "missing raw WM samples")
     require(driver["observed_actions"] == driver["steps"] == len(driver["action_codes"]), "missing observed actions")
     require(pure["steps"] == len(pure["samples_ns"]) and pure["checksum"] != 0, "missing pure work or checksum")
+    planned = WORKLOADS[workload].get("endpoints", {})
+    timed = driver.get("endpoints", {})
+    require(sorted(timed) == sorted(planned), f"timed endpoints {sorted(timed)} differ from the workload's {sorted(planned)}")
+    for name in planned:
+        require(len(timed[name]) == driver["endpoint_steps"][name] > 0, f"{name} has {len(timed[name])} samples for {driver['endpoint_steps'][name]} planned steps")
     start, end = driver["start_ns"], driver["end_ns"]
     require(start < end, "invalid shared monotonic measurement interval")
     samples = wm["samples"]
@@ -98,7 +158,7 @@ def summarize_trial(directory, workload):
     before, after = (read(directory / f"wm-checkpoint-{i}.json") for i in [0, 1])
     delta = {key: after[key] - before[key] for key in before}
     require(all(v >= 0 for v in delta.values()), "RTS checkpoint counters moved backwards")
-    return result | {"exercised": exercised,
+    return result | {"exercised": exercised, "endpoints": {name: quantiles(samples) for name, samples in timed.items()},
                      "manage_per_action": result["manage"]["count"] / driver["steps"],
                      "render_per_action": result["render"]["count"] / driver["steps"],
                      "wm_workload_rts_delta": delta, "pure": quantiles(pure["samples_ns"]), "pure_checksum": pure["checksum"],
@@ -109,15 +169,31 @@ def summarize_trial(directory, workload):
                      "major_gc_observed_before_shutdown": wm["major_gcs"] > 0, "major_gc_during_workload": delta["major_gcs"] > 0}
 
 
-def budget_outcomes(trial):
-    return {name: trial[group][metric] < limit for name, (group, metric, limit) in BUDGETS.items()}
+def budget_values(trial, workload):
+    values = {name: (trial[group][metric], limit) for name, (group, metric, limit) in BUDGETS.items()}
+    for name, spec in WORKLOADS[workload].get("endpoints", {}).items():
+        if spec["target_p99_ms"] is not None:
+            values[f"{name}_p99"] = (trial["endpoints"][name]["p99_ms"], spec["target_p99_ms"])
+    return values
+
+
+def budget_outcomes(trial, workload):
+    return {name: value < limit for name, (value, limit) in budget_values(trial, workload).items()}
 
 
 def budget_section(trials):
-    misses = [f"{t['directory']} {name} = {t[group][metric]:.4f} ms (budget < {limit} ms)"
-              for t in trials for name, (group, metric, limit) in BUDGETS.items() if not t["budgets"][name]]
+    misses = [f"{t['directory']} {name} = {value:.4f} ms (budget < {limit} ms)"
+              for t in trials for name, (value, limit) in budget_values(t, t["workload"]).items() if not t["budgets"][name]]
     lines = ["", "## Budgets", "",
-             "Budgets are pure p99 < 2 ms, manage and render sequence p99 < 10 ms, and maximum observed WM stop-the-world pause < 10 ms."]
+             "Budgets are pure p99 < 2 ms, manage and render sequence p99 < 10 ms, and maximum observed WM stop-the-world pause < 10 ms. "
+             "An m3 trial must also meet each command target that names one."]
+    if any("revision" in t for t in trials):
+        lines += ["", "| Trial | Revision | Workload | Collector | Pure p99 | Manage p99 | Render p99 | Max STW | Endpoint p99 | Pass |",
+                  "|---|---|---|---|---:|---:|---:|---:|---|---|"]
+        for t in trials:
+            endpoints = ", ".join(f"{name} {v['p99_ms']:.2f}" for name, v in t["endpoints"].items()) or "none"
+            lines.append(f"| {t['directory']} | {t['revision']} | {t['workload']} | {t['collector']} | {t['pure']['p99_ms']:.4f} | {t['manage']['p99_ms']:.4f} | "
+                         f"{t['render']['p99_ms']:.4f} | {t['wm_rts']['max_stw_pause_ms']:.1f} | {endpoints} | {'pass' if all(t['budgets'].values()) else 'FAIL'} |")
     if misses:
         lines += ["", "Missed:", ""] + [f"- {miss}" for miss in misses]
     else:
@@ -125,52 +201,116 @@ def budget_section(trials):
     return lines
 
 
+def revision_section(manifest, revisions, checksums):
+    lines = ["", "## Revisions", "",
+             "| Revision | Commit | Compiler | Binary SHA-256 | Linked seki libraries (SHA-256) |", "|---|---|---|---|---|"]
+    for name, r in revisions.items():
+        libraries = "<br>".join(f"`{path}` `{digest}`" for path, digest in r["linked_seki_libraries"].items()) or "not recorded"
+        lines.append(f"| {name} | `{r['git_sha']}` | {r['compiler']} | `{r['binary_sha256']}` | {libraries} |")
+    sources = manifest["runtime_sources"]
+    lines.append("")
+    if sources is None:
+        lines.append("One revision ran, so no runtime sources were compared.")
+    elif sources["identical"]:
+        lines.append(f"Runtime sources under {', '.join(sources['paths'])} are identical across the revisions, so the m2 differences between them are a noise floor. "
+                     "This report claims no speedup or regression.")
+    else:
+        lines.append(f"Runtime sources under {', '.join(sources['paths'])} differ across the revisions.")
+    for workload, by_revision in checksums.items():
+        if len(by_revision) > 1:
+            same = len(set(by_revision.values())) == 1
+            lines.append(f"{workload} pure checksums {'agree' if same else 'differ'} across revisions.")
+    for item in manifest["unsupported"]:
+        lines.append(f"{item['revision']} does not run {item['workload']}: {item['reason']}.")
+    return lines
+
+
+def endpoint_section(trials):
+    rows = [(t, name, v) for t in trials for name, v in t["endpoints"].items()]
+    if not rows:
+        return []
+    lines = ["", "## M3 command endpoints", "",
+             "Each sample runs from the driver's send of one IPC command to the outcome named below, on idle river after a 1 ms gap, "
+             "with no physical input. Probe outcomes are polled every 0.1 ms; subscriber lines are stamped on arrival. "
+             "No ratio compares these with the m2 sequences.", ""]
+    for workload in dict.fromkeys(t["workload"] for t, _, _ in rows):
+        for name, spec in WORKLOADS[workload]["endpoints"].items():
+            lines.append(f"- `{name}`: {spec['text']}.")
+        for name, reason in WORKLOADS[workload].get("unsupported", {}).items():
+            lines.append(f"- `{name}` is unsupported: {reason}.")
+    lines += ["", "| Trial | Endpoint | Samples | p50 ms | p95 ms | p99 ms | Max ms | Target p99 |", "|---|---|---:|---:|---:|---:|---:|---|"]
+    for t, name, v in rows:
+        target = WORKLOADS[t["workload"]]["endpoints"][name]["target_p99_ms"]
+        lines.append(f"| {t['directory']} | {name} | {v['count']} | {v['p50_ms']:.4f} | {v['p95_ms']:.4f} | {v['p99_ms']:.4f} | {v['max_ms']:.4f} | "
+                     f"{f'< {target} ms' if target is not None else 'none'} |")
+    return lines
+
+
 def report(directory):
     directory = Path(directory)
     manifest = read(directory / "manifest.json")
-    workload = manifest_workload(manifest)
+    campaign = manifest["schema"] >= 3
+    revisions = manifest_revisions(manifest)
     trials = []
     for item in manifest["trials"]:
-        trial = item | summarize_trial(directory / item["directory"], workload)
-        trial["budgets"] = budget_outcomes(trial)
+        workload = item["workload"] if campaign else manifest_workload(manifest)
+        trial = item | {"workload": workload} | summarize_trial(directory / item["directory"], workload)
+        trial["budgets"] = budget_outcomes(trial, workload)
         trials.append(trial)
-    checksums = {t["pure_checksum"] for t in trials}
-    require(len(checksums) == 1, "deterministic checksum differs across trials")
-    summary = {"manifest": manifest, "workload": workload, "trials": trials, "verdict": "inconclusive; production defaults unchanged"}
+    checksums = {}
+    for t in trials:
+        seen = checksums.setdefault(t["workload"], {}).setdefault(t.get("revision", "local"), t["pure_checksum"])
+        require(seen == t["pure_checksum"], f"deterministic checksum differs across {t['workload']} trials at {t.get('revision', 'local')}")
+    groups = {}
+    for t in trials:
+        groups.setdefault((t["workload"], t.get("revision", "local"), t["collector"]), []).append(t)
+    summary = {"manifest": manifest, "workloads": list(checksums), "trials": trials, "pure_checksums": checksums,
+               "verdict": "inconclusive; production defaults unchanged"}
     lines = ["# Latency and collector evidence", "", "Collector selection is inconclusive. Production defaults remain unchanged.", "",
-             "The diagnostic uses the same optimized threaded build at `-N1`; only `--nonmoving-gc` differs. WM sequence latency is request submission time, not compositor acknowledgment or display latency.", "",
-             f"Trials per collector: {len(trials)//2}. Fewer than five is exploratory evidence only.",
-             f"Machine: {manifest['machine']}. Compiler: {manifest['compiler']}. Binary SHA-256: `{manifest['binary_sha256']}`.",
-             f"Seed {manifest['seed']}; workload {workload}: {WORKLOADS[workload]['text']}; {manifest['live_steps']} acknowledged actions after 24 warmup actions. Pure mode uses {manifest['pure_windows']} windows, {manifest['pure_steps']} events, and 128 warmup events.", "",
-             "| Collector | Metric | Trials | Median | Min | Max |", "|---|---|---:|---:|---:|---:|"]
-    for collector in ["normal", "nonmoving"]:
-        group = [t for t in trials if t["collector"] == collector]
-        if not group:
-            continue
+             "The diagnostic uses the same optimized threaded build at `-N1`; only `--nonmoving-gc` differs. WM sequence latency is request submission time, not compositor acknowledgment or display latency.", ""]
+    per_group = min(len(group) for group in groups.values())
+    if campaign:
+        lines += [f"Trials per workload, revision, and collector: {per_group}. Fewer than five is exploratory evidence only.",
+                  f"Machine: {manifest['uname']}; {manifest['cpu_model']}, {manifest['cpu_count']} CPUs. River {manifest['river']} with `WLR_RENDERER={manifest['renderer']}`."]
+        lines += [f"Workload {w}: {WORKLOADS[w]['text']}; {manifest['live_steps'][w]} acknowledged actions after 24 warmup actions." for w in checksums]
+    else:
+        workload = manifest_workload(manifest)
+        lines += [f"Trials per collector: {per_group}. Fewer than five is exploratory evidence only.",
+                  f"Machine: {manifest['machine']}. Compiler: {manifest['compiler']}. Binary SHA-256: `{manifest['binary_sha256']}`.",
+                  f"Seed {manifest['seed']}; workload {workload}: {WORKLOADS[workload]['text']}; {manifest['live_steps']} acknowledged actions after 24 warmup actions."]
+    lines += [f"Seed {manifest['seed']}. Pure mode uses {manifest['pure_windows']} windows, {manifest['pure_steps']} events, and 128 warmup events.", "",
+              "| Workload | Revision | Collector | Metric | Trials | Median | Min | Max |", "|---|---|---|---|---:|---:|---:|---:|"]
+    for (workload, revision, collector), group in groups.items():
         metrics = [(f"{kind} {metric}", [t[kind][metric] for t in group]) for kind in ["pure","manage","render"] for metric in ["p50_ms","p95_ms","p99_ms","max_ms"]]
         metrics += [(f"WM {metric}", [t["wm_rts"][metric] for t in group]) for metric in ["allocated_bytes","max_residency_bytes","max_stw_pause_ms","nonmoving_sync_max_pause_ms"]]
         for name, values in metrics:
-            lines.append(f"| {collector} | {name} | {len(values)} | {statistics.median(values):.4f} | {min(values):.4f} | {max(values):.4f} |")
+            lines.append(f"| {workload} | {revision} | {collector} | {name} | {len(values)} | {statistics.median(values):.4f} | {min(values):.4f} | {max(values):.4f} |")
     lines += budget_section(trials)
+    if campaign:
+        lines += revision_section(manifest, revisions, checksums)
+    lines += endpoint_section(trials)
     lines += ["", "## Work and validity", "",
               "Sequences per action count the manage and render sequences inside the interval for each measured action. A rise against the same workload points at repeated proposals.", "",
               "| Trial | Manage | Render | Manage per action | Render per action | Pure | Major GC in workload | Load before / after |", "|---|---:|---:|---:|---:|---:|---|---|"]
     for t in trials:
         lines.append(f"| {t['directory']} | {t['manage']['count']} | {t['render']['count']} | {t['manage_per_action']:.2f} | {t['render_per_action']:.2f} | {t['pure']['count']} | {t['major_gc_during_workload']} | {t['load_before']} / {t['load_after']} |")
-    names = WORKLOADS[workload]["exercised"]
-    if names:
+    for workload in checksums:
+        names = WORKLOADS[workload]["exercised"]
+        if not names:
+            continue
         lines += ["", "## Exercised M2 features", "",
                   "Counts come from the model's transitions over the measured actions. Every count except float raises changed what the probe observed, so a barrier confirmed it.", "",
                   "| Trial | " + " | ".join(names) + " |", "|---|" + "---:|" * len(names)]
         for t in trials:
-            lines.append(f"| {t['directory']} | " + " | ".join(str(t["exercised"][name]) for name in names) + " |")
+            if t["workload"] == workload:
+                lines.append(f"| {t['directory']} | " + " | ".join(str(t["exercised"][name]) for name in names) + " |")
     lines += ["", "## Interpretation", "",
               "Per-trial results and budget outcomes are retained in summary.json. Budgets are engineering budgets, not river guarantees, and no ordinary unit test enforces wall-clock budgets.", "",
               "RTS allocation and residency describe the WM process lifetime, including startup and shutdown. The `-s` per-generation collection maxima have 0.1 ms printed resolution. Nonmoving synchronization maxima are reported separately and included in the observed stop-the-world maximum; concurrent cycle duration is excluded. There is no forced final GC. The earlier RTSStats snapshot reports whether major GC occurred before shutdown. A trial without major GC gives limited collector evidence.", "",
               "The pure interval includes concrete structural checksum folding over every state, layout, tag, stack, floating rectangle, fullscreen window, pointer op, intent, and desired-scene field. Inputs are pre-generated and previous state fully evaluated. Independent invariants and deterministic replay occur outside the interval. Replay, serialization, and validation still contribute to pure-process lifetime RTS totals.", "",
               "Each native action waits until the probe observes the expected keyboard owner and the size every window last committed. Pictures are polled and checked pixel by pixel only outside the measured interval: before it, after it, and after the restoring actions. Final input delivery checks the target window. An idle-phase WM acknowledgment after the last action ensures the last completed render precedes interval end. Signal/checkpoint overhead lies in the broad driver interval, outside sequence timers. Startup, warmup, cleanup, and samples crossing the interval boundary remain in raw wm.json but are excluded from quantiles. Driver/native-client and river costs are excluded from WM RTS statistics.", "",
               "Scheduling, GC, and waiting remain possible limiters. Separate profile mode records a WM eventlog and Linux process CPU snapshots for WM, river, and driver; it is excluded from these trials. These observations do not identify source-level hotspots. No collector winner is inferred from noisy distributions or an unproven limiter.", "",
-              "The local compiler may differ from the repository's pinned GHC 9.10.3. Consult manifest.json for the exact compiler, build flags, platform, tools, trial order, and workload. Reproduction commands and limitations are in docs/latency.md."]
+              "The local compiler may differ from the repository's pinned GHC 9.10.3. Consult manifest.json for the exact compiler, build flags, platform, tools, trial order, and workloads. Reproduction commands and limitations are in docs/latency.md."]
     write(directory / "summary.json", summary)
     (directory / "report.md").write_text("\n".join(lines) + "\n")
     return summary
@@ -214,13 +354,61 @@ def cleanup_groups(directory):
             time.sleep(.2)
 
 
+def sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def output(command, cwd=None, stderr=None):
+    return subprocess.check_output(command, cwd=cwd, stderr=stderr, text=True).strip()
+
+
+def prepare_revision(worktree, binary, compiler, build_flags):
+    """Build in the revision's own worktree, so its binary loads that worktree's seki libraries."""
+    record = {"worktree": str(worktree) if worktree else None}
+    if binary is None:
+        subprocess.run(["cabal", "build", "seki-latency", *build_flags], cwd=worktree, check=True)
+        binary = Path(output(["cabal", "list-bin", "seki-latency", *build_flags], cwd=worktree))
+        record |= {"build_command": ["cabal", "build", "seki-latency", *build_flags], "build_provenance": "built by runner",
+                   "compiler": output([compiler, "--numeric-version"])}
+    else:
+        record |= {"build_command": None, "build_provenance": "provided binary; dependency optimization flags unverified",
+                   "compiler": output([str(binary), "info"]) + " (patch version unverified)"}
+    libraries = linked_seki_libraries(output(["ldd", str(binary)]))
+    if worktree and record["build_command"]:
+        for library in libraries:
+            require(Path(library).resolve().is_relative_to(Path(worktree).resolve()), f"{binary} loads {library} from outside {worktree}")
+    record |= {"git_sha": output(["git", "rev-parse", "HEAD"], cwd=worktree) if worktree else None,
+               "dirty_paths": output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=worktree).splitlines() if worktree else [],
+               "binary": str(binary), "binary_sha256": sha256(binary), "binary_reported_compiler": output([str(binary), "info"]),
+               "linked_seki_libraries": {library: sha256(library) for library in libraries}}
+    return record
+
+
+def probe_support(binary, workload, scratch):
+    result = subprocess.run([binary, "pure", str(scratch), "1909", "2", "1", workload, "+RTS", "-N1", "-RTS"],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=60)
+    return workload_support(result.returncode, result.stdout)
+
+
+def runtime_sources(revisions):
+    paths = ["src", "src-core", "src-public"]
+    named = [r for r in revisions.values() if r["git_sha"]]
+    if len(named) < 2:
+        return None
+    first = named[0]
+    identical = all(subprocess.run(["git", "diff", "--quiet", first["git_sha"], r["git_sha"], "--", *paths], cwd=first["worktree"]).returncode == 0 for r in named[1:])
+    return {"paths": paths, "identical": identical}
+
+
 def main():
     parser = argparse.ArgumentParser(description="Collect opt-in latency and collector evidence")
     parser.add_argument("directory", type=Path)
     parser.add_argument("--trials", type=int, default=5)
-    parser.add_argument("--workload", choices=sorted(WORKLOADS))
+    parser.add_argument("--workload", action="append", choices=sorted(WORKLOADS))
+    parser.add_argument("--revision", action="append", default=[], metavar="NAME=WORKTREE",
+                        help="build and interleave a clean worktree; repeat for each revision")
     parser.add_argument("--seed", type=int, default=1909)
-    parser.add_argument("--live-steps", type=int, default=1023)
+    parser.add_argument("--live-steps", type=int)
     parser.add_argument("--pure-steps", type=int, default=20000)
     parser.add_argument("--pure-windows", type=int, default=32)
     parser.add_argument("--compiler", default="ghc-9.10.3")
@@ -232,39 +420,60 @@ def main():
     if args.report_only:
         report(directory)
         return
-    require(args.workload is not None, "--workload is required to collect trials")
+    require(args.workload, "--workload is required to collect trials")
+    workloads = list(dict.fromkeys(args.workload))
     require(args.trials > 0 and 0 <= args.seed < 2**64, "invalid trials or seed")
+    require(not (args.binary and args.revision), "--binary and --revision are exclusive")
     require(not directory.exists(), "use a fresh artifact directory; previous runs are retained")
-    directory.mkdir(parents=True)
+    worktrees = {}
+    for item in args.revision:
+        name, separator, path = item.partition("=")
+        require(separator and re.fullmatch(r"[a-z][a-z0-9]*", name) and name not in worktrees, f"invalid revision {item}")
+        worktrees[name] = Path(path).resolve()
     build_flags = ["-w", args.compiler, "--offline", "--enable-optimization=2", "--builddir=dist-newstyle/latency"]
-    if args.binary:
-        binary = args.binary.resolve()
+    if worktrees:
+        revisions = {name: prepare_revision(path, None, args.compiler, build_flags) for name, path in worktrees.items()}
+        for name, r in revisions.items():
+            require(not r["dirty_paths"], f"revision {name} has uncommitted changes: {r['dirty_paths']}")
     else:
-        subprocess.run(["cabal", "build", "seki-latency", *build_flags], cwd=ROOT, check=True)
-        binary = Path(subprocess.check_output(["cabal", "list-bin", "seki-latency", *build_flags], cwd=ROOT, text=True).strip())
-    manifest = {"schema": 2, "workload": args.workload, "machine": platform.platform(), "cpu_count": os.cpu_count(),
+        revisions = {"local": prepare_revision(None if args.binary else ROOT, args.binary and args.binary.resolve(), args.compiler, build_flags)}
+    directory.mkdir(parents=True)
+    supported, unsupported = {}, []
+    for name, r in revisions.items():
+        supported[name] = set()
+        for workload in workloads:
+            reason = probe_support(r["binary"], workload, directory / f"support-{name}-{workload}.json")
+            if reason is None:
+                supported[name].add(workload)
+            else:
+                unsupported.append({"revision": name, "workload": workload, "reason": reason})
+    if args.profile:
+        require(len(revisions) == 1 and len(workloads) == 1, "profile mode runs one revision and one workload")
+        order = [(next(iter(revisions)), workloads[0], "profile")]
+    else:
+        order = trial_plan(args.trials, list(revisions), workloads, supported)
+    live_steps = {w: args.live_steps or WORKLOADS[w]["live_steps"] for w in workloads}
+    manifest = {"schema": 3, "workloads": workloads, "machine": platform.platform(), "uname": " ".join(os.uname()), "cpu_count": os.cpu_count(),
                 "cpu_model": next((l.split(":",1)[1].strip() for l in Path("/proc/cpuinfo").read_text().splitlines() if l.startswith("model name")), "unknown"),
-                "compiler": (subprocess.check_output([str(binary),"info"], text=True).strip() + " (patch version unverified)" if args.binary else subprocess.check_output([args.compiler,"--numeric-version"], text=True).strip()),
-                "binary_reported_compiler": subprocess.check_output([str(binary),"info"], text=True).strip(),
-                "river": subprocess.check_output(["river","-version"], stderr=subprocess.STDOUT, text=True).strip(),
-                "build_command": None if args.binary else ["cabal", "build", "seki-latency", *build_flags],
-                "build_provenance": "provided binary; dependency optimization flags unverified" if args.binary else "built by runner", "binary": str(binary), "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
-                "seed": args.seed, "live_steps": args.live_steps, "pure_steps": args.pure_steps, "pure_windows": args.pure_windows,
+                "river": output(["river", "-version"], stderr=subprocess.STDOUT), "renderer": "pixman",
+                "revisions": revisions, "unsupported": unsupported, "runtime_sources": runtime_sources(revisions),
+                "seed": args.seed, "live_steps": live_steps, "pure_steps": args.pure_steps, "pure_windows": args.pure_windows,
                 "rts_common": ["-N1","-T","-s"], "rts_difference": "--nonmoving-gc", "profile": args.profile,
                 "clock_ticks_per_second": os.sysconf("SC_CLK_TCK"), "trials": []}
     write(directory / "manifest.json", manifest)
-    order = ["profile"] if args.profile else [c for _ in range(args.trials) for c in ("normal","nonmoving")]
-    for index, collector in enumerate(order):
-        trial = directory / f"{index:02d}-{collector}"
+    for index, (name, workload, collector) in enumerate(order):
+        binary, steps = revisions[name]["binary"], live_steps[workload]
+        trial = directory / f"{index:02d}-{name}-{workload}-{collector}"
         trial.mkdir()
-        item = {"directory": trial.name, "collector": collector, "load_before": os.getloadavg(), "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime())}
+        item = {"directory": trial.name, "revision": name, "workload": workload, "collector": collector,
+                "load_before": os.getloadavg(), "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime())}
         manifest["trials"].append(item)
         write(directory / "manifest.json", manifest)
-        with (trial / "driver.log").open("w") as output:
-            command = [str(binary),"live",str(trial),str(args.seed),str(args.live_steps),collector,args.workload,"+RTS","-N1","-RTS"]
-            process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+        with (trial / "driver.log").open("w") as log:
+            command = [str(binary),"live",str(trial),str(args.seed),str(steps),collector,workload,"+RTS","-N1","-RTS"]
+            process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             cpu = []
-            deadline = time.monotonic() + max(120, args.live_steps)
+            deadline = time.monotonic() + max(120, steps)
             try:
                 while process.poll() is None:
                     require(time.monotonic() < deadline, "live trial timed out")
@@ -289,13 +498,16 @@ def main():
             item["load_after"] = os.getloadavg()
             write(directory / "manifest.json", manifest)
             return
-        with (trial / "pure.rts").open("w") as output:
+        with (trial / "pure.rts").open("w") as log:
             flags = ["-N1","-T","-s"] + (["--nonmoving-gc"] if collector == "nonmoving" else [])
-            subprocess.run([str(binary),"pure",str(trial/"pure.json"),str(args.seed),str(args.pure_windows),str(args.pure_steps),args.workload,"+RTS",*flags,"-RTS"], stdout=output, stderr=subprocess.STDOUT, check=True, timeout=120)
+            subprocess.run([str(binary),"pure",str(trial/"pure.json"),str(args.seed),str(args.pure_windows),str(args.pure_steps),workload,"+RTS",*flags,"-RTS"], stdout=log, stderr=subprocess.STDOUT, check=True, timeout=120)
         item["load_after"] = os.getloadavg()
-        summarize_trial(trial, args.workload)
+        summarize_trial(trial, workload)
         write(directory / "manifest.json", manifest)
         print(f"validated {trial.name}", flush=True)
+    for name, r in revisions.items():
+        require(sha256(r["binary"]) == r["binary_sha256"] and all(sha256(path) == digest for path, digest in r["linked_seki_libraries"].items()),
+                f"revision {name}'s binary or seki libraries changed during the trials")
     report(directory)
 
 
