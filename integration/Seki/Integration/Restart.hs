@@ -14,10 +14,9 @@ import Data.ByteString.Char8 qualified as BS8
 import Data.List (isInfixOf)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
-import Data.Text qualified as Text
 import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Fixture.Probe
-import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputPicture, pictureError, withHeldLogoIn, withKeyboard, withNestedRiver)
+import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputPicture, pictureError, placeOutputs, withHeldLogoIn, withKeyboard, withNestedRiver)
 import Seki.Integration.Harness
 import Seki.Internal.Config (Config (..), StdLayouts, def, defaultManageHook)
 import Seki.Internal.Core.Action (restart, windows)
@@ -61,7 +60,7 @@ restartProcess = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-re
     ( do
         pid <- managedProcessPid seki >>= maybe (failIntegration "seki has no pid") pure
         [(_, output)] <- waitUntil "seki shows the output" assertionTimeoutMicroseconds (outputNames socket) ((== 1) . length)
-        void (runProcessCapture environment "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "800x600", "--pos", "0,0", "--scale", "1", "--transform", "normal"])
+        placeOutputs environment [output]
         withKeyboard environment . withProbe socket $ \probe -> do
           _ <- waitUntil "seki's bindings switch to workspace 2" assertionTimeoutMicroseconds (modKeys environment ["2"] >> focusedWorkspace environment) (== Just "2")
           covering <- openWindow probe Blue
@@ -173,7 +172,7 @@ restartFallback = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-r
   void (forkIO (runSessions launch (const config) Nothing >>= putMVar result))
   flip onException (tryReadMVar result >>= announce . ("m2-restart-fallback sessions: " <>) . show) $ do
     [(_, output)] <- waitUntil "seki shows the output" assertionTimeoutMicroseconds (outputNames socket) ((== 1) . length)
-    void (runProcessCapture environment "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "800x600", "--pos", "0,0", "--scale", "1", "--transform", "normal"])
+    placeOutputs environment [output]
     withKeyboard environment . withProbe socket $ \probe -> do
       let onOutput phase = outputPicture "m2-restart-fallback" socket output phase . pictureError
       press "F2"

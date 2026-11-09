@@ -23,7 +23,7 @@ import GHC.Clock (getMonotonicTimeNSec)
 import Network.Socket (Family (AF_UNIX), SockAddr (SockAddrUnix), SocketType (Stream), close, connect, defaultProtocol, socket)
 import Network.Socket.ByteString (recv, sendAll)
 import Seki.Fixture.Probe
-import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, png, portedBorders, withHeldLogoIn, withKeyboard, withNestedRiverEnvironment, withNestedXwaylandRiver)
+import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputPicture, pictureErrorWith, placeOutputs, png, portedBorders, withHeldLogoIn, withKeyboard, withNestedRiverEnvironment, withNestedXwaylandRiver)
 import Seki.Integration.Harness
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable, listDirectory, removeFile)
 import System.Environment (getExecutablePath, lookupEnv)
@@ -107,8 +107,7 @@ withDailySession name options body = do
         ( do
             pid <- managedProcessPid process >>= maybe (failIntegration (name <> ": the daily process has no pid")) pure
             outputs <- sort . map snd <$> waitUntil "seki shows every output" assertionTimeoutMicroseconds (outputNames surface) ((== count) . length)
-            forM_ (zip [0 :: Int ..] outputs) $ \(index, output) ->
-              void (runProcessCapture base "wlr-randr" ["--output", Text.unpack output, "--custom-mode", "800x600", "--pos", show (index * 800) <> ",0", "--scale", "1", "--transform", "normal"])
+            placeOutputs base outputs
             withKeyboard base . withProbe surface $ \probe -> do
               let session = DailySession name nested pid home launches keymap cli additions probe
               _ <- waitSnapshot session "IPC shows a workspace on every output" (\s -> length (snapOutputs s) == count && all (isJust . outputWorkspace) (snapOutputs s))
