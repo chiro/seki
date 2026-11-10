@@ -83,20 +83,26 @@ Wayland socket.
 `dailyConfig` in `test-public/PortedConfig.hs` is the maintainer's daily-use
 configuration. It extends the M2 port `portedConfig` with Waybar, swaybg,
 swayidle and swaylock, fcitx5, an alacritty scratchpad on Mod-grave, and input
-rules for keyboards and one touchpad, which the rule matches as a pointer.
+rules for keyboards and one touchpad, which the rule matches as a pointer. It
+also binds xmonad defaults that `defaultKeys` lacks: Mod-p runs a launcher,
+Mod-Shift-j and Mod-Shift-k swap windows, and Mod-Tab and Mod-Shift-Tab cycle
+focus.
 `test-public/DailyConfigMain.hs` runs it
 with the keymap at `$XDG_CONFIG_HOME/seki/keymap.xkb`. When `XDG_CONFIG_HOME`
 is unset or relative, the keymap is `~/.config/seki/keymap.xkb`.
 
 The configuration runs `waybar`, `swaybg`, `swayidle`, `swaylock`, `fcitx5`,
-`alacritty`, `amixer`, and `brightnessctl`. It also names the maintainer's
-wallpaper and touchpad. Install those programs, or change the commands, the
-wallpaper path, and the touchpad name in your copy. Automatic client urgency is
-unavailable, so the configuration has no urgent border or bar flag.
+`alacritty`, `wmenu-run` (or `dmenu_run`), `amixer`, and `brightnessctl`. It
+also names the maintainer's wallpaper, touchpad, and terminal font size. Install
+those programs, or change the commands, the wallpaper path, and the touchpad
+name in your copy. Automatic client urgency is unavailable, so the configuration
+has no urgent border or bar flag.
 
 To start from it, run these steps from a seki checkout:
 
-1. Build the installed product and put its `bin` directory on `PATH`:
+1. Build the installed product and put its `bin` directory on `PATH`. The
+   Nix daemon must be running. If your `nix.conf` does not enable flakes, add
+   `--extra-experimental-features 'nix-command flakes'` to `nix build`.
 
    ```sh
    nix build --no-write-lock-file .#config-delivery -o ~/.local/share/seki-delivery
@@ -126,8 +132,27 @@ To start from it, run these steps from a seki checkout:
    `~/.config/seki/seki-user.cabal`.
 7. Run `seki --check` again. It exits 0 when the configuration builds and
    passes its policy check.
-8. Start `seki` from river's init script, as the [README](../README.md)
-   describes.
+8. Start `seki` from river's init script, `~/.config/river/init`, in a loop,
+   as the [README](../README.md) describes. A display manager starts river
+   without your shell's environment, so the script sets `PATH` itself. This is
+   the maintainer's script. The input method variables are for fcitx5, and the
+   log file keeps seki's output across restarts:
+
+   ```sh
+   #!/bin/sh
+   export PATH="$HOME/.local/share/seki-delivery/bin:$PATH"
+   export GTK_IM_MODULE=fcitx QT_IM_MODULE=fcitx XMODIFIERS=@im=fcitx
+   log="${XDG_STATE_HOME:-$HOME/.local/state}/seki/session.log"
+   mkdir -p "${log%/*}"
+   while true; do seki >> "$log" 2>&1; sleep 1; done &
+   ```
+
+   Make the script executable. A display manager such as LightDM lists river's
+   session file, `/usr/share/wayland-sessions/river.desktop`. Choose that
+   session to start river, and river runs the script.
 
 To change the configuration later, edit `~/.config/seki/PortedConfig.hs` and
 run `seki --recompile`, or press Mod-q.
+
+`dailyConfig` binds no key that ends the session. To log out, run
+`loginctl terminate-session "$XDG_SESSION_ID"` from a terminal in the session.
