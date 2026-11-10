@@ -2,7 +2,7 @@ module Seki.Internal.Core.ActionTest (tests) where
 
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
-import Seki.Internal.Core.Action (Action, Intent (..), float, kill, restart, runAction, sendMessage, sink, spawn, spawnOnce, windows, withFocused)
+import Seki.Internal.Core.Action (Action, Intent (..), exitSession, float, kill, restart, runAction, sendMessage, sink, spawn, spawnOnce, windows, withFocused)
 import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), mkRect, mkSize)
 import Seki.Internal.Core.Layout (CLR (..), ChangeLayout (..), Choose (..), IncMasterN (..), Mirror (..), Resize (..))
 import Seki.Internal.Core.StackSet (
@@ -106,6 +106,9 @@ tests =
             runAction kill attached @?= ((), attached, [CloseWindow w2])
         , testCase "restart records a restart and changes nothing" $
             runAction restart attached @?= ((), attached, [Restart])
+        , testCase "exitSession records an exit and changes nothing, even headless" $ do
+            runAction exitSession attached @?= ((), attached, [ExitSession])
+            runAction exitSession headless @?= ((), headless, [ExitSession])
         , testCase "float floats a tiled window with no stored box" $
             runAction (float w2) attached @?= ((), withFloating (Map.singleton w2 ClientSized), [ReclaimFocus])
         , testCase "float keeps a floating window's stored box" $

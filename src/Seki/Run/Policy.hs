@@ -312,6 +312,7 @@ prepareManagePlan policy snapshot = do
   mapM_ (\cell -> atomically (tryPutTMVar cell revision)) [cell | ExternalInput _ (Just cell) <- external]
   outcome <- case stepFollowUp step of
     NoFollowUp -> pure KeepManaging
+    EndRiverSession -> pure EndSession
     CheckRecordedTarget -> checkRestart RecordedTarget
     CheckReadyTarget -> policyValidatedTarget policy >>= maybe (pure KeepManaging) (checkRestart . CheckedTarget)
   pure (outcome <$ stepPlan step)
@@ -342,6 +343,8 @@ data ManageFollowUp
   = NoFollowUp
   | CheckReadyTarget
   | CheckRecordedTarget
+  | -- | Ending the session makes a restart moot, so no target is checked or built.
+    EndRiverSession
 
 stepManage ::
   (Eq i, Show i, LayoutClass l) =>
@@ -388,11 +391,13 @@ stepManage config canBuild snapshot external stored = (next, ManageStep effects 
       <> map LaunchCommand (planLaunch intents)
       <> map LogLine (planNotices intents)
       <> [LaunchCommand command | (_, _, command) <- planPads intents]
-  (buildRequest, followUp) = case (canBuild, planRestart intents) of
-    (True, True) -> ([RequestBuild], NoFollowUp)
-    (True, False) -> ([], CheckReadyTarget)
-    (False, True) -> ([], CheckRecordedTarget)
-    (False, False) -> ([], NoFollowUp)
+  (buildRequest, followUp)
+    | planExit intents = ([], EndRiverSession)
+    | otherwise = case (canBuild, planRestart intents) of
+        (True, True) -> ([RequestBuild], NoFollowUp)
+        (True, False) -> ([], CheckReadyTarget)
+        (False, True) -> ([], CheckRecordedTarget)
+        (False, False) -> ([], NoFollowUp)
   liveWindow (WindowId w) =
     riverWindowObject <$> (mkObjectId w >>= (`lookupRiverWindow` inventory))
   isInteraction WindowInteraction{} = True
@@ -412,11 +417,12 @@ data IntentPlan = IntentPlan
   , planClose :: [WindowId]
   , planReclaim :: Bool
   , planRestart :: Bool
+  , planExit :: Bool
   }
 
 -- | A case over every 'Intent', so a new one cannot be silently ignored.
 interpretIntents :: [Intent] -> IntentPlan
-interpretIntents = foldr add (IntentPlan [] [] [] [] False False)
+interpretIntents = foldr add (IntentPlan [] [] [] [] False False False)
  where
   add intent plan = case intent of
     LaunchScratchpad name generation command -> plan{planPads = (name, generation, command) : planPads plan}
@@ -425,6 +431,7 @@ interpretIntents = foldr add (IntentPlan [] [] [] [] False False)
     CloseWindow w -> plan{planClose = w : planClose plan}
     ReclaimFocus -> plan{planReclaim = True}
     Restart -> plan{planRestart = True}
+    ExitSession -> plan{planExit = True}
 
 -- | The output that shows the window's workspace.
 workspaceOutput :: CoreState i l -> WindowId -> Maybe OutputId
