@@ -50,16 +50,16 @@ tests =
         assertEqual "layout" (Choose CL tall (Choose CL (Mirror tall) Full)) (layoutHook def)
         assertEqual "border width" 2 (borderWidth (borders def))
         assertEqual "fixed group" True (bindingsUseFixedLayout def)
-        assertEqual "binding count" 31 (length (keys def def))
+        assertEqual "binding count" 37 (length (keys def def))
         policy <- prepareConfig def >>= either (assertFailure . show) pure
-        assertEqual "lowered fixed group" (replicate 31 (Just 0)) (map riverKeyBindingLayoutOverride (riverKeyBindings (policyRuntimeHandlers policy)))
+        assertEqual "lowered fixed group" (replicate 37 (Just 0)) (map riverKeyBindingLayoutOverride (riverKeyBindings (policyRuntimeHandlers policy)))
     , testCase "final overrides reach keys and wire binding identity" $ do
         let config = def{modMask = Mod1, terminal = "custom-terminal", workspaces = ["a", "b"], bindingsUseFixedLayout = False}
         assertEqual "terminal action" [Action.Spawn "custom-terminal"] (intents (press config Shift 0xff0d initial))
         policy <- prepareConfig config >>= either (assertFailure . show) pure
         let bindings = riverKeyBindings (policyRuntimeHandlers policy)
         assertEqual "all modifiers" [River.RiverSeatV1ModifiersFlags 9, River.RiverSeatV1ModifiersFlags 9] (map riverKeyBindingModifiers (take 2 bindings))
-        assertEqual "no fixed layout" (replicate 17 Nothing) (map riverKeyBindingLayoutOverride bindings)
+        assertEqual "no fixed layout" (replicate 23 Nothing) (map riverKeyBindingLayoutOverride bindings)
         assertEqual "overridden tags" "b" (currentTag (press config (Mods 0) 0x32 (stateWithTags ["a", "b"])))
     , testCase "every default action changes the intended core state" $ do
         assertEqual "spawn" [Action.Spawn "foot"] (intents (press def Shift 0xff0d initial))
@@ -88,6 +88,9 @@ tests =
         let config = def{layoutHook = Full, keys = defaultKeys, manageHook = composeAll [appId =? "mpv" --> doShift "2", defaultManageHook], startupHook = pure (), pointerBindings = defaultPointerBindings}
             fullInitial = fromWorkspaces (AttachedState (StackSet.StackSet (StackSet.Screen (StackSet.Workspace "1" Full (Just (StackSet.Stack (StackSet.WindowId 2) [] []))) (StackSet.OutputId 1)) [] [StackSet.Workspace "2" Full Nothing] Map.empty) [])
         assertEqual "dialog floats" (Map.singleton (StackSet.WindowId 2) StackSet.ClientSized) (floatingState (manage config noWindowProps{propParent = Just (StackSet.WindowId 1)} fullInitial))
+    , testCase "mod-w, mod-e and mod-r view the workspace on screens 0, 1 and 2, and with shift move the focused window there" $ do
+        assertEqual "focus moves to the screen" [("2", StackSet.OutputId 2), ("3", StackSet.OutputId 3), ("1", StackSet.OutputId 1)] [currentScreen (press def (Mods 0) symbol screened) | symbol <- [0x77, 0x65, 0x72]]
+        assertEqual "shift" [Just "2", Just "3", Just "1"] [findTagState (StackSet.WindowId 2) (state (press def Shift symbol screened)) | symbol <- [0x77, 0x65, 0x72]]
     , testCase "mod-t tiles the focused floating window again" $ do
         let floated = state (Action.runAction (Action.float (StackSet.WindowId 2)) initial)
         assertEqual "floated first" (Map.singleton (StackSet.WindowId 2) StackSet.ClientSized) (floatingState floated)
@@ -178,6 +181,14 @@ tall = Tall 1 (3 / 100) (1 / 2)
 initial :: CoreState String StdLayouts
 initial = stateWithTags (workspaces def)
 
+{- | 'initial' with workspaces 2 and 3 shown on outputs 2 and 3, and river's
+outputs placed in the order 2, 3, 1.
+-}
+screened :: CoreState String StdLayouts
+screened = case coreWorkspaces initial of
+  AttachedState ss u -> (fromWorkspaces (AttachedState ss{StackSet.visible = zipWith StackSet.Screen (take 2 (StackSet.hidden ss)) (map StackSet.OutputId [2, 3]), StackSet.hidden = drop 2 (StackSet.hidden ss)} u)){coreScreenOrder = map StackSet.OutputId [2, 3, 1]}
+  HeadlessState{} -> error "initial is attached"
+
 stateWithTags :: [String] -> CoreState String StdLayouts
 stateWithTags tags = fromWorkspaces (AttachedState (StackSet.StackSet (StackSet.Screen first (StackSet.OutputId 1)) [] rest Map.empty) [])
  where
@@ -223,6 +234,10 @@ currentLayout st = case coreWorkspaces st of
 currentTag :: (a, CoreState String l, c) -> String
 currentTag (_, CoreState{coreWorkspaces = AttachedState stackSet _}, _) = StackSet.currentTag stackSet
 currentTag _ = error "expected attached state"
+
+currentScreen :: (a, CoreState String l, c) -> (String, StackSet.OutputId)
+currentScreen (_, CoreState{coreWorkspaces = AttachedState stackSet _}, _) = (StackSet.currentTag stackSet, StackSet.output (StackSet.current stackSet))
+currentScreen _ = error "expected attached state"
 
 ratio :: (a, CoreState i StdLayouts, c) -> Rational
 ratio result = case currentLayout (state result) of Choose _ layout _ -> tallRatio layout

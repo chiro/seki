@@ -109,6 +109,9 @@ Mod-h and Mod-l resize the master area. Mod-comma and Mod-period change the
 master count. Mod-t tiles a floating window again. Mod-q restarts seki in
 place, and Mod-Shift-q ends the river session. Mod-1 through Mod-9 select
 workspaces with `greedyView`; adding Shift moves the focused window there.
+Mod-w, Mod-e and Mod-r switch to the first, second and third screen, counted
+left to right by where river places each output. Adding Shift moves the
+focused window to that screen's workspace.
 
 `def`'s `manageHook` is `defaultManageHook`, which floats dialogs: the windows
 whose client set a parent. A floating window sits above every tiled window
@@ -217,6 +220,8 @@ to run it.
 
 `Action` is pure. Use `windows`, `sendMessage`, `spawn`, `spawnOnce`, `kill`,
 `float`, `sink`, `toggleFullscreen`, `restart`, `exitSession`, and `withFocused` to change state or record effects. Arbitrary IO is not part of the configuration API.
+`screenWorkspace` finds the workspace on a screen, as in
+`screenWorkspace 1 >>= mapM_ (windows . view)`.
 Import `Seki.Core.StackSet` qualified for its full operation set; `Seki`
 exports selected operations without conflicting with `Config.workspaces`.
 
