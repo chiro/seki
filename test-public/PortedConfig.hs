@@ -35,6 +35,9 @@ everything above and differs from xmonad.hs in these further ways:
 * Mod-Shift-l runs @swaylock@ instead of @xscreensaver-command --lock@.
 * Mod-grave toggles a terminal scratchpad that xmonad.hs does not have.
   alacritty's @--class@ sets the Wayland app_id the pad matches.
+* alacritty runs at font size 13.33. On X11 it multiplied its configured size
+  8 by 1.667, the scale it derives from the panel's 162 DPI. river's output
+  scale is 1, so the port passes the scaled size.
 * Mod-p, Mod-Shift-j and k, Mod-Tab, and Mod-Shift-Tab are xmonad defaults
   that 'defaultKeys' lacks. Mod-p runs @wmenu-run@, a Wayland dmenu, and falls
   back to @dmenu_run@.
@@ -98,7 +101,8 @@ dailyConfig keymap = do
             spawnOnce "swaybg -i /usr/share/backgrounds/archlinux/wave.png -m fill"
             spawnOnce "fcitx5"
             spawnOnce "swayidle -w timeout 600 'swaylock -f'"
-        , scratchpads = [Scratchpad "term" "alacritty --class seki-scratchpad" (appId =? "seki-scratchpad") (OutputRect padRect)]
+        , terminal = "alacritty -o font.size=13.33"
+        , scratchpads = [Scratchpad "term" "alacritty -o font.size=13.33 --class seki-scratchpad" (appId =? "seki-scratchpad") (OutputRect padRect)]
         , inputRules =
             [ InputRule anyKeyboard (Just Keyboard) [Keymap keymap, RepeatInfo 25 660]
             , InputRule touchpad (Just Pointer) [Tap True, ClickMethod ClickFinger, NaturalScroll True]
