@@ -107,8 +107,8 @@ Mod-Shift-c closes the focused window. Mod-Space cycles layouts. Mod-j and
 Mod-k move focus, and Mod-Return swaps the focused window with the master.
 Mod-h and Mod-l resize the master area. Mod-comma and Mod-period change the
 master count. Mod-t tiles a floating window again. Mod-q restarts seki in
-place. Mod-1 through Mod-9 select workspaces with `greedyView`; adding Shift
-moves the focused window there.
+place, and Mod-Shift-q ends the river session. Mod-1 through Mod-9 select
+workspaces with `greedyView`; adding Shift moves the focused window there.
 
 `def`'s `manageHook` is `defaultManageHook`, which floats dialogs: the windows
 whose client set a parent. A floating window sits above every tiled window
@@ -189,6 +189,13 @@ Start seki from river's init script in a loop, so river gets one again:
 while true; do seki; sleep 1; done &
 ```
 
+`exitSession`, bound to Mod-Shift-q by default, asks river to end the
+session, as xmonad's Mod-Shift-q ends the X session. river closes every
+client, seki included, and exits. river 0.5.0 also stops its init script's
+process group, which ends the loop above. A river whose window-management
+protocol is older than version 4 has no such request, so there the action
+does nothing.
+
 When changing the layout's type, replace the layout-dependent key function,
 pointer bindings, manage hook, and startup hook in the same record update, as in
 `def{layoutHook = Full, keys = defaultKeys, pointerBindings = defaultPointerBindings, manageHook = defaultManageHook, startupHook = pure ()}`.
@@ -209,7 +216,7 @@ file's `dailyConfig` is the maintainer's daily-use configuration. See
 to run it.
 
 `Action` is pure. Use `windows`, `sendMessage`, `spawn`, `spawnOnce`, `kill`,
-`float`, `sink`, `toggleFullscreen`, `restart`, and `withFocused` to change state or record effects. Arbitrary IO is not part of the configuration API.
+`float`, `sink`, `toggleFullscreen`, `restart`, `exitSession`, and `withFocused` to change state or record effects. Arbitrary IO is not part of the configuration API.
 Import `Seki.Core.StackSet` qualified for its full operation set; `Seki`
 exports selected operations without conflicting with `Config.workspaces`.
 

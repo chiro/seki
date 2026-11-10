@@ -158,5 +158,5 @@ After you rebuild `config-delivery`, start seki again, for example by logging
 out and back in. Mod-q rebuilds against the seki library that the running
 process started with, so it keeps the old library.
 
-`dailyConfig` binds no key that ends the session. To log out, run
-`loginctl terminate-session "$XDG_SESSION_ID"` from a terminal in the session.
+To log out, press Mod-Shift-q. river exits and stops the init script, loop
+included.
