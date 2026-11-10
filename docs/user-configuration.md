@@ -154,5 +154,9 @@ To start from it, run these steps from a seki checkout:
 To change the configuration later, edit `~/.config/seki/PortedConfig.hs` and
 run `seki --recompile`, or press Mod-q.
 
+After you rebuild `config-delivery`, start seki again, for example by logging
+out and back in. Mod-q rebuilds against the seki library that the running
+process started with, so it keeps the old library.
+
 `dailyConfig` binds no key that ends the session. To log out, run
 `loginctl terminate-session "$XDG_SESSION_ID"` from a terminal in the session.
