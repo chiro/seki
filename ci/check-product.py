@@ -102,6 +102,8 @@ def prove(command, root, env, archive, provisioned=False):
         assert profile.readlink() == old
         project_file.write_bytes(project_bytes)
         # A project an older delivery generated follows the installed archive and compiler.
+        # The default-runtime case below needs the invalid Main.hs back afterwards.
+        invalid_main = main.read_bytes()
         main.write_text('module Main (main) where\nimport Seki\nmain :: IO ()\nmain = seki def\n')
         stale = project_bytes.replace(os.fsencode(str(archive)), b"/nix/store/0-old-seki-config-source/seki-0.0.1.tar.gz")
         stale = re.sub(rb"(?m)^with-compiler: .*/ghc$", b"with-compiler: /nix/store/0-old-ghc/bin/ghc", stale)
@@ -110,6 +112,7 @@ def prove(command, root, env, archive, provisioned=False):
         result = run(["--check"])
         assert "at the installed seki archive and compiler" in result.stderr
         assert project_file.read_bytes() == project_bytes
+        main.write_bytes(invalid_main)
         # Restore bypasses broken source and tools; exactly two runtime arguments.
         recorded = root / "recorded"
         old.chmod(0o700)
