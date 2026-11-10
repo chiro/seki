@@ -35,6 +35,9 @@ everything above and differs from xmonad.hs in these further ways:
 * Mod-Shift-l runs @swaylock@ instead of @xscreensaver-command --lock@.
 * Mod-grave toggles a terminal scratchpad that xmonad.hs does not have.
   alacritty's @--class@ sets the Wayland app_id the pad matches.
+* Mod-p, Mod-Shift-j and k, Mod-Tab, and Mod-Shift-Tab are xmonad defaults
+  that 'defaultKeys' lacks. Mod-p runs @wmenu-run@, a Wayland dmenu, and falls
+  back to @dmenu_run@.
 * The keyboard and touchpad settings come from xorg.conf.d and xset and move
   into input rules. Compile the keymap file 'dailyConfig' is given from the
   X11 settings with @xkbcli compile-keymap --rules evdev --model pc105 --layout
@@ -103,4 +106,9 @@ dailyConfig keymap = do
         }
       [ (KeyBinding (Mod4 .|. Shift) (Keysym 0x6c), spawn "swaylock")
       , (KeyBinding Mod4 (Keysym 0x60), toggleScratchpad "term")
+      , (KeyBinding Mod4 (Keysym 0x70), spawn "wmenu-run || dmenu_run")
+      , (KeyBinding (Mod4 .|. Shift) (Keysym 0x6a), windows swapDown)
+      , (KeyBinding (Mod4 .|. Shift) (Keysym 0x6b), windows swapUp)
+      , (KeyBinding Mod4 (Keysym 0xff09), windows focusDown)
+      , (KeyBinding (Mod4 .|. Shift) (Keysym 0xff09), windows focusUp)
       ]
