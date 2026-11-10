@@ -176,6 +176,7 @@ defaultKeys config =
   , key (Mods 0) 0x2e (Core.sendMessage (IncMasterN (-1)))
   , key (Mods 0) 0x74 (Core.withFocused Core.sink)
   , key (Mods 0) 0x71 Core.restart
+  , key Shift 0x71 Core.exitSession
   ]
     ++ concat
       [ [key (Mods 0) symbol (Core.windows (StackSet.greedyView tag)), key Shift symbol (Core.windows (StackSet.shift tag))]

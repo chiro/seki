@@ -42,6 +42,7 @@ module Seki (
   sink,
   toggleFullscreen,
   restart,
+  exitSession,
   Scratchpad (..),
   toggleScratchpad,
   resetScratchpad,
@@ -174,6 +175,14 @@ replaces itself with that executable, and restores the state there.
 -}
 restart :: Action l ()
 restart = Core.restart
+
+{- | End the Wayland session, as @Mod-Shift-q@ does by default. river exits and
+closes every client, seki included, as xmonad's default @Mod-Shift-q@ ends
+the X session. A river whose window-management protocol is older than
+version 4 has no request for this, and the action does nothing there.
+-}
+exitSession :: Action l ()
+exitSession = Core.exitSession
 
 -- | Open, hide or bring a named pad. Unresolved launches coalesce.
 toggleScratchpad :: String -> Action l ()
