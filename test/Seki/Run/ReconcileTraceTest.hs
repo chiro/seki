@@ -7,14 +7,14 @@ import Control.Applicative ((<|>))
 import Control.Exception (onException)
 import Control.Monad (foldM_, forM, forM_, replicateM, unless, when)
 import Data.ByteString (ByteString)
-import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import Data.Int (Int32)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Word (Word32)
-import Seki.Internal.Core.Action (float, restart, sink, windows, withFocused)
+import Seki.Internal.Core.Action (exitSession, float, restart, sink, windows, withFocused)
 import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), mkRect, mkSize, rectX, rectY)
 import Seki.Internal.Core.Layout (CLR (..), Choose (..), LayoutClass (..), Mirror (..), SizePolicy (..), tolerant)
 import Seki.Internal.Core.ManageHook (ManageHook, appId, doFloat, doShift, idHook, isDialog, (-->), (=?))
@@ -70,6 +70,7 @@ tests =
     , testCase "an op that replaces another starts in the sequence after the one that ends it" testPointerSwap
     , testCase "a refused restart logs why and sends no stop" testRestartRefused
     , testCase "a restart that passes its check sends stop after manage_finish and destroy on finished" testRestartStops
+    , testCase "exitSession sends exit_session after manage_finish, even after a restart in the same action" testExitSession
     , testCase "a restore keeps saved windows in their tile and places the rest by the manage hook" testRestoreTrace
     , pointerProperty
     ]
@@ -1005,6 +1006,19 @@ testRestartStops = do
       Right Nothing -> pure ()
       other -> assertFailure ("expected the runtime to close the connection, got " <> show (fmap (fmap receivedBytes) other))
   result @?= Right RiverStopped
+
+testExitSession :: Assertion
+testExitSession = do
+  checked <- newIORef False
+  forM_ [exitSession, restart >> exitSession] $ \hook -> do
+    let config = (restartingConfig (writeIORef checked True >> pure (Right ())) (\_ -> pure ())){policyStartupHook = hook}
+    result <- restartTrace config $ \reader peer manager -> do
+      sendFrames peer [event manager 3 (pure ())]
+      rendered <- readUntil reader peer manager 4
+      [(rawFrameSender f, rawFrameOpcode f) | f <- rendered, rawFrameSender f == manager] @?= [(manager, Opcode 6)]
+      closeTransport peer
+    result @?= Right RiverEnded
+  readIORef checked >>= (@?= False)
 
 {- | Two windows whose identifiers were saved in workspace 1 under its Full
 layout, one window with a new identifier, and two windows that share an

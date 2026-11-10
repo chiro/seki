@@ -20,6 +20,7 @@ module Seki.Internal.Core.Action (
   sink,
   toggleFullscreen,
   restart,
+  exitSession,
   toggleScratchpad,
   resetScratchpad,
   scratchpadIntents,
@@ -46,6 +47,8 @@ data Intent
   | ReclaimFocus
   | -- | Replace this seki process with the executable it started from, keeping the window state.
     Restart
+  | -- | Ask river to end the Wayland session.
+    ExitSession
   deriving (Eq, Show)
 
 -- | A state change on 'CoreState' that also records 'Intent's in order.
@@ -145,6 +148,12 @@ stacks, focus, layouts, floats, fullscreen windows, and the spawned-once set.
 -}
 restart :: Action i l ()
 restart = record (const [Restart])
+
+{- | Ask river to end the Wayland session once the action has run, which
+closes every client and seki with it.
+-}
+exitSession :: Action i l ()
+exitSession = record (const [ExitSession])
 
 -- | Toggle a named pad; unresolved attempts coalesce until a match or reset.
 toggleScratchpad :: (Eq i) => String -> Action i l ()
