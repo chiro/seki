@@ -2,7 +2,7 @@ module Seki.Internal.Core.ActionTest (tests) where
 
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
-import Seki.Internal.Core.Action (Action, Intent (..), exitSession, float, kill, restart, runAction, sendMessage, sink, spawn, spawnOnce, windows, withFocused)
+import Seki.Internal.Core.Action (Action, Intent (..), exitSession, float, kill, restart, runAction, screenWorkspace, sendMessage, sink, spawn, spawnOnce, windows, withFocused)
 import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), mkRect, mkSize)
 import Seki.Internal.Core.Layout (CLR (..), ChangeLayout (..), Choose (..), IncMasterN (..), Mirror (..), Resize (..))
 import Seki.Internal.Core.StackSet (
@@ -127,6 +127,13 @@ tests =
             coreSpawnedOnce st @?= Set.singleton "bar"
             intentsOf (spawnOnce "bar") st @?= []
             intentsOf (spawn "bar") st @?= [Spawn "bar"]
+        , testCase "screenWorkspace counts screens in the stored order, not the current-first order" $ do
+            runAction (screenWorkspace 0) screened @?= (Just 1, screened, [])
+            runAction (screenWorkspace 1) screened @?= (Just 2, screened, [])
+        , testCase "screenWorkspace finds nothing for an output without a workspace or an index out of range" $
+            map (\n -> let (tag, _, _) = runAction (screenWorkspace n) screened in tag) [2, 3, -1] @?= [Nothing, Nothing, Nothing]
+        , testCase "screenWorkspace finds nothing while headless" $
+            runAction (screenWorkspace 0) headless{coreScreenOrder = [o1]} @?= (Nothing, headless{coreScreenOrder = [o1]}, [])
         ]
     ]
 
@@ -142,8 +149,10 @@ rest = Choose CL (Mirror tall) Full
 layouts :: L
 layouts = Choose CL tall rest
 
-o1 :: OutputId
+o1, o2, o3 :: OutputId
 o1 = OutputId 1
+o2 = OutputId 2
+o3 = OutputId 3
 
 w1, w2, w3 :: WindowId
 w1 = WindowId 1
@@ -156,6 +165,15 @@ ws1 = Workspace 1 layouts (Just (Stack w2 [w3] [w1]))
 -- | One output showing workspace 1, whose windows are w3, w2, w1 with w2 focused.
 attached :: CoreState Int L
 attached = fromWorkspaces (AttachedState (StackSet (Screen ws1 o1) [] [Workspace 2 layouts Nothing, Workspace 3 layouts Nothing] Map.empty) [])
+
+{- | Workspace 2 on the current output o2 and workspace 1 on o1, ordered
+left of it; o3 is ordered last and has no workspace yet.
+-}
+screened :: CoreState Int L
+screened =
+  (fromWorkspaces (AttachedState (StackSet (Screen (Workspace 2 layouts Nothing) o2) [Screen (Workspace 1 layouts Nothing) o1] [] Map.empty) [o3]))
+    { coreScreenOrder = [o1, o2, o3]
+    }
 
 emptyAttached :: CoreState Int L
 emptyAttached = fromWorkspaces (AttachedState (StackSet (Screen (Workspace 1 layouts Nothing) o1) [] [Workspace 2 layouts Nothing] Map.empty) [])

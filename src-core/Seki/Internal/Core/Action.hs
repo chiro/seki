@@ -21,6 +21,7 @@ module Seki.Internal.Core.Action (
   toggleFullscreen,
   restart,
   exitSession,
+  screenWorkspace,
   toggleScratchpad,
   resetScratchpad,
   scratchpadIntents,
@@ -32,7 +33,7 @@ import Data.Set qualified as Set
 import Seki.Internal.Core.Layout (LayoutClass, Message, SomeMessage (..), messageCurrentLayout)
 import Seki.Internal.Core.Scratchpad (resetPad, togglePad)
 import Seki.Internal.Core.Scratchpad.Types (ScratchpadEffect (..))
-import Seki.Internal.Core.StackSet (FloatGeom (..), StackSet (..), WindowId, member, peek)
+import Seki.Internal.Core.StackSet (FloatGeom (..), StackSet (..), WindowId, lookupWorkspace, member, peek)
 import Seki.Internal.Core.StackSet qualified as StackSet
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..), overWorkspaces)
 
@@ -154,6 +155,17 @@ closes every client and seki with it.
 -}
 exitSession :: Action i l ()
 exitSession = record (const [ExitSession])
+
+{- | The workspace on the screen at this index, counting river's outputs from
+left to right from 0, as xmonad's @screenWorkspace@ counts screens. An output
+without a workspace, an index out of range, or headless state gives 'Nothing'.
+-}
+screenWorkspace :: Int -> Action i l (Maybe i)
+screenWorkspace n = Action $ \st -> (find st, st, [])
+ where
+  find st = case (drop n (coreScreenOrder st), coreWorkspaces st) of
+    (o : _, AttachedState ss _) | n >= 0 -> lookupWorkspace o ss
+    _ -> Nothing
 
 -- | Toggle a named pad; unresolved attempts coalesce until a match or reset.
 toggleScratchpad :: (Eq i) => String -> Action i l ()

@@ -82,6 +82,10 @@ data CoreState i l = CoreState
   , coreScratchpadGeneration :: Integer
   , coreScratchpadWarnings :: Set String
   , coreWorkspaces :: Workspaces i l
+  , coreScreenOrder :: [OutputId]
+  -- ^ river's outputs from left to right, which
+  -- 'Seki.Internal.Core.Action.screenWorkspace' counts. The policy sets it
+  -- before each drain, since the core holds no output positions.
   , coreSpawnedOnce :: Set String
   -- ^ The commands 'Seki.Internal.Core.Action.spawnOnce' has launched.
   , coreRaiseOrder :: [WindowId]
@@ -130,7 +134,7 @@ newCoreState l tags@(t : ts) = case firstRepeat [] tags of
 
 -- | A core state over these workspaces with nothing else recorded yet.
 fromWorkspaces :: Workspaces i l -> CoreState i l
-fromWorkspaces ws = CoreState Map.empty Map.empty 0 Set.empty ws Set.empty [] Set.empty Nothing firstOpId
+fromWorkspaces ws = CoreState Map.empty Map.empty 0 Set.empty ws [] Set.empty [] Set.empty Nothing firstOpId
 
 -- | Change the workspaces and keep the rest of the core state.
 overWorkspaces :: (Workspaces i l -> Workspaces i l) -> CoreState i l -> CoreState i l
