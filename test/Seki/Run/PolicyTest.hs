@@ -9,12 +9,13 @@ import Control.Exception (SomeException)
 import Control.Monad (void)
 import Data.ByteString.Char8 qualified as Char8
 import Data.IORef (modifyIORef', newIORef, readIORef)
+import Data.Int (Int32)
 import Data.List (isPrefixOf, sort)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
 import Data.Text qualified as Text
 import Data.Word (Word32)
-import Seki.Internal.Core.Action (Action, kill, spawn, windows)
+import Seki.Internal.Core.Action (Action, kill, screenWorkspace, spawn, windows)
 import Seki.Internal.Core.ManageHook (ManageHook, appId, doShift, idHook, (-->), (=?))
 import Seki.Internal.Core.PointerOp (HEdge (..), OpKind (..), ResizeEdges (..), VEdge (..))
 import Seki.Internal.Core.Scene (BorderColor (..), SceneStyle (..), defaultSceneStyle)
@@ -78,7 +79,7 @@ import Seki.Run.Runtime (
   runRiverSession,
  )
 import Seki.Run.Xkb (RiverKeyBinding (..))
-import Seki.Wire.Arguments (putNewId, putNullableString, putObject)
+import Seki.Wire.Arguments (putInt, putNewId, putNullableString, putObject)
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit, objectId)
 import Seki.Wire.Transport (ConnectionTarget, Transport, closeTransport)
 import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..), objectIdValue)
@@ -104,6 +105,7 @@ tests =
     , testCase "sends close requests only for windows still in inventory" testCloseRequests
     , testCase "sets the current output as the layer-shell default" testSetDefaultFollowsCurrentOutput
     , testCase "sets no layer-shell default while headless" testSetDefaultHeadless
+    , testCase "counts screens from left to right by river's output positions" testScreenOrder
     , testCase "runs the startup hook once, after the first output attaches" testStartupHookOnce
     , testCase "launches a command without waiting for it" testLaunchDetached
     , testCase "a launched command is not left as seki's child" testLaunchNotChild
@@ -357,6 +359,35 @@ testSetDefaultFollowsCurrentOutput =
       [Just (1, oid o1), Just (2, oid o2), Just (1, oid o2)]
       (map (currentScreenOf . drainAfter) drains)
 
+testScreenOrder :: Assertion
+testScreenOrder =
+  withRuntimePair $ \target peer -> do
+    o1 <- requireObjectId 0xff000080
+    o2 <- requireObjectId 0xff000081
+    s1 <- requireObjectId 0xff000082
+    let onScreen n = screenWorkspace n >>= mapM_ (windows . view)
+        bindings = [(keyBinding 0x77, onScreen 0), (keyBinding 0x65, onScreen 1)]
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (managerId, xkbBindingsId, layerShellId) <- handshake reader peer
+      sendFrames peer [newOutput managerId o1, newOutput managerId o2, newSeat managerId s1, outputPosition o1 800 0, outputPosition o2 0 0]
+      mapM_ (receiveLayerShellOutputRequest reader peer layerShellId) [o1, o2]
+      _ <- receiveLayerShellSeatRequest reader peer layerShellId s1
+      [leftId, rightId] <- mapM (receiveKeyBindingRequest reader peer xkbBindingsId s1 . fst) bindings
+      sendFrames peer [manageStart managerId]
+      mapM_ (\b -> receiveExpectedRequest reader peer b (Opcode 2) (pure ())) [leftId, rightId]
+      finishManage reader peer managerId
+      sendFrames peer [pressed leftId, manageStart managerId]
+      finishManage reader peer managerId
+      sendFrames peer [pressed rightId, manageStart managerId]
+      finishManage reader peer managerId
+      closeTransport peer
+    (_, drains) <- runPolicy target mockDone bindings
+    assertEqual
+      "screen 0 is o2, placed left of o1 although it arrived second"
+      [Just (1, oid o1), Just (2, oid o2), Just (1, oid o1)]
+      (map (currentScreenOf . drainAfter) drains)
+
 testSetDefaultHeadless :: Assertion
 testSetDefaultHeadless =
   withRuntimePair $ \target peer -> do
@@ -519,6 +550,9 @@ newWindow, newOutput, newSeat :: ObjectId -> ObjectId -> IO Char8.ByteString
 newWindow managerId w = encodedFrame managerId (Opcode 6) (putNewId w)
 newOutput managerId o = encodedFrame managerId (Opcode 7) (putNewId o)
 newSeat managerId s = encodedFrame managerId (Opcode 8) (putNewId s)
+
+outputPosition :: ObjectId -> Int32 -> Int32 -> IO Char8.ByteString
+outputPosition o x y = encodedFrame o (Opcode 2) (putInt x >> putInt y)
 
 manageStart :: ObjectId -> IO Char8.ByteString
 manageStart managerId = encodedFrame managerId (Opcode 2) (pure ())

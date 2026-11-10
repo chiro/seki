@@ -55,6 +55,7 @@ import Data.Bool (bool)
 import Data.ByteString.Lazy.Char8 qualified as Lazy
 import Data.Foldable (find)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
+import Data.List (sort)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, mapMaybe)
 import Data.Word (Word32)
@@ -76,7 +77,7 @@ import Seki.Run.BuildSession
 import Seki.Run.ConfigBuild (BuildContext, ValidatedTarget)
 import Seki.Run.External
 import Seki.Run.InputSnapshot (inputStatusValue)
-import Seki.Run.Inventory (RiverDimensionsHint (..), RiverInventory, RiverOutputState (..), RiverRectangle (..), RiverWindowState (..), lookupRiverOutput, lookupRiverWindow, riverInventoryOutputs, riverInventoryWindows, riverOutputRectangle)
+import Seki.Run.Inventory (RiverDimensionsHint (..), RiverInventory, RiverOutputState (..), RiverPoint (..), RiverRectangle (..), RiverWindowState (..), lookupRiverOutput, lookupRiverWindow, riverInventoryOutputs, riverInventoryWindows, riverOutputRectangle)
 import Seki.Run.Phase (ManageM, RenderM, closeWindow)
 import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Reconcile (ReconcileState, emptyReconcileState, reconcileManage, reconcileRender, reconciledBoxes, reconciledOps)
@@ -360,7 +361,8 @@ stepManage config canBuild snapshot external stored = (next, ManageStep effects 
   input = riverRuntimeInput snapshot
   pending = statePendingRestore stored
   previous = stateReconcile stored
-  (restored, notes) = maybe (stateCore stored, []) (\saved -> restoreCore (liveInventoryOf inventory) saved (stateCore stored)) pending
+  (unordered, notes) = maybe (stateCore stored, []) (\saved -> restoreCore (liveInventoryOf inventory) saved (stateCore stored)) pending
+  restored = unordered{coreScreenOrder = screenOrder inventory}
   view = DrainView inventory (shownBox restored previous) (`Map.lookup` reconciledOps previous)
   events = map ($ view) (reverse (stateQueue stored))
   (st, raised) = drainCoreWithScratchpads (policyScratchpads config) (policyManageHook config) (events <> map RunAction external) restored
@@ -534,6 +536,13 @@ seatIdOf = SeatId . rawId
 
 windowIdOf :: Object River.RiverWindowV1 -> WindowId
 windowIdOf = WindowId . rawId
+
+{- | The outputs from left to right, then top to bottom, as
+'Seki.Internal.Core.Action.screenWorkspace' counts them. An output river has
+not placed yet is left out.
+-}
+screenOrder :: RiverInventory -> [OutputId]
+screenOrder inventory = map snd (sort [((x, y), outputIdOf (riverOutputObject o)) | o <- riverInventoryOutputs inventory, Just (RiverPoint x y) <- [riverOutputPosition o]])
 
 outputIdOf :: Object River.RiverOutputV1 -> OutputId
 outputIdOf = OutputId . rawId
