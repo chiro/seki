@@ -1,6 +1,6 @@
 # seki Specification — A river Window Manager in Haskell
 
-Status: **v1 design accepted, M2 complete, M3 software complete with daily-work acceptance pending** / Last updated: 2026-11-09
+Status: **v1 design accepted, M2 complete, M3 complete** / Last updated: 2026-11-10
 Legend: [DECIDED] = current design decision, [RESOLVED] = checked against the protocol or other available evidence
 
 This is the target design for v1, not a description of the currently exported
@@ -472,7 +472,7 @@ stop/exec mechanism.
 | M0 Validation | **Complete** | Haskell wire protocol implementation without libwayland; own XML code generator; connection and window/output event handling; Full placement; terminal and close bindings; Japanese input and Xwayland validation | Completed on nested river, including exact fcitx5/Mozc input and the real-river release suite |
 | M1 Core | **Complete** | StackSet port + QuickCheck properties, Tall / Mirror / Full / `\|\|\|`, greedyView, focus movement, swapMaster, borders, non_exclusive_area, the two-phase monads (ManageM/RenderM) | Tiling operations follow the intended xmonad semantics. Sequence latency and GC pauses meet the documented seki budgets; see the [M1 implementation plan](m1-plan.md) |
 | M2 Practical | **Complete** | Floating (mod+drag), ManageHook, startupHook and `spawnOnce`, fullscreen, restart + state restoration, Crop/Tolerate | The main parts of my own xmonad.hs can be ported, and the M1 latency budgets hold with floats, fullscreen, and `Crop` in the workload; see the [M2 implementation plan](m2-plan.md) |
-| M3 Daily use | Software complete; daily-work acceptance pending | Bar IPC + `sekictl`, scratchpad, inputRules, `--recompile` / `--check`, documentation and configuration skeleton. Automatic client urgency is unavailable, because river has no supported client signal for it. The maintainer deferred it from M3 on 2026-11-03 | **Full migration from xmonad; used for daily work.** The acceptance record in the [M3 implementation plan](m3-plan.md) is still blank |
+| M3 Daily use | **Complete** | Bar IPC + `sekictl`, scratchpad, inputRules, `--recompile` / `--check`, documentation and configuration skeleton. Automatic client urgency is unavailable, because river has no supported client signal for it. The maintainer deferred it from M3 on 2026-11-03 | **Full migration from xmonad; used for daily work.** The maintainer recorded full migration on 2026-11-10; see the acceptance record in the [M3 implementation plan](m3-plan.md) |
 | M4 onwards | Planned | Submaps, binding repeat, focus-follows-mouse, prompt (shell surface + shm drawing), the contrib-equivalent extension set, IndependentScreens, further protocol integrations | — |
 
 ### 6.3 Resolved Questions and Follow-up
