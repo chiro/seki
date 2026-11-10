@@ -117,6 +117,7 @@ import Seki.Run.Xkb (
   createRiverKeyBinding,
   selectRiverXkbBindingsGlobal,
  )
+import Seki.Wire.Binding (requestSince)
 import Seki.Wire.Connection (
   Connection,
   ConnectionError,
@@ -126,7 +127,7 @@ import Seki.Wire.Connection (
   submitInheritedObjectRequest,
   submitRequest,
  )
-import Seki.Wire.Connection.ObjectTable (Object, ObjectLimit, objectId)
+import Seki.Wire.Connection.ObjectTable (Object, ObjectLimit, objectId, objectVersion)
 import Seki.Wire.Connection.Registry (RegistryError, bindGlobalWithRoute, globalNameFromWord, globalVersion, selectGlobal)
 import Seki.Wire.Transport (ConnectionTarget, OwnedFd)
 import Seki.Wire.Types (ObjectId)
@@ -155,8 +156,11 @@ whether seki asked for it.
 data Lifecycle = Managing | Stopping | Finished Bool
   deriving (Eq)
 
--- | What the runtime sends after a manage sequence's @manage_finish@.
-data ManageOutcome = KeepManaging | StopManaging
+{- | What the runtime sends after a manage sequence's @manage_finish@.
+'EndSession' sends nothing to a manager older than version 4, which lacks
+@exit_session@.
+-}
+data ManageOutcome = KeepManaging | StopManaging | EndSession
   deriving (Eq, Show)
 
 -- | How a session ended without an error.
@@ -471,6 +475,9 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState managerState xkbGl
         runManagePlans
         ( \case
             KeepManaging -> pure ()
+            EndSession ->
+              when (objectVersion manager >= requestSince River.encodeRiverWindowManagerV1ExitSession) $
+                submitManagerRequest manager River.encodeRiverWindowManagerV1ExitSession
             StopManaging -> do
               quiesceWakes
               readIORef lifecycle >>= \case
