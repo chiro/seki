@@ -329,7 +329,7 @@ twoOutput = withDailySession "m3-daily-two-output" (dailyOptions 2) $ \session -
   streamShows stream "the bar shows both outputs, the title, and the layout" (shown (Just "daily two-output") [])
   capture session "daily-two-output-windows"
   modKeys (clientEnvironment session) ["grave"]
-  launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty --class seki-scratchpad"
+  launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty -o font.size=13.33 --class seki-scratchpad"
   streamShows stream "the launched scratchpad is pending" (shown (Just "daily two-output") [("term", "pending")])
   pad <- openWindowWith probe (windowSpec Blue){specAppId = CustomAppId "seki-scratchpad"}
   waitFocus session "the shown pad has keyboard focus" (Just pad)
@@ -383,7 +383,7 @@ buildHandover = withDailyHome (dailyOptions 2) $ \home -> do
     editor <- openWindowWith probe (windowSpec Blue){specAppId = CustomAppId "Emacs"}
     requestFullscreen probe editor
     modKeys (clientEnvironment session) ["grave"]
-    launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty --class seki-scratchpad"
+    launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty -o font.size=13.33 --class seki-scratchpad"
     pad <- openWindowWith probe (windowSpec Green){specAppId = CustomAppId "seki-scratchpad"}
     waitFocus session "the shown pad has keyboard focus" (Just pad)
     setTitle probe pad "daily build pad"
@@ -516,7 +516,7 @@ hotplugOutput session = do
   click (sessionSocket session) (sessionExtent session) (placedX emacs + 400, 300)
   waitFocus session "a click focuses the Emacs window on the other output" (Just editor)
   modKeys (clientEnvironment session) ["grave"]
-  launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty --class seki-scratchpad"
+  launchedOnce session "Mod-grave launches the scratchpad terminal" "alacritty -o font.size=13.33 --class seki-scratchpad"
   pad <- openWindowWith probe (windowSpec Blue){specAppId = CustomAppId "seki-scratchpad"}
   waitFocus session "the shown pad has keyboard focus" (Just pad)
   picture session emacsOutput "the pad shows on emacs's output" [Paint Blue (Box 1 1 798 598) True]
