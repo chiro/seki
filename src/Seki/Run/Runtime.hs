@@ -184,7 +184,8 @@ data RiverPointerBindingState = RiverPointerBindingState
 data RiverSeatBindings = RiverSeatBindings
   { riverBindingsSeat :: Object River.RiverSeatV1
   , riverSeatLayerShell :: Object LayerShell.RiverLayerShellSeatV1
-  , riverSeatLayerFocusRevision :: Integer
+  , riverSeatFocusRevision :: Integer
+  -- ^ Advances whenever river may have moved the seat's keyboard focus on its own, so the reconciler stops trusting the focus it last sent.
   , riverSeatLayerFocus :: RiverLayerFocus
   , riverSeatKeyBindings :: [RiverKeyBindingState]
   , riverSeatPointerBindings :: [RiverPointerBindingState]
@@ -658,7 +659,7 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState managerState xkbGl
         case Map.lookup (objectId seat) seats of
           Nothing -> (seats, Left (RiverRuntimeSeatNotTracked (objectId seat)))
           Just state ->
-            (Map.insert (objectId seat) state{riverSeatLayerFocus = focus, riverSeatLayerFocusRevision = riverSeatLayerFocusRevision state + 1} seats, Right ())
+            (Map.insert (objectId seat) state{riverSeatLayerFocus = focus, riverSeatFocusRevision = riverSeatFocusRevision state + 1} seats, Right ())
     void (recordStateResult result)
   handleSeatEvent seat event = do
     tracked <- requireSeat seat

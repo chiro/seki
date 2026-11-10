@@ -190,7 +190,7 @@ reconcileManage reclaim scene snapshot (ReconcileState old oldSeats stacking) = 
   seatStep seat = (identifier, SeatApplied (riverBindingsSeat seat) revision nextFocus overridden nextOp, request, opRequest)
    where
     identifier = objectId (riverBindingsSeat seat)
-    revision = riverSeatLayerFocusRevision seat
+    revision = riverSeatFocusRevision seat
     previous = Map.lookup identifier oldSeats
     (lastFocus, reclaimed) = case previous of
       Just (SeatApplied handle r f override _) | handle == riverBindingsSeat seat && r == revision -> (f, override)
@@ -236,7 +236,7 @@ reconcileRender style scene snapshot (ReconcileState old seats oldStacking) = (R
   states = liveStates snapshot old
   windows = riverInventoryWindows inventory
   layerOwns seat = case Map.lookup (objectId (riverBindingsSeat seat)) seats of
-    Just (SeatApplied handle revision _ override _) | handle == riverBindingsSeat seat && revision == riverSeatLayerFocusRevision seat -> riverSeatLayerFocus seat /= RiverLayerFocusNone && not override
+    Just (SeatApplied handle revision _ override _) | handle == riverBindingsSeat seat && revision == riverSeatFocusRevision seat -> riverSeatLayerFocus seat /= RiverLayerFocusNone && not override
     _ -> riverSeatLayerFocus seat /= RiverLayerFocusNone
   layerFocused = any layerOwns (riverRuntimeSeatBindings snapshot)
   color w
@@ -275,7 +275,7 @@ reconcileRender style scene snapshot (ReconcileState old seats oldStacking) = (R
   needsFocus seat = case Map.lookup (objectId (riverBindingsSeat seat)) seats of
     Just (SeatApplied handle revision previous override _)
       | handle == riverBindingsSeat seat
-      , revision == riverSeatLayerFocusRevision seat
+      , revision == riverSeatFocusRevision seat
       , riverSeatLayerFocus seat == RiverLayerFocusNone || override -> case sceneFocus scene of
           Just w | Just a <- Map.lookup w rendered, appliedShown a == Just True, proposal a == NoProposal -> previous /= Just (Just w)
           _ -> False

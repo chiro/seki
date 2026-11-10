@@ -186,7 +186,7 @@ layerFocusScenario fixture probe = do
 seatLayerFocus :: Fixture -> IO (Integer, RiverLayerFocus)
 seatLayerFocus fixture =
   readRiverSeatBindings (mSession fixture) >>= \case
-    [seat] -> pure (riverSeatLayerFocusRevision seat, riverSeatLayerFocus seat)
+    [seat] -> pure (riverSeatFocusRevision seat, riverSeatLayerFocus seat)
     seats -> failIntegration ("expected one seat, got " <> show (length seats))
 
 layerTakesKeyboard :: Fixture -> Probe -> String -> IO Integer
