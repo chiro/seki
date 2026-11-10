@@ -141,7 +141,7 @@ runDaily name home extra body =
   count = homeOutputCount home
 
 stubPrograms :: [String]
-stubPrograms = ["waybar", "swaybg", "fcitx5", "swayidle", "swaylock", "alacritty", "amixer", "brightnessctl"]
+stubPrograms = ["waybar", "swaybg", "fcitx5", "swayidle", "swaylock", "alacritty", "amixer", "brightnessctl", "wmenu-run"]
 
 startupCommands :: [String]
 startupCommands = ["waybar", "swaybg -i /usr/share/backgrounds/archlinux/wave.png -m fill", "fcitx5", "swayidle -w timeout 600 swaylock -f"]
@@ -318,7 +318,7 @@ twoOutput = withDailySession "m3-daily-two-output" (dailyOptions 2) $ \session -
   let outputs = [(termOutput, "term"), (emacsOutput, "emacs")]
       shown title pads = bar outputs [workspace "term" [Occupied, Visible, Focused] "Mirror Tall", workspace "emacs" [Occupied, Visible] "Tall"] title pads
   report "OUTPUTS" (show outputs)
-  _ <- openWindow probe Blue
+  first <- openWindow probe Blue
   _ <- openWindowWith probe (windowSpec Green){specAppId = CustomAppId "Emacs"}
   second <- openWindow probe Green
   waitFocus session "the newest term window has keyboard focus" (Just second)
@@ -344,6 +344,16 @@ twoOutput = withDailySession "m3-daily-two-output" (dailyOptions 2) $ \session -
   capture session "daily-two-output-hidden"
   modShiftKeys (clientEnvironment session) ["l"]
   launchedOnce session "Mod-Shift-l locks the screen with swaylock" "swaylock"
+  modKeys (clientEnvironment session) ["p"]
+  launchedOnce session "Mod-p opens the wmenu launcher" "wmenu-run"
+  modShiftKeys (clientEnvironment session) ["j"]
+  picture session termOutput "Mod-Shift-j swaps the focused window below the other" [Paint Blue (Box 1 1 798 298) False, Paint Green (Box 1 301 798 298) True]
+  modShiftKeys (clientEnvironment session) ["k"]
+  picture session termOutput "Mod-Shift-k swaps it back" [Paint Green (Box 1 1 798 298) True, Paint Blue (Box 1 301 798 298) False]
+  modKeys (clientEnvironment session) ["Tab"]
+  waitFocus session "Mod-Tab focuses the other term window" (Just first)
+  modShiftKeys (clientEnvironment session) ["Tab"]
+  waitFocus session "Mod-Shift-Tab focuses the newest window again" (Just second)
 
 stubBuildResources :: DailyHome -> FilePath -> IO [(String, String)]
 stubBuildResources home steps = do

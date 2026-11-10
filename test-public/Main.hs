@@ -52,7 +52,7 @@ main = do
       check "the daily configuration keeps the port's workspaces and layouts" (workspaces daily == workspaces portedConfig && layoutHook daily == layouts)
       check "the daily configuration keeps the port's borders" (borders daily == borders portedConfig)
       check "the daily configuration keeps every port key" (all (`elem` bound daily) (bound portedConfig))
-      check "Mod-grave is the only key the daily configuration adds to the port's keys" (KeyBinding Mod4 (Keysym 0x60) `elem` bound daily && length (bound daily) == length (bound portedConfig) + 1)
+      check "the daily configuration adds the scratchpad, launcher, swap, and focus-cycle keys and no others" (all (`elem` bound daily) dailyKeys && length (bound daily) == length (bound portedConfig) + length dailyKeys)
       check "the daily configuration has one alacritty scratchpad" (map (\p -> (scratchpadName p, scratchpadCommand p)) (scratchpads daily) == [("term", "alacritty --class seki-scratchpad")])
       check "the scratchpad is 1280 by 800, centered on a 1920 by 1200 output" (map scratchpadGeometry (scratchpads daily) == [OutputRect padRect | Right padRect <- [mkSize 1280 800 >>= mkRect (Point 320 200)]])
       check "the keyboard rule loads the keymap and repeats at 25 Hz after 660 ms" (map ruleSettings (filter ((== Just Keyboard) . ruleDeviceType) (inputRules daily)) == [[Keymap "/keymaps/daily.xkb", RepeatInfo 25 660]])
@@ -64,3 +64,5 @@ main = do
   bound config = map fst (keys config config)
   layouts = Tall 1 (3 / 100) (1 / 2) ||| Mirror (Tall 1 (3 / 100) (1 / 2)) ||| Full
   portedKeys = KeyBinding (Mod4 .|. Shift) (Keysym 0x6c) : [KeyBinding (Mods 0) (Keysym symbol) | symbol <- [0x1008FF11, 0x1008FF12, 0x1008FF13, 0x1008FF02, 0x1008FF03]]
+  -- Mod-grave, Mod-p, Mod-Shift-j and k, Mod-Tab, and Mod-Shift-Tab.
+  dailyKeys = [KeyBinding Mod4 (Keysym 0x60), KeyBinding Mod4 (Keysym 0x70), KeyBinding (Mod4 .|. Shift) (Keysym 0x6a), KeyBinding (Mod4 .|. Shift) (Keysym 0x6b), KeyBinding Mod4 (Keysym 0xff09), KeyBinding (Mod4 .|. Shift) (Keysym 0xff09)]
