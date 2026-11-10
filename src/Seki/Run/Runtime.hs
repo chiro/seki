@@ -497,6 +497,10 @@ sequenceCheckedHandlers wayland sequenceStatus inventoryState managerState xkbGl
       quiesceWakes
       submitManagerRequest manager River.encodeRiverWindowManagerV1Destroy
       atomicModifyIORef' lifecycle (\state -> (Finished (state == Stopping), ()))
+    River.RiverWindowManagerV1SessionUnlocked -> do
+      -- River clears every seat's focus when it unlocks the session.
+      atomicModifyIORef' seatBindingsState (\seats -> (fmap (\seat -> seat{riverSeatFocusRevision = riverSeatFocusRevision seat + 1}) seats, ()))
+      handleRiverWindowManagerEvent handlers manager event
     _ -> handleRiverWindowManagerEvent handlers manager event
   handleWindowCreated window = do
     added <- updateInventory sequenceStatus inventoryState (addRiverWindow window)

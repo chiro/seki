@@ -34,6 +34,7 @@ tests =
     [ testCase "serializes proposals, restores focus, accepts client size mismatch, and honors fullscreen but not maximize or minimize requests" testSettlement
     , testCase "retains omitted dimensions across layouts, clips an oversized commit while its proposal is pending, and prunes a pending close" testLayouts
     , testCase "respects layer focus and recovers on every focus_none report" testLayerFocus
+    , testCase "focuses the window again after river unlocks the session" testUnlockFocus
     , testCase "flags a single Tall window tiled on every edge" testSingleTall
     , testGroup
         "Tolerate proposals"
@@ -511,6 +512,69 @@ testLayouts = withRuntimePair $ \target peer -> do
   result @?= Right RiverEnded
  where
   keys = [RiverKeyBinding key (River.RiverSeatV1ModifiersFlags 0) Nothing | key <- [0x61, 0x62, 0x63]]
+
+{- | River clears every seat's keyboard focus when the session unlocks, then
+sends @session_unlocked@ and a manage sequence. Keyboard input reaches no
+window until the window manager focuses one again.
+-}
+testUnlockFocus :: Assertion
+testUnlockFocus = withRuntimePair $ \target peer -> do
+  window <- requireObjectId 0xff000050
+  output <- requireObjectId 0xff000051
+  seat <- requireObjectId 0xff000052
+  done <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    (manager, _, layerShell) <- handshake reader peer
+    let request sender opcode args = receiveExpectedRequest reader peer sender (Opcode opcode) args
+        event sender opcode args = encodedFrame sender (Opcode opcode) args
+        start = sendFrames peer [event manager 2 (pure ())]
+        render = sendFrames peer [event manager 3 (pure ())]
+    sendFrames peer [event manager 6 (putNewId window), event manager 7 (putNewId output), event manager 8 (putNewId seat)]
+    node <- receiveNewIdRequest reader peer window (Opcode 2)
+    ls <- receiveLayerShellOutputRequest reader peer layerShell output
+    sendFrames peer [event output 2 (putInt 0 >> putInt 0), event output 3 (putInt 1000 >> putInt 1000)]
+    _ <- receiveLayerShellSeatRequest reader peer layerShell seat
+    let manageEnd = request ls 1 (pure ()) >> request manager 2 (pure ())
+        focusedManage = request ls 1 (pure ()) >> request seat 1 (putObject window) >> request manager 2 (pure ())
+        renderEnd = request manager 4 (pure ())
+    sendFrames peer [event ls 0 (putInt 0 >> putInt 0 >> putInt 100 >> putInt 80)]
+    start
+    request window 7 (pure ())
+    request window 14 (putUint 4)
+    request window 9 (putUint 15)
+    request window 3 (putInt 96 >> putInt 76)
+    request ls 1 (pure ())
+    request seat 3 (pure ())
+    request manager 2 (pure ())
+    sendFrames peer [event window 2 (putInt 96 >> putInt 76)]
+    render
+    request node 1 (putInt 2 >> putInt 2)
+    request window 22 (putInt 0 >> putInt 0 >> putInt 96 >> putInt 76)
+    request node 2 (pure ())
+    request window 8 (putUint 15 >> putInt 2 >> mapM_ putUint [0, 0x80000000, 0xffffffff, 0xffffffff])
+    request window 5 (pure ())
+    request manager 4 (pure ())
+    request manager 3 (pure ())
+    start
+    focusedManage
+    render
+    renderEnd
+    sendFrames peer [event manager 4 (pure ())]
+    start
+    manageEnd
+    render
+    renderEnd
+    sendFrames peer [event manager 5 (pure ())]
+    start
+    focusedManage
+    render
+    renderEnd
+    closeTransport peer
+  policy <- expectRight =<< newPolicy (PolicyConfig [] [] Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (const (pure (Right ()))) (\_ -> pure ()))
+  session <- expectRight =<< openRiverSessionAt target defaultObjectLimit (policyRuntimeHandlers policy)
+  result <- runRiverSession session
+  expectMockSuccess done
+  result @?= Right RiverEnded
 
 testSingleTall :: Assertion
 testSingleTall = withRuntimePair $ \target peer -> do
