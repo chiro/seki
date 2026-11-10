@@ -3,8 +3,8 @@
 A tiling window manager for [river](https://codeberg.org/river/river), written
 in Haskell and aiming for xmonad's semantics and configuration model.
 
-> **Status: M2 Practical is complete. The M3 Daily use software is merged, and
-> daily-work acceptance is pending.** See the [milestones](docs/spec.md#62-milestones),
+> **Status: M3 Daily use is complete. The maintainer uses seki for daily work
+> in place of xmonad.** See the [milestones](docs/spec.md#62-milestones),
 > the [M3 plan](docs/m3-plan.md), the [M2 latency and GC report](docs/latency-m2/report.md),
 > and the [M3 latency report](docs/latency-m3/report.md).
 

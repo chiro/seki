@@ -1,6 +1,6 @@
 # M3 Daily use implementation plan
 
-Status is **Software complete; daily-work acceptance pending**. Updated 2026-11-09 against `5aaf32fc9482bfabca38a6d0ae94ccffba673bde`.
+Status is **Complete**. Updated 2026-11-10 against `8f7c75c`, the merge of #78.
 M3 makes seki usable for daily work in place of xmonad.
 It builds external event ingress, bar IPC and `sekictl`, input rules, scratchpads,
 and configuration compilation in M3-01 through M3-07.
@@ -11,10 +11,10 @@ M3-03, M3-04, and M3-06 landed together through PR #44 on 2026-11-03 as `6d349f5
 The operator deferred M3-05, automatic client urgency, from M3 on 2026-11-03. River has no supported client signal for it (M3-D01), and M3 ships no manual substitute.
 M3-07 is three stacked PRs, which the operator merges in this order.
 [PR #68](https://github.com/chiro/seki/pull/68) adds the daily-use configuration and its real-river lanes. It merged on 2026-11-09 as `1545eee900b14e380d7b153e1e0890ec6b4fbc4c`, and its tree matches the reviewed head `b72b2b1`.
-[PR #72](https://github.com/chiro/seki/pull/72) adds the m3 latency workload and the strict campaign.
-[PR #75](https://github.com/chiro/seki/pull/75) commits this plan and brings the documentation up to date.
+[PR #72](https://github.com/chiro/seki/pull/72) adds the m3 latency workload and the strict campaign. It merged on 2026-11-09.
+[PR #75](https://github.com/chiro/seki/pull/75) commits this plan and brings the documentation up to date. It merged into #72's stale branch, and [PR #76](https://github.com/chiro/seki/pull/76) re-landed it on main the same day.
 [PR #70](https://github.com/chiro/seki/pull/70) made the installed `config-delivery` product ship `sekictl`. It landed on 2026-11-09 as `3c3037369eed28e5dc59528046afa4b7a1309cae`.
-M3 is not complete. The operator still runs lanes 9 and 10 of M3-07, reviews the M3-07 media, merges the stack, and fills in the [operator acceptance record](#operator-acceptance-record).
+M3 is complete. The operator reviewed the M3-07 media, passed lanes 9 and 10 on 2026-11-10, and recorded full migration from xmonad in the [operator acceptance record](#operator-acceptance-record). [PR #77](https://github.com/chiro/seki/pull/77) and [PR #78](https://github.com/chiro/seki/pull/78) fixed the two seki gaps the lanes found.
 Execution was authorized on 2026-10-31. Unresolved design gates still apply. The operator retains merge authority.
 
 ## How to read this
@@ -438,12 +438,12 @@ Use the same compiler, compositor, workload, collector, and host for revision co
 - [x] Port the remaining daily-use setup with Waybar, input rules, named scratchpads, and the configuration build flow. Document automatic client urgency as unavailable and explicitly deferred. Keep the example public-API-only and build with `-Werror`. #68 builds `seki-daily-config` with `-Werror` from public modules alone, and its module documentation says that automatic client urgency is unavailable. #75 records the deferral in the README, spec, and IPC documentation.
 - [x] Run combined scenarios for bar reconnection, device hotplug, scratchpads, and build/restart while two outputs and floats are active. Include Japanese input and Xwayland regressions. #68 adds the seven `m3-daily-*` scenarios to the release manifest.
 - [ ] Retain an unchanged M2 workload for valid trunk/head comparison. Add a separately named M3 workload that proves external wake, IPC update, scratchpad toggle, input-result reporting, and recompile completion through observable outcomes. Partly done. #72 keeps the m2 workload and times four of the five m3 outcomes. The latency fixture cannot report input results, so `m3-input-perf` measures that path instead.
-- [ ] Record one operator-confirmed daily-work session with compositor/toolchain versions, device models, exercised tasks, and any blockers. A green headless suite alone does not meet full migration from xmonad. This is an operator gate. See the [operator acceptance record](#operator-acceptance-record).
-- [ ] Update spec and README status only after every in-scope package, physical-device check, and exit criterion is verified. Link exact commits and reports in the coverage ledger. #75 marks M3 as software complete with daily-work acceptance pending. It does not mark M3 Complete.
+- [x] Record one operator-confirmed daily-work session with compositor/toolchain versions, device models, exercised tasks, and any blockers. A green headless suite alone does not meet full migration from xmonad. This is an operator gate. See the [operator acceptance record](#operator-acceptance-record). The operator recorded full migration on 2026-11-10.
+- [x] Update spec and README status only after every in-scope package, physical-device check, and exit criterion is verified. Link exact commits and reports in the coverage ledger. #75 marked M3 as software complete with daily-work acceptance pending. After lanes 9 and 10, the media review, #77, and #78, this change marks M3 Complete in the spec and README.
 
 **You see.**
 
-- [ ] The maintainer can use the ported configuration for daily work, rebuild it safely, and rely on bar and input state across restarts. Save the scenario transcript and capture. This is an operator gate, which lane 10 records.
+- [x] The maintainer can use the ported configuration for daily work, rebuild it safely, and rely on bar and input state across restarts. Save the scenario transcript and capture. This is an operator gate, which lane 10 records. Lane 10 passed on 2026-11-10. Rebuilding safely after a delivery upgrade needed #78.
 
 **Verify, unit.**
 
@@ -460,8 +460,8 @@ The shipped lanes are `m2-reference-config` for lane 1 and the `m3-daily-*` scen
 - [x] Lane 6. Use Japanese input in foot after configuration handover. Save `daily-ime.png`. Pass when the expected Mozc text commits and no startup daemon duplicates. `m3-daily-ime` passed.
 - [x] Lane 7. Use the Xwayland application for ordinary window-management regression. Save `daily-xwayland.png`. Pass when management remains correct and documentation clearly identifies automatic attention/urgency as deferred and unavailable; no urgency proof is credited. `m3-daily-xwayland` passed, and #75 documents the deferral.
 - [x] Lane 8. Flood IPC while moving and resizing a floating window. Save `daily-load.png`. Pass when input remains responsive and subscribers cannot block rendering. `m3-daily-load` passed. Key-to-focus took 14.4 ms idle and 14.5 ms during the flood.
-- [ ] Lane 9. Exercise physical keyboard/touchpad configuration in an approved session. Save `daily-hardware.png`. Pass when the hardware acceptance record confirms intended settings and recovery. This is an operator gate. #68's description has the runbook.
-- [ ] Lane 10. Complete an operator-confirmed daily-work session. Save `daily-session.png`. Pass when the maintainer records full migration or names a blocking gap. This is an operator gate. #68's description has the runbook.
+- [x] Lane 9. Exercise physical keyboard/touchpad configuration in an approved session. Save `daily-hardware.png`. Pass when the hardware acceptance record confirms intended settings and recovery. This is an operator gate. #68's description has the runbook. Passed on 2026-11-10, after #77 fixed keyboard focus after an unlock.
+- [x] Lane 10. Complete an operator-confirmed daily-work session. Save `daily-session.png`. Pass when the maintainer records full migration or names a blocking gap. This is an operator gate. #68's description has the runbook. The maintainer recorded full migration on 2026-11-10.
 
 **Verify, perf.**
 
@@ -472,62 +472,61 @@ The shipped lanes are `m2-reference-config` for lane 1 and the `m3-daily-*` scen
 
 **Review gate.** The operator reviews before merge.
 
-- [ ] Post the lane screenshots and a 30 to 60 second video of M3-07 behavior in chat. Save them under `artifacts/m3/M3-07/review/`. Wait for the operator's review. This is an operator gate. A 45-second video, a contact sheet, and the lane PNGs are on the maintainer's host under `artifacts/m3/M3-07/review/root-b52cc23/`. The operator's review is pending.
+- [x] Post the lane screenshots and a 30 to 60 second video of M3-07 behavior in chat. Save them under `artifacts/m3/M3-07/review/`. Wait for the operator's review. This is an operator gate. A 45-second video, a contact sheet, and the lane PNGs are on the maintainer's host under `artifacts/m3/M3-07/review/root-b52cc23/`. The operator reviewed them on 2026-11-10.
 
 **Merge.**
 
-- [ ] Record a clean independent verdict at the exact head, complete review-bot triage, and confirm current dependencies. Stop at merge-ready for the operator. The root verdicts on #68 and #72 are posted on those PRs, and #68 has merged. #75's verdict and the remaining merges are pending.
+- [x] Record a clean independent verdict at the exact head, complete review-bot triage, and confirm current dependencies. Stop at merge-ready for the operator. The root verdicts on #68 and #72 are posted on those PRs. #68 and #72 merged on 2026-11-09. #75 merged into #72's stale branch, and #76 re-landed its content on main the same day.
 
 ## Close the program
 
-- [ ] Link unit, live, and performance evidence for every package to the final head SHA. Leave incomplete boxes unchecked. Partly done. The [coverage ledger](#record-package-coverage) links each package's evidence to its own merge or PR head. The final head exists only after the operator merges #75.
-- [ ] Resolve every M3-D entry below and link the decision and regression evidence. Do not mark missing client urgency as implemented. M3-D03 still needs the physical acceptance in lane 9.
+- [x] Link unit, live, and performance evidence for every package to the final head SHA. Leave incomplete boxes unchecked. The [coverage ledger](#record-package-coverage) links each package's evidence to its own merge or PR head. Lanes 9 and 10 ran on the delivery built from `27ca255`, the merge of #77.
+- [x] Resolve every M3-D entry below and link the decision and regression evidence. Do not mark missing client urgency as implemented. Lane 9 gave M3-D03 its physical acceptance on 2026-11-10.
 - [x] Pass the complete pinned release command and exact manifest, including every existing M0, M1, and M2 scenario. CI's pinned real-river job passes the full 67-scenario manifest at `5aaf32f`, a head of #72.
-- [ ] Confirm the public daily-use configuration builds outside the repository and works on the recorded physical devices. This is an operator gate, which lane 9 and the runbook in #68's description cover.
-- [ ] Obtain the operator's daily-work acceptance record. Update the milestone table to Complete only after that record and all gates exist. This is an operator gate. The spec and README say that acceptance is pending.
-- [ ] The operator reviews the M3-07 media under `artifacts/m3/M3-07/review/root-b52cc23/`.
-- [ ] The operator merges #68, #72, and #75, in that order. #68 merged on 2026-11-09.
-- [ ] The operator runs lanes 9 and 10 and fills in the [operator acceptance record](#operator-acceptance-record).
-- [ ] Report final PR links, measured results, coverage gaps, and the operator's remaining actions.
+- [x] Confirm the public daily-use configuration builds outside the repository and works on the recorded physical devices. This is an operator gate, which lane 9 and the runbook in #68's description cover. The maintainer built it from `~/.config/seki` with the installed delivery and ran it on the recorded laptop.
+- [x] Obtain the operator's daily-work acceptance record. Update the milestone table to Complete only after that record and all gates exist. This is an operator gate. The record below exists, and the spec and README say Complete.
+- [x] The operator reviews the M3-07 media under `artifacts/m3/M3-07/review/root-b52cc23/`. Reviewed on 2026-11-10.
+- [x] The operator merges #68, #72, and #75, in that order. #68 and #72 merged on 2026-11-09. #75 merged into #72's stale branch, and #76 re-landed it on main the same day.
+- [x] The operator runs lanes 9 and 10 and fills in the [operator acceptance record](#operator-acceptance-record).
+- [x] Report final PR links, measured results, coverage gaps, and the operator's remaining actions. This change's description reports them.
 
 ## Operator acceptance record
 
-The operator fills in this record after running lanes 9 and 10 with the runbook in [#68's description](https://github.com/chiro/seki/pull/68).
-Until a later change fills it in, M3 is software complete and daily-work acceptance is pending.
+The operator ran lanes 9 and 10 with the runbook in [#68's description](https://github.com/chiro/seki/pull/68) on 2026-11-09 and 2026-11-10, and passed both. The captures and `sekictl snapshot` readbacks are on the maintainer's host under `artifacts/m3/M3-07/`, outside the repository.
 
 ### Lane 9. Physical keyboard and touchpad
 
 | Field | Result |
 |---|---|
-| Date | |
-| river version (`river -version`) | |
-| seki commit | |
-| GHC version (`ghc --version`) | |
-| Keyboard model | |
-| Touchpad model (`libinput list-devices`) | |
-| Keyboard `keymap` and `repeat_info` results in `daily-hardware.json` | |
-| Touchpad `tap`, `click_method`, and `natural_scroll` results in `daily-hardware.json` | |
-| Caps Lock acts as Control | |
-| Repeat delay and rate | |
-| Tap, two-finger click, and two-finger natural scrolling | |
-| Settings after Mod-q, suspend and resume, and a keyboard replug | |
+| Date | 2026-11-09, with the suspend and resume check on 2026-11-10 |
+| river version (`river -version`) | 0.5.0 +xwayland |
+| seki commit | `b10e734`; the suspend and resume recheck ran `27ca255`, the merge of #77 |
+| GHC version (`ghc --version`) | 9.10.3, from the `config-delivery` closure |
+| Keyboard model | Built-in keyboard of a Lenovo ThinkPad E14 Gen 6 (21M3CTO1WW), reported as "AT Translated Set 2 keyboard" |
+| Touchpad model (`libinput list-devices`) | ELAN06C7:00 04F3:3193 Touchpad, from seki's device list, since the `libinput` tool is not installed |
+| Keyboard `keymap` and `repeat_info` results in `daily-hardware.json` | `keymap` sent and `repeat_info` sent at 25 Hz after 660 ms, before and after Mod-q and after resume. The readbacks are `lane9-snapshot-*.json` |
+| Touchpad `tap`, `click_method`, and `natural_scroll` results in `daily-hardware.json` | `tap` applied, `click_method` applied as `click_finger`, and `natural_scroll` applied, before and after Mod-q and after resume |
+| Caps Lock acts as Control | Yes |
+| Repeat delay and rate | As intended |
+| Tap, two-finger click, and two-finger natural scrolling | All work |
+| Settings after Mod-q, suspend and resume, and a keyboard replug | Mod-q reapplied every setting in a new session of the same process, with one fcitx5 and one Waybar. After a lid suspend and resume, the settings stayed and the device generations did not change. After the swaylock unlock, no window got keys until focus moved; #77 fixes that. The operator confirmed the fix once #78's cause, a `cabal.project` still naming the first delivery's archive, was corrected. Replug does not apply, because the laptop has only the built-in keyboard |
 | Capture | `daily-hardware.png` |
-| Blockers | |
-| Lane 9 result | |
+| Blockers | None. #77 and #78 fixed the two gaps the lane found |
+| Lane 9 result | Pass |
 
 ### Lane 10. Daily-work session
 
 | Field | Result |
 |---|---|
-| Date | |
-| river version (`river -version`) | |
-| seki commit | |
-| GHC version (`ghc --version`) | |
-| Device models | |
-| Tasks exercised | |
-| Blockers | |
+| Date | 2026-11-09 to 2026-11-10 |
+| river version (`river -version`) | 0.5.0 +xwayland |
+| seki commit | `b10e734`, then `27ca255` from 2026-11-10 |
+| GHC version (`ghc --version`) | 9.10.3, from the `config-delivery` closure |
+| Device models | Lenovo ThinkPad E14 Gen 6 (21M3CTO1WW) with its built-in keyboard, the ELAN06C7:00 04F3:3193 touchpad, and a 1920x1200 panel |
+| Tasks exercised | Terminal and editor work in alacritty, the Mod-grave scratchpad, and Emacs; a web browser and desktop applications; Japanese input through fcitx5 and Mozc; workspace moves, the Mod-p launcher, Mod-q restarts, swaylock, and Waybar; logging in from LightDM's river session |
+| Blockers | None. The session found five gaps, and each is closed: alacritty's font was too small (the daily configuration sets 13.33), no launcher and missing xmonad keys (the daily configuration adds them), lost keyboard focus after an unlock (#77), and a rebuilt delivery that never reached the configuration (#78) |
 | Capture | `daily-session.png` |
-| Full-migration verdict (full migration from xmonad, or the gap that blocks it) | |
+| Full-migration verdict (full migration from xmonad, or the gap that blocks it) | Full migration from xmonad |
 
 ## Appendix A. Prototype evidence
 
@@ -565,7 +564,7 @@ command, observation, and artifact path. Do not turn an unrun check into a passe
 |---|---|---|---|
 | M3-D01 | Technically unsupported; automatic client urgency explicitly deferred from M3 by operator 2026-11-03 | Source refresh checked v0.5.0 and upstream `65a90843` with no supported native/Xwayland attention delivery. No M3-05 implementation or manual substitute. M3-07 may proceed under revised scope; physical/daily-work gates are not waived. | Future urgency work |
 | M3-D02 | Verified for M3-01 | Direct worker `manage_dirty` wakes idle river under the non-threaded RTS. The queue retains one dispatcher and policy owner, with capacity 256 and batch size 32. The initial round-trip probe used coarse polling and established feasibility, not precise wire latency. M3-01 selected a 50 ms enqueue-to-observed-policy p99 ceiling before production measurement. Independent checks at `5dc5da1` cover waiter cancellation, owned-wake failure, saturation with focus/resize, shutdown, and stale sessions. The root verdict stayed on the maintainer's host and is not in the repository. | M3-01 |
-| M3-D03 | Discovery/adapters independently verified; physical acceptance pending | At `44c24e9`, pinned river v0.5.0 input XMLs, source-level v1 compatibility, capped v1/v2/v3 discovery, facet/generation retirement and real XKB/generic controls pass independent checks. Custom curves with 64 points pass native transient configuration checks. Actual river 0.4.5 execution and physical libinput application are not claimed. | M3-03 |
+| M3-D03 | Verified; lane 9 passed the physical acceptance on 2026-11-10 | At `44c24e9`, pinned river v0.5.0 input XMLs, source-level v1 compatibility, capped v1/v2/v3 discovery, facet/generation retirement and real XKB/generic controls pass independent checks. Custom curves with 64 points pass native transient configuration checks. Actual river 0.4.5 execution and physical libinput application are not claimed. | M3-03 |
 | M3-D04 | Verified for the declared source-archive plus pinned Nix dependency path | Exact public candidate --check, fresh Cabal cache/store, warm repeat, installed archive/compiler/default/product delivery, threaded skeleton and stable profile handover proved. Changed-image state, pixels, input, PID, and argv0, and recovery from a failed exec and from serialization, were independently verified. First closure acquisition requires Nix network/trust; no secure-index repair or cold-Nix claim. | M3-06 |
 | M3-D05 | Decided in M3-04 | Exercise scratchpad launch-pending, hide/show, duplicate matches, workspace moves, restart, and changed definitions. Confirm storage and manageHook precedence with executable proof before freezing the API. Decision: a definition's first matching window becomes its owner and bypasses the user `manageHook`, and hidden pads stay outside workspace navigation. [Scratchpads](scratchpads.md) documents the shipped storage, precedence, and restore rules. The `m3-scratchpad-*` release scenarios exercise pending launches, hide and show, duplicates, workspace moves, restart, and changed definitions. | M3-04 |
 | M3-D06 | Decided in M3-02 | Exercise IPC command acceptance versus application and displayed state, slow readers, reconnect, and title-only updates. Confirm revision and error semantics from observed traces. Decision: a receipt means the reducer applied the command and carries that revision, not a displayed frame, and a subscriber may skip intermediate revisions. [IPC](ipc.md) documents the shipped receipt, revision, and error contract. The `m3-ipc-*` release scenarios exercise receipts, slow readers, reconnect, and title-only updates. | M3-02 |
@@ -652,4 +651,4 @@ are implementation work, not evidence of support already present.
 | M3-04 | PR #45 included in PR #44, now main `6d349f5` | Root and independent 840 tests and public, package, phase, and format checks pass | Full 59-scenario exact manifest passes; C1/M1 independent native controls and keyboard and geometry receipts pass | Historical finite campaign applies because the timed paths are unchanged; full 59-scenario stock gate passes; no fresh campaign claimed | Pinned `95cddf9` passes all 4 checks; fresh media approved by operator; both review fixes consumed; merge remains operator-owned |
 | M3-05 | Deferred from M3 by explicit operator scope decision | Not implemented | No client urgency proof claimed | Not measured | Deferral covers automatic native/Xwayland client urgency only; no manual substitute or broader waiver |
 | M3-06 | PR #46 included in PR #44, now main `6d349f5`; approved tree `031bb19` preserved | 856 tests, public, package, and phase checks, and eight external candidate checks pass locally | Full 60-scenario native run and ten named functional lanes pass; changed definitions, a real changed image, and recovery proved | 30 finite trials retained; one baseline nonmoving trial at 11.2 ms fails the strict < 10 ms budget; the other 29 pass, including all 20 head trials; the original campaign failed; PR #46-only baseline exception approved, head budgets unchanged | `c946f43` bootstrap receipts valid; `c1f9578` false-green proof rejected; `53120f5` all 8 checks and four complete proof artifacts verified; `971c2bb` installed receipts valid; `cfbe7d4` all 8 CI checks and all 4 artifact proofs verified; ten lanes and media validated; baseline performance BLOCKED; `031bb19` CI and all 4 artifacts verified; second audit and README recheck PASS; operator approved the PR #46-only baseline exception and media; merge operator-owned |
-| M3-07 | #68 adds the daily-use configuration and lanes, #72 the m3 workload and campaign, and #75 this plan and the documentation; #70 merged as `3c30373` and ships `sekictl` in `config-delivery` | CI's build, test, phase-type, and package checks pass in the pinned shell at `b72b2b1` and `5aaf32f`; `fourmolu` and `test_report.py` pass outside the pinned shell | Lanes 1 to 8 pass at `b52cc23`, and lane 1 also at trunk `3c30373`; the full manifest passes in CI at `b72b2b1` and `5aaf32f`; lanes 9 and 10 wait for the operator | 30 of 30 strict trials at trunk `3c30373` and head `82a31cc` meet every budget, with a worst pause of 6.3 ms; m3 endpoints stay below their 50 ms targets; the latency fixture cannot time input results or the recompile handover | #68 had three audit rounds with nothing blocking, and its root verdict is merge-ready at `b72b2b1`; #72's round-2 audits found nothing blocking, and their fixes end at `5aaf32f`; #71, #73, and #74 track follow-ups; media review, merges, and the acceptance record belong to the operator |
+| M3-07 | #68 adds the daily-use configuration and lanes, #72 the m3 workload and campaign, and #75 this plan and the documentation; #70 merged as `3c30373` and ships `sekictl` in `config-delivery` | CI's build, test, phase-type, and package checks pass in the pinned shell at `b72b2b1` and `5aaf32f`; `fourmolu` and `test_report.py` pass outside the pinned shell | Lanes 1 to 8 pass at `b52cc23`, and lane 1 also at trunk `3c30373`; the full manifest passes in CI at `b72b2b1` and `5aaf32f`; the operator passed lanes 9 and 10 on 2026-11-10, after #77 and #78 | 30 of 30 strict trials at trunk `3c30373` and head `82a31cc` meet every budget, with a worst pause of 6.3 ms; m3 endpoints stay below their 50 ms targets; the latency fixture cannot time input results or the recompile handover | #68 had three audit rounds with nothing blocking, and its root verdict is merge-ready at `b72b2b1`; #72's round-2 audits found nothing blocking, and their fixes end at `5aaf32f`; #71, #73, and #74 track follow-ups; media review, merges, and the acceptance record belong to the operator |
