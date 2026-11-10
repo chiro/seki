@@ -43,6 +43,7 @@ module Seki (
   toggleFullscreen,
   restart,
   exitSession,
+  screenWorkspace,
   Scratchpad (..),
   toggleScratchpad,
   resetScratchpad,
@@ -183,6 +184,18 @@ version 4 has no request for this, and the action does nothing there.
 -}
 exitSession :: Action l ()
 exitSession = Core.exitSession
+
+{- | The workspace on the screen at this index, as xmonad's @screenWorkspace@
+gives it. Screens count from 0, left to right by where river places each
+output, then top to bottom. An index with no screen, or an output still
+waiting for a workspace, gives 'Nothing'. By default @Mod-w@, @Mod-e@ and
+@Mod-r@ view the workspace on screens 0, 1 and 2, and with @Shift@ move the
+focused window there:
+
+> screenWorkspace 1 >>= mapM_ (windows . view)
+-}
+screenWorkspace :: Int -> Action l (Maybe String)
+screenWorkspace = Core.screenWorkspace
 
 -- | Open, hide or bring a named pad. Unresolved launches coalesce.
 toggleScratchpad :: String -> Action l ()

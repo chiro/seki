@@ -182,6 +182,11 @@ defaultKeys config =
       [ [key (Mods 0) symbol (Core.windows (StackSet.greedyView tag)), key Shift symbol (Core.windows (StackSet.shift tag))]
       | (tag, symbol) <- zip (workspaces config) [0x31 .. 0x39]
       ]
+    ++ concat
+      [ [key (Mods 0) symbol (onScreen StackSet.view), key Shift symbol (onScreen StackSet.shift)]
+      | (screen, symbol) <- zip [0 ..] [0x77, 0x65, 0x72]
+      , let onScreen f = Core.screenWorkspace screen >>= mapM_ (Core.windows . f)
+      ]
  where
   key modifiers symbol action = (KeyBinding (modMask config .|. modifiers) (Keysym symbol), action)
 

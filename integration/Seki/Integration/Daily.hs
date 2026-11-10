@@ -313,13 +313,15 @@ parseSnapshot = withObject "snapshot" $ \o -> do
 twoOutput :: IO ()
 twoOutput = withDailySession "m3-daily-two-output" (dailyOptions 2) $ \session -> withSubscription session "daily-two-output-subscription.jsonl" $ \stream -> do
   let probe = sessionProbe session
-  termOutput <- placedOutput <$> startedOn session "term"
-  emacsOutput <- placedOutput <$> startedOn session "emacs"
-  let outputs = [(termOutput, "term"), (emacsOutput, "emacs")]
+  termPlaced <- startedOn session "term"
+  emacsPlaced <- startedOn session "emacs"
+  let termOutput = placedOutput termPlaced
+      emacsOutput = placedOutput emacsPlaced
+      outputs = [(termOutput, "term"), (emacsOutput, "emacs")]
       shown title pads = bar outputs [workspace "term" [Occupied, Visible, Focused] "Mirror Tall", workspace "emacs" [Occupied, Visible] "Tall"] title pads
   report "OUTPUTS" (show outputs)
   first <- openWindow probe Blue
-  _ <- openWindowWith probe (windowSpec Green){specAppId = CustomAppId "Emacs"}
+  emacsWindow <- openWindowWith probe (windowSpec Green){specAppId = CustomAppId "Emacs"}
   second <- openWindow probe Green
   waitFocus session "the newest term window has keyboard focus" (Just second)
   setTitle probe second "daily two-output"
@@ -354,6 +356,17 @@ twoOutput = withDailySession "m3-daily-two-output" (dailyOptions 2) $ \session -
   waitFocus session "Mod-Tab focuses the other term window" (Just first)
   modShiftKeys (clientEnvironment session) ["Tab"]
   waitFocus session "Mod-Shift-Tab focuses the newest window again" (Just second)
+  let screenKey placed = if placedX placed == 0 then "w" else "e"
+  modKeys (clientEnvironment session) [screenKey emacsPlaced]
+  waitFocus session ("Mod-" <> screenKey emacsPlaced <> " focuses the Emacs window on its screen") (Just emacsWindow)
+  modKeys (clientEnvironment session) [screenKey termPlaced]
+  waitFocus session ("Mod-" <> screenKey termPlaced <> " focuses the term window again") (Just second)
+  modKeys (clientEnvironment session) ["Tab"]
+  waitFocus session "Mod-Tab focuses the blue term window" (Just first)
+  modShiftKeys (clientEnvironment session) [screenKey emacsPlaced]
+  waitFocus session ("Mod-Shift-" <> screenKey emacsPlaced <> " moves the blue window to the emacs screen and keeps focus on term") (Just second)
+  picture session emacsOutput "the moved window tiles as master beside the Emacs window" [Paint Blue (Box 1 1 398 598) False, Paint Green (Box 401 1 398 598) False]
+  picture session termOutput "term shows its remaining window" [Paint Green (Box 1 1 798 598) True]
 
 stubBuildResources :: DailyHome -> FilePath -> IO [(String, String)]
 stubBuildResources home steps = do
