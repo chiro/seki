@@ -144,6 +144,8 @@ tests =
     , testCase "M2-D08: answers a render sequence that comes before the first manage sequence" testRenderBeforeFirstManage
     , testCase "a manage plan that asks to stop sends stop once after manage_finish, then destroy on finished" testStopLifecycle
     , testCase "a finished seki did not ask for is destroyed and ends the session" testUnrequestedFinished
+    , testCase "a manage plan that ends the session sends exit_session after manage_finish" testEndSession
+    , testCase "a manager older than version 4 sends no exit_session and keeps managing" testEndSessionUnsupported
     , testCase "fails when river reports window management unavailable" testManagerUnavailable
     , testCase "closes startup when the manager global is missing" testMissingManager
     , testCase "closes startup when the XKB bindings global is missing" testMissingXkb
@@ -1240,6 +1242,41 @@ testUnrequestedFinished =
     result <- runRiverSession session
     expectMockSuccess mockDone
     assertEqual "an unrequested finish ends the session" (Right RiverEnded) result
+
+testEndSession :: Assertion
+testEndSession =
+  withRuntimePair $ \target peer -> do
+    mockDone <- runMock $ flip onException (closeTransport peer) $ do
+      reader <- newFrameReader
+      managerId <- bootManager reader peer
+      sendFrames peer [encodedFrame managerId (Opcode 2) (pure ())]
+      receiveSequenceCompletion reader peer managerId (Opcode 2)
+      sendFrames peer [encodedFrame managerId (Opcode 3) (pure ())]
+      receiveExpectedRequest reader peer managerId (Opcode 6) (pure ())
+      receiveSequenceCompletion reader peer managerId (Opcode 4)
+      closeTransport peer
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit endingHandlers
+    result <- runRiverSession session
+    expectMockSuccess mockDone
+    assertEqual "river ends the session by closing the connection" (Right RiverEnded) result
+
+testEndSessionUnsupported :: Assertion
+testEndSessionUnsupported =
+  withRuntimePair $ \target peer -> do
+    mockDone <- runMock $ flip onException (closeTransport peer) $ do
+      reader <- newFrameReader
+      managerId <- bootManagerAt 3 reader peer
+      forM_ [(2, 2), (3, 4), (2, 2)] $ \(start, finish) -> do
+        sendFrames peer [encodedFrame managerId (Opcode start) (pure ())]
+        receiveSequenceCompletion reader peer managerId (Opcode finish)
+      closeTransport peer
+    session <- expectRight =<< openRiverSessionAt target defaultObjectLimit endingHandlers
+    result <- runRiverSession session
+    expectMockSuccess mockDone
+    assertEqual "the session runs until river closes it" (Right RiverEnded) result
+
+endingHandlers :: RiverRuntimeHandlers
+endingHandlers = (runtimeHandlers (const (pure ()))){prepareRiverManagePlan = \_ -> pure (pure EndSession)}
 
 testExternalBatches :: Assertion
 testExternalBatches = withRuntimePair $ \target peer -> do
