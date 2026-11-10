@@ -310,8 +310,8 @@ prepareManagePlan policy snapshot = do
   observer <- readIORef (policyObserver policy)
   observer revision (stateCore next) snapshot
   mapM_ (\cell -> atomically (tryPutTMVar cell revision)) [cell | ExternalInput _ (Just cell) <- external]
-  outcome <- case stepCheck step of
-    NoRestartCheck -> pure KeepManaging
+  outcome <- case stepFollowUp step of
+    NoFollowUp -> pure KeepManaging
     CheckRecordedTarget -> checkRestart RecordedTarget
     CheckReadyTarget -> policyValidatedTarget policy >>= maybe (pure KeepManaging) (checkRestart . CheckedTarget)
   pure (outcome <$ stepPlan step)
@@ -331,14 +331,15 @@ prepareManagePlan policy snapshot = do
 
 data ManageStep = ManageStep
   { stepEffects :: [ManageEffect]
-  , stepCheck :: RestartCheck
+  , stepFollowUp :: ManageFollowUp
   , stepPlan :: ManageM ()
   }
 
 data ManageEffect = LogLine String | RequestBuild | LaunchCommand String
 
-data RestartCheck
-  = NoRestartCheck
+-- | What the policy does once a manage plan is ready.
+data ManageFollowUp
+  = NoFollowUp
   | CheckReadyTarget
   | CheckRecordedTarget
 
@@ -350,7 +351,7 @@ stepManage ::
   [Action i l ()] ->
   PolicyState i l ->
   (PolicyState i l, ManageStep)
-stepManage config canBuild snapshot external stored = (next, ManageStep effects check (mapM_ closeWindow (mapMaybe liveWindow (planClose intents)) >> plan))
+stepManage config canBuild snapshot external stored = (next, ManageStep effects followUp (mapM_ closeWindow (mapMaybe liveWindow (planClose intents)) >> plan))
  where
   inventory = riverRuntimeInventory snapshot
   input = riverRuntimeInput snapshot
@@ -387,11 +388,11 @@ stepManage config canBuild snapshot external stored = (next, ManageStep effects 
       <> map LaunchCommand (planLaunch intents)
       <> map LogLine (planNotices intents)
       <> [LaunchCommand command | (_, _, command) <- planPads intents]
-  (buildRequest, check) = case (canBuild, planRestart intents) of
-    (True, True) -> ([RequestBuild], NoRestartCheck)
+  (buildRequest, followUp) = case (canBuild, planRestart intents) of
+    (True, True) -> ([RequestBuild], NoFollowUp)
     (True, False) -> ([], CheckReadyTarget)
     (False, True) -> ([], CheckRecordedTarget)
-    (False, False) -> ([], NoRestartCheck)
+    (False, False) -> ([], NoFollowUp)
   liveWindow (WindowId w) =
     riverWindowObject <$> (mkObjectId w >>= (`lookupRiverWindow` inventory))
   isInteraction WindowInteraction{} = True
