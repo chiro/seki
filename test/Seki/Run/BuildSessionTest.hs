@@ -91,6 +91,28 @@ tests =
           writeFile (config </> "Main.hs") "user content"
           generate resources{templates = "/missing/templates"} config
           readFile (config </> "Main.hs") >>= (@?= "user content")
+    , testCase "an existing cabal.project follows the installed archive and compiler" $
+        fixture "exit 0" $ \(BuildContext resources config _) _ -> do
+          let project = config </> "cabal.project"
+              installed = resources{archive = "/store/new-seki-config-source/seki-0.2.0.0.tar.gz", compiler = "/store/new-ghc/bin/ghc"}
+          writeFile project "packages: . \"/store/old-seki-config-source/seki-0.1.0.0.tar.gz\" \"../mine/mine-1.0.tar.gz\"\nwith-compiler: /store/old-ghc/bin/ghc\noptimization: 1\n"
+          generate installed config
+          readFile project >>= (@?= "packages: . \"/store/new-seki-config-source/seki-0.2.0.0.tar.gz\" \"../mine/mine-1.0.tar.gz\"\nwith-compiler: /store/new-ghc/bin/ghc\noptimization: 1\n")
+    , testCase "a cabal.project that names the installed resources stays byte for byte" $
+        fixture "exit 0" $ \(BuildContext resources config _) _ -> do
+          let project = config </> "cabal.project"
+              installed = resources{archive = "/store/seki-config-source/seki-0.1.0.0.tar.gz", compiler = "/store/ghc/bin/ghc"}
+              current = "-- mine\npackages: . \"/store/seki-config-source/seki-0.1.0.0.tar.gz\"\nwith-compiler: /store/ghc/bin/ghc"
+          writeFile project current
+          generate installed config
+          readFile project >>= (@?= current)
+    , testCase "a with-compiler path to another kind of compiler stays" $
+        fixture "exit 0" $ \(BuildContext resources config _) _ -> do
+          let project = config </> "cabal.project"
+              chosen = "with-compiler: /opt/compilers/ghc-9.10.3\n"
+          writeFile project chosen
+          generate resources{compiler = "/store/ghc/bin/ghc"} config
+          readFile project >>= (@?= chosen)
     , testCase "worker validates immutable copy, reports full log and wakes the owner" $
         fixture "exit 0" $ \context directory -> do
           wakes <- newIORef (0 :: Int)

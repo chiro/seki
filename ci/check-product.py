@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import sys
@@ -100,6 +101,15 @@ def prove(command, root, env, archive, provisioned=False):
         run(["--check"], 1)
         assert profile.readlink() == old
         project_file.write_bytes(project_bytes)
+        # A project an older delivery generated follows the installed archive and compiler.
+        main.write_text('module Main (main) where\nimport Seki\nmain :: IO ()\nmain = seki def\n')
+        stale = project_bytes.replace(os.fsencode(str(archive)), b"/nix/store/0-old-seki-config-source/seki-0.0.1.tar.gz")
+        stale = re.sub(rb"(?m)^with-compiler: .*/ghc$", b"with-compiler: /nix/store/0-old-ghc/bin/ghc", stale)
+        assert stale.count(b"/nix/store/0-old-") == 2, stale
+        project_file.write_bytes(stale)
+        result = run(["--check"])
+        assert "at the installed seki archive and compiler" in result.stderr
+        assert project_file.read_bytes() == project_bytes
         # Restore bypasses broken source and tools; exactly two runtime arguments.
         recorded = root / "recorded"
         old.chmod(0o700)

@@ -380,6 +380,8 @@ belongs to M3.
 M3's installed `seki` command uses `$XDG_CONFIG_HOME/seki/`, or
 `~/.config/seki/` when that variable is unset. It generates missing `Main.hs`,
 `seki-user.cabal`, and `cabal.project` files without overwriting existing files.
+Before each build, it points the archive and compiler paths in an existing
+`cabal.project` at the installed delivery.
 The generated executable uses the threaded RTS without a default `-N` setting.
 The installed launcher, shipped default runtime, and compiled user image are
 separate executables.
