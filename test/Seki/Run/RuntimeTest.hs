@@ -1157,16 +1157,19 @@ expectRuntimeLeft expected result = case result of
 
 -- | Bind the runtime's globals and return the manager's object ID.
 bootManager :: FrameReader -> Transport -> IO ObjectId
-bootManager reader peer = do
+bootManager = bootManagerAt 4
+
+bootManagerAt :: Word32 -> FrameReader -> Transport -> IO ObjectId
+bootManagerAt version reader peer = do
   (registryId, callbackId) <- receiveStartupRequests reader peer
   sendFrames
     peer
-    [ registryGlobalFrame registryId 7 "river_window_manager_v1" 4
+    [ registryGlobalFrame registryId 7 "river_window_manager_v1" version
     , registryGlobalFrame registryId 8 "river_xkb_bindings_v1" 3
     , registryGlobalFrame registryId 9 "river_layer_shell_v1" 1
     , callbackDoneFrame callbackId 93
     ]
-  (managerId, _, _) <- receiveRuntimeBinds reader peer
+  (managerId, _, _) <- receiveRuntimeBindsAtManagerVersion reader peer version
   pure managerId
 
 expectClosed :: Transport -> Assertion
