@@ -23,16 +23,19 @@ import Control.Exception (IOException, bracket, catch, onException, try)
 import Control.Monad (unless, when)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as B8
+import Data.Char (isDigit)
+import Data.List qualified as List
 import Data.Text qualified as Text
+import Data.Text.Encoding (encodeUtf8)
 import Data.Text.IO qualified as TextIO
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.IO.Handle (hDuplicate)
 import System.Directory hiding (isSymbolicLink)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
-import System.FilePath (isAbsolute, takeDirectory, (</>))
+import System.FilePath (isAbsolute, takeDirectory, takeFileName, (</>))
 import System.IO
-import System.IO.Error (isAlreadyExistsError)
+import System.IO.Error (isAlreadyExistsError, isDoesNotExistError)
 import System.Posix.Files
 import System.Posix.IO (OpenMode (WriteOnly), closeFd, creat, defaultFileFlags, exclusive, fdToHandle, openFd)
 import System.Posix.Signals (sigKILL, signalProcessGroup)
@@ -83,6 +86,7 @@ generate :: Resources -> FilePath -> IO ()
 generate resources directory = do
   createDirectoryIfMissing True directory
   mapM_ missing ["Main.hs", "seki-user.cabal", "cabal.project"]
+  followInstalled resources (directory </> "cabal.project")
  where
   missing name = do
     let path = directory </> name
@@ -97,6 +101,39 @@ generate resources directory = do
           let rendered = replace "@ARCHIVE@" (show (archive resources)) $ replace "@COMPILER@" (compiler resources) content
           hPutStr handle rendered
         hPutStrLn stderr ("seki: created " <> path)
+
+{- | Point an existing project's seki archive and compiler at the installed
+resources. The project outlives the delivery that generated it, and an
+upgraded delivery installs both at new paths. A quoted @seki-VERSION.tar.gz@
+path and a @with-compiler@ path with the installed compiler's file name are
+another delivery's. Every other byte stays.
+-}
+followInstalled :: Resources -> FilePath -> IO ()
+followInstalled resources path = do
+  outcome <- try (BS.readFile path)
+  case outcome of
+    Left e | isDoesNotExistError e -> pure ()
+    Left e -> ioError e
+    Right content -> do
+      let updated = B8.intercalate (B8.singleton '\n') (map line (B8.split '\n' content))
+      when (updated /= content) $ do
+        BS.writeFile path updated
+        hPutStrLn stderr ("seki: pointed " <> path <> " at the installed seki archive and compiler")
+ where
+  encoded = encodeUtf8 . Text.pack
+  installedCompiler = encoded (compiler resources)
+  line text = case B8.strip <$> B8.stripPrefix (B8.pack "with-compiler:") text of
+    Just value | value /= installedCompiler && takeFileName (B8.unpack value) == takeFileName (compiler resources) -> B8.pack "with-compiler: " <> installedCompiler
+    _ -> quoted text
+  -- Odd fields of a split on quotes are quoted strings.
+  quoted text = B8.intercalate (B8.singleton '"') (zipWith field [0 :: Int ..] (B8.split '"' text))
+  field index value
+    | odd index && isArchive (takeFileName (B8.unpack value)) = encoded (archive resources)
+    | otherwise = value
+  isArchive name = case stripSuffix ".tar.gz" =<< List.stripPrefix "seki-" name of
+    Just version -> not (null version) && all (\c -> isDigit c || c == '.') version
+    Nothing -> False
+  stripSuffix suffix = fmap reverse . List.stripPrefix (reverse suffix) . reverse
 
 replace :: String -> String -> String -> String
 replace needle value = go

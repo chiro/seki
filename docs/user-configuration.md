@@ -10,11 +10,15 @@ User executables depend dynamically on that retained closure.
 Run `seki --check` to create missing files in `$XDG_CONFIG_HOME/seki` (default
 `~/.config/seki`), build the project offline, resolve `exe:seki-user` with Cabal
 `list-bin`, copy it to a private generation, and invoke that exact copy with
-`--check`. Existing files, including partial files, are preserved. Correct partial
-files manually using the shipped `examples/config` templates. The generated
-project quotes the absolute archive path, binds the absolute compiler path, and
-uses installed dependencies.
-It does not search for a source checkout or download Hackage packages.
+`--check`. Existing files, including partial files, are preserved. Correct
+partial files manually using the shipped `examples/config` templates. The
+generated project quotes the absolute archive path, binds the absolute compiler
+path, and uses installed dependencies. Each build points an existing
+`cabal.project` at the installed archive and compiler, so a rebuilt delivery
+reaches the configuration. It replaces a quoted path to a
+`seki-<version>.tar.gz` file and a `with-compiler` path with the installed
+compiler's file name, and keeps every other byte. It does not search for a source checkout or download Hackage
+packages.
 
 Check exits zero only when candidate policy validation succeeds. It never selects
 a startup profile, opens Wayland, runs library startup/manage hooks, consumes
