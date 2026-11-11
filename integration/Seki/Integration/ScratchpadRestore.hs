@@ -54,7 +54,7 @@ withManager nested config action = do
     ended <- newEmptyMVar
     dispatcher <- forkIO (runRiverSession session >>= putMVar ended)
     withIPCAt
-      (riverRuntimeDirectory nested </> "seki" </> "ipc.sock")
+      (ipcSocketIn (riverRuntimeDirectory nested))
       policy
       ( do
           void (waitUntil "restore manager attached" assertionTimeoutMicroseconds (readPolicyState policy) (\st -> case coreWorkspaces st of AttachedState{} -> True; _ -> False))

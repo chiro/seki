@@ -49,6 +49,8 @@ module Seki.Integration.Harness (
   requireSetting,
   IntegrationFailure,
   socketQueuedBytes,
+  ipcSocketIn,
+  connectUnix,
   bufferedLine,
   appliedRevision,
 ) where
@@ -284,6 +286,15 @@ assertionTimeoutMicroseconds = 10 * 1000 * 1000
 
 foreign import ccall unsafe "ioctl"
   c_ioctl :: CInt -> CULong -> Ptr () -> IO CInt
+
+ipcSocketIn :: FilePath -> FilePath
+ipcSocketIn runtime = runtime </> "seki" </> "ipc.sock"
+
+connectUnix :: FilePath -> IO Socket
+connectUnix path = do
+  client <- socket AF_UNIX Stream defaultProtocol
+  connect client (SockAddrUnix path) `onException` close client
+  pure client
 
 bufferedLine :: Socket -> IO (IO ByteString)
 bufferedLine client = do
@@ -1250,8 +1261,7 @@ riverInitHelper socketPath = do
   waylandDisplay <- lookupEnv "WAYLAND_DISPLAY" >>= maybe (failIntegration "river did not give its init command WAYLAND_DISPLAY") pure
   xDisplay <- lookupEnv "DISPLAY"
   preload <- lookupEnv "LD_PRELOAD"
-  bracket (socket AF_UNIX Stream defaultProtocol) close $ \connection -> do
-    connect connection (SockAddrUnix socketPath)
+  bracket (connectUnix socketPath) close $ \connection ->
     SocketByteString.sendAll connection . ByteString8.pack $
       "WAYLAND_DISPLAY=" <> waylandDisplay <> "\nDISPLAY=" <> maybe "" id xDisplay <> "\nLD_PRELOAD=" <> maybe "" id preload <> "\n"
 
@@ -1261,8 +1271,7 @@ terminalProbe probeMode socketPath = do
   hSetBuffering stdout NoBuffering
   when (probeMode == ImeTerminalProbe) $
     ByteString.hPut stdout "\ESC[?737769h"
-  bracket (socket AF_UNIX Stream defaultProtocol) close $ \connection -> do
-    connect connection (SockAddrUnix socketPath)
+  bracket (connectUnix socketPath) close $ \connection -> do
     sendLock <- newMVar ()
     lastSize <- newIORef Nothing
     let send payload =

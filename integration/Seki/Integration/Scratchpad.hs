@@ -79,7 +79,7 @@ withPad name outputs action = do
     ordinary <- openWindow probe Green
     root <- maybe (failIntegration "private runtime missing") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
     withIPCAt
-      (root </> "seki" </> "ipc.sock")
+      (ipcSocketIn root)
       (mPolicy fixture)
       ( do
           cli <- getEnv "SEKICTL_EXECUTABLE"
@@ -262,10 +262,8 @@ togglePerformance fixture probe ordinary launches = do
   launchEnd <- getMonotonicTimeNSec
   announce ("SCRATCHPAD_LAUNCH_TO_MAP_AND_INPUT_NS " <> show (launchEnd - launchStart))
   root <- maybe (failIntegration "missing private runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
-  let path = root </> "seki" </> "ipc.sock"
-      subscribe = do
-        client <- socket AF_UNIX Stream defaultProtocol
-        connect client (SockAddrUnix path)
+  let subscribe = do
+        client <- connectUnix (ipcSocketIn root)
         sendAll client "{\"version\":1,\"id\":\"load\",\"op\":\"subscribe\"}\n"
         count <- newIORef (0 :: Int)
         thread <-

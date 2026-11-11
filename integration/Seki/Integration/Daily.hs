@@ -20,7 +20,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Word (Word32)
 import GHC.Clock (getMonotonicTimeNSec)
-import Network.Socket (Family (AF_UNIX), SockAddr (SockAddrUnix), SocketType (Stream), close, connect, defaultProtocol, socket)
+import Network.Socket (close)
 import Network.Socket.ByteString (sendAll)
 import Seki.Fixture.Probe
 import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputOrigins, outputPicture, pictureErrorWith, placeOutputs, portedBorders, saveOutputsSideBySide, withHeldLogoIn, withKeyboard, withNestedRiverUsing)
@@ -652,11 +652,7 @@ data Flood = Flood {floodReplies :: IO Int, floodRevision :: IO Integer, unreadF
 
 withFlood :: DailySession -> Int -> (Flood -> IO a) -> IO a
 withFlood session workers action = do
-  let path = riverRuntimeDirectory (sessionRiver session) </> "seki" </> "ipc.sock"
-      open = do
-        client <- socket AF_UNIX Stream defaultProtocol
-        connect client (SockAddrUnix path) `onException` close client
-        pure client
+  let open = connectUnix (ipcSocketIn (riverRuntimeDirectory (sessionRiver session)))
   stop <- newIORef False
   replies <- newIORef (0 :: Int)
   latest <- newIORef (0 :: Integer)
