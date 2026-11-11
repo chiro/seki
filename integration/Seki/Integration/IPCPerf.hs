@@ -7,9 +7,6 @@ import Control.Concurrent.Chan (newChan, readChan, writeChan)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (bracket, displayException, finally)
 import Control.Monad (forM_, replicateM)
-import Data.Aeson (eitherDecodeStrict', withObject, (.:))
-import Data.Aeson.Types (parseEither)
-import Data.ByteString qualified as BS
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
@@ -69,8 +66,9 @@ ipcPerf = do
                     ( let loop = do
                             bytes <- readSnapshot
                             ended <- getMonotonicTimeNSec
-                            (revision, tag) <- snapshotObservation bytes
-                            writeChan observed (Right (revision, ended, tag))
+                            shot <- requireRight "snapshot reply" (replySnapshot bytes)
+                            tag <- requireRight "focused workspace" (focusedTag shot)
+                            writeChan observed (Right (snapRevision shot, ended, tag))
                             loop
                        in loop
                     )
@@ -104,26 +102,3 @@ ipcPerf = do
               )
               `finally` stop
       saveCapture fixture "ipc-perf"
-
-snapshotObservation :: BS.ByteString -> IO (Integer, Text.Text)
-snapshotObservation bytes = do
-  value <- requireRight "snapshot JSON" (eitherDecodeStrict' bytes)
-  requireRight "snapshot revision and state" (parseEither parser value)
- where
-  parser = withObject "envelope" $ \o ->
-    o .: "result"
-      >>= withObject
-        "result"
-        ( \r ->
-            r .: "snapshot"
-              >>= withObject
-                "snapshot"
-                ( \snapshot -> do
-                    revision <- snapshot .: "revision"
-                    workspaces <- snapshot .: "workspaces"
-                    flags <- mapM (withObject "workspace" (\w -> (,) <$> w .: "tag" <*> w .: "focused")) workspaces
-                    case [tag | (tag, True) <- flags] of
-                      [tag] -> pure (revision, tag)
-                      _ -> fail "snapshot must have one intended workspace focus"
-                )
-        )

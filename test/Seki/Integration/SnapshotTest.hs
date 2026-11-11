@@ -2,7 +2,7 @@
 
 module Seki.Integration.SnapshotTest (tests) where
 
-import Data.Aeson (Value (..), encode, object, (.=))
+import Data.Aeson (Value (..), encode, object, toJSON, (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as Lazy
@@ -37,6 +37,13 @@ tests =
               , snapDevices = []
               , snapBuild = Just (BuildView "failed" 3 (Just "stub check failed") (Just "/state/seki"))
               }
+    , testCase "the focused tag is the one workspace marked focused" $ do
+        snapshot <- projected
+        fmap focusedTag (replySnapshot (line snapshot)) @?= Right (Right "2")
+    , testCase "a snapshot that focuses no workspace has no focused tag" $ do
+        snapshot <- projected
+        let unfocused = object ["tag" .= ("1" :: Text), "occupied" .= False, "visible" .= False, "focused" .= False, "layout" .= ("Full" :: Text)]
+        fmap (isLeft . focusedTag) (replySnapshot (line (with "workspaces" (toJSON [unfocused]) snapshot))) @?= Right True
     , testCase "a snapshot from a WM without a build session has no build report" $ do
         snapshot <- projected
         fmap snapBuild (replySnapshot (line (with "build" Null snapshot))) @?= Right Nothing
