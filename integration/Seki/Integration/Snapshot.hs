@@ -7,6 +7,7 @@ module Seki.Integration.Snapshot (
   DeviceView (..),
   BuildView (..),
   replySnapshot,
+  focusedTag,
 ) where
 
 import Data.Aeson (Value, eitherDecodeStrict', withObject, (.:), (.:?))
@@ -38,6 +39,11 @@ data BuildView = BuildView {buildState :: Text, buildGeneration :: Integer, buil
 
 replySnapshot :: BS.ByteString -> Either String Snapshot
 replySnapshot bytes = eitherDecodeStrict' bytes >>= parseEither (withObject "reply" (\reply -> reply .: "result" >>= withObject "result" (\result -> result .: "snapshot" >>= parseSnapshot)))
+
+focusedTag :: Snapshot -> Either String Text
+focusedTag shot = case [wsTag w | w <- snapWorkspaces shot, wsFocused w] of
+  [tag] -> Right tag
+  _ -> Left "snapshot must focus one workspace"
 
 parseSnapshot :: Value -> Parser Snapshot
 parseSnapshot = withObject "snapshot" $ \o -> do

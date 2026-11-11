@@ -218,7 +218,7 @@ capture session label = do
 withSubscription :: DailySession -> String -> (IO [Snapshot] -> IO a) -> IO a
 withSubscription session file action =
   withSekictlSubscription (clientEnvironment session) (homeCli (sessionHome session)) path $ \received ->
-    action (received >>= mapM (requireRight "subscription snapshot" . replySnapshot)) `finally` keep
+    action received `finally` keep
  where
   path = riverRuntimeDirectory (sessionRiver session) </> file
   keep = do

@@ -7,8 +7,6 @@ import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryReadMVar)
 import Control.Exception (SomeException, bracket, onException, try)
 import Control.Monad (forM_, unless, void, (>=>))
-import Data.Aeson (eitherDecodeStrict', withObject, (.:))
-import Data.Aeson.Types (parseEither)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.List (isInfixOf)
@@ -105,12 +103,7 @@ focusedWorkspace :: [(String, String)] -> IO (Maybe Text)
 focusedWorkspace environment = do
   cli <- requireSetting "SEKICTL_EXECUTABLE"
   reply <- try @SomeException (runProcessCapture environment cli ["snapshot"])
-  pure $ either (const Nothing) (either (const Nothing) id . (eitherDecodeStrict' >=> parseEither focused)) reply
- where
-  focused = withObject "reply" $ \o -> do
-    workspaces <- o .: "result" >>= (.: "snapshot") >>= (.: "workspaces")
-    tags <- mapM (\w -> (,) <$> w .: "focused" <*> w .: "tag") workspaces
-    pure (lookup True tags)
+  pure (either (const Nothing) (either (const Nothing) Just . (replySnapshot >=> focusedTag)) reply)
 
 -- | Capture until two captures 300 ms apart agree.
 settled :: FilePath -> Text -> IO Image

@@ -6,8 +6,6 @@ import Control.Concurrent (forkFinally, forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (IOException, bracket, finally, try)
 import Control.Monad (forM_, join, replicateM, void)
-import Data.Aeson (eitherDecodeStrict', withObject, (.:))
-import Data.Aeson.Types (parseEither)
 import Data.ByteString qualified as BS
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef)
 import Data.List (isInfixOf, isPrefixOf, isSuffixOf, nub, sort)
@@ -262,12 +260,8 @@ ipcMetadata = withFixture (policyConfigOf def) "m3-ipc-metadata" 1 $ \fixture pr
 
 snapshotTitle :: BS.ByteString -> IO (Integer, Maybe Text.Text)
 snapshotTitle bytes = do
-  value <- requireRight "JSON snapshot" (eitherDecodeStrict' bytes)
-  requireRight "snapshot fields" (parseEither parser value)
- where
-  parser = withObject "envelope" $ \envelope -> do
-    result <- envelope .: "result"
-    withObject "result" (\o -> o .: "snapshot" >>= withObject "snapshot" (\snapshot -> (,) <$> snapshot .: "revision" <*> snapshot .: "focused_title")) result
+  shot <- requireRight "snapshot reply" (replySnapshot bytes)
+  pure (snapRevision shot, snapTitle shot)
 
 ipcState :: IO ()
 ipcState = withFixture (policyConfigOf def) "m3-ipc-state" 2 $ \fixture probe -> do
@@ -325,27 +319,8 @@ ipcState = withFixture (policyConfigOf def) "m3-ipc-state" 2 $ \fixture probe ->
 
 snapshotFlags :: BS.ByteString -> IO ([Maybe Text.Text], [(Text.Text, Bool, Bool)], Bool)
 snapshotFlags bytes = do
-  value <- requireRight "snapshot JSON" (eitherDecodeStrict' bytes)
-  requireRight "state fields" (parseEither parser value)
- where
-  parser = withObject "envelope" $ \envelope -> do
-    result <- envelope .: "result"
-    withObject
-      "result"
-      ( \o ->
-          o .: "snapshot"
-            >>= withObject
-              "snapshot"
-              ( \s -> do
-                  outputs <- s .: "outputs"
-                  names <- mapM (withObject "output" (.: "name")) outputs
-                  workspaces <- s .: "workspaces"
-                  flags <- mapM (withObject "workspace" (\w -> (,,) <$> w .: "tag" <*> w .: "visible" <*> w .: "focused")) workspaces
-                  available <- s .: "keyboard_available"
-                  pure (names, flags, available)
-              )
-      )
-      result
+  shot <- requireRight "snapshot reply" (replySnapshot bytes)
+  pure (map outputName (snapOutputs shot), [(wsTag w, wsVisible w, wsFocused w) | w <- snapWorkspaces shot], snapKeyboard shot)
 
 ipcReconnect :: IO ()
 ipcReconnect = withNestedRiver 1 $ \nested -> do
@@ -362,7 +337,7 @@ ipcReconnect = withNestedRiver 1 $ \nested -> do
     withKeyboard environment . withProbe (riverSocket nested) $ \probe -> do
       _ <- openWindow probe Red
       withSekictlSubscription environment cli logFile $ \received -> do
-        let sessions = received >>= mapM snapshotSession
+        let sessions = map snapSession <$> received
         first <- waitUntil "initial CLI subscription" assertionTimeoutMicroseconds sessions (not . null)
         _ <- runProcessCapture environment cli ["spawn", "printf 'once\n' >> '" <> marker <> "'"]
         _ <- waitUntil "spawn executed once" assertionTimeoutMicroseconds (readLines marker) ((== ["once"]) . filter (not . BS.null))
@@ -377,13 +352,6 @@ ipcReconnect = withNestedRiver 1 $ \nested -> do
         forM_ artifacts $ \directory -> do
           BS.readFile logFile >>= BS.writeFile (directory </> "reconnect-subscription.jsonl")
           saveOutputCapture (riverSocket nested) output (directory </> "reconnect.png")
-
-snapshotSession :: BS.ByteString -> IO Text.Text
-snapshotSession bytes = do
-  value <- requireRight "subscription JSON" (eitherDecodeStrict' bytes)
-  requireRight "session identity" (parseEither parser value)
- where
-  parser = withObject "envelope" $ \e -> e .: "result" >>= withObject "result" (\r -> r .: "snapshot" >>= withObject "snapshot" (.: "session"))
 
 ipcLimits :: IO ()
 ipcLimits = do
