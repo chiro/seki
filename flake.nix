@@ -45,8 +45,6 @@
       };
       configLauncher = toolchainPkgs.writeShellScriptBin "seki" ''
         unset SEKI_CONFIG_CABAL_CONFIG
-        # A session asks this path again for the resources of the delivery
-        # installed behind it now, so the path stays unresolved.
         case $0 in
           /*) export SEKI_CONFIG_LAUNCHER="$0" ;;
           *) export SEKI_CONFIG_LAUNCHER="$PWD/$0" ;;

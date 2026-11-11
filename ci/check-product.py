@@ -123,7 +123,7 @@ def prove(command, root, env, archive, provisioned=False):
         assert recorded.read_text().splitlines() == [str(profile), "--restore", str(restore)]
         assert restore.read_bytes() == b"do not consume"
         run(["--restore", "--check"], 1)
-        # A session asks the path it was started through for the resources installed now.
+        # The wrapper exports the unresolved path it was started through; that path names the installed resources.
         installed = root / "installed delivery"
         installed.symlink_to(command.parent.parent)
         old.write_text('#!/bin/sh\nprintf "%s" "$SEKI_CONFIG_LAUNCHER" > "' + str(recorded) + '"\n')

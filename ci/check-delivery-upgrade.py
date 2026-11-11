@@ -104,6 +104,8 @@ def check(work, first, second):
 
 
 if __name__ == "__main__":
-    deliveries = [Path(argument).resolve(strict=True) for argument in sys.argv[1:3]]
+    if len(sys.argv) != 3:
+        sys.exit(__doc__)
+    first, second = (Path(argument).resolve(strict=True) for argument in sys.argv[1:])
     with tempfile.TemporaryDirectory(prefix="seki-upgrade-") as temporary:
-        check(Path(temporary), *deliveries)
+        check(Path(temporary), first, second)
