@@ -20,7 +20,7 @@ import Control.Concurrent (ThreadId, forkIOWithUnmask, killThread)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar)
 import Control.Concurrent.STM (TVar, atomically, modifyTVar', newTVarIO, readTVar, readTVarIO, retry, stateTVar)
 import Control.Exception (IOException, finally, mask_, try)
-import Control.Monad (forever, void)
+import Control.Monad (forever, void, when)
 import Data.Aeson (ToJSON, Value (..), object, toJSON, (.=))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as BS
@@ -59,7 +59,7 @@ transitionBuild state event = case (state, event) of
  where
   start generation = BuildRunning generation False Nothing
 
-data BuildSession = BuildSession (TVar BuildState) ThreadId (MVar ())
+data BuildSession = BuildSession (TVar BuildState) (TVar (Maybe String)) ThreadId (MVar ())
 
 newBuildSession :: IO () -> BuildContext -> IO BuildSession
 newBuildSession wake = newSession wake . Right
@@ -69,17 +69,32 @@ newUnavailableBuildSession wake = newSession wake . Left
 
 {- | One thread runs every build of the session in order, so a result always
 belongs to the build the state shows as running. It reports each change
-through @wake@ rather than the command queue, which may be full.
+through @wake@ rather than the command queue, which may be full. It looks at
+the installed delivery once before the first build, so an idle session
+already warns when it does not run that delivery.
 -}
 newSession :: IO () -> Either String BuildContext -> IO BuildSession
 newSession wake context = do
   state <- newTVarIO BuildIdle
+  warning <- newTVarIO Nothing
   done <- newEmptyMVar
-  thread <- mask_ (forkIOWithUnmask (\unmask -> unmask (forever (runNextBuild context state wake)) `finally` putMVar done ()))
-  pure (BuildSession state thread done)
+  let worker = mapM_ (look warning wake) context >> forever (runNextBuild context state warning wake)
+  thread <- mask_ (forkIOWithUnmask (\unmask -> unmask worker `finally` putMVar done ()))
+  pure (BuildSession state warning thread done)
 
-runNextBuild :: Either String BuildContext -> TVar BuildState -> IO () -> IO ()
-runNextBuild context state wake = do
+-- | Resolve the resources and publish the warning. A changed warning wakes the owner and goes to seki's output.
+look :: TVar (Maybe String) -> IO () -> BuildContext -> IO Resolution
+look warning wake context = do
+  resolution <- resolve context
+  let current = resolvedWarning resolution
+  changed <- atomically (stateTVar warning (\previous -> (previous /= current, current)))
+  when changed $ do
+    mapM_ (\message -> void (try @IOException (hPutStrLn stderr ("seki: " <> message)))) current
+    wake
+  pure resolution
+
+runNextBuild :: Either String BuildContext -> TVar BuildState -> TVar (Maybe String) -> IO () -> IO ()
+runNextBuild context state warning wake = do
   atomically (readTVar state >>= \case BuildRunning{} -> pure (); _ -> retry)
   logPath <- newIORef Nothing
   let step event = atomically (stateTVar state (\current -> let next = transitionBuild current event in (next, next)))
@@ -87,8 +102,7 @@ runNextBuild context state wake = do
   result <- try @IOException $ case context of
     Left message -> ioError (userError message)
     Right installed@(BuildContext _ _ config directory) -> do
-      resolution <- resolve installed
-      mapM_ (\warning -> void (try @IOException (hPutStrLn stderr ("seki: " <> warning)))) (resolvedWarning resolution)
+      resolution <- look warning wake installed
       privateDirectory directory >> generate (resolvedResources resolution) config >> buildWithLog resolution config directory report
   path <- readIORef logPath
   outcome <- case result of
@@ -102,23 +116,24 @@ runNextBuild context state wake = do
   wake
 
 requestBuild :: BuildSession -> IO ()
-requestBuild (BuildSession state _ _) = atomically (modifyTVar' state (`transitionBuild` BuildRequested))
+requestBuild (BuildSession state _ _ _) = atomically (modifyTVar' state (`transitionBuild` BuildRequested))
 
 closeBuildSession :: BuildSession -> IO ()
-closeBuildSession (BuildSession _ thread done) = mask_ (killThread thread >> readMVar done)
+closeBuildSession (BuildSession _ _ thread done) = mask_ (killThread thread >> readMVar done)
 
 readyTarget :: BuildSession -> IO (Maybe ValidatedTarget)
-readyTarget (BuildSession state _ _) =
+readyTarget (BuildSession state _ _ _) =
   readTVarIO state >>= \case
     BuildReady _ target -> pure (Just target)
     _ -> pure Nothing
 
 buildStatus :: BuildSession -> IO Value
-buildStatus (BuildSession state _ _) = do
+buildStatus (BuildSession state warning _ _) = do
   image <- getExecutablePath
+  current <- readTVarIO warning
   status <- readStatus
   pure $ case status of
-    Object fields -> Object (KeyMap.insert "active_image" (toJSON image) fields)
+    Object fields -> Object (KeyMap.insert "warning" (toJSON current) (KeyMap.insert "active_image" (toJSON image) fields))
     other -> other
  where
   readStatus =
@@ -141,7 +156,7 @@ diagnosticTail path =
       )
 
 recordRecoveryFailure :: BuildSession -> String -> IO ()
-recordRecoveryFailure (BuildSession state _ _) message =
+recordRecoveryFailure (BuildSession state _ _ _) message =
   atomically $
     modifyTVar' state $ \case
       BuildIdle -> BuildFailed 0 message Nothing

@@ -220,6 +220,11 @@ The applied revision receipt acknowledges reduction of the request, not build,
 validation, activation, or a displayed frame. The additive `build` snapshot field
 is null for direct runtimes. Installed sessions report state, generation,
 queued generation where applicable, error and full disk log path.
+`warning` is null while the session runs the installed delivery. It is a
+message while the session cannot read the installed delivery, or while that
+delivery ships other build resources than the session runs. A session that
+the installed wrapper started asks the launcher for those resources when the
+session starts and before each build, and `warning` reports the latest answer.
 States include idle, building, failed and validated. A validated image
 has passed its own `--check`; this does not acknowledge activation. A fresh
 managed session and its new IPC session identity establish successful runtime
