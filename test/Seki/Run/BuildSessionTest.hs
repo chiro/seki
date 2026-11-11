@@ -5,7 +5,7 @@ module Seki.Run.BuildSessionTest (tests) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically, tryTakeTMVar)
-import Control.Exception (bracket, bracket_, finally, throwIO)
+import Control.Exception (IOException, bracket, bracket_, finally, throwIO, try)
 import Control.Monad (void)
 import Data.Aeson (Value (..))
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -171,6 +171,15 @@ tests =
             Resolution resources warning <- resolve context
             resources @?= started
             warning @?= Just ("SEKI_CONFIG_LAUNCHER must name an absolute installed resource; builds use " <> archive started <> ", which this session runs")
+    , testCase "a launcher that does not answer by its deadline is stopped and reaped" $
+        fixture "exit 0" $ \(BuildContext _ _ _ state) directory -> do
+          let launcher = directory </> "hanging-launcher"
+              pidFile = directory </> "launcher.pid"
+          writeScript launcher ("#!/bin/sh\necho $$ > '" <> pidFile <> "'\nexec sleep 600\n")
+          outcome <- timeout 10000000 (try (installedResources 1 state launcher) :: IO (Either IOException Resources))
+          assertBool ("the lookup ends with an error at its deadline: " <> show outcome) (maybe False (either (const True) (const False)) outcome)
+          pid <- takeWhile (/= '\n') <$> readFile pidFile
+          doesPathExist ("/proc/" <> pid) >>= assertBool ("launcher " <> pid <> " is gone") . not
     , testCase "a launcher that only repeats the asking session's variables has not answered" $
         fixture "exit 0" $ \(BuildContext started _ config state) directory -> do
           let launcher = directory </> "launcher"
