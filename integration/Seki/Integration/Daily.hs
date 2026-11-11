@@ -5,13 +5,13 @@ module Seki.Integration.Daily (dailyScenarios) where
 import Control.Concurrent (forkFinally, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (IOException, bracket, finally, onException, try)
-import Control.Monad (forM, forM_, unless, void, when)
+import Control.Monad (forM, forM_, unless, void, when, (>=>))
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.Char (isDigit)
 import Data.Either (isRight)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
-import Data.List (find, isPrefixOf, nub, sort)
+import Data.List (find, isInfixOf, isPrefixOf, nub, sort)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe)
 import Data.Text (Text)
@@ -24,12 +24,12 @@ import Seki.Fixture.Probe
 import Seki.Integration.Fixture (Box (..), NestedRiver (..), Paint (..), outputOrigins, outputPicture, pictureErrorWith, placeOutputs, portedBorders, saveOutputsSideBySide, withHeldLogoIn, withKeyboard, withNestedRiverUsing)
 import Seki.Integration.Harness
 import Seki.Integration.M2 (drag)
-import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable, listDirectory, removeFile)
+import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable, listDirectory, removeFile, renameFile)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, takeFileName, (</>))
 import System.IO.Temp (withSystemTempDirectory)
-import System.Posix.Files (readSymbolicLink)
+import System.Posix.Files (createSymbolicLink, readSymbolicLink)
 import System.Process (proc)
 import System.Timeout (timeout)
 
@@ -37,6 +37,7 @@ dailyScenarios :: [(String, IO ())]
 dailyScenarios =
   [ ("m3-daily-two-output", twoOutput)
   , ("m3-daily-build", buildHandover)
+  , ("m3-daily-delivery", deliveryUpgrade)
   , ("m3-daily-bar", barReconnect)
   , ("m3-daily-hotplug", hotplug)
   , ("m3-daily-ime", imeHandover)
@@ -328,9 +329,9 @@ twoOutput = withDailySession "m3-daily-two-output" (dailyOptions 2) $ \session -
   picture session emacsOutput "the moved window tiles as master beside the Emacs window" [Paint Blue (Box 1 1 398 598) False, Paint Green (Box 401 1 398 598) False]
   picture session termOutput "term shows its remaining window" [Paint Green (Box 1 1 798 598) True]
 
-stubBuildResources :: DailyHome -> FilePath -> IO [(String, String)]
-stubBuildResources home steps = do
-  let resources = homeDirectory home </> "config-resources"
+stubBuildResources :: DailyHome -> String -> FilePath -> IO [(String, String)]
+stubBuildResources home name steps = do
+  let resources = homeDirectory home </> name
       templates = resources </> "templates"
   createDirectoryIfMissing True templates
   forM_ ["Main.hs", "seki-user.cabal", "cabal.project"] $ \file -> writeFile (templates </> file) ("-- " <> file <> " for @ARCHIVE@ built by @COMPILER@\n")
@@ -341,7 +342,7 @@ stubBuildResources home steps = do
 buildHandover :: IO ()
 buildHandover = withDailyHome (dailyOptions 2) $ \home -> do
   let steps = homeDirectory home </> "build-steps"
-  resources <- stubBuildResources home steps
+  resources <- stubBuildResources home "config-resources" steps
   runDaily "m3-daily-build" home resources $ \session -> withSubscription session "daily-build-subscription.jsonl" $ \stream -> do
     let probe = sessionProbe session
         stateDirectory = homeStateDirectory home </> "seki"
@@ -376,7 +377,7 @@ buildHandover = withDailyHome (dailyOptions 2) $ \home -> do
     recorded <- stream
     let new = dropWhile ((== oldSession) . snapSession) recorded
     report "NEW_SESSION_BUILD" (show (map snapBuild (take 1 new)))
-    assertEqual "the new session runs the candidate with no build error" [Just (BuildView "idle" 0 Nothing (Just image))] (map snapBuild (take 1 new))
+    assertEqual "the new session runs the candidate with no build error" [Just (BuildView "idle" 0 Nothing (Just image) Nothing)] (map snapBuild (take 1 new))
     lines <$> readFile steps >>= assertEqual "the session ran one build and one list-bin" ["build", "list-bin"]
     restored "after the handover"
     waitFocus session "the pad keeps keyboard focus after the handover" (Just pad)
@@ -387,6 +388,49 @@ buildHandover = withDailyHome (dailyOptions 2) $ \home -> do
     capture session "daily-build-pad-hidden"
     runInputDriver (clientEnvironment session) ["-k", "XF86AudioRaiseVolume"]
     launchedOnce session "XF86AudioRaiseVolume works in the new image" "amixer -D pulse sset Master 2%+"
+
+deliveryUpgrade :: IO ()
+deliveryUpgrade = withDailyHome (dailyOptions 1) $ \home -> do
+  let directory = homeDirectory home
+      launcher = directory </> "installed-seki"
+      steps name = directory </> (name <> "-steps")
+      answering name variables = do
+        let path = directory </> (name <> "-seki")
+        writeExecutable path ("#!/bin/sh\n[ \"$1\" = --resources ] || exit 64\ncat <<'ANSWER'\n" <> unlines [variable <> "=" <> value | (variable, value) <- variables] <> "ANSWER\n")
+        pure path
+      install path = createSymbolicLink path (launcher <> ".next") >> renameFile (launcher <> ".next") launcher
+      built name = doesFileExist (steps name) >>= \exists -> if exists then lines <$> readFile (steps name) else pure []
+      archiveOf = fromMaybe "" . lookup "SEKI_CONFIG_ARCHIVE"
+  first <- stubBuildResources home "first-delivery" (steps "first")
+  second <- stubBuildResources home "second-delivery" (steps "second")
+  firstLauncher <- answering "first" first
+  secondLauncher <- answering "second" second
+  install firstLauncher
+  runDaily "m3-daily-delivery" home (("SEKI_CONFIG_LAUNCHER", launcher) : first) $ \session -> do
+    let handover phase = do
+          old <- snapSession <$> snapshot session
+          _ <- sekictl session ["recompile"]
+          void (waitSnapshot session phase ((/= old) . snapSession))
+    install secondLauncher
+    handover "a recompile after the launcher path moved starts a new session"
+    built "second" >>= assertEqual "the build ran the tools that the launcher names now" ["build", "list-bin"]
+    built "first" >>= assertEqual "the tools that the session started with did not run" []
+    project <- readFile (directory </> ".config" </> "seki" </> "cabal.project")
+    assertEqual ("cabal.project names the installed archive: " <> project) True (archiveOf second `isInfixOf` project)
+    environment <- processEnvironment (sessionPid session)
+    assertEqual "the new image's environment names the resources it was built from" (Just (archiveOf second)) (lookup "SEKI_CONFIG_ARCHIVE" environment)
+    removeFile launcher
+    handover "a recompile without a launcher starts a new session"
+    built "second" >>= assertEqual "the build kept the resources that the session runs" ["build", "list-bin", "build", "list-bin"]
+    built "first" >>= assertEqual "the first delivery's tools still did not run" []
+    warning <- waitUntil "the idle session warns that it cannot read the installed delivery" assertionTimeoutMicroseconds (sessionBuildWarning session) (maybe False (Text.isPrefixOf (Text.pack ("cannot read the installed delivery through " <> launcher))))
+    report "DELIVERY_WARNING" (show warning)
+
+sessionBuildWarning :: DailySession -> IO (Maybe Text)
+sessionBuildWarning session = (snapBuild >=> buildWarning) <$> (sekictl session ["snapshot"] >>= requireRight "snapshot reply" . replySnapshot)
+
+processEnvironment :: Int -> IO [(String, String)]
+processEnvironment pid = map (fmap (drop 1) . break (== '=') . BS8.unpack) . BS.split 0 <$> BS.readFile ("/proc/" <> show pid <> "/environ")
 
 barReconnect :: IO ()
 barReconnect = withDailySession "m3-daily-bar" (dailyOptions 1) $ \session -> withSubscription session "daily-bar-subscription.jsonl" $ \stream -> do
