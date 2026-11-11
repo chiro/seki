@@ -9,7 +9,6 @@ import Control.Exception (SomeException, bracket, onException, try)
 import Control.Monad (forM_, unless, void, (>=>))
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
-import Data.List (isInfixOf)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import GHC.Clock (getMonotonicTimeNSec)
@@ -79,10 +78,10 @@ restartProcess = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-re
           workspace1 <- settled socket output
           ownerBefore <- keyboardOwner <$> keyboardSnapshot probe
           modKeys environment ["q"]
-          _ <- waitUntil "seki execs itself with --restore" assertionTimeoutMicroseconds (BS8.unpack <$> BS.readFile ("/proc/" <> show pid <> "/cmdline")) ("--restore" `isInfixOf`)
-          cmdline <- BS8.split '\NUL' <$> BS.readFile ("/proc/" <> show pid <> "/cmdline")
+          waitForRestoreExec pid
+          cmdline <- processArguments pid
           announce ("m2-restart: restarted as " <> show cmdline)
-          assertEqual "argv[0] keeps the symlink found on PATH" (BS8.pack (bin </> "seki")) (head cmdline)
+          assertEqual "argv[0] keeps the symlink found on PATH" (bin </> "seki") (head cmdline)
           sameImage "workspace 1 after the restart" socket output workspace1
           descriptors <- listDirectory ("/proc/" <> show pid <> "/fd")
           targets <- mapM (\fd -> getSymbolicLinkTarget ("/proc/" <> show pid <> "/fd/" <> fd)) descriptors
