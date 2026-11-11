@@ -131,7 +131,7 @@ inputPerf = withSystemTempDirectory "seki-input-perf" $ \directory -> do
       environment = [("LD_PRELOAD", backend), ("SEKI_FIXTURE_LAYOUT_CYCLE", "1"), ("SEKI_FIXTURE_FAST_CYCLE", "1"), ("SEKI_FIXTURE_LAYOUT_RECEIPTS", receipts)]
   withInputFixture environment (policyConfigOf def{inputRules = rules}) "m3-input-perf" 1 $ \fixture _ -> do
     root <- maybe (failIntegration "missing private runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
-    withIPCAt (root </> "seki" </> "ipc.sock") (mPolicy fixture) $ do
+    withIPCAt (ipcSocketIn root) (mPolicy fixture) $ do
       summary <- runProcessCaptureWithin 30000000 (mEnvironment fixture) "python3" [cwd </> "integration/input/subscriber.py", receipts, result]
       announce ("M3_INPUT_PERF " <> show summary)
     lookupEnv "SEKI_INTEGRATION_ARTIFACT_DIR" >>= mapM_ (\path -> copyFile result (path </> "input-perf.json"))
@@ -161,7 +161,7 @@ workerLifecycle = do
             status <- try @IOException (readFile ("/proc/" <> show pid <> "/status"))
             pure (either (const True) (isInfixOf "State:\tZ") status)
       _ <- waitUntil "first keymap load held in open" assertionTimeoutMicroseconds holds (>= 1)
-      _ <- waitUntil "IPC live while a keymap load is held" assertionTimeoutMicroseconds (doesFileExist (root </> "seki" </> "ipc.sock")) id
+      _ <- waitUntil "IPC live while a keymap load is held" assertionTimeoutMicroseconds (doesFileExist (ipcSocketIn root)) id
       reply <- runProcessCapture (riverEnvironment river) cli ["workspace", "3"]
       value <- requireRight "held-load reply JSON" (eitherDecodeStrict' reply)
       revision <- requireRight "held-load applied revision" (parseEither (withObject "reply" (\o -> o .: "result" >>= withObject "result" (.: "revision"))) value)
@@ -194,7 +194,7 @@ preloadBoundary = do
   cli <- getEnv "SEKICTL_EXECUTABLE"
   withNestedRiverEnvironment [("LD_PRELOAD", backend)] 1 $ \river ->
     bracket (startManagedProcess "actual seki" (riverEnvironment river) (proc seki [])) stopManagedProcess $ \manager -> do
-      _ <- waitUntil "actual seki IPC ready" assertionTimeoutMicroseconds (doesFileExist (riverRuntimeDirectory river </> "seki" </> "ipc.sock")) id
+      _ <- waitUntil "actual seki IPC ready" assertionTimeoutMicroseconds (doesFileExist (ipcSocketIn (riverRuntimeDirectory river))) id
       _ <- runProcessCapture (riverEnvironment river) cli ["snapshot"]
       assertNoProcessPreload "actual seki" manager
       stopManagedProcess (riverProcess river)

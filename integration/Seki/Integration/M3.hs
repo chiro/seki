@@ -177,11 +177,8 @@ ipcBoundary = do
   let config = (policyConfigOf def){policyLaunch = \cmd -> modifyIORef' launched (<> [cmd])}
   withFixture config "m3-ipc-boundary" 1 $ \fixture _ -> do
     root <- maybe (failIntegration "missing fixture runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
-    let path = root </> "seki" </> "ipc.sock"
-        open = do
-          client <- socket AF_UNIX Stream defaultProtocol
-          connect client (SockAddrUnix path)
-          pure client
+    let path = ipcSocketIn root
+        open = connectUnix path
         request bytes = bracket open close $ \client -> sendAll client bytes >> ipcLine client
     withIPCAt path (mPolicy fixture) $ do
       submitExternal (policyIngress (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "initial publication trigger" Accepted
@@ -238,11 +235,8 @@ ipcLine client = do
 ipcMetadata :: IO ()
 ipcMetadata = withFixture (policyConfigOf def) "m3-ipc-metadata" 1 $ \fixture probe -> do
   root <- maybe (failIntegration "missing runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
-  let path = root </> "seki" </> "ipc.sock"
-      open = do
-        client <- socket AF_UNIX Stream defaultProtocol
-        connect client (SockAddrUnix path)
-        pure client
+  let path = ipcSocketIn root
+      open = connectUnix path
       title = "<b>&\"\n$(touch /tmp/seki-title-must-not-run)"
   withIPCAt path (mPolicy fixture) $ bracket open close $ \subscriber -> do
     sendAll subscriber "{\"version\":1,\"id\":\"sub\",\"op\":\"subscribe\"}\n"
@@ -284,11 +278,8 @@ snapshotTitle bytes = do
 ipcState :: IO ()
 ipcState = withFixture (policyConfigOf def) "m3-ipc-state" 2 $ \fixture probe -> do
   root <- maybe (failIntegration "missing runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
-  let path = root </> "seki" </> "ipc.sock"
-      open = do
-        client <- socket AF_UNIX Stream defaultProtocol
-        connect client (SockAddrUnix path)
-        pure client
+  let path = ipcSocketIn root
+      open = connectUnix path
       request bytes = bracket open close $ \client -> sendAll client bytes >> ipcLine client
       snapshot = request "{\"version\":1,\"id\":\"state\",\"op\":\"snapshot\"}\n"
   withIPCAt path (mPolicy fixture) $ do
@@ -414,11 +405,8 @@ ipcLimits = do
           }
   withFixture config "m3-ipc-limits" 1 $ \fixture _ -> do
     root <- maybe (failIntegration "missing runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
-    let path = root </> "seki" </> "ipc.sock"
-        open = do
-          client <- socket AF_UNIX Stream defaultProtocol
-          connect client (SockAddrUnix path)
-          pure client
+    let path = ipcSocketIn root
+        open = connectUnix path
         request bytes = bracket open close $ \client -> sendAll client bytes >> ipcLine client
     withIPCAt path (mPolicy fixture) $ do
       submitExternal (policyIngress (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "publish oversized projection" Accepted
@@ -458,7 +446,7 @@ recompileResponsive = withFixture (policyConfigOf def) "m3-recompile" 1 $ \fixtu
   writeFile wrapper ("#!/bin/sh\necho started >> '" <> started <> "'\nwhile [ ! -f '" <> release <> "' ]; do sleep 0.02; done\necho deliberate-compile-error\nexit 1\n")
   setFileMode wrapper 0o700
   configureBuild (mPolicy fixture) (BuildContext (Resources "/unused" "/unused" "/unused" wrapper directory) directory directory)
-  withIPCAt (root </> "seki" </> "ipc.sock") (mPolicy fixture) $ do
+  withIPCAt (ipcSocketIn root) (mPolicy fixture) $ do
     _ <- openWindow probe Red
     _ <- openWindow probe Green
     receipt <- runProcessCapture environment launcher ["--recompile"]

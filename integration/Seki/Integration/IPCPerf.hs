@@ -26,7 +26,6 @@ import Seki.Run.External
 import Seki.Run.IPC (withIPCAt)
 import Seki.Run.Policy
 import Seki.Run.Runtime
-import System.FilePath ((</>))
 
 ipcPerfScenarios :: [(String, IO ())]
 ipcPerfScenarios = [("m3-ipc-perf", ipcPerf)]
@@ -45,11 +44,8 @@ ipcPerf = do
           }
   withFixtureUsing decorate (policyConfigOf def) "m3-ipc-perf" 1 $ \fixture _ -> do
     root <- maybe (failIntegration "missing runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
-    let path = root </> "seki" </> "ipc.sock"
-        open = do
-          client <- socket AF_UNIX Stream defaultProtocol
-          connect client (SockAddrUnix path)
-          pure client
+    let path = ipcSocketIn root
+        open = connectUnix path
         subscribe = do
           client <- open
           sendAll client "{\"version\":1,\"id\":\"sub\",\"op\":\"subscribe\"}\n"

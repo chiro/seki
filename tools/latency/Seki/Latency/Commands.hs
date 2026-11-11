@@ -19,7 +19,7 @@ import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import Network.Socket
 import Network.Socket.ByteString (sendAll)
-import Seki.Integration.Harness (appliedRevision, bufferedLine)
+import Seki.Integration.Harness (appliedRevision, bufferedLine, connectUnix)
 import Seki.Latency.Snapshot (BuildReport, decodeSnapshot)
 import Seki.Run.IPCSchema (Operation (Subscribe), Request (..), encodeLine)
 import System.Timeout (timeout)
@@ -42,8 +42,8 @@ data Commands = Commands Socket (IO BS.ByteString) (Chan (Either String Publishe
 
 withCommands :: FilePath -> (Commands -> IO a) -> IO a
 withCommands path body =
-  bracket (connectTo path) close $ \commander ->
-    bracket (connectTo path) close $ \subscriber -> do
+  bracket (connectUnix path) close $ \commander ->
+    bracket (connectUnix path) close $ \subscriber -> do
       sendLine subscriber Subscribe
       readReply <- bufferedLine commander
       readSnapshot <- bufferedLine subscriber
@@ -57,12 +57,6 @@ withCommands path body =
         (forkFinally loop (either (writeChan published . Left . displayException) pure))
         killThread
         (\_ -> body (Commands commander readReply published))
-
-connectTo :: FilePath -> IO Socket
-connectTo path = do
-  client <- socket AF_UNIX Stream defaultProtocol
-  connect client (SockAddrUnix path)
-  pure client
 
 sendLine :: Socket -> Operation -> IO ()
 sendLine client operation = either fail (sendAll client) (encodeLine (toJSON (Request "latency" operation)))
