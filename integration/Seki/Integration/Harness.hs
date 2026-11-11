@@ -24,6 +24,8 @@ module Seki.Integration.Harness (
   waitForProcessWithTimeout,
   renderManagedProcessLogs,
   managedProcessPid,
+  processArguments,
+  waitForRestoreExec,
   assertNoProcessPreload,
   stopManagedProcess,
   riverArguments,
@@ -336,6 +338,12 @@ socketQueuedBytes client = withFdSocket client $ \fd -> allocaBytes 4 $ \pointer
   result <- c_ioctl fd 0x541B (castPtr pointer)
   when (result /= 0) (failIntegration "FIONREAD failed")
   fromIntegral <$> (peekByteOff pointer 0 :: IO CInt)
+
+processArguments :: Int -> IO [String]
+processArguments pid = map ByteString8.unpack . filter (not . ByteString.null) . ByteString.split 0 <$> ByteString.readFile ("/proc/" <> show pid <> "/cmdline")
+
+waitForRestoreExec :: Int -> IO ()
+waitForRestoreExec pid = void (waitUntil "seki execs itself with --restore" assertionTimeoutMicroseconds (processArguments pid) (elem "--restore"))
 
 mainWith :: [(String, IO ())] -> IO ()
 mainWith additionalScenarios = do

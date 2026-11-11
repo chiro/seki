@@ -343,7 +343,7 @@ ipcReconnect = withNestedRiver 1 $ \nested -> do
         _ <- waitUntil "spawn executed once" assertionTimeoutMicroseconds (readLines marker) ((== ["once"]) . filter (not . BS.null))
         pid <- managedProcessPid manager >>= maybe (failIntegration "manager pid missing") pure
         key
-        _ <- waitUntil "real exec restart" assertionTimeoutMicroseconds (BS.readFile ("/proc/" <> show pid <> "/cmdline")) (isInfixOf "--restore" . map (toEnum . fromEnum) . BS.unpack)
+        waitForRestoreExec pid
         after <- waitUntil "subscriber reconnects to a fresh session" (assertionTimeoutMicroseconds + 2000000) sessions ((>= 2) . length . nub)
         assertEqual "session identity changed" True (length (nub after) > length (nub first))
         readLines marker >>= assertEqual "spawn was not replayed" ["once", ""]

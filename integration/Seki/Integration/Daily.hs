@@ -192,7 +192,7 @@ waitFocus :: DailySession -> String -> Maybe ProbeWindow -> IO ()
 waitFocus session phase wanted = void (waitUntil phase assertionTimeoutMicroseconds (keyboardSnapshot (sessionProbe session)) ((== wanted) . keyboardOwner))
 
 processImage :: Int -> IO (FilePath, [String])
-processImage pid = (,) <$> readSymbolicLink ("/proc/" <> show pid <> "/exe") <*> (map BS8.unpack . filter (not . BS.null) . BS.split 0 <$> BS.readFile ("/proc/" <> show pid <> "/cmdline"))
+processImage pid = (,) <$> readSymbolicLink ("/proc/" <> show pid <> "/exe") <*> processArguments pid
 
 startedOn :: DailySession -> Text -> IO Placement
 startedOn session tag = maybe (failIntegration ("no output showed " <> Text.unpack tag <> " when the session started: " <> show (sessionOutputs session))) pure (find ((== tag) . placedWorkspace) (sessionOutputs session))

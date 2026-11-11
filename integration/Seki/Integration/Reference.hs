@@ -5,9 +5,8 @@ module Seki.Integration.Reference (referenceScenarios) where
 
 import Control.Exception (bracket, onException)
 import Control.Monad (forM_, void)
-import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
-import Data.List (isInfixOf, sort)
+import Data.List (sort)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Seki.Fixture.Probe
@@ -77,7 +76,7 @@ referenceConfig = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-r
           modShiftKeys base ["l"]
           launched "Mod-Shift-l locks the screen" ["alacritty", "amixer -D pulse sset Master 2%+", "xscreensaver-command --lock"]
           modKeys base ["q"]
-          _ <- waitUntil "seki execs itself with --restore" assertionTimeoutMicroseconds (BS8.unpack <$> BS.readFile ("/proc/" <> show pid <> "/cmdline")) ("--restore" `isInfixOf`)
+          waitForRestoreExec pid
           _ <-
             waitUntil
               "restarted workspace binding selects Emacs"
