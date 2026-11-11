@@ -2,6 +2,7 @@ module Main (main) where
 
 import Seki.Fixture.LayerSurfaceTest qualified as LayerSurfaceFixtureTest
 import Seki.Fixture.ProbeTest qualified as ProbeFixtureTest
+import Seki.Integration.SnapshotTest qualified as SnapshotTest
 import Seki.Internal.Core.ActionTest qualified as ActionTest
 import Seki.Internal.Core.EventTest qualified as CoreEventTest
 import Seki.Internal.Core.GeometryTest qualified as GeometryTest
@@ -67,6 +68,7 @@ main =
         , LatencyPureTest.tests
         , LatencyWorkloadTest.tests
         , LatencySnapshotTest.tests
+        , SnapshotTest.tests
         , LatencyTest.tests
         , ReconcileTest.tests
         , ReconcileTraceTest.tests

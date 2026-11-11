@@ -53,6 +53,7 @@ module Seki.Integration.Harness (
   connectUnix,
   bufferedLine,
   appliedRevision,
+  module Seki.Integration.Snapshot,
 ) where
 
 import Control.Concurrent (forkIO, threadDelay)
@@ -111,6 +112,7 @@ import Network.Socket (
   withFdSocket,
  )
 import Network.Socket.ByteString qualified as SocketByteString
+import Seki.Integration.Snapshot
 import Seki.Internal.Core.Action (kill, spawn)
 import Seki.Internal.Core.ManageHook (idHook)
 import Seki.Internal.Core.Scene (SceneStyle (..), defaultSceneStyle)

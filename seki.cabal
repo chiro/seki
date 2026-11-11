@@ -322,11 +322,13 @@ executable seki-daily-config
 test-suite seki-test
   import:         warnings
   type:           exitcode-stdio-1.0
-  hs-source-dirs: test tools/latency
+  hs-source-dirs: test tools/latency integration
   main-is:        Main.hs
   other-modules:
     Seki.Fixture.LayerSurfaceTest
     Seki.Fixture.ProbeTest
+    Seki.Integration.Snapshot
+    Seki.Integration.SnapshotTest
     Seki.Internal.InputTest
     Seki.Internal.Core.ActionTest
     Seki.Internal.Core.ScratchpadTest
@@ -427,6 +429,7 @@ test-suite seki-integration
   other-modules:
     Seki.Integration.Fixture
     Seki.Integration.Harness
+    Seki.Integration.Snapshot
     Seki.Integration.M1
     Seki.Integration.M2
     Seki.Integration.M3
@@ -467,6 +470,7 @@ executable seki-latency
     Seki.Latency.Snapshot
     Seki.Latency.Workload
     Seki.Integration.Harness
+    Seki.Integration.Snapshot
   build-depends:
     base >=4.20 && <4.21,
     aeson >=2.1 && <2.3,
