@@ -1,4 +1,5 @@
 import importlib.util
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -270,9 +271,10 @@ class ReportTest(unittest.TestCase):
 
     def test_driver_group_covers_every_integration_module_the_driver_compiles(self):
         cabal = (Path(__file__).resolve().parents[2] / "seki.cabal").read_text()
-        stanza = cabal.split("executable seki-latency\n", 1)[1].split("\n\n", 1)[0]
-        modules = [line.strip() for line in stanza.splitlines() if line.strip().startswith("Seki.Integration.")]
-        self.assertIn("Seki.Integration.Harness", modules)
+        stanzas = [s for s in re.split(r"\n(?=\S)", cabal) if s.startswith("executable seki-latency\n")]
+        self.assertEqual(len(stanzas), 1, "seki.cabal has one executable seki-latency stanza")
+        modules = set(re.findall(r"\bSeki\.Integration(?:\.\w+)+", stanzas[0]))
+        self.assertLessEqual({"Seki.Integration.Harness", "Seki.Integration.Snapshot"}, modules)
         for module in modules:
             path = "integration/" + module.replace(".", "/") + ".hs"
             self.assertTrue(any(path == source or path.startswith(source + "/") for source in runner.SOURCES["driver"]), path)
