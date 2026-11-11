@@ -33,7 +33,7 @@ import Data.ByteString.Char8 qualified as Char8
 import Data.Void (Void, absurd)
 import GHC.Clock (getMonotonicTimeNSec)
 import Seki.Internal.Core.Restore (RestoreError (..), RestoreState, decodeRestoreState, encodeRestoreState)
-import Seki.Run.ConfigBuild (ValidatedTarget, atomicLink, validatedPath, validatedProfile)
+import Seki.Run.ConfigBuild (ValidatedTarget, atomicLink, resourceVariables, validatedPath, validatedProfile, validatedResources)
 import Seki.Wire.Transport (ConnectionDiscoveryError, ConnectionTarget, discoverConnectionTarget, resolveConnectionTarget)
 import System.Directory (createDirectoryIfMissing, findExecutable, getCurrentDirectory, removeFile, renameFile)
 import System.Environment (getEnvironment, getExecutablePath, lookupEnv)
@@ -200,16 +200,20 @@ loadRestoreFile path =
 the exec failed, which 'Void' makes a type fact.
 -}
 execRestart :: Launch -> FilePath -> IO IOException
-execRestart launch file = case launchTarget launch of
+execRestart launch = execWith launch []
+
+-- | 'execRestart' with variables that replace the inherited ones of the same name.
+execWith :: Launch -> [(String, String)] -> FilePath -> IO IOException
+execWith launch variables file = case launchTarget launch of
   Left refusal -> pure (userError (describeRefusal refusal))
   Right target ->
     either id absurd
       <$> try @IOException
         ( do
-            env <- filter ((/= "WAYLAND_SOCKET") . fst) <$> getEnvironment
+            inherited <- filter ((`notElem` "WAYLAND_SOCKET" : map fst variables) . fst) <$> getEnvironment
             hFlush stdout
             hFlush stderr
-            launchExec launch target ["--restore", file] env
+            launchExec launch target ["--restore", file] (variables <> inherited)
         )
 
 {- | Reap children the previous process image left behind: launch shells that
@@ -223,7 +227,9 @@ reapInheritedChildren =
     Left (_ :: IOException) -> pure ()
 
 -- Promotion follows successful serialization; immediate exec refusal rolls back
--- before Config reconnects with the old in-memory configuration.
+-- before Config reconnects with the old in-memory configuration. The next
+-- image's SEKI_CONFIG_* name the resources its candidate was built from, so
+-- a build that cannot read the installed delivery keeps the library it runs.
 execValidatedRestart :: Launch -> ValidatedTarget -> FilePath -> IO IOException
 execValidatedRestart launch target file = mask $ \restore -> do
   let profile = validatedProfile target
@@ -238,6 +244,6 @@ execValidatedRestart launch target file = mask $ \restore -> do
       case promoted of
         Left err -> pure err
         Right () -> do
-          failure <- restore (execRestart launch{launchTarget = Right profile} file) `onException` rollback
+          failure <- restore (execWith launch{launchTarget = Right profile} (resourceVariables (validatedResources target)) file) `onException` rollback
           rolledBack <- try @IOException rollback
           pure (either (\err -> userError (show failure <> "; profile rollback failed: " <> show err)) (const failure) rolledBack)
