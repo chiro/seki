@@ -58,6 +58,8 @@ def check(work, first, second):
     def report(phase):
         pid = int((work / "seki.pid").read_text())
         image = os.readlink(f"/proc/{pid}/exe")
+        exported = next(entry.split("=", 1)[1] for entry in Path(f"/proc/{pid}/environ").read_text().split("\0") if entry.startswith("SEKI_CONFIG_ARCHIVE="))
+        log = max((work / "state/seki").glob("build*.log"), key=lambda path: path.stat().st_mtime_ns)
         plan = json.loads((work / "config/seki/dist-newstyle/cache/plan.json").read_text())
         units = {p["id"]: p["pkg-src"]["path"] for p in plan["install-plan"] if p["pkg-name"] == "seki"}
         loaded = [line.split()[2] for line in subprocess.run(["ldd", image], capture_output=True, text=True, check=True).stdout.splitlines() if "libHSseki-" in line]
@@ -66,18 +68,20 @@ def check(work, first, second):
         print(f"UPGRADE {phase}")
         print(f"  link           {os.readlink(link)}")
         print(f"  session        pid {pid} runs {image}")
+        print(f"  environment    SEKI_CONFIG_ARCHIVE={exported} ({label(exported)})")
+        print(f"  build log      {log}: {log.read_text(errors='replace').splitlines()[0]}")
         print(f"  cabal.project  {quoted} ({', '.join(label(path) for path in quoted)})")
         print(f"  plan.json      {sorted(set(units.values()))} ({', '.join(sorted({label(path) for path in units.values()}))})")
         for path in loaded:
             print(f"  ldd            {path}")
         print(f"  profile links  {', '.join(linked) or 'no planned seki unit'}", flush=True)
-        return linked
+        return linked, label(exported)
 
     with (work / "river.log").open("w") as log:
         river = subprocess.Popen(["river", "-no-xwayland", "-c", str(init)], env=env, stdout=log, stderr=subprocess.STDOUT)
     try:
         started = wait("the first session", build_status)
-        assert report("session started from the first delivery") == ["first"]
+        assert report("session started from the first delivery") == (["first"], "first")
         os.symlink(second, work / "delivery.next")
         os.replace(work / "delivery.next", link)
         subprocess.run([str(link / "bin/seki"), "--recompile"], env=env, check=True, capture_output=True, timeout=30)
@@ -88,8 +92,9 @@ def check(work, first, second):
             return build and build["state"] == "idle" and build["active_image"] != started["active_image"]
 
         wait("the handover after the recompile", handed_over)
-        linked = report("after the link moved to the second delivery and seki --recompile")
+        linked, exported = report("after the link moved to the second delivery and seki --recompile")
         assert linked == ["second"], f"the recompile built against the {' and '.join(linked)} delivery"
+        assert exported == "second", f"the new image's environment names the {exported} delivery"
     finally:
         river.send_signal(signal.SIGTERM)
         try:
