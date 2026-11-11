@@ -20,6 +20,7 @@ data-files:
   examples/config/cabal.project
 extra-source-files:
   ci/check-product.py
+  ci/check-delivery-upgrade.py
   ci/check-package.sh
   ci/check-phase-types.sh
   ci/run-integration.sh
