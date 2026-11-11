@@ -43,7 +43,7 @@ tests =
             workspace tag occupied visible focused layout = object ["tag" .= (tag :: Text), "occupied" .= occupied, "visible" .= visible, "focused" .= focused, "layout" .= (layout :: Text)]
             pad = object ["name" .= ("term" :: Text), "state" .= ("hidden" :: Text)]
             keymap = object ["setting" .= ("keymap" :: Text), "status" .= ("applied" :: Text), "requested" .= object ["path" .= ("/keymaps/us.xkb" :: Text)]]
-            device = object ["name" .= ("kbd" :: Text), "lifecycle" .= ("active" :: Text), "results" .= [keymap]]
+            device = object ["name" .= ("kbd" :: Text), "lifecycle" .= ("ready" :: Text), "results" .= [keymap]]
             filled =
               foldr
                 (uncurry with)
@@ -62,7 +62,7 @@ tests =
             , [("term", "hidden")]
             , Just "Editor"
             , True
-            , [DeviceView (Just "kbd") "active" [("keymap", "applied")] (Just "/keymaps/us.xkb")]
+            , [DeviceView (Just "kbd") "ready" [("keymap", "applied")] (Just "/keymaps/us.xkb")]
             )
     , testCase "the focused tag is the one workspace marked focused" $ do
         snapshot <- projected
