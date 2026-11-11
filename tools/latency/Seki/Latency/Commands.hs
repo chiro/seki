@@ -19,8 +19,7 @@ import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import Network.Socket
 import Network.Socket.ByteString (sendAll)
-import Seki.Integration.Harness (appliedRevision, bufferedLine, connectUnix)
-import Seki.Latency.Snapshot (BuildReport, decodeSnapshot)
+import Seki.Integration.Harness (BuildView, Snapshot (..), appliedRevision, bufferedLine, connectUnix, focusedTag, replySnapshot)
 import Seki.Run.IPCSchema (Operation (Subscribe), Request (..), encodeLine)
 import System.Timeout (timeout)
 
@@ -28,7 +27,7 @@ data Published = Published
   { publishedAt :: Word64
   , publishedRevision :: Integer
   , publishedFocus :: Text
-  , publishedBuild :: Maybe BuildReport
+  , publishedBuild :: Maybe BuildView
   }
   deriving (Eq, Show)
 
@@ -51,12 +50,15 @@ withCommands path body =
       let loop = do
             line <- readSnapshot
             received <- getMonotonicTimeNSec
-            writeChan published (fmap (\(revision, focus, build) -> Published received revision focus build) (decodeSnapshot line))
+            writeChan published (replySnapshot line >>= publication received)
             loop
       bracket
         (forkFinally loop (either (writeChan published . Left . displayException) pure))
         killThread
         (\_ -> body (Commands commander readReply published))
+
+publication :: Word64 -> Snapshot -> Either String Published
+publication received shot = (\focus -> Published received (snapRevision shot) focus (snapBuild shot)) <$> focusedTag shot
 
 sendLine :: Socket -> Operation -> IO ()
 sendLine client operation = either fail (sendAll client) (encodeLine (toJSON (Request "latency" operation)))
