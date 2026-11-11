@@ -2,6 +2,7 @@
 
 module Seki.Run.ConfigBuild (
   Resources (..),
+  environmentResources,
   resource,
   xdg,
   stateDirectory,
@@ -31,7 +32,7 @@ import Data.Text.IO qualified as TextIO
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.IO.Handle (hDuplicate)
 import System.Directory hiding (isSymbolicLink)
-import System.Environment (lookupEnv)
+import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath (isAbsolute, takeDirectory, takeFileName, (</>))
 import System.IO
@@ -49,17 +50,27 @@ installedContext =
   lookupEnv "SEKI_CONFIG_ARCHIVE" >>= \case
     Nothing -> pure Nothing
     Just _ -> do
-      resources <- Resources <$> resource "ARCHIVE" <*> resource "GHC" <*> resource "CABAL" <*> resource "ENV" <*> resource "TEMPLATES"
+      resources <- environmentResources
       config <- xdg "XDG_CONFIG_HOME" ".config"
       state <- stateDirectory
       pure (Just (BuildContext resources (config </> "seki") state))
 
+-- | The resources that a lookup of the @SEKI_CONFIG_*@ variables names.
+resourcesFrom :: (String -> Maybe String) -> Either String Resources
+resourcesFrom variable = Resources <$> path "ARCHIVE" <*> path "GHC" <*> path "CABAL" <*> path "ENV" <*> path "TEMPLATES"
+ where
+  path name = installed name (variable ("SEKI_CONFIG_" <> name))
+
+environmentResources :: IO Resources
+environmentResources = getEnvironment >>= either (ioError . userError) pure . resourcesFrom . flip lookup
+
 resource :: String -> IO FilePath
-resource name = do
-  value <- lookupEnv ("SEKI_CONFIG_" <> name)
-  case value of
-    Just path | isAbsolute path -> pure path
-    _ -> ioError (userError ("SEKI_CONFIG_" <> name <> " must name an absolute installed resource"))
+resource name = lookupEnv ("SEKI_CONFIG_" <> name) >>= either (ioError . userError) pure . installed name
+
+installed :: String -> Maybe String -> Either String FilePath
+installed name = \case
+  Just path | isAbsolute path -> Right path
+  _ -> Left ("SEKI_CONFIG_" <> name <> " must name an absolute installed resource")
 
 xdg :: String -> FilePath -> IO FilePath
 xdg name suffix = do

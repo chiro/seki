@@ -35,7 +35,7 @@ launch option = do
       state <- stateDirectory
       executeFile (state </> "profile") False ["--restore", file] Nothing
     _ -> do
-      resources <- Resources <$> resource "ARCHIVE" <*> resource "GHC" <*> resource "CABAL" <*> resource "ENV" <*> resource "TEMPLATES"
+      resources <- environmentResources
       config <- xdg "XDG_CONFIG_HOME" ".config"
       state <- stateDirectory
       privateDirectory state
