@@ -23,6 +23,7 @@ module Seki.Run.ConfigBuild (
   BuildContext (..),
   Resolution (..),
   resolve,
+  installedResources,
 ) where
 
 import Control.Concurrent (threadDelay)
@@ -70,18 +71,18 @@ resolve :: BuildContext -> IO Resolution
 resolve (BuildContext running Nothing _ _) = pure (Resolution running Nothing)
 resolve (BuildContext running (Just (Left refusal)) _ _) = pure (Resolution running (Just (refusal <> "; builds use " <> archive running <> ", which this session runs")))
 resolve (BuildContext running (Just (Right launcher)) _ state) =
-  try (privateDirectory state >> installedResources state launcher) >>= \answer -> pure $ case answer of
+  try (privateDirectory state >> installedResources 30 state launcher) >>= \answer -> pure $ case answer of
     Right installed
       | installed == running -> Resolution installed Nothing
       | otherwise -> Resolution installed (Just ("this session does not run the installed delivery (installed archive " <> archive installed <> ", session archive " <> archive running <> "); a recompile builds against the installed delivery"))
     Left (e :: IOException) -> Resolution running (Just ("cannot read the installed delivery through " <> launcher <> " (" <> show e <> "); builds use " <> archive running <> ", which this session runs"))
 
-installedResources :: FilePath -> FilePath -> IO Resources
-installedResources state launcher = do
+installedResources :: Integer -> FilePath -> FilePath -> IO Resources
+installedResources seconds state launcher = do
   (path, handle) <- openBinaryTempFile state "resources.log"
   answer <- flip finally (hClose handle) $ do
     withoutSessionResources <- filter (not . List.isPrefixOf "SEKI_CONFIG_" . fst) <$> getEnvironment
-    runLogged path handle (Just (30, 65536)) (proc launcher ["--resources"]){env = Just withoutSessionResources}
+    runLogged path handle (Just (seconds, 65536)) (proc launcher ["--resources"]){env = Just withoutSessionResources}
     hFlush handle
     hSeek handle AbsoluteSeek 0
     B8.unpack <$> BS.hGet handle 65536
