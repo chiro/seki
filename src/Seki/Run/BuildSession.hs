@@ -86,7 +86,10 @@ runNextBuild context state wake = do
       report path = writeIORef logPath (Just path) >> step (BuildLogged path) >> wake
   result <- try @IOException $ case context of
     Left message -> ioError (userError message)
-    Right (BuildContext resources config directory) -> privateDirectory directory >> generate resources config >> buildWithLog resources config directory report
+    Right installed@(BuildContext _ _ config directory) -> do
+      resolution <- resolve installed
+      mapM_ (\warning -> void (try @IOException (hPutStrLn stderr ("seki: " <> warning)))) (resolvedWarning resolution)
+      privateDirectory directory >> generate (resolvedResources resolution) config >> buildWithLog resolution config directory report
   path <- readIORef logPath
   outcome <- case result of
     Left err -> do

@@ -177,7 +177,7 @@ buildFailingCheck directory = do
   writeFile candidate ("#!/bin/sh\necho '" <> checkFailure <> "' >&2\nexit 1\n")
   writeFile stub ("#!/bin/sh\ncase \"$3\" in\n  build) exit 0 ;;\n  list-bin) echo '" <> candidate <> "' ;;\n  *) exit 2 ;;\nesac\n")
   mapM_ (`setFileMode` 0o700) [stub, candidate]
-  pure (BuildContext Resources{archive = "/unused", compiler = "/unused", cabal = "cabal", environment = stub, templates = directory} directory directory)
+  pure (BuildContext Resources{archive = "/unused", compiler = "/unused", cabal = "cabal", environment = stub, templates = directory} Nothing directory directory)
 
 runLive :: FilePath -> WorkloadName -> Word64 -> Int -> String -> IO ()
 runLive directory workload seed steps collector = do
