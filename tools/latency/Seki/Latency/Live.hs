@@ -28,7 +28,6 @@ import Seki.Internal.Core.StackSet qualified as S
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Latency.Commands
-import Seki.Latency.Snapshot (BuildReport (..))
 import Seki.Latency.Workload
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.ConfigBuild (BuildContext (..), Resources (..))
@@ -333,10 +332,10 @@ timeCommand commands observe next step = do
   publishes p = do
     unless (Text.unpack (publishedFocus p) == publishedFocusedTag expected) (fail ("subscriber published " <> show p <> " for " <> show next))
     pure p
-  finished generation p = maybe False (\b -> reportedGeneration b == fromIntegral generation && reportedState b /= "building") (publishedBuild p)
+  finished generation p = maybe False (\b -> buildGeneration b == fromIntegral generation && buildState b /= "building") (publishedBuild p)
   failedByStub p = do
     let report = publishedBuild p
-    unless (fmap reportedState report == Just "failed" && maybe False (Text.isInfixOf (Text.pack checkFailure)) (report >>= reportedError)) (fail ("build did not fail at the stub check: " <> show report))
+    unless (fmap buildState report == Just "failed" && maybe False (Text.isInfixOf (Text.pack checkFailure)) (report >>= buildError)) (fail ("build did not fail at the stub check: " <> show report))
     pure p
 
 idleGapMicroseconds :: Int

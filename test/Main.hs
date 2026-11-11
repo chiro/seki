@@ -25,7 +25,6 @@ import Seki.Run.IPCTest qualified as IPCTest
 import Seki.Run.InputTest qualified as RuntimeInputTest
 import Seki.Run.InventoryTest qualified as InventoryTest
 import Seki.Run.LatencyPureTest qualified as LatencyPureTest
-import Seki.Run.LatencySnapshotTest qualified as LatencySnapshotTest
 import Seki.Run.LatencyTest qualified as LatencyTest
 import Seki.Run.LatencyWorkloadTest qualified as LatencyWorkloadTest
 import Seki.Run.ManageWakeTest qualified as ManageWakeTest
@@ -67,7 +66,6 @@ main =
         , ExternalTest.tests
         , LatencyPureTest.tests
         , LatencyWorkloadTest.tests
-        , LatencySnapshotTest.tests
         , SnapshotTest.tests
         , LatencyTest.tests
         , ReconcileTest.tests

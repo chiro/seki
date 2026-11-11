@@ -355,9 +355,7 @@ test-suite seki-test
     Seki.Run.LatencyTest
     Seki.Run.LatencyPureTest
     Seki.Run.LatencyWorkloadTest
-    Seki.Run.LatencySnapshotTest
     Seki.Latency.Pure
-    Seki.Latency.Snapshot
     Seki.Latency.Workload
     Seki.Run.MockRiver
     Seki.Run.BuildSessionTest
@@ -467,7 +465,6 @@ executable seki-latency
     Seki.Latency.Commands
     Seki.Latency.Pure
     Seki.Latency.Live
-    Seki.Latency.Snapshot
     Seki.Latency.Workload
     Seki.Integration.Harness
     Seki.Integration.Snapshot
