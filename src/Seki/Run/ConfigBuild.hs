@@ -69,19 +69,23 @@ installedContext =
       state <- stateDirectory
       pure (Just (BuildContext resources launcher (config </> "seki") state))
 
--- | The resources one build uses, and why they are not the installed delivery's when they are not.
+{- | The resources a build uses now, and a warning while the session does not
+run the installed delivery or cannot read it.
+-}
 data Resolution = Resolution {resolvedResources :: Resources, resolvedWarning :: Maybe String}
 
 {- | A session that the installed wrapper started asks its launcher path again,
 because a rebuilt delivery sits behind the same path. When the launcher does
-not answer, the build keeps the resources this session runs. Never throws.
+not answer, builds keep the resources this session runs. Never throws.
 -}
 resolve :: BuildContext -> IO Resolution
 resolve (BuildContext running Nothing _ _) = pure (Resolution running Nothing)
 resolve (BuildContext running (Just launcher) _ state) =
   try (privateDirectory state >> installedResources state launcher) >>= \answer -> pure $ case answer of
-    Right installed -> Resolution installed Nothing
-    Left (e :: IOException) -> Resolution running (Just ("cannot read the installed delivery through " <> launcher <> " (" <> show e <> "); this build uses " <> archive running <> ", which this session runs"))
+    Right installed
+      | installed == running -> Resolution installed Nothing
+      | otherwise -> Resolution installed (Just ("this session does not run the installed delivery (installed archive " <> archive installed <> ", session archive " <> archive running <> "); a recompile builds against the installed delivery"))
+    Left (e :: IOException) -> Resolution running (Just ("cannot read the installed delivery through " <> launcher <> " (" <> show e <> "); builds use " <> archive running <> ", which this session runs"))
 
 {- | Ask the launcher which resources its delivery installs. The launcher runs
 without this session's own @SEKI_CONFIG_*@, so it cannot answer with them.

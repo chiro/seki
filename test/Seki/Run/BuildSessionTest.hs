@@ -178,6 +178,41 @@ tests =
                 assertBool ("the log reports the launcher: " <> show (take 2 logged)) (any (isPrefixOf ("seki: cannot read the installed delivery through " <> launcher)) (take 2 logged))
             )
               `finally` closeBuildSession session
+    , testCase "the status warns that the launcher cannot answer, before any build and after one" $
+        fixture "exit 0" $ \(BuildContext started _ config state) directory -> do
+          let launcher = directory </> "missing-launcher"
+              warned status = case field "warning" status of
+                Just (String message) -> ("cannot read the installed delivery through " <> Text.pack launcher) `Text.isPrefixOf` message
+                _ -> False
+          wakes <- newIORef (0 :: Int)
+          session <- newBuildSession (modifyIORef' wakes (+ 1)) (BuildContext started (Just launcher) config state)
+          ( do
+              await (warned <$> buildStatus session)
+              idle <- buildStatus session
+              (field "state" idle, field "generation" idle) @?= (Just (String "idle"), Just (Number 0))
+              await ((>= 1) <$> readIORef wakes)
+              requestBuild session
+              void (awaitReady session)
+              buildStatus session >>= assertBool "the warning stays after the build" . warned
+            )
+            `finally` closeBuildSession session
+    , testCase "the status warns while the session does not run the installed delivery, and not once it does" $
+        fixture "exit 0" $ \(BuildContext started _ config state) directory -> do
+          let running = started{archive = "/store/running/seki-0.1.0.0.tar.gz"}
+              installed = started{archive = "/store/installed/seki-0.2.0.0.tar.gz"}
+              launcher = directory </> "launcher"
+          writeScript (directory </> "installed-launcher") (answering installed)
+          writeScript (directory </> "running-launcher") (answering running)
+          pointAt launcher (directory </> "installed-launcher")
+          session <- newBuildSession (pure ()) (BuildContext running (Just launcher) config state)
+          ( do
+              await ((== Just (String "this session does not run the installed delivery (installed archive /store/installed/seki-0.2.0.0.tar.gz, session archive /store/running/seki-0.1.0.0.tar.gz); a recompile builds against the installed delivery")) . field "warning" <$> buildStatus session)
+              pointAt launcher (directory </> "running-launcher")
+              requestBuild session
+              void (awaitReady session)
+              buildStatus session >>= (@?= Just Null) . field "warning"
+            )
+            `finally` closeBuildSession session
     , testCase "worker validates immutable copy, reports full log and wakes the owner" $
         fixture "exit 0" $ \context directory -> do
           wakes <- newIORef (0 :: Int)
