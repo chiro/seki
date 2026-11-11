@@ -263,14 +263,25 @@ class ReportTest(unittest.TestCase):
         self.campaign()
         text = (self.path / "report.md").read_text()
         self.assertIn("Runtime sources under `src`, `src-core`, `src-public`, `src-generated`, and `cbits` are identical across the revisions.", text)
-        self.assertIn("Latency driver sources under `tools/latency`, `integration/Seki/Integration/Harness.hs`, `tools/layer-surface-fixture/src`, "
+        self.assertIn("Latency driver sources under `tools/latency`, `integration/Seki/Integration/Harness.hs`, "
+                      "`integration/Seki/Integration/Snapshot.hs`, `tools/layer-surface-fixture/src`, "
                       "and `tools-generated/layer-surface-fixture` are identical across the revisions, "
                       "so manage, render, and pure differences between them are a noise floor.", text)
+
+    def test_driver_group_covers_every_integration_module_the_driver_compiles(self):
+        cabal = (Path(__file__).resolve().parents[2] / "seki.cabal").read_text()
+        stanza = cabal.split("executable seki-latency\n", 1)[1].split("\n\n", 1)[0]
+        modules = [line.strip() for line in stanza.splitlines() if line.strip().startswith("Seki.Integration.")]
+        self.assertIn("Seki.Integration.Harness", modules)
+        for module in modules:
+            path = "integration/" + module.replace(".", "/") + ".hs"
+            self.assertTrue(any(path == source or path.startswith(source + "/") for source in runner.SOURCES["driver"]), path)
 
     def test_a_driver_difference_claims_no_noise_floor(self):
         self.campaign(driver=False)
         text = (self.path / "report.md").read_text()
-        self.assertIn("Latency driver sources under `tools/latency`, `integration/Seki/Integration/Harness.hs`, `tools/layer-surface-fixture/src`, "
+        self.assertIn("Latency driver sources under `tools/latency`, `integration/Seki/Integration/Harness.hs`, "
+                      "`integration/Seki/Integration/Snapshot.hs`, `tools/layer-surface-fixture/src`, "
                       "and `tools-generated/layer-surface-fixture` differ across the revisions.", text)
         self.assertIn("The WM runs the driver's policy setup", text)
         self.assertNotIn("noise floor", text)
