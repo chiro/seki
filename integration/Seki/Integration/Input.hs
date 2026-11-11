@@ -5,8 +5,6 @@ module Seki.Integration.Input (inputScenarios, inputWorkerMain) where
 
 import Control.Exception (IOException, bracket, try)
 import Control.Monad (void)
-import Data.Aeson (eitherDecodeStrict', withObject, (.:))
-import Data.Aeson.Types (parseEither)
 import Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (isInfixOf)
 import Data.Map.Strict qualified as Map
@@ -163,9 +161,8 @@ workerLifecycle = do
       _ <- waitUntil "first keymap load held in open" assertionTimeoutMicroseconds holds (>= 1)
       _ <- waitUntil "IPC live while a keymap load is held" assertionTimeoutMicroseconds (doesFileExist (ipcSocketIn root)) id
       reply <- runProcessCapture (riverEnvironment river) cli ["workspace", "3"]
-      value <- requireRight "held-load reply JSON" (eitherDecodeStrict' reply)
-      revision <- requireRight "held-load applied revision" (parseEither (withObject "reply" (\o -> o .: "result" >>= withObject "result" (.: "revision"))) value)
-      assertEqual "normal command acknowledged while a load is held" True (revision > (0 :: Integer))
+      revision <- appliedRevision reply
+      assertEqual "normal command acknowledged while a load is held" True (revision > 0)
       _ <- waitUntil "replacement generation loads while the first load is held" assertionTimeoutMicroseconds holds (>= 2)
       stopManagedProcess (riverProcess river)
       _ <- waitUntil "runtime exits with keymap loads still held" assertionTimeoutMicroseconds exited id
