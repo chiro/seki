@@ -200,20 +200,19 @@ loadRestoreFile path =
 the exec failed, which 'Void' makes a type fact.
 -}
 execRestart :: Launch -> FilePath -> IO IOException
-execRestart launch = execWith launch []
+execRestart launch = execOverriding launch []
 
--- | 'execRestart' with variables that replace the inherited ones of the same name.
-execWith :: Launch -> [(String, String)] -> FilePath -> IO IOException
-execWith launch variables file = case launchTarget launch of
+execOverriding :: Launch -> [(String, String)] -> FilePath -> IO IOException
+execOverriding launch overrides file = case launchTarget launch of
   Left refusal -> pure (userError (describeRefusal refusal))
   Right target ->
     either id absurd
       <$> try @IOException
         ( do
-            inherited <- filter ((`notElem` "WAYLAND_SOCKET" : map fst variables) . fst) <$> getEnvironment
+            inherited <- filter ((`notElem` "WAYLAND_SOCKET" : map fst overrides) . fst) <$> getEnvironment
             hFlush stdout
             hFlush stderr
-            launchExec launch target ["--restore", file] (variables <> inherited)
+            launchExec launch target ["--restore", file] (overrides <> inherited)
         )
 
 {- | Reap children the previous process image left behind: launch shells that
@@ -227,12 +226,11 @@ reapInheritedChildren =
     Left (_ :: IOException) -> pure ()
 
 -- Promotion follows successful serialization; immediate exec refusal rolls back
--- before Config reconnects with the old in-memory configuration. The next
--- image's SEKI_CONFIG_* name the resources its candidate was built from, so
--- a build that cannot read the installed delivery keeps the library it runs.
+-- before Config reconnects with the old in-memory configuration.
 execValidatedRestart :: Launch -> ValidatedTarget -> FilePath -> IO IOException
 execValidatedRestart launch target file = mask $ \restore -> do
   let profile = validatedProfile target
+      builtFrom = resourceVariables (validatedResources target)
   previous <- try @IOException (readSymbolicLink profile)
   case previous of
     Left err | not (isDoesNotExistError err) -> pure err
@@ -244,6 +242,6 @@ execValidatedRestart launch target file = mask $ \restore -> do
       case promoted of
         Left err -> pure err
         Right () -> do
-          failure <- restore (execWith launch{launchTarget = Right profile} (resourceVariables (validatedResources target)) file) `onException` rollback
+          failure <- restore (execOverriding launch{launchTarget = Right profile} builtFrom file) `onException` rollback
           rolledBack <- try @IOException rollback
           pure (either (\err -> userError (show failure <> "; profile rollback failed: " <> show err)) (const failure) rolledBack)

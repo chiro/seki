@@ -69,22 +69,19 @@ newUnavailableBuildSession wake = newSession wake . Left
 
 {- | One thread runs every build of the session in order, so a result always
 belongs to the build the state shows as running. It reports each change
-through @wake@ rather than the command queue, which may be full. It looks at
-the installed delivery once before the first build, so an idle session
-already warns when it does not run that delivery.
+through @wake@ rather than the command queue, which may be full.
 -}
 newSession :: IO () -> Either String BuildContext -> IO BuildSession
 newSession wake context = do
   state <- newTVarIO BuildIdle
   warning <- newTVarIO Nothing
   done <- newEmptyMVar
-  let worker = mapM_ (look warning wake) context >> forever (runNextBuild context state warning wake)
-  thread <- mask_ (forkIOWithUnmask (\unmask -> unmask worker `finally` putMVar done ()))
+  let warnWhileIdle = mapM_ (resolveAndWarn warning wake) context
+  thread <- mask_ (forkIOWithUnmask (\unmask -> unmask (warnWhileIdle >> forever (runNextBuild context state warning wake)) `finally` putMVar done ()))
   pure (BuildSession state warning thread done)
 
--- | Resolve the resources and publish the warning. A changed warning wakes the owner and goes to seki's output.
-look :: TVar (Maybe String) -> IO () -> BuildContext -> IO Resolution
-look warning wake context = do
+resolveAndWarn :: TVar (Maybe String) -> IO () -> BuildContext -> IO Resolution
+resolveAndWarn warning wake context = do
   resolution <- resolve context
   let current = resolvedWarning resolution
   changed <- atomically (stateTVar warning (\previous -> (previous /= current, current)))
@@ -102,7 +99,7 @@ runNextBuild context state warning wake = do
   result <- try @IOException $ case context of
     Left message -> ioError (userError message)
     Right installed@(BuildContext _ _ config directory) -> do
-      resolution <- look warning wake installed
+      resolution <- resolveAndWarn warning wake installed
       privateDirectory directory >> generate (resolvedResources resolution) config >> buildWithLog resolution config directory report
   path <- readIORef logPath
   outcome <- case result of

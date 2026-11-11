@@ -51,12 +51,7 @@ import System.Process
 
 data Resources = Resources {archive :: FilePath, compiler :: FilePath, cabal :: FilePath, environment :: FilePath, templates :: FilePath} deriving (Eq, Show)
 data ValidatedTarget = ValidatedTarget {validatedPath :: FilePath, validatedLog :: FilePath, validatedProfile :: FilePath, validatedResources :: Resources} deriving (Eq, Show)
-
-{- | The resources this session runs, the launcher path it was started through
-when the installed wrapper started it, the configuration directory, and the
-state directory.
--}
-data BuildContext = BuildContext Resources (Maybe FilePath) FilePath FilePath
+data BuildContext = BuildContext {sessionResources :: Resources, startedThrough :: Maybe FilePath, configDirectory :: FilePath, buildStateDirectory :: FilePath}
 
 installedContext :: IO (Maybe BuildContext)
 installedContext =
@@ -69,15 +64,8 @@ installedContext =
       state <- stateDirectory
       pure (Just (BuildContext resources launcher (config </> "seki") state))
 
-{- | The resources a build uses now, and a warning while the session does not
-run the installed delivery or cannot read it.
--}
 data Resolution = Resolution {resolvedResources :: Resources, resolvedWarning :: Maybe String}
 
-{- | A session that the installed wrapper started asks its launcher path again,
-because a rebuilt delivery sits behind the same path. When the launcher does
-not answer, builds keep the resources this session runs. Never throws.
--}
 resolve :: BuildContext -> IO Resolution
 resolve (BuildContext running Nothing _ _) = pure (Resolution running Nothing)
 resolve (BuildContext running (Just launcher) _ state) =
@@ -87,16 +75,12 @@ resolve (BuildContext running (Just launcher) _ state) =
       | otherwise -> Resolution installed (Just ("this session does not run the installed delivery (installed archive " <> archive installed <> ", session archive " <> archive running <> "); a recompile builds against the installed delivery"))
     Left (e :: IOException) -> Resolution running (Just ("cannot read the installed delivery through " <> launcher <> " (" <> show e <> "); builds use " <> archive running <> ", which this session runs"))
 
-{- | Ask the launcher which resources its delivery installs. The launcher runs
-without this session's own @SEKI_CONFIG_*@, so it cannot answer with them.
-The output of a failed query stays in the state directory.
--}
 installedResources :: FilePath -> FilePath -> IO Resources
 installedResources state launcher = do
   (path, handle) <- openBinaryTempFile state "resources.log"
   answer <- flip finally (hClose handle) $ do
-    inherited <- getEnvironment
-    runLogged path handle (Just (30, 65536)) (proc launcher ["--resources"]){env = Just (filter (not . List.isPrefixOf "SEKI_CONFIG_" . fst) inherited)}
+    withoutSessionResources <- filter (not . List.isPrefixOf "SEKI_CONFIG_" . fst) <$> getEnvironment
+    runLogged path handle (Just (30, 65536)) (proc launcher ["--resources"]){env = Just withoutSessionResources}
     hFlush handle
     hSeek handle AbsoluteSeek 0
     B8.unpack <$> BS.hGet handle 65536
@@ -104,7 +88,6 @@ installedResources state launcher = do
   removeFile path
   pure resources
 
--- | The resources that a lookup of the @SEKI_CONFIG_*@ variables names.
 resourcesFrom :: (String -> Maybe String) -> Either String Resources
 resourcesFrom variable = Resources <$> path "ARCHIVE" <*> path "GHC" <*> path "CABAL" <*> path "ENV" <*> path "TEMPLATES"
  where
@@ -113,11 +96,9 @@ resourcesFrom variable = Resources <$> path "ARCHIVE" <*> path "GHC" <*> path "C
 resourceVariables :: Resources -> [(String, FilePath)]
 resourceVariables resources = [("SEKI_CONFIG_" <> name, path resources) | (name, path) <- [("ARCHIVE", archive), ("GHC", compiler), ("CABAL", cabal), ("ENV", environment), ("TEMPLATES", templates)]]
 
--- | The launcher's answer to @--resources@: one @NAME=path@ line for each variable.
 renderResources :: Resources -> String
 renderResources = unlines . map (\(name, path) -> name <> "=" <> path) . resourceVariables
 
--- | Lines that name no known variable are ignored, so a newer launcher can print more.
 parseResources :: String -> Either String Resources
 parseResources answer = resourcesFrom (`lookup` [(name, drop 1 path) | (name, path) <- map (break (== '=')) (lines answer)])
 
