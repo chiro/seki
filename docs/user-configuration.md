@@ -57,6 +57,36 @@ managed IPC session identifies the new image. See [IPC](ipc.md) for the status
 contract. Configuration and hooks are trusted code; checking does not provide
 recovery from arbitrary crashes after exec.
 
+The installed wrapper exports `SEKI_CONFIG_LAUNCHER`, the path that `seki` was
+started through. That path is usually a link, and a rebuilt delivery replaces
+the target of the link. A session runs that path with `--resources` when the
+session starts and before each build. `seki --resources` prints the archive,
+the compiler, Cabal, the build environment, and the templates of its delivery,
+one `SEKI_CONFIG_<NAME>=<path>` line each. The build uses the answer, so a
+recompile after a delivery rebuild builds against the new seki library. The
+first line of each build log names the archive of that build. The query has a
+thirty-second deadline and a 64 KiB output threshold.
+
+When the launcher does not answer, the build uses the resources that the
+session runs. The `warning` in the IPC build status, seki's output, and the
+build log give the reason, and the output of the failed query stays in a
+`resources*.log` file in the state directory. The `warning` also appears while
+the installed delivery ships other resources than the session runs, for
+example after a recompile that failed against a new delivery. A restart passes
+the resources of the new image to it as its `SEKI_CONFIG_*` variables, so those
+variables name the seki library that the session runs.
+
+A session that started from a delivery without `SEKI_CONFIG_LAUNCHER` runs a
+seki library that does not ask the launcher. Start seki again once after you
+install the first delivery that exports the variable. A launcher from an older
+delivery answers `--resources` with its usage line. A newer session then keeps
+its own resources and warns.
+
+A recompile that follows a rebuilt delivery hands the saved session state to
+the new seki library. If the new library cannot read the version of that
+state, it logs the reason and starts without the state. The windows stay open,
+and seki manages them as new windows.
+
 Direct development runtimes without `SEKI_CONFIG_ARCHIVE` retain M2's recorded
 target restart behavior. Their IPC owner refuses recompile requests. Do not use
 a second launcher invocation to change a running session.
@@ -65,7 +95,8 @@ For direct development runtime use `cabal run exe:seki-default`; public user
 programs continue to call `Seki.seki config`. The direct launcher requires explicit
 absolute `SEKI_CONFIG_ARCHIVE`, `SEKI_CONFIG_GHC`, `SEKI_CONFIG_CABAL`,
 `SEKI_CONFIG_ENV`, `SEKI_CONFIG_TEMPLATES`, and `SEKI_CONFIG_DEFAULT` resources.
-The installed Nix wrapper supplies these immutable paths. The launcher supplies a private Cabal config, cache and store under its state
+The installed Nix wrapper supplies these immutable paths. A direct run without
+`SEKI_CONFIG_LAUNCHER` builds with the resources in its environment. The launcher supplies a private Cabal config, cache and store under its state
 directory. Direct developer runs can explicitly select an absolute
 `SEKI_CONFIG_CABAL_CONFIG`; the installed wrapper clears this override. Developer
 cached Cabal environments are separate evidence from the installed provisioned path.
@@ -76,7 +107,17 @@ installed `seki` from a fresh home and state directory. It builds the shipped
 skeleton offline, repeats the unchanged build, checks a valid and an invalid
 configuration, checks the compiler, state, and restore failure paths, and starts
 both the default runtime fallback and the built configuration against a sentinel
-Wayland socket.
+Wayland socket. It also checks that the wrapper exports the path it was
+started through, and that `seki --resources` through that path names the
+archive of the delivery.
+
+CI does not run `ci/check-delivery-upgrade.py`, because it needs river and two
+`config-delivery` outputs that ship different archives. To check an upgrade in
+a real session, build the two outputs and run
+`python3 ci/check-delivery-upgrade.py FIRST SECOND`. The script starts a
+session from the first output behind a link, points the link at the second
+output, and runs `seki --recompile`. It passes when the new profile loads the
+seki library that Cabal built from the second archive.
 
 ## Start from the daily-use configuration
 
@@ -154,9 +195,12 @@ To start from it, run these steps from a seki checkout:
 To change the configuration later, edit `~/.config/seki/PortedConfig.hs` and
 run `seki --recompile`, or press Mod-q.
 
-After you rebuild `config-delivery`, start seki again, for example by logging
-out and back in. Mod-q rebuilds against the seki library that the running
-process started with, so it keeps the old library.
+After you rebuild `config-delivery`, press Mod-q or run `seki --recompile`.
+The session builds the configuration against the new delivery and restarts
+into it. To see the archive that the next build uses, run `seki --resources`.
+If the session started from a delivery that does not export
+`SEKI_CONFIG_LAUNCHER`, start seki again once, for example by logging out and
+back in.
 
 To log out, press Mod-Shift-q. river exits and stops the init script, loop
 included.
