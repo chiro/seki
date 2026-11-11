@@ -10,6 +10,7 @@ import Control.Monad (void)
 import Data.Aeson (Value (..))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.IORef
+import Data.List (isPrefixOf)
 import Data.Maybe (isJust)
 import Data.Text qualified as Text
 import Seki.Internal.Core.Action (restart)
@@ -113,6 +114,14 @@ tests =
           writeFile project chosen
           generate resources{compiler = "/store/ghc/bin/ghc"} config
           readFile project >>= (@?= chosen)
+    , testCase "the launcher's answer reads back as the resources it was rendered from" $
+        parseResources (renderResources delivery) @?= Right delivery
+    , testCase "an answer may carry lines that this seki does not know" $
+        parseResources ("bash: warning: setlocale\nSEKI_CONFIG_DEFAULT=/store/seki/bin/seki-default\n" <> renderResources delivery) @?= Right delivery
+    , testCase "an answer that lacks a resource names the missing variable" $
+        parseResources (unlines (filter (not . isPrefixOf "SEKI_CONFIG_GHC=") (lines (renderResources delivery)))) @?= Left "SEKI_CONFIG_GHC must name an absolute installed resource"
+    , testCase "an answer with a relative path is refused" $
+        parseResources (renderResources delivery{templates = "share/templates"}) @?= Left "SEKI_CONFIG_TEMPLATES must name an absolute installed resource"
     , testCase "worker validates immutable copy, reports full log and wakes the owner" $
         fixture "exit 0" $ \context directory -> do
           wakes <- newIORef (0 :: Int)
@@ -236,6 +245,9 @@ tests =
           doesFileExist (directory </> "escaped") >>= (@?= False)
           readFile (directory </> "started") >>= assertEqual "closed session starts no compiler" "started\n"
     ]
+
+delivery :: Resources
+delivery = Resources "/store/source/seki-0.1.0.0.tar.gz" "/store/ghc/bin/ghc" "/store/cabal/bin/cabal" "/store/env/bin/seki-config-env" "/store/templates"
 
 fixture :: String -> (BuildContext -> FilePath -> IO ()) -> IO ()
 fixture check body = withSystemTempDirectory "seki-build-test" $ \directory -> do

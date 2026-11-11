@@ -3,6 +3,8 @@
 module Seki.Run.ConfigBuild (
   Resources (..),
   environmentResources,
+  renderResources,
+  parseResources,
   resource,
   xdg,
   stateDirectory,
@@ -42,7 +44,7 @@ import System.Posix.IO (OpenMode (WriteOnly), closeFd, creat, defaultFileFlags, 
 import System.Posix.Signals (sigKILL, signalProcessGroup)
 import System.Process
 
-data Resources = Resources {archive :: FilePath, compiler :: FilePath, cabal :: FilePath, environment :: FilePath, templates :: FilePath}
+data Resources = Resources {archive :: FilePath, compiler :: FilePath, cabal :: FilePath, environment :: FilePath, templates :: FilePath} deriving (Eq, Show)
 data ValidatedTarget = ValidatedTarget {validatedPath :: FilePath, validatedLog :: FilePath, validatedProfile :: FilePath} deriving (Eq, Show)
 data BuildContext = BuildContext Resources FilePath FilePath
 installedContext :: IO (Maybe BuildContext)
@@ -60,6 +62,17 @@ resourcesFrom :: (String -> Maybe String) -> Either String Resources
 resourcesFrom variable = Resources <$> path "ARCHIVE" <*> path "GHC" <*> path "CABAL" <*> path "ENV" <*> path "TEMPLATES"
  where
   path name = installed name (variable ("SEKI_CONFIG_" <> name))
+
+resourceVariables :: Resources -> [(String, FilePath)]
+resourceVariables resources = [("SEKI_CONFIG_" <> name, path resources) | (name, path) <- [("ARCHIVE", archive), ("GHC", compiler), ("CABAL", cabal), ("ENV", environment), ("TEMPLATES", templates)]]
+
+-- | The launcher's answer to @--resources@: one @NAME=path@ line for each variable.
+renderResources :: Resources -> String
+renderResources = unlines . map (\(name, path) -> name <> "=" <> path) . resourceVariables
+
+-- | Lines that name no known variable are ignored, so a newer launcher can print more.
+parseResources :: String -> Either String Resources
+parseResources answer = resourcesFrom (`lookup` [(name, drop 1 path) | (name, path) <- map (break (== '=')) (lines answer)])
 
 environmentResources :: IO Resources
 environmentResources = getEnvironment >>= either (ioError . userError) pure . resourcesFrom . flip lookup

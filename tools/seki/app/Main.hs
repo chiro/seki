@@ -25,8 +25,9 @@ main = do
     [] -> launch Start
     ["--check"] -> launch Check
     ["--recompile"] -> runClient ["recompile"]
+    ["--resources"] -> try environmentResources >>= either (\(err :: IOException) -> diagnostic ("seki: " <> show err) >> exitFailure) (putStr . renderResources)
     ["--restore", file] | take 2 file /= "--" -> launch (Restore file)
-    _ -> diagnostic "usage: seki [--check | --recompile | --restore FILE]" >> exitFailure
+    _ -> diagnostic "usage: seki [--check | --recompile | --resources | --restore FILE]" >> exitFailure
 
 launch :: Options -> IO ()
 launch option = do
