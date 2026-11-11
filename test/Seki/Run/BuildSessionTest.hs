@@ -10,7 +10,7 @@ import Control.Monad (void)
 import Data.Aeson (Value (..))
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.IORef
-import Data.List (isPrefixOf)
+import Data.List (isPrefixOf, sort)
 import Data.Maybe (isJust)
 import Data.Text qualified as Text
 import Seki.Internal.Core.Action (restart)
@@ -289,7 +289,8 @@ tests =
           readSymbolicLink profile >>= (@?= old)
     , testCase "a restart hands the next image the resources its candidate was built from" $
         fixture "exit 0" $ \(BuildContext started _ config state) directory -> do
-          target <- build started{archive = "/store/installed/seki-0.2.0.0.tar.gz"} config state
+          let installed = started{archive = "/store/installed/seki-0.2.0.0.tar.gz", compiler = "/store/installed/ghc"}
+          target <- build installed config state
           handed <- newIORef []
           let launch =
                 Launch
@@ -301,9 +302,8 @@ tests =
                   }
           _ <- withVariables (("SEKI_CONFIG_LAUNCHER", "/installed/bin/seki") : resourceVariables started) (execValidatedRestart launch target (directory </> "saved"))
           env <- readIORef handed
-          [value | ("SEKI_CONFIG_ARCHIVE", value) <- env] @?= ["/store/installed/seki-0.2.0.0.tar.gz"]
-          [value | ("SEKI_CONFIG_ENV", value) <- env] @?= [environment started]
-          lookup "SEKI_CONFIG_LAUNCHER" env @?= Just "/installed/bin/seki"
+          sort [variable | variable@(name, _) <- env, "SEKI_CONFIG_" `isPrefixOf` name]
+            @?= sort (("SEKI_CONFIG_LAUNCHER", "/installed/bin/seki") : resourceVariables installed)
     , testCase "a checked replacement does not depend on the old executable still existing" $
         fixture "exit 0" $ \(BuildContext resources _ config state) directory -> do
           target <- build resources config state
