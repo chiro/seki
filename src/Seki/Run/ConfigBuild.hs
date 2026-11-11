@@ -17,6 +17,7 @@ module Seki.Run.ConfigBuild (
   validatedPath,
   validatedLog,
   validatedProfile,
+  validatedResources,
   atomicLink,
   installedContext,
   BuildContext (..),
@@ -49,7 +50,7 @@ import System.Posix.Signals (sigKILL, signalProcessGroup)
 import System.Process
 
 data Resources = Resources {archive :: FilePath, compiler :: FilePath, cabal :: FilePath, environment :: FilePath, templates :: FilePath} deriving (Eq, Show)
-data ValidatedTarget = ValidatedTarget {validatedPath :: FilePath, validatedLog :: FilePath, validatedProfile :: FilePath} deriving (Eq, Show)
+data ValidatedTarget = ValidatedTarget {validatedPath :: FilePath, validatedLog :: FilePath, validatedProfile :: FilePath, validatedResources :: Resources} deriving (Eq, Show)
 
 {- | The resources this session runs, the launcher path it was started through
 when the installed wrapper started it, the configuration directory, and the
@@ -243,7 +244,7 @@ buildWithLog (Resolution resources warning) config state reportLog = bracket (op
       setFileMode candidate 0o500
       runLogged logPath logHandle (Just (10, 1048576)) (proc candidate ["--check"])
       hFlush logHandle
-      pure (ValidatedTarget candidate logPath (state </> "profile"))
+      pure (ValidatedTarget candidate logPath (state </> "profile") resources)
     )
     `catch` \(e :: IOException) -> do
       hFlush logHandle

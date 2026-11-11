@@ -245,6 +245,23 @@ tests =
           createSymbolicLink old profile
           _ <- execValidatedRestart launch target saved
           readSymbolicLink profile >>= (@?= old)
+    , testCase "a restart hands the next image the resources its candidate was built from" $
+        fixture "exit 0" $ \(BuildContext started _ config state) directory -> do
+          target <- build started{archive = "/store/installed/seki-0.2.0.0.tar.gz"} config state
+          handed <- newIORef []
+          let launch =
+                Launch
+                  { launchFirstTarget = Left XdgRuntimeDirMissing
+                  , launchReconnectTarget = Left XdgRuntimeDirMissing
+                  , launchTarget = Right (directory </> "profile")
+                  , launchStateDir = Right directory
+                  , launchExec = \_ _ env -> writeIORef handed env >> throwIO (userError "injected exec failure")
+                  }
+          _ <- withVariables (("SEKI_CONFIG_LAUNCHER", "/installed/bin/seki") : resourceVariables started) (execValidatedRestart launch target (directory </> "saved"))
+          env <- readIORef handed
+          [value | ("SEKI_CONFIG_ARCHIVE", value) <- env] @?= ["/store/installed/seki-0.2.0.0.tar.gz"]
+          [value | ("SEKI_CONFIG_ENV", value) <- env] @?= [environment started]
+          lookup "SEKI_CONFIG_LAUNCHER" env @?= Just "/installed/bin/seki"
     , testCase "a checked replacement does not depend on the old executable still existing" $
         fixture "exit 0" $ \(BuildContext resources _ config state) directory -> do
           target <- build resources config state
