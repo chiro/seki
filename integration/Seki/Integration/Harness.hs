@@ -90,7 +90,7 @@ import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.Char (ord)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
-import Data.List (intercalate, nub, sort)
+import Data.List (intercalate, isPrefixOf, nub, sort)
 import Data.Maybe (fromMaybe, isJust)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
@@ -1701,21 +1701,22 @@ requireEnvironmentValue name environment =
 
 isIsolatedVariable :: String -> Bool
 isIsolatedVariable name =
-  name
-    `elem` [ "WAYLAND_SOCKET"
-           , "WAYLAND_DISPLAY"
-           , "DISPLAY"
-           , "DBUS_SESSION_BUS_ADDRESS"
-           , "GTK_IM_MODULE"
-           , "QT_IM_MODULE"
-           , "XMODIFIERS"
-           , "SDL_IM_MODULE"
-           , "XDG_RUNTIME_DIR"
-           , "XDG_CONFIG_HOME"
-           , "LD_PRELOAD"
-           , "WLR_BACKENDS"
-           , "WLR_HEADLESS_OUTPUTS"
-           ]
+  "SEKI_CONFIG_" `isPrefixOf` name
+    || name
+      `elem` [ "WAYLAND_SOCKET"
+             , "WAYLAND_DISPLAY"
+             , "DISPLAY"
+             , "DBUS_SESSION_BUS_ADDRESS"
+             , "GTK_IM_MODULE"
+             , "QT_IM_MODULE"
+             , "XMODIFIERS"
+             , "SDL_IM_MODULE"
+             , "XDG_RUNTIME_DIR"
+             , "XDG_CONFIG_HOME"
+             , "LD_PRELOAD"
+             , "WLR_BACKENDS"
+             , "WLR_HEADLESS_OUTPUTS"
+             ]
 
 createPrivateDirectory :: FilePath -> IO ()
 createPrivateDirectory path = createDirectory path >> setFileMode path 0o700
