@@ -37,6 +37,7 @@ trap finalize_log EXIT
 cd -- "$repository_root"
 
 python3 -B examples/waybar/test_seki.py
+python3 -B integration/input/test_subscriber.py
 python3 integration/input/guard.py
 fixture_build=$(mktemp -d "${TMPDIR:-/tmp}/seki-input-build.XXXXXXXX")
 trap 'finalize_log; python3 integration/input/guard.py; rm -rf -- "$fixture_build"' EXIT

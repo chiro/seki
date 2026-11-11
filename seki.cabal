@@ -30,6 +30,7 @@ extra-source-files:
   integration/input/build.sh
   integration/input/guard.py
   integration/input/subscriber.py
+  integration/input/test_subscriber.py
   integration/ipc-stream.py
   examples/waybar/seki.py
   examples/waybar/test_seki.py
