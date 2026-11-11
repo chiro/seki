@@ -45,6 +45,12 @@
       };
       configLauncher = toolchainPkgs.writeShellScriptBin "seki" ''
         unset SEKI_CONFIG_CABAL_CONFIG
+        # A session asks this path again for the resources of the delivery
+        # installed behind it now, so the path stays unresolved.
+        case $0 in
+          /*) export SEKI_CONFIG_LAUNCHER="$0" ;;
+          *) export SEKI_CONFIG_LAUNCHER="$PWD/$0" ;;
+        esac
         export SEKI_CONFIG_ARCHIVE=${configArchive}/seki-0.1.0.0.tar.gz
         export SEKI_CONFIG_GHC=${configCompiler}/bin/ghc
         export SEKI_CONFIG_CABAL=${cabal}/bin/cabal

@@ -30,8 +30,8 @@ def prove(command, root, env, archive, provisioned=False):
         # Explicit developer-only cached source acquisition; installed mode forbids repositories.
         (project / "cabal.project.local").write_text("active-repositories: hackage.haskell.org\n")
 
-    def run(args, expected=0, overrides=None):
-        result = subprocess.run([str(command), *args], env=dict(env, **(overrides or {})),
+    def run(args, expected=0, overrides=None, through=command):
+        result = subprocess.run([str(through), *args], env=dict(env, **(overrides or {})),
                                 cwd=root, capture_output=True, text=True, timeout=240)
         print("PRODUCT", args, result.returncode, result.stdout, result.stderr, flush=True)
         assert result.returncode == expected, result
@@ -123,6 +123,15 @@ def prove(command, root, env, archive, provisioned=False):
         assert recorded.read_text().splitlines() == [str(profile), "--restore", str(restore)]
         assert restore.read_bytes() == b"do not consume"
         run(["--restore", "--check"], 1)
+        # A session asks the path it was started through for the resources installed now.
+        installed = root / "installed delivery"
+        installed.symlink_to(command.parent.parent)
+        old.write_text('#!/bin/sh\nprintf "%s" "$SEKI_CONFIG_LAUNCHER" > "' + str(recorded) + '"\n')
+        run(["--restore", str(restore)], overrides={"SEKI_CONFIG_LAUNCHER": "/inherited"}, through=installed / "bin/seki")
+        if provisioned:
+            assert recorded.read_text() == str(installed / "bin/seki"), recorded.read_text()
+        answer = dict(line.split("=", 1) for line in run(["--resources"], through=installed / "bin/seki").stdout.splitlines())
+        assert answer["SEKI_CONFIG_ARCHIVE"] == str(archive)
         # An unwritable/invalid state location fails check before runtime.
         blocked = root / "blocked"
         blocked.write_text("file")
