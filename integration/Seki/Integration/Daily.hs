@@ -400,9 +400,9 @@ deliveryUpgrade = withDailyHome (dailyOptions 1) $ \home -> do
         pure path
       install path = createSymbolicLink path (launcher <> ".next") >> renameFile (launcher <> ".next") launcher
       built name = doesFileExist (steps name) >>= \exists -> if exists then lines <$> readFile (steps name) else pure []
-      archiveOf = fromMaybe "" . lookup "SEKI_CONFIG_ARCHIVE"
   first <- stubBuildResources home "first-delivery" (steps "first")
   second <- stubBuildResources home "second-delivery" (steps "second")
+  installedArchive <- maybe (failIntegration "the second delivery names no archive") pure (lookup "SEKI_CONFIG_ARCHIVE" second)
   firstLauncher <- answering "first" first
   secondLauncher <- answering "second" second
   install firstLauncher
@@ -416,9 +416,9 @@ deliveryUpgrade = withDailyHome (dailyOptions 1) $ \home -> do
     built "second" >>= assertEqual "the build ran the tools that the launcher names now" ["build", "list-bin"]
     built "first" >>= assertEqual "the tools that the session started with did not run" []
     project <- readFile (directory </> ".config" </> "seki" </> "cabal.project")
-    assertEqual ("cabal.project names the installed archive: " <> project) True (archiveOf second `isInfixOf` project)
+    assertEqual ("cabal.project names the installed archive: " <> project) True (installedArchive `isInfixOf` project)
     environment <- processEnvironment (sessionPid session)
-    assertEqual "the new image's environment names the resources it was built from" (Just (archiveOf second)) (lookup "SEKI_CONFIG_ARCHIVE" environment)
+    assertEqual "the new image's environment names the resources it was built from" (Just installedArchive) (lookup "SEKI_CONFIG_ARCHIVE" environment)
     removeFile launcher
     handover "a recompile without a launcher starts a new session"
     built "second" >>= assertEqual "the build kept the resources that the session runs" ["build", "list-bin", "build", "list-bin"]
