@@ -5,7 +5,7 @@ module Seki.Integration.M3 (m3Scenarios, ipcScenarios, recompileScenarios) where
 import Control.Concurrent (forkFinally, forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (IOException, bracket, finally, try)
-import Control.Monad (forM_, replicateM, void)
+import Control.Monad (forM_, join, replicateM, void)
 import Data.Aeson (eitherDecodeStrict', withObject, (.:))
 import Data.Aeson.Types (parseEither)
 import Data.ByteString qualified as BS
@@ -31,6 +31,7 @@ import Seki.Run.Config (policyConfigOf)
 import Seki.Run.ConfigBuild (BuildContext (..), Resources (..))
 import Seki.Run.External
 import Seki.Run.IPC (withIPCAt)
+import Seki.Run.IPCSchema (maxLineBytes)
 import Seki.Run.Inventory (riverInventoryOutputs)
 import Seki.Run.Policy
 import Seki.Run.Runtime
@@ -179,10 +180,9 @@ ipcBoundary = do
     root <- maybe (failIntegration "missing fixture runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
     let path = ipcSocketIn root
         open = connectUnix path
-        request bytes = bracket open close $ \client -> sendAll client bytes >> ipcLine client
     withIPCAt path (mPolicy fixture) $ do
       submitExternal (policyIngress (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "initial publication trigger" Accepted
-      initial <- request "{\"version\":1,\"id\":\"a\",\"op\":\"snapshot\"}\n"
+      initial <- request path "{\"version\":1,\"id\":\"a\",\"op\":\"snapshot\"}\n"
       assertEqual "initial snapshot" True ("\"workspaces\"" `BS.isInfixOf` initial)
       cliExecutable <- requireSetting "SEKICTL_EXECUTABLE"
       cli <- runProcessCapture (mEnvironment fixture) cliExecutable ["workspace", "3"]
@@ -191,46 +191,39 @@ ipcBoundary = do
       saveCapture fixture "ipc-regression"
       second <- try @IOException (withIPCAt path (mPolicy fixture) (pure ()))
       assertEqual "second live server refused" True (either (const True) (const False) second)
-      _ <- request "{\"version\":1,\"id\":\"a\",\"op\":\"snapshot\"}\n"
+      _ <- request path "{\"version\":1,\"id\":\"a\",\"op\":\"snapshot\"}\n"
       saveCapture fixture "socket-owner"
       bracket open close $ \client -> do
         sendAll client "{\"version\":1,"
         sendAll client "\"id\":\"frag\",\"op\":\"workspace\",\"tag\":\"2\"}\n"
-        response <- ipcLine client
+        response <- join (bufferedLine client)
         assertEqual "fragment accepted once" True ("\"revision\"" `BS.isInfixOf` response)
       bracket open close $ \client -> do
-        sendAll client (BS.replicate 65537 32)
+        sendAll client (BS.replicate (maxLineBytes + 1) 32)
         ended <- timeout assertionTimeoutMicroseconds (recv client 1)
         assertEqual "oversized disconnect" (Just BS.empty) ended
       forM_ [BS.pack [255, 10], "{\"version\":9,\"id\":\"bad\",\"op\":\"snapshot\"}\n"] $ \bad -> do
-        response <- request bad
+        response <- request path bad
         assertEqual "invalid request error" True ("\"error\"" `BS.isInfixOf` response)
       saveCapture fixture "framing"
       bracket open close $ \unread -> do
         sendAll unread "{\"version\":1,\"id\":\"slow\",\"op\":\"subscribe\"}\n"
         bracket open close $ \client -> do
+          readReply <- bufferedLine client
           forM_ [1 .. 1000 :: Int] $ \n -> do
             let tag = if odd n then "1" else "2"
             sendAll client ("{\"version\":1,\"id\":\"load\",\"op\":\"workspace\",\"tag\":\"" <> tag <> "\"}\n")
-            response <- ipcLine client
+            response <- readReply
             assertEqual "every update acknowledged after application" True ("\"revision\"" `BS.isInfixOf` response)
         saveCapture fixture "slow-reader"
       bracket open close $ \client -> sendAll client "{\"version\":1,\"id\":\"gone\",\"op\":\"spawn\",\"command\":\"disconnect-marker\"}\n"
       void (waitUntil "disconnected client's admitted command applied" assertionTimeoutMicroseconds (readIORef launched) (elem "disconnect-marker"))
-      response <- request "{\"version\":1,\"id\":\"healthy\",\"op\":\"workspace\",\"tag\":\"3\"}\n"
+      response <- request path "{\"version\":1,\"id\":\"healthy\",\"op\":\"workspace\",\"tag\":\"3\"}\n"
       assertEqual "disconnect preserves session ingress" True ("\"revision\"" `BS.isInfixOf` response)
       announce "M3_IPC_BOUNDARY all 1000 updates acknowledged; disconnect isolation and duplicate server passed"
 
-ipcLine :: Socket -> IO BS.ByteString
-ipcLine client = do
-  result <- timeout assertionTimeoutMicroseconds (readLine BS.empty)
-  maybe (failIntegration "IPC response timed out") pure result
- where
-  readLine pending = do
-    byte <- recv client 1
-    if byte == "\n" || BS.null byte
-      then pure pending
-      else if BS.length pending >= 65536 then failIntegration "oversized IPC reply" else readLine (pending <> byte)
+request :: FilePath -> BS.ByteString -> IO BS.ByteString
+request path bytes = bracket (connectUnix path) close $ \client -> sendAll client bytes >> join (bufferedLine client)
 
 ipcMetadata :: IO ()
 ipcMetadata = withFixture (policyConfigOf def) "m3-ipc-metadata" 1 $ \fixture probe -> do
@@ -241,14 +234,15 @@ ipcMetadata = withFixture (policyConfigOf def) "m3-ipc-metadata" 1 $ \fixture pr
   withIPCAt path (mPolicy fixture) $ bracket open close $ \subscriber -> do
     sendAll subscriber "{\"version\":1,\"id\":\"sub\",\"op\":\"subscribe\"}\n"
     submitExternal (policyIngress (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "publish initial" Accepted
-    initial <- ipcLine subscriber
+    readSnapshot <- bufferedLine subscriber
+    initial <- readSnapshot
     (initialRevision, initialTitle) <- snapshotTitle initial
     assertEqual "initial subscription has no title" Nothing initialTitle
     announce ("M3_IPC_INITIAL " <> show initial)
     window <- openWindow probe Red
     setTitle probe window "first title"
     let waitTitle expected = do
-          line <- ipcLine subscriber
+          line <- readSnapshot
           (revision, observed) <- snapshotTitle line
           if observed == Just expected then pure (revision, line) else waitTitle expected
     (mappedRevision, mapped) <- waitTitle "first title"
@@ -280,8 +274,7 @@ ipcState = withFixture (policyConfigOf def) "m3-ipc-state" 2 $ \fixture probe ->
   root <- maybe (failIntegration "missing runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
   let path = ipcSocketIn root
       open = connectUnix path
-      request bytes = bracket open close $ \client -> sendAll client bytes >> ipcLine client
-      snapshot = request "{\"version\":1,\"id\":\"state\",\"op\":\"snapshot\"}\n"
+      snapshot = request path "{\"version\":1,\"id\":\"state\",\"op\":\"snapshot\"}\n"
   withIPCAt path (mPolicy fixture) $ do
     _ <- openWindow probe Red
     submitExternal (policyIngress (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "publish" Accepted
@@ -319,7 +312,7 @@ ipcState = withFixture (policyConfigOf def) "m3-ipc-state" 2 $ \fixture probe ->
       ( replicateM 32 $ do
           client <- open
           sendAll client "{\"version\":1,\"id\":\"capacity\",\"op\":\"subscribe\"}\n"
-          initialLine <- ipcLine client
+          initialLine <- join (bufferedLine client)
           assertEqual "connection admitted" True ("\"snapshot\"" `BS.isInfixOf` initialLine)
           pure client
       )
@@ -327,7 +320,7 @@ ipcState = withFixture (policyConfigOf def) "m3-ipc-state" 2 $ \fixture probe ->
       $ \_ -> bracket open close $ \extra -> do
         response <- timeout assertionTimeoutMicroseconds (try @IOException (recv extra 1))
         assertEqual "33rd connection closed" True (case response of Just (Left _) -> True; Just (Right bytes) -> BS.null bytes; Nothing -> False)
-    _ <- waitUntil "subscriber slots released on EOF without new state" assertionTimeoutMicroseconds (try @IOException snapshot) (either (const False) (BS.isInfixOf "\"snapshot\""))
+    _ <- waitUntil "subscriber slots released on EOF without new state" assertionTimeoutMicroseconds (try @IOException (try @IntegrationFailure snapshot)) (either (const False) (either (const False) (BS.isInfixOf "\"snapshot\"")))
     announce "M3_IPC_CAPACITY 32 admitted; 33rd closed; idle EOF releases slots"
 
 snapshotFlags :: BS.ByteString -> IO ([Maybe Text.Text], [(Text.Text, Bool, Bool)], Bool)
@@ -407,17 +400,16 @@ ipcLimits = do
     root <- maybe (failIntegration "missing runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
     let path = ipcSocketIn root
         open = connectUnix path
-        request bytes = bracket open close $ \client -> sendAll client bytes >> ipcLine client
     withIPCAt path (mPolicy fixture) $ do
       submitExternal (policyIngress (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "publish oversized projection" Accepted
-      tooLarge <- request "{\"version\":1,\"id\":\"large-id\",\"op\":\"snapshot\"}\n"
+      tooLarge <- request path "{\"version\":1,\"id\":\"large-id\",\"op\":\"snapshot\"}\n"
       assertEqual "oversized snapshot reported" True ("snapshot_too_large" `BS.isInfixOf` tooLarge)
       assertEqual "oversize error preserves request ID" True ("large-id" `BS.isInfixOf` tooLarge)
       bracket open close $ \subscriber -> do
         sendAll subscriber "{\"version\":1,\"id\":\"subscribe-id\",\"op\":\"subscribe\"}\n"
-        initial <- ipcLine subscriber
+        initial <- join (bufferedLine subscriber)
         assertEqual "oversized subscription is explicit" True ("snapshot_too_large" `BS.isInfixOf` initial)
-        applied <- request "{\"version\":1,\"id\":\"ack-id\",\"op\":\"spawn\",\"command\":\"large-snapshot-marker\"}\n"
+        applied <- request path "{\"version\":1,\"id\":\"ack-id\",\"op\":\"spawn\",\"command\":\"large-snapshot-marker\"}\n"
         assertEqual "oversized projection cannot drop application reply" True ("\"revision\"" `BS.isInfixOf` applied && "ack-id" `BS.isInfixOf` applied)
         readIORef launched >>= assertEqual "spawn intent ran once" ["large-snapshot-marker"]
       announce "M3_IPC_LIMITS oversized snapshot/subscription explicit; independent application reply preserved"
