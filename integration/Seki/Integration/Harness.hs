@@ -118,6 +118,7 @@ import Seki.Internal.Core.StackSet qualified as StackSet
 import Seki.Internal.Core.State (CoreState (..), Workspaces (..))
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
+import Seki.Run.IPCSchema (maxLineBytes)
 import Seki.Run.Inventory (
   RiverInventory,
   RiverOutputState (..),
@@ -305,7 +306,7 @@ bufferedLine client = do
           Just n -> do
             writeIORef pending (ByteString.drop (n + 1) bytes)
             pure (ByteString.take n bytes)
-          Nothing | ByteString.length bytes > 65536 -> failIntegration "oversized response"
+          Nothing | ByteString.length bytes > maxLineBytes -> failIntegration "oversized response"
           Nothing -> do
             chunk <- SocketByteString.recv client 4096
             if ByteString.null chunk then failIntegration "unexpected IPC disconnect" else writeIORef pending (bytes <> chunk) >> readOne
