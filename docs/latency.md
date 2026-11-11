@@ -62,8 +62,10 @@ reverse the order of the revisions.
 
 The runner compares two groups of sources across the revisions with `git
 diff`. The runtime group is `src`, `src-core`, `src-public`, `src-generated`,
-and `cbits`. The latency driver group is `tools/latency` and
-`integration/Seki/Integration/Harness.hs`. When the runtime group is
+and `cbits`. The latency driver group is `tools/latency`,
+`integration/Seki/Integration/Harness.hs`,
+`integration/Seki/Integration/Snapshot.hs`, `tools/layer-surface-fixture/src`,
+and `tools-generated/layer-surface-fixture`. When the runtime group is
 identical, the report calls the m2 manage and render differences a noise
 floor and claims no speedup or regression. The pure interval also runs the
 driver's checksum fold, so the report extends the noise floor to pure m2 only

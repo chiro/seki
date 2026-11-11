@@ -43,7 +43,8 @@ SCHEMA = 4
 
 SOURCES = {"runtime": ["src", "src-core", "src-public", "src-generated", "cbits"],
            "driver": ["tools/latency", "integration/Seki/Integration/Harness.hs",
-                      "tools/layer-surface-fixture/src", "tools-generated/layer-surface-fixture"]}
+                      "integration/Seki/Integration/Snapshot.hs", "tools/layer-surface-fixture/src",
+                      "tools-generated/layer-surface-fixture"]}
 
 BUDGETS = {"pure_p99": ("pure", "p99_ms", 2), "manage_p99": ("manage", "p99_ms", 10),
            "render_p99": ("render", "p99_ms", 10), "wm_gc_max": ("wm_rts", "max_stw_pause_ms", 10)}
