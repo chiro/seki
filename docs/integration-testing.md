@@ -22,7 +22,8 @@ nix develop --no-write-lock-file .#ci --command ci/run-integration.sh
 
 This command:
 
-1. runs the Waybar example's unit test, `examples/waybar/test_seki.py`;
+1. runs the Waybar example's unit test, `examples/waybar/test_seki.py`, and
+   the layout subscriber's self-test, `integration/input/test_subscriber.py`;
 2. builds the private input fixture, with the headless-river guard before and
    after the run;
 3. builds `seki-integration`;
