@@ -134,7 +134,7 @@ tests =
           writeScript (directory </> "second-launcher") (answering second)
           pointAt launcher (directory </> "first-launcher")
           writeFile project (projectFor started{archive = "/store/started/seki-0.1.0.0.tar.gz", compiler = "/store/started-ghc/bin/ghc"})
-          session <- newBuildSession (pure ()) (BuildContext started (Just launcher) config state)
+          session <- newBuildSession (pure ()) (BuildContext started (Just (Right launcher)) config state)
           ( do
               requestBuild session
               awaitStatus session "validated" 1
@@ -154,7 +154,7 @@ tests =
               launcher = directory </> "launcher"
           writeScript launcher "#!/bin/sh\necho 'usage: seki [--check | --recompile | --restore FILE]' >&2\nexit 1\n"
           writeFile project "packages: . \"/store/older/seki-0.1.0.0.tar.gz\"\n"
-          session <- newBuildSession (pure ()) (BuildContext running (Just launcher) config state)
+          session <- newBuildSession (pure ()) (BuildContext running (Just (Right launcher)) config state)
           ( do
               requestBuild session
               target <- awaitReady session
@@ -164,11 +164,18 @@ tests =
               assertBool ("the log says why the build keeps the session's resources: " <> show (take 2 logged)) (any (isPrefixOf ("seki: cannot read the installed delivery through " <> launcher)) (take 2 logged))
             )
             `finally` closeBuildSession session
+    , testCase "a launcher setting that is not an absolute path leaves builds on the resources the session runs, with a warning" $
+        fixture "exit 0" $ \(BuildContext started _ _ _) _ ->
+          withVariables (("SEKI_CONFIG_LAUNCHER", "bin/seki") : resourceVariables started) $ do
+            context <- installedContext >>= maybe (assertFailure "no build context") pure
+            Resolution resources warning <- resolve context
+            resources @?= started
+            warning @?= Just ("SEKI_CONFIG_LAUNCHER must name an absolute installed resource; builds use " <> archive started <> ", which this session runs")
     , testCase "a launcher that only repeats the asking session's variables has not answered" $
         fixture "exit 0" $ \(BuildContext started _ config state) directory -> do
           let launcher = directory </> "launcher"
           writeScript launcher "#!/bin/sh\nenv | grep '^SEKI_CONFIG_'\n"
-          session <- newBuildSession (pure ()) (BuildContext started (Just launcher) config state)
+          session <- newBuildSession (pure ()) (BuildContext started (Just (Right launcher)) config state)
           withVariables (resourceVariables started{archive = "/store/echo/seki-0.1.0.0.tar.gz"}) $
             ( do
                 requestBuild session
@@ -185,7 +192,7 @@ tests =
                 Just (String message) -> ("cannot read the installed delivery through " <> Text.pack launcher) `Text.isPrefixOf` message
                 _ -> False
           wakes <- newIORef (0 :: Int)
-          session <- newBuildSession (modifyIORef' wakes (+ 1)) (BuildContext started (Just launcher) config state)
+          session <- newBuildSession (modifyIORef' wakes (+ 1)) (BuildContext started (Just (Right launcher)) config state)
           ( do
               await (warned <$> buildStatus session)
               idle <- buildStatus session
@@ -204,7 +211,7 @@ tests =
           writeScript (directory </> "installed-launcher") (answering installed)
           writeScript (directory </> "running-launcher") (answering running)
           pointAt launcher (directory </> "installed-launcher")
-          session <- newBuildSession (pure ()) (BuildContext running (Just launcher) config state)
+          session <- newBuildSession (pure ()) (BuildContext running (Just (Right launcher)) config state)
           ( do
               await ((== Just (String "this session does not run the installed delivery (installed archive /store/installed/seki-0.2.0.0.tar.gz, session archive /store/running/seki-0.1.0.0.tar.gz); a recompile builds against the installed delivery")) . field "warning" <$> buildStatus session)
               pointAt launcher (directory </> "running-launcher")

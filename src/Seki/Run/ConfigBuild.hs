@@ -51,7 +51,7 @@ import System.Process
 
 data Resources = Resources {archive :: FilePath, compiler :: FilePath, cabal :: FilePath, environment :: FilePath, templates :: FilePath} deriving (Eq, Show)
 data ValidatedTarget = ValidatedTarget {validatedPath :: FilePath, validatedLog :: FilePath, validatedProfile :: FilePath, validatedResources :: Resources} deriving (Eq, Show)
-data BuildContext = BuildContext {sessionResources :: Resources, startedThrough :: Maybe FilePath, configDirectory :: FilePath, buildStateDirectory :: FilePath}
+data BuildContext = BuildContext {sessionResources :: Resources, startedThrough :: Maybe (Either String FilePath), configDirectory :: FilePath, buildStateDirectory :: FilePath}
 
 installedContext :: IO (Maybe BuildContext)
 installedContext =
@@ -59,7 +59,7 @@ installedContext =
     Nothing -> pure Nothing
     Just _ -> do
       resources <- environmentResources
-      launcher <- lookupEnv "SEKI_CONFIG_LAUNCHER" >>= traverse (either (ioError . userError) pure . resourcePath "LAUNCHER" . Just)
+      launcher <- fmap (resourcePath "LAUNCHER" . Just) <$> lookupEnv "SEKI_CONFIG_LAUNCHER"
       config <- xdg "XDG_CONFIG_HOME" ".config"
       state <- stateDirectory
       pure (Just (BuildContext resources launcher (config </> "seki") state))
@@ -68,7 +68,8 @@ data Resolution = Resolution {resolvedResources :: Resources, resolvedWarning ::
 
 resolve :: BuildContext -> IO Resolution
 resolve (BuildContext running Nothing _ _) = pure (Resolution running Nothing)
-resolve (BuildContext running (Just launcher) _ state) =
+resolve (BuildContext running (Just (Left refusal)) _ _) = pure (Resolution running (Just (refusal <> "; builds use " <> archive running <> ", which this session runs")))
+resolve (BuildContext running (Just (Right launcher)) _ state) =
   try (privateDirectory state >> installedResources state launcher) >>= \answer -> pure $ case answer of
     Right installed
       | installed == running -> Resolution installed Nothing
