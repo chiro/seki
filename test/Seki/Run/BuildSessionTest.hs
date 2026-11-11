@@ -298,7 +298,11 @@ tests =
           readSymbolicLink profile >>= (@?= old)
     , testCase "a restart hands the next image the resources its candidate was built from" $
         fixture "exit 0" $ \(BuildContext started _ config state) directory -> do
-          let installed = started{archive = "/store/installed/seki-0.2.0.0.tar.gz", compiler = "/store/installed/ghc"}
+          let installedEnvironment = directory </> "installed-environment"
+              installedTemplates = directory </> "installed-templates"
+              installed = Resources "/store/installed/seki-0.2.0.0.tar.gz" "/store/installed/ghc" "/store/installed/cabal" installedEnvironment installedTemplates
+          createSymbolicLink (environment started) installedEnvironment
+          createSymbolicLink (templates started) installedTemplates
           target <- build installed config state
           handed <- newIORef []
           let launch =
