@@ -5,7 +5,7 @@ module Seki.Run.BuildSessionTest (tests) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically, tryTakeTMVar)
-import Control.Exception (bracket, finally, throwIO)
+import Control.Exception (bracket, bracket_, finally, throwIO)
 import Control.Monad (void)
 import Data.Aeson (Value (..))
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -26,6 +26,7 @@ import Seki.Run.Restart
 import Seki.Run.Runtime (RiverInputSnapshot (..), RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
 import Seki.Wire.Transport (ConnectionDiscoveryError (..), ConnectionTarget (..))
 import System.Directory
+import System.Environment (setEnv, unsetEnv)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Files (createSymbolicLink, readSymbolicLink, setFileMode)
@@ -45,7 +46,7 @@ tests =
         queued @?= BuildRunning 1 True Nothing
         transitionBuild queued (BuildFinished (Left ("obsolete", Nothing))) @?= BuildRunning 2 False Nothing
     , testCase "policy build completion wakes the owner through a full command queue" $
-        fixture "exit 0" $ \context@(BuildContext resources _ _) directory -> do
+        fixture "exit 0" $ \context@(BuildContext resources _ _ _) directory -> do
           writeFile (environment resources) ("#!/bin/sh\nfor arg do\ncase \"$arg\" in\nbuild) touch '" <> directory </> "started'; while [ ! -f '" <> directory </> "release' ]; do sleep 0.02; done; exit 0;;\nlist-bin) printf '%s\\n' '" <> directory </> "image'; exit 0;;\nesac\ndone\nexit 2\n")
           policy <- newPolicy (PolicyConfig [] [] Layout.Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (const (pure (Right ()))) (\_ -> pure ())) >>= either (assertFailure . show) pure
           configureBuild policy context
@@ -87,20 +88,20 @@ tests =
             )
             `finally` closePolicy policy
     , testCase "existing user files do not open template resources" $
-        fixture "exit 0" $ \(BuildContext resources config _) _ -> do
+        fixture "exit 0" $ \(BuildContext resources _ config _) _ -> do
           generate resources config
           writeFile (config </> "Main.hs") "user content"
           generate resources{templates = "/missing/templates"} config
           readFile (config </> "Main.hs") >>= (@?= "user content")
     , testCase "an existing cabal.project follows the installed archive and compiler" $
-        fixture "exit 0" $ \(BuildContext resources config _) _ -> do
+        fixture "exit 0" $ \(BuildContext resources _ config _) _ -> do
           let project = config </> "cabal.project"
               installed = resources{archive = "/store/new-seki-config-source/seki-0.2.0.0.tar.gz", compiler = "/store/new-ghc/bin/ghc"}
           writeFile project "packages: . \"/store/old-seki-config-source/seki-0.1.0.0.tar.gz\" \"../mine/mine-1.0.tar.gz\"\nwith-compiler: /store/old-ghc/bin/ghc\noptimization: 1\n"
           generate installed config
           readFile project >>= (@?= "packages: . \"/store/new-seki-config-source/seki-0.2.0.0.tar.gz\" \"../mine/mine-1.0.tar.gz\"\nwith-compiler: /store/new-ghc/bin/ghc\noptimization: 1\n")
     , testCase "a cabal.project that names the installed resources stays byte for byte" $
-        fixture "exit 0" $ \(BuildContext resources config _) _ -> do
+        fixture "exit 0" $ \(BuildContext resources _ config _) _ -> do
           let project = config </> "cabal.project"
               installed = resources{archive = "/store/seki-config-source/seki-0.1.0.0.tar.gz", compiler = "/store/ghc/bin/ghc"}
               current = "-- mine\npackages: . \"/store/seki-config-source/seki-0.1.0.0.tar.gz\"\nwith-compiler: /store/ghc/bin/ghc"
@@ -108,7 +109,7 @@ tests =
           generate installed config
           readFile project >>= (@?= current)
     , testCase "a with-compiler path to another kind of compiler stays" $
-        fixture "exit 0" $ \(BuildContext resources config _) _ -> do
+        fixture "exit 0" $ \(BuildContext resources _ config _) _ -> do
           let project = config </> "cabal.project"
               chosen = "with-compiler: /opt/compilers/ghc-9.10.3\n"
           writeFile project chosen
@@ -122,6 +123,61 @@ tests =
         parseResources (unlines (filter (not . isPrefixOf "SEKI_CONFIG_GHC=") (lines (renderResources delivery)))) @?= Left "SEKI_CONFIG_GHC must name an absolute installed resource"
     , testCase "an answer with a relative path is refused" $
         parseResources (renderResources delivery{templates = "share/templates"}) @?= Left "SEKI_CONFIG_TEMPLATES must name an absolute installed resource"
+    , testCase "each build asks the launcher again and follows the delivery installed now" $
+        fixture "exit 0" $ \(BuildContext started _ config state) directory -> do
+          let first = started{archive = "/store/first/seki-0.1.0.0.tar.gz", compiler = "/store/first-ghc/bin/ghc"}
+              second = started{archive = "/store/second/seki-0.2.0.0.tar.gz", compiler = "/store/second-ghc/bin/ghc"}
+              project = config </> "cabal.project"
+              launcher = directory </> "launcher"
+              projectFor resources = "packages: . " <> show (archive resources) <> "\nwith-compiler: " <> compiler resources <> "\n"
+          writeScript (directory </> "first-launcher") (answering first)
+          writeScript (directory </> "second-launcher") (answering second)
+          pointAt launcher (directory </> "first-launcher")
+          writeFile project (projectFor started{archive = "/store/started/seki-0.1.0.0.tar.gz", compiler = "/store/started-ghc/bin/ghc"})
+          session <- newBuildSession (pure ()) (BuildContext started (Just launcher) config state)
+          ( do
+              requestBuild session
+              awaitStatus session "validated" 1
+              readFile project >>= (@?= projectFor first)
+              pointAt launcher (directory </> "second-launcher")
+              requestBuild session
+              awaitStatus session "validated" 2
+              readFile project >>= (@?= projectFor second)
+              target <- awaitReady session
+              readFile (validatedLog target) >>= assertBool "the build log names the archive" . isPrefixOf "seki: building against /store/second/seki-0.2.0.0.tar.gz\n"
+            )
+            `finally` closeBuildSession session
+    , testCase "a launcher that cannot answer leaves the build on the resources the session runs, and the build log says so" $
+        fixture "exit 0" $ \(BuildContext started _ config state) directory -> do
+          let running = started{archive = "/store/running/seki-0.1.0.0.tar.gz"}
+              project = config </> "cabal.project"
+              launcher = directory </> "launcher"
+          writeScript launcher "#!/bin/sh\necho 'usage: seki [--check | --recompile | --restore FILE]' >&2\nexit 1\n"
+          writeFile project "packages: . \"/store/older/seki-0.1.0.0.tar.gz\"\n"
+          session <- newBuildSession (pure ()) (BuildContext running (Just launcher) config state)
+          ( do
+              requestBuild session
+              target <- awaitReady session
+              readFile project >>= (@?= "packages: . \"/store/running/seki-0.1.0.0.tar.gz\"\n")
+              logged <- lines <$> readFile (validatedLog target)
+              take 1 logged @?= ["seki: building against /store/running/seki-0.1.0.0.tar.gz"]
+              assertBool ("the log says why the build keeps the session's resources: " <> show (take 2 logged)) (any (isPrefixOf ("seki: cannot read the installed delivery through " <> launcher)) (take 2 logged))
+            )
+            `finally` closeBuildSession session
+    , testCase "a launcher that only repeats the asking session's variables has not answered" $
+        fixture "exit 0" $ \(BuildContext started _ config state) directory -> do
+          let launcher = directory </> "launcher"
+          writeScript launcher "#!/bin/sh\nenv | grep '^SEKI_CONFIG_'\n"
+          session <- newBuildSession (pure ()) (BuildContext started (Just launcher) config state)
+          withVariables (resourceVariables started{archive = "/store/echo/seki-0.1.0.0.tar.gz"}) $
+            ( do
+                requestBuild session
+                target <- awaitReady session
+                logged <- lines <$> readFile (validatedLog target)
+                take 1 logged @?= ["seki: building against /archive"]
+                assertBool ("the log reports the launcher: " <> show (take 2 logged)) (any (isPrefixOf ("seki: cannot read the installed delivery through " <> launcher)) (take 2 logged))
+            )
+              `finally` closeBuildSession session
     , testCase "worker validates immutable copy, reports full log and wakes the owner" $
         fixture "exit 0" $ \context directory -> do
           wakes <- newIORef (0 :: Int)
@@ -166,7 +222,7 @@ tests =
             )
             `finally` closeBuildSession session
     , testCase "validated promotion precedes exec and immediate failure rolls back" $
-        fixture "exit 0" $ \(BuildContext resources config state) directory -> do
+        fixture "exit 0" $ \(BuildContext resources _ config state) directory -> do
           target <- build resources config state
           let profile = directory </> "profile"
               old = directory </> "old-image"
@@ -190,7 +246,7 @@ tests =
           _ <- execValidatedRestart launch target saved
           readSymbolicLink profile >>= (@?= old)
     , testCase "a checked replacement does not depend on the old executable still existing" $
-        fixture "exit 0" $ \(BuildContext resources config state) directory -> do
+        fixture "exit 0" $ \(BuildContext resources _ config state) directory -> do
           target <- build resources config state
           let old = directory </> "missing-old-image"
               launch =
@@ -205,7 +261,7 @@ tests =
           checkRestartTarget launch (CheckedTarget target) >>= (@?= Right ())
           doesPathExist (validatedProfile target) >>= (@?= False)
     , testCase "direct fallback promotes canonical profile and removes it on exec failure" $
-        fixture "exit 0" $ \(BuildContext resources config state) directory -> do
+        fixture "exit 0" $ \(BuildContext resources _ config state) directory -> do
           target <- build resources config state
           let raw = directory </> "raw-default"
               profile = directory </> "profile"
@@ -225,10 +281,10 @@ tests =
           doesPathExist profile >>= (@?= False)
           readFile raw >>= (@?= "raw default stays intact")
     , testCase "close cancels and reaps held compiler process group" $
-        fixture "exit 0" $ \(BuildContext resources config state) directory -> do
+        fixture "exit 0" $ \(BuildContext resources _ config state) directory -> do
           writeFile (environment resources) ("#!/bin/sh\necho started >> '" <> directory </> "started'\nwhile [ ! -f '" <> directory </> "release' ]; do sleep 0.02; done\ntouch '" <> directory </> "escaped'\n")
           wakes <- newIORef (0 :: Int)
-          session <- newBuildSession (modifyIORef' wakes (+ 1)) (BuildContext resources config state)
+          session <- newBuildSession (modifyIORef' wakes (+ 1)) (BuildContext resources Nothing config state)
           ( do
               requestBuild session
               await (doesFileExist (directory </> "started"))
@@ -260,7 +316,19 @@ fixture check body = withSystemTempDirectory "seki-build-test" $ \directory -> d
   setFileMode image 0o700
   writeFile wrapper ("#!/bin/sh\nfor arg do\ncase \"$arg\" in\nbuild) echo compiler-output; exit 0;;\nlist-bin) printf '%s\\n' '" <> image <> "'; exit 0;;\nesac\ndone\nexit 2\n")
   setFileMode wrapper 0o700
-  body (BuildContext (Resources "/archive" "/compiler" "/cabal" wrapper templatesPath) directory directory) directory
+  body (BuildContext (Resources "/archive" "/compiler" "/cabal" wrapper templatesPath) Nothing directory directory) directory
+
+answering :: Resources -> String
+answering resources = "#!/bin/sh\n[ \"$1\" = --resources ] || exit 64\ncat <<'ANSWER'\n" <> renderResources resources <> "ANSWER\n"
+
+writeScript :: FilePath -> String -> IO ()
+writeScript path script = writeFile path script >> setFileMode path 0o700
+
+pointAt :: FilePath -> FilePath -> IO ()
+pointAt link target = createSymbolicLink target (link <> ".next") >> renameFile (link <> ".next") link
+
+withVariables :: [(String, String)] -> IO a -> IO a
+withVariables variables = bracket_ (mapM_ (uncurry setEnv) variables) (mapM_ (unsetEnv . fst) variables)
 
 awaitReady :: BuildSession -> IO ValidatedTarget
 awaitReady session = do

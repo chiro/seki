@@ -3,6 +3,7 @@
 module Seki.Run.ConfigBuild (
   Resources (..),
   environmentResources,
+  resourceVariables,
   renderResources,
   parseResources,
   resource,
@@ -19,15 +20,18 @@ module Seki.Run.ConfigBuild (
   atomicLink,
   installedContext,
   BuildContext (..),
+  Resolution (..),
+  resolve,
 ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, bracket, catch, onException, try)
+import Control.Exception (IOException, bracket, catch, finally, onException, try)
 import Control.Monad (unless, when)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as B8
 import Data.Char (isDigit)
 import Data.List qualified as List
+import Data.Maybe (maybeToList)
 import Data.Text qualified as Text
 import Data.Text.Encoding (encodeUtf8)
 import Data.Text.IO qualified as TextIO
@@ -46,22 +50,60 @@ import System.Process
 
 data Resources = Resources {archive :: FilePath, compiler :: FilePath, cabal :: FilePath, environment :: FilePath, templates :: FilePath} deriving (Eq, Show)
 data ValidatedTarget = ValidatedTarget {validatedPath :: FilePath, validatedLog :: FilePath, validatedProfile :: FilePath} deriving (Eq, Show)
-data BuildContext = BuildContext Resources FilePath FilePath
+
+{- | The resources this session runs, the launcher path it was started through
+when the installed wrapper started it, the configuration directory, and the
+state directory.
+-}
+data BuildContext = BuildContext Resources (Maybe FilePath) FilePath FilePath
+
 installedContext :: IO (Maybe BuildContext)
 installedContext =
   lookupEnv "SEKI_CONFIG_ARCHIVE" >>= \case
     Nothing -> pure Nothing
     Just _ -> do
       resources <- environmentResources
+      launcher <- lookupEnv "SEKI_CONFIG_LAUNCHER" >>= traverse (either (ioError . userError) pure . resourcePath "LAUNCHER" . Just)
       config <- xdg "XDG_CONFIG_HOME" ".config"
       state <- stateDirectory
-      pure (Just (BuildContext resources (config </> "seki") state))
+      pure (Just (BuildContext resources launcher (config </> "seki") state))
+
+-- | The resources one build uses, and why they are not the installed delivery's when they are not.
+data Resolution = Resolution {resolvedResources :: Resources, resolvedWarning :: Maybe String}
+
+{- | A session that the installed wrapper started asks its launcher path again,
+because a rebuilt delivery sits behind the same path. When the launcher does
+not answer, the build keeps the resources this session runs. Never throws.
+-}
+resolve :: BuildContext -> IO Resolution
+resolve (BuildContext running Nothing _ _) = pure (Resolution running Nothing)
+resolve (BuildContext running (Just launcher) _ state) =
+  try (privateDirectory state >> installedResources state launcher) >>= \answer -> pure $ case answer of
+    Right installed -> Resolution installed Nothing
+    Left (e :: IOException) -> Resolution running (Just ("cannot read the installed delivery through " <> launcher <> " (" <> show e <> "); this build uses " <> archive running <> ", which this session runs"))
+
+{- | Ask the launcher which resources its delivery installs. The launcher runs
+without this session's own @SEKI_CONFIG_*@, so it cannot answer with them.
+The output of a failed query stays in the state directory.
+-}
+installedResources :: FilePath -> FilePath -> IO Resources
+installedResources state launcher = do
+  (path, handle) <- openBinaryTempFile state "resources.log"
+  answer <- flip finally (hClose handle) $ do
+    inherited <- getEnvironment
+    runLogged path handle (Just (30, 65536)) (proc launcher ["--resources"]){env = Just (filter (not . List.isPrefixOf "SEKI_CONFIG_" . fst) inherited)}
+    hFlush handle
+    hSeek handle AbsoluteSeek 0
+    B8.unpack <$> BS.hGet handle 65536
+  resources <- either (\message -> ioError (userError (message <> "; " <> path))) pure (parseResources answer)
+  removeFile path
+  pure resources
 
 -- | The resources that a lookup of the @SEKI_CONFIG_*@ variables names.
 resourcesFrom :: (String -> Maybe String) -> Either String Resources
 resourcesFrom variable = Resources <$> path "ARCHIVE" <*> path "GHC" <*> path "CABAL" <*> path "ENV" <*> path "TEMPLATES"
  where
-  path name = installed name (variable ("SEKI_CONFIG_" <> name))
+  path name = resourcePath name (variable ("SEKI_CONFIG_" <> name))
 
 resourceVariables :: Resources -> [(String, FilePath)]
 resourceVariables resources = [("SEKI_CONFIG_" <> name, path resources) | (name, path) <- [("ARCHIVE", archive), ("GHC", compiler), ("CABAL", cabal), ("ENV", environment), ("TEMPLATES", templates)]]
@@ -78,10 +120,10 @@ environmentResources :: IO Resources
 environmentResources = getEnvironment >>= either (ioError . userError) pure . resourcesFrom . flip lookup
 
 resource :: String -> IO FilePath
-resource name = lookupEnv ("SEKI_CONFIG_" <> name) >>= either (ioError . userError) pure . installed name
+resource name = lookupEnv ("SEKI_CONFIG_" <> name) >>= either (ioError . userError) pure . resourcePath name
 
-installed :: String -> Maybe String -> Either String FilePath
-installed name = \case
+resourcePath :: String -> Maybe String -> Either String FilePath
+resourcePath name = \case
   Just path | isAbsolute path -> Right path
   _ -> Left ("SEKI_CONFIG_" <> name <> " must name an absolute installed resource")
 
@@ -167,13 +209,14 @@ replace needle value = go
   go (c : rest) = c : go rest
 
 build :: Resources -> FilePath -> FilePath -> IO ValidatedTarget
-build resources config state = buildWithLog resources config state (const (pure ()))
+build resources config state = buildWithLog (Resolution resources Nothing) config state (const (pure ()))
 
-buildWithLog :: Resources -> FilePath -> FilePath -> (FilePath -> IO ()) -> IO ValidatedTarget
-buildWithLog resources config state reportLog = bracket (openBinaryTempFile state "build.log") (hClose . snd) $ \(logPath, logHandle) -> do
+buildWithLog :: Resolution -> FilePath -> FilePath -> (FilePath -> IO ()) -> IO ValidatedTarget
+buildWithLog (Resolution resources warning) config state reportLog = bracket (openBinaryTempFile state "build.log") (hClose . snd) $ \(logPath, logHandle) -> do
   setFileMode logPath 0o600
   reportLog logPath
   hPutStrLn stderr ("seki: build log: " <> logPath)
+  mapM_ (BS.hPut logHandle . encodeUtf8 . Text.pack . (<> "\n") . ("seki: " <>)) (("building against " <> archive resources) : maybeToList warning)
   cabalConfig <-
     lookupEnv "SEKI_CONFIG_CABAL_CONFIG" >>= \case
       Just path | isAbsolute path -> pure path

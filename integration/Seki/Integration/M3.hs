@@ -405,7 +405,7 @@ recompileResponsive = withFixture (policyConfigOf def) "m3-recompile" 1 $ \fixtu
   writeFile profile "old target"
   writeFile wrapper ("#!/bin/sh\necho started >> '" <> started <> "'\nwhile [ ! -f '" <> release <> "' ]; do sleep 0.02; done\necho deliberate-compile-error\nexit 1\n")
   setFileMode wrapper 0o700
-  configureBuild (mPolicy fixture) (BuildContext (Resources "/unused" "/unused" "/unused" wrapper directory) directory directory)
+  configureBuild (mPolicy fixture) (BuildContext (Resources "/unused" "/unused" "/unused" wrapper directory) Nothing directory directory)
   withIPCAt (ipcSocketIn root) (mPolicy fixture) $ do
     _ <- openWindow probe Red
     _ <- openWindow probe Green
