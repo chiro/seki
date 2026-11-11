@@ -23,7 +23,7 @@ tests =
     "integration snapshot decoder"
     [ testCase "a production snapshot line decodes its session, revision, workspaces, and build report" $ do
         snapshot <- projected
-        let failed = object ["state" .= ("failed" :: Text), "generation" .= (3 :: Int), "error" .= ("stub check failed" :: Text), "log_path" .= ("/state/build.log" :: Text), "active_image" .= ("/state/seki" :: Text)]
+        let failed = object ["state" .= ("failed" :: Text), "generation" .= (3 :: Int), "error" .= ("stub check failed" :: Text), "log_path" .= ("/state/build.log" :: Text), "active_image" .= ("/state/seki" :: Text), "warning" .= ("this session does not run the installed delivery" :: Text)]
         replySnapshot (line (with "build" failed snapshot))
           @?= Right
             Snapshot
@@ -35,7 +35,7 @@ tests =
               , snapPads = []
               , snapKeyboard = False
               , snapDevices = []
-              , snapBuild = Just (BuildView "failed" 3 (Just "stub check failed") (Just "/state/seki"))
+              , snapBuild = Just (BuildView "failed" 3 (Just "stub check failed") (Just "/state/seki") (Just "this session does not run the installed delivery"))
               }
     , testCase "every other field the scenarios read reaches its own slot" $ do
         snapshot <- projected
