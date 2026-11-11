@@ -2,10 +2,7 @@
 
 module Seki.Integration.IPCPerf (ipcPerfScenarios) where
 
-import Control.Concurrent (forkFinally, killThread)
-import Control.Concurrent.Chan (newChan, readChan, writeChan)
-import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
-import Control.Exception (bracket, displayException, finally)
+import Control.Exception (bracket)
 import Control.Monad (forM_, replicateM)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.Map.Strict qualified as Map
@@ -49,56 +46,37 @@ ipcPerf = do
           readLine <- bufferedLine client
           _ <- readLine
           pure (client, readLine)
+        withArrivals subscriber body = case subscriber of
+          Nothing -> body Nothing
+          Just (_, readSnapshot) -> withSnapshotPump readSnapshot (body . Just)
+        matching next revision = do
+          (received, shot) <- next >>= requireRight "subscriber reader"
+          tag <- requireRight "focused workspace" (focusedTag shot)
+          if snapRevision shot >= revision then pure (received, tag) else matching next revision
     withIPCAt path (mPolicy fixture) $ do
       submitExternal (policyIngress (mPolicy fixture)) (ExternalInput (pure ()) Nothing) >>= assertEqual "publish initial" Accepted
       forM_ [1, 2, 32 :: Int] $ \clients -> bracket open close $ \commander -> do
         readReply <- bufferedLine commander
         let unread = max 0 (clients - 2)
         bracket (replicateM unread subscribe) (mapM_ (close . fst)) $ \_ ->
-          bracket (if clients == 1 then pure Nothing else Just <$> subscribe) (mapM_ (close . fst)) $ \subscriber -> do
-            observed <- newChan
-            done <- newEmptyMVar
-            reader <- case subscriber of
-              Nothing -> pure Nothing
-              Just (_, readSnapshot) ->
-                Just
-                  <$> forkFinally
-                    ( let loop = do
-                            bytes <- readSnapshot
-                            ended <- getMonotonicTimeNSec
-                            shot <- requireRight "snapshot reply" (replySnapshot bytes)
-                            tag <- requireRight "focused workspace" (focusedTag shot)
-                            writeChan observed (Right (snapRevision shot, ended, tag))
-                            loop
-                       in loop
-                    )
-                    ( \result -> do
-                        case result of Left e -> writeChan observed (Left (displayException e)); Right () -> pure ()
-                        putMVar done ()
-                    )
-            let stop = mapM_ (\thread -> killThread thread >> takeMVar done) reader
-                matching revision = do
-                  (observedRevision, received, tag) <- readChan observed >>= requireRight "subscriber reader"
-                  if observedRevision >= revision then pure (received, tag) else matching revision
-            ( forM_ [1 .. 1000 :: Int] $ \n -> do
-                let tag = if odd n then "2" else "1"
-                started <- getMonotonicTimeNSec
-                sendAll commander ("{\"version\":1,\"id\":\"perf\",\"op\":\"workspace\",\"tag\":\"" <> tag <> "\"}\n")
-                response <- readReply
-                state <- readPolicyState (mPolicy fixture)
-                ended <- getMonotonicTimeNSec
-                revision <- appliedRevision response
-                assertEqual "observed requested workspace outside timed interval" (Just (if odd n then "2" else "1")) (case coreWorkspaces state of AttachedState ss _ -> Just (SS.currentTag ss); _ -> Nothing)
-                begin <- Map.lookup revision <$> readIORef starts >>= maybe (failIntegration "missing matching owner application") pure
-                change <- case subscriber of
-                  Nothing -> pure Nothing
-                  Just _ -> do
-                    (received, observedTag) <- matching revision
-                    assertEqual "subscriber state validated outside timed interval" (Text.pack (if odd n then "2" else "1")) observedTag
-                    pure (Just (received - begin))
-                assertEqual "command below preselected 50ms ceiling" True (ended - started < 50000000)
-                forM_ change $ \duration -> assertEqual "change to subscriber below 50ms ceiling" True (duration < 50000000)
-                announce ("M3_IPC_PERF " <> show clients <> " " <> show n <> " " <> show (ended - started) <> " " <> maybe "null" show change)
-              )
-              `finally` stop
+          bracket (if clients == 1 then pure Nothing else Just <$> subscribe) (mapM_ (close . fst)) $ \subscriber ->
+            withArrivals subscriber $ \arrivals -> forM_ [1 .. 1000 :: Int] $ \n -> do
+              let tag = if odd n then "2" else "1"
+              started <- getMonotonicTimeNSec
+              sendAll commander ("{\"version\":1,\"id\":\"perf\",\"op\":\"workspace\",\"tag\":\"" <> tag <> "\"}\n")
+              response <- readReply
+              state <- readPolicyState (mPolicy fixture)
+              ended <- getMonotonicTimeNSec
+              revision <- appliedRevision response
+              assertEqual "observed requested workspace outside timed interval" (Just (if odd n then "2" else "1")) (case coreWorkspaces state of AttachedState ss _ -> Just (SS.currentTag ss); _ -> Nothing)
+              begin <- Map.lookup revision <$> readIORef starts >>= maybe (failIntegration "missing matching owner application") pure
+              change <- case arrivals of
+                Nothing -> pure Nothing
+                Just next -> do
+                  (received, observedTag) <- matching next revision
+                  assertEqual "subscriber state validated outside timed interval" (Text.pack (if odd n then "2" else "1")) observedTag
+                  pure (Just (received - begin))
+              assertEqual "command below preselected 50ms ceiling" True (ended - started < 50000000)
+              forM_ change $ \duration -> assertEqual "change to subscriber below 50ms ceiling" True (duration < 50000000)
+              announce ("M3_IPC_PERF " <> show clients <> " " <> show n <> " " <> show (ended - started) <> " " <> maybe "null" show change)
       saveCapture fixture "ipc-perf"

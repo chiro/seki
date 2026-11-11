@@ -53,10 +53,12 @@ module Seki.Integration.Harness (
   connectUnix,
   bufferedLine,
   appliedRevision,
+  withSnapshotPump,
   module Seki.Integration.Snapshot,
 ) where
 
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (forkFinally, forkIO, killThread, threadDelay)
+import Control.Concurrent.Chan (newChan, readChan, writeChan)
 import Control.Concurrent.MVar (
   MVar,
   isEmptyMVar,
@@ -90,7 +92,7 @@ import Data.List (intercalate, nub, sort)
 import Data.Maybe (fromMaybe, isJust)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Data.Word (Word16, Word32)
+import Data.Word (Word16, Word32, Word64)
 import Foreign.C.Types (CInt (..), CULong (..))
 import Foreign.Marshal.Alloc (allocaBytes)
 import Foreign.Ptr (Ptr, castPtr)
@@ -318,6 +320,16 @@ appliedRevision :: ByteString -> IO Integer
 appliedRevision bytes = do
   value <- requireRight "command JSON" (eitherDecodeStrict' bytes)
   requireRight "application revision" (parseEither (withObject "envelope" (\o -> o .: "result" >>= withObject "result" (.: "revision"))) value)
+
+withSnapshotPump :: IO ByteString -> (IO (Either String (Word64, Snapshot)) -> IO value) -> IO value
+withSnapshotPump readLine body = do
+  arrivals <- newChan
+  let pump = do
+        line <- readLine
+        received <- getMonotonicTimeNSec
+        writeChan arrivals ((received,) <$> replySnapshot line)
+        pump
+  bracket (forkFinally pump (either (writeChan arrivals . Left . displayException) pure)) killThread (\_ -> body (readChan arrivals))
 
 socketQueuedBytes :: Socket -> IO Int
 socketQueuedBytes client = withFdSocket client $ \fd -> allocaBytes 4 $ \pointer -> do
