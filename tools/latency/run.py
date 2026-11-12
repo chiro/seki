@@ -523,6 +523,10 @@ def runs_setup_script(stanzas):
     return False
 
 
+def unparsed_layout(stanzas):
+    return any("{" in line for stanza in stanzas for line in stanza) or bool(stanzas) and stanzas[0][0][0].isspace()
+
+
 def names_other_packages(project):
     return any(path != "." for block in cabal_stanzas(project) for name, value in cabal_fields(block) if name == "packages" for path in cabal_paths(value))
 
@@ -546,16 +550,18 @@ def compare_sources(revisions):
     if len(named) < 2:
         return None
     first = named[0]
-    git = lambda *args: output(["git", *args], cwd=first["worktree"])
+    git = lambda *args: subprocess.check_output(["git", *args], cwd=first["worktree"], text=True)
     cabal = {r["git_sha"]: cabal_stanzas(git("show", f"{r['git_sha']}:seki.cabal")) for r in named}
     projects = [(path, git("show", f"{r['git_sha']}:{path}")) for r in named
                 for path in git("ls-tree", "--name-only", r["git_sha"]).splitlines() if path.startswith("cabal.project")]
     importing = sorted({path for path, text in projects if re.search(r"^\s*import\s*:", text, re.M | re.I)})
     packaging = sorted({path for path, text in projects if names_other_packages(text)})
     custom = [r["git_sha"][:7] for r in named if runs_setup_script(cabal[r["git_sha"]])]
+    unparsed = [r["git_sha"][:7] for r in named if unparsed_layout(cabal[r["git_sha"]])]
     found = [(importing, "{} import{s} another project file, which the runner does not compare"),
              (packaging, "{} name{s} another local package, which the runner does not compare"),
-             (custom, "`seki.cabal` at {} builds through a setup script, which the runner does not compare")]
+             (custom, "`seki.cabal` at {} builds through a setup script, which the runner does not compare"),
+             (unparsed, "`seki.cabal` at {} uses brace or indented layout, which the runner does not parse")]
     reason = "; ".join(message.format(listed(items), s="s" if len(items) == 1 else "") for items, message in found if items) or None
     sources = {}
     for name, group in SOURCES.items():
