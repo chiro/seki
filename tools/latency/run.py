@@ -44,12 +44,14 @@ WORKLOADS = {
            }},
 }
 
-SCHEMA = 4
+SCHEMA = 5
 
-SOURCES = {"runtime": ["src", "src-core", "src-public", "src-generated", "cbits"],
-           "driver": ["tools/latency", "integration/Seki/Integration/Harness.hs",
-                      "integration/Seki/Integration/Snapshot.hs", "tools/layer-surface-fixture/src",
-                      "tools-generated/layer-surface-fixture"]}
+SOURCES = {"runtime": {"paths": ["src", "src-core", "src-public", "src-generated", "cbits", "cabal.project"],
+                       "stanzas": ["common warnings", "library", "library seki-core", "library seki-wire"]},
+           "driver": {"paths": ["tools/latency", "integration/Seki/Integration/Harness.hs",
+                                "integration/Seki/Integration/Snapshot.hs", "tools/layer-surface-fixture/src",
+                                "tools-generated/layer-surface-fixture", "cabal.project"],
+                      "stanzas": ["common warnings", "executable seki-latency", "library layer-surface-fixture"]}}
 
 BUDGETS = {"pure_p99": ("pure", "p99_ms", 2), "manage_p99": ("manage", "p99_ms", 10),
            "render_p99": ("render", "p99_ms", 10), "wm_gc_max": ("wm_rts", "max_stw_pause_ms", 10)}
@@ -217,15 +219,15 @@ def revision_section(manifest, checksums):
         lines.append("One revision ran, so no sources were compared.")
     else:
         runtime, driver = sources["runtime"], sources["driver"]
-        lines.append(f"Runtime sources under {listed(runtime['paths'])} {'are identical' if runtime['identical'] else 'differ'} across the revisions.")
+        lines.append(f"Runtime sources under {compared(runtime)} {'are identical' if runtime['identical'] else 'differ'} across the revisions.")
         if not driver["identical"]:
-            lines.append(f"Latency driver sources under {listed(driver['paths'])} differ across the revisions. The WM runs the driver's policy setup, and the pure interval "
+            lines.append(f"Latency driver sources under {compared(driver)} differ across the revisions. The WM runs the driver's policy setup, and the pure interval "
                          "includes the driver's checksum fold, so this report draws no conclusion from differences between revisions. Matching pure checksums show the same output, not the same cost.")
         elif runtime["identical"]:
-            lines.append(f"Latency driver sources under {listed(driver['paths'])} are identical across the revisions, "
+            lines.append(f"Latency driver sources under {compared(driver)} are identical across the revisions, "
                          "so manage, render, and pure differences between them are a noise floor.")
         else:
-            lines.append(f"Latency driver sources under {listed(driver['paths'])} are identical across the revisions.")
+            lines.append(f"Latency driver sources under {compared(driver)} are identical across the revisions.")
         if runtime["identical"]:
             lines.append("This report claims no speedup or regression.")
     for workload, by_revision in checksums.items():
@@ -235,6 +237,10 @@ def revision_section(manifest, checksums):
     for item in manifest["unsupported"]:
         lines.append(f"{item['revision']} does not run {item['workload']}: {item['reason']}.")
     return lines
+
+
+def compared(group):
+    return f"{listed(group['paths'])}, with the {listed(group['stanzas'])} stanzas of `seki.cabal`,"
 
 
 def listed(paths):
@@ -414,9 +420,13 @@ def compare_sources(revisions):
     if len(named) < 2:
         return None
     first = named[0]
-    same = lambda paths: all(subprocess.run(["git", "diff", "--quiet", first["git_sha"], r["git_sha"], "--", *paths], cwd=first["worktree"]).returncode == 0
-                             for r in named[1:])
-    return {name: {"paths": paths, "identical": same(paths)} for name, paths in SOURCES.items()}
+    def stanzas(sha, names):
+        blocks = {block.split("\n", 1)[0].rstrip(): block for block in re.split(r"\n(?=\S)", output(["git", "show", f"{sha}:seki.cabal"], cwd=first["worktree"]))}
+        return [blocks.get(name) for name in names]
+    def same(group):
+        return all(subprocess.run(["git", "diff", "--quiet", first["git_sha"], r["git_sha"], "--", *group["paths"]], cwd=first["worktree"]).returncode == 0
+                   and stanzas(r["git_sha"], group["stanzas"]) == stanzas(first["git_sha"], group["stanzas"]) for r in named[1:])
+    return {name: group | {"identical": same(group)} for name, group in SOURCES.items()}
 
 
 def run_live(trial, binary, workload, collector, steps, seed, profile):

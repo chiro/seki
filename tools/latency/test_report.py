@@ -230,7 +230,7 @@ class ReportTest(unittest.TestCase):
             [("00-trunk-m2-normal", "trunk", "m2"), ("01-head-m2-normal", "head", "m2"), ("02-head-m3-normal", "head", "m3")],
             revisions={"trunk": revision("c2b7851"), "head": revision("abc1234")},
             unsupported=[dict(revision="trunk", workload="m3", reason="invalid workload: m3")],
-            sources={name: dict(paths=paths, identical=same) for (name, paths), same in zip(runner.SOURCES.items(), [runtime, driver])}))
+            sources={name: group | dict(identical=same) for (name, group), same in zip(runner.SOURCES.items(), [runtime, driver])}))
         return runner.report(self.path)
 
     def test_campaign_report_groups_by_revision_and_names_the_noise_floor(self):
@@ -263,11 +263,14 @@ class ReportTest(unittest.TestCase):
     def test_campaign_report_names_every_compared_path(self):
         self.campaign()
         text = (self.path / "report.md").read_text()
-        self.assertIn("Runtime sources under `src`, `src-core`, `src-public`, `src-generated`, and `cbits` are identical across the revisions.", text)
+        self.assertIn("Runtime sources under `src`, `src-core`, `src-public`, `src-generated`, `cbits`, and `cabal.project`, "
+                      "with the `common warnings`, `library`, `library seki-core`, and `library seki-wire` stanzas of `seki.cabal`, "
+                      "are identical across the revisions.", text)
         self.assertIn("Latency driver sources under `tools/latency`, `integration/Seki/Integration/Harness.hs`, "
                       "`integration/Seki/Integration/Snapshot.hs`, `tools/layer-surface-fixture/src`, "
-                      "and `tools-generated/layer-surface-fixture` are identical across the revisions, "
-                      "so manage, render, and pure differences between them are a noise floor.", text)
+                      "`tools-generated/layer-surface-fixture`, and `cabal.project`, "
+                      "with the `common warnings`, `executable seki-latency`, and `library layer-surface-fixture` stanzas of `seki.cabal`, "
+                      "are identical across the revisions, so manage, render, and pure differences between them are a noise floor.", text)
 
     def test_driver_group_covers_every_integration_module_the_driver_compiles(self):
         cabal = (Path(__file__).resolve().parents[2] / "seki.cabal").read_text()
@@ -277,19 +280,30 @@ class ReportTest(unittest.TestCase):
         self.assertLessEqual({"Seki.Integration.Harness", "Seki.Integration.Snapshot"}, modules)
         for module in modules:
             path = "integration/" + module.replace(".", "/") + ".hs"
-            self.assertTrue(any(path == source or path.startswith(source + "/") for source in runner.SOURCES["driver"]), path)
+            self.assertTrue(any(path == source or path.startswith(source + "/") for source in runner.SOURCES["driver"]["paths"]), path)
+
+    def test_build_stanzas_name_what_builds_the_driver_and_its_libraries(self):
+        cabal = (Path(__file__).resolve().parents[2] / "seki.cabal").read_text()
+        headers = {block.split("\n", 1)[0] for block in re.split(r"\n(?=\S)", cabal)}
+        latency = next(block for block in re.split(r"\n(?=\S)", cabal) if block.startswith("executable seki-latency\n"))
+        for group in runner.SOURCES.values():
+            self.assertLessEqual(set(group["stanzas"]), headers)
+            self.assertIn("cabal.project", group["paths"])
+        for library in re.findall(r"\bseki:([\w-]+)", latency):
+            self.assertTrue(any(f"library {library}" in group["stanzas"] for group in runner.SOURCES.values()), library)
 
     def test_a_driver_difference_claims_no_noise_floor(self):
         self.campaign(driver=False)
         text = (self.path / "report.md").read_text()
         self.assertIn("Latency driver sources under `tools/latency`, `integration/Seki/Integration/Harness.hs`, "
                       "`integration/Seki/Integration/Snapshot.hs`, `tools/layer-surface-fixture/src`, "
-                      "and `tools-generated/layer-surface-fixture` differ across the revisions.", text)
+                      "`tools-generated/layer-surface-fixture`, and `cabal.project`, "
+                      "with the `common warnings`, `executable seki-latency`, and `library layer-surface-fixture` stanzas of `seki.cabal`, "
+                      "differ across the revisions.", text)
         self.assertIn("The WM runs the driver's policy setup", text)
         self.assertNotIn("noise floor", text)
         self.assertIn("This report claims no speedup or regression.", text)
 
-    @unittest.expectedFailure
     def test_source_comparison_reads_each_group_from_git(self):
         repo = self.path / "repo"
         repo.mkdir()
