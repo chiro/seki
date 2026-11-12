@@ -489,7 +489,7 @@ def build_inputs(stanzas, components):
 def solver_inputs(stanza):
     entries = set()
     for name, value in cabal_fields(stanza[1:]):
-        if name is None:
+        if name in (None, "buildable"):
             return None
         if name in LIST_FIELDS:
             entries |= {(name, " ".join(item.split())) for item in value.split(",") if item.strip() and not OWN_PACKAGE.match(item.strip())}
