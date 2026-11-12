@@ -1,67 +1,118 @@
 #!/usr/bin/env python3
 """The layout subscriber must report the latency that its source really has."""
+import itertools
 import json
 import os
-from pathlib import Path
-import subprocess
+import re
+import signal
 import sys
 import tempfile
 import time
 import unittest
 
-LATENCY_MS = 80
+import subscriber
+
+FAULTY = 3
 
 
-def snapshot(group):
-    keyboard = {'name': 'seki-private-backend-keyboard', 'state': {'layout_index': group}}
-    return json.dumps({'result': {'snapshot': {'xkb': {'items': [keyboard]}}}})
+def snapshot(keyboards):
+    return json.dumps({'result': {'snapshot': {'xkb': {'items': keyboards}}}})
 
 
-def source(receipts):
+def keyboard(group):
+    return {'name': subscriber.KEYBOARD, 'state': {'layout_index': group}}
+
+
+def source(ack_path, source_path, latency_ms, fault):
     """Stand in for the fixture backend, seki, and sekictl.
 
-    Change the layout every 10 ms and publish each change LATENCY_MS later.
+    Change the layout once for each acknowledgement byte and publish the
+    change `latency_ms` later. `fault` applies to change FAULTY.
     """
+    if fault == 'absent':
+        print(snapshot([]), flush=True)
+        signal.pause()
     group = 0
-    unpublished = []
-    print(snapshot(group), flush=True)
-    change_at = time.monotonic_ns()
-    while True:
-        now = time.monotonic_ns()
-        if unpublished and unpublished[0][0] <= now:
-            print(snapshot(unpublished.pop(0)[1]), flush=True)
-        elif change_at <= now:
+    print(snapshot([keyboard(group)]), flush=True)
+    with open(ack_path, 'rb', buffering=0) as acknowledgements:
+        for change in itertools.count():
+            if not acknowledgements.read(1):
+                return
+            if (fault, change) == ('unemitted', FAULTY):
+                signal.pause()
             group = 1 - group
-            with open(receipts, 'a') as file:
-                file.write(f'{now} {group}\n')
-            unpublished.append((now + LATENCY_MS * 1_000_000, group))
-            change_at += 10_000_000
-        else:
-            time.sleep(0.0005)
+            if (fault, change) != ('uncommanded', FAULTY):
+                with open(source_path, 'a') as file:
+                    file.write(f'{time.monotonic_ns()} {group}\n')
+            time.sleep(latency_ms / 1000)
+            while (fault, change) == ('unpublished', FAULTY):
+                print(snapshot([keyboard(1 - group)]), flush=True)
+            print(snapshot([keyboard(group)]), flush=True)
+
+
+def hung(signum, frame):
+    raise TimeoutError('the subscriber hung')
 
 
 class SubscriberTest(unittest.TestCase):
-    # Issue 73: the subscriber matches each receipt to the latest source event
-    # with the same layout, so it reads any latency as under 20 ms.
-    @unittest.expectedFailure
+    def setUp(self):
+        # A subscriber that hangs must fail its test, not block the run.
+        signal.signal(signal.SIGALRM, hung)
+        signal.alarm(10)
+        self.addCleanup(signal.alarm, 0)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.ack_path = os.path.join(directory.name, 'ack')
+        self.source_path = os.path.join(directory.name, 'source.txt')
+        # The backend makes and opens the FIFO like this when river starts.
+        os.mkfifo(self.ack_path)
+        self.addCleanup(os.close, os.open(self.ack_path, os.O_RDONLY | os.O_NONBLOCK))
+
+    def measure(self, latency_ms=0, fault='none'):
+        command = [sys.executable, '-B', __file__, 'source', self.ack_path, self.source_path,
+                   str(latency_ms), fault]
+        return subscriber.measure(command, self.ack_path, self.source_path, timeout=0.5)
+
+    def test_a_latency_below_the_ceilings_passes(self):
+        self.assertEqual(len(self.measure()), subscriber.CHANGES)
+
     def test_a_latency_above_the_ceiling_is_reported_and_fails(self):
-        with tempfile.TemporaryDirectory() as directory:
-            sekictl = Path(directory, 'sekictl')
-            sekictl.write_text(f'#!/bin/sh\nexec {sys.executable} -B {__file__} source\n')
-            sekictl.chmod(0o700)
-            receipts = Path(directory, 'source.txt')
-            result = Path(directory, 'subscriber.json')
-            done = subprocess.run(
-                [sys.executable, '-B', Path(__file__).with_name('subscriber.py'), receipts, result],
-                env=dict(os.environ, SEKICTL_EXECUTABLE=str(sekictl), SEKI_FAKE_RECEIPTS=str(receipts)),
-                capture_output=True, timeout=60)
-            summary = json.loads(result.read_text())['summary']
-            self.assertGreaterEqual(summary['p99_ms'], LATENCY_MS)
-            self.assertNotEqual(done.returncode, 0)
+        with self.assertRaisesRegex(
+                RuntimeError, 'layout change 10 took .* 11 changes have taken 50 ms or more') as failure:
+            self.measure(latency_ms=60)
+        reported = float(re.search(r'took ([0-9.]+) ms', str(failure.exception)).group(1))
+        self.assertGreaterEqual(reported, 60)
+
+    def test_a_latency_above_the_maximum_fails_at_once(self):
+        with self.assertRaisesRegex(
+                RuntimeError, 'layout change 0 took .* the maximum is 100 ms') as failure:
+            self.measure(latency_ms=110)
+        reported = float(re.search(r'took ([0-9.]+) ms', str(failure.exception)).group(1))
+        self.assertGreaterEqual(reported, 110)
+
+    def test_an_unpublished_change_times_out_by_index(self):
+        with self.assertRaisesRegex(
+                RuntimeError, f'layout change {FAULTY} was emitted but not published within 0.5 s'):
+            self.measure(fault='unpublished')
+
+    def test_an_unemitted_change_times_out_by_index(self):
+        with self.assertRaisesRegex(
+                RuntimeError, f'layout change {FAULTY} was not emitted within 0.5 s'):
+            self.measure(fault='unemitted')
+
+    def test_a_change_without_a_source_event_fails(self):
+        with self.assertRaisesRegex(
+                RuntimeError, f'layout change {FAULTY} did not come from source event {FAULTY}'):
+            self.measure(fault='uncommanded')
+
+    def test_a_keyboard_that_never_appears_times_out(self):
+        with self.assertRaisesRegex(
+                RuntimeError, f'no layout for {subscriber.KEYBOARD} within 0.5 s'):
+            self.measure(fault='absent')
 
 
 if __name__ == '__main__':
-    if sys.argv[1:] == ['source']:
-        source(os.environ['SEKI_FAKE_RECEIPTS'])
+    if sys.argv[1:2] == ['source']:
+        source(sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5])
     else:
         unittest.main()
