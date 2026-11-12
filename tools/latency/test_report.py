@@ -572,7 +572,6 @@ class SourceComparisonTest(unittest.TestCase):
         live = edit(suites, "  main-is: Main.hs\n  build-depends: base\n", "  main-is: Main.hs\n  buildable: False\n  build-depends: base\n")
         self.assertEqual(self.identical({"seki.cabal": dormant}, {"seki.cabal": live}), {"runtime": False, "driver": False})
 
-    @unittest.expectedFailure
     def test_a_bound_moved_from_a_disabled_test_suite_to_an_executable_is_compared(self):
         exe = edit(CABAL, "test-suite seki-test\n", "executable seki-default\n  hs-source-dirs: app\n  main-is: Main.hs\n  build-depends: base\n\ntest-suite seki-test\n")
         in_test = edit(exe, "  build-depends: base, seki\n", "  build-depends: base, seki, text <2.1\n")

@@ -60,6 +60,8 @@ METADATA_FIELDS = {"synopsis", "description", "homepage", "bug-reports", "licens
 
 SEPARATE_KINDS = {"test-suite", "benchmark", "executable"}
 
+ENABLED_BY = {"test-suite": "tests", "benchmark": "benchmarks"}
+
 LOCAL_FIELDS = {"type", "main-is", "hs-source-dirs", "exposed-modules", "other-modules", "visibility", "ghc-options",
                 "c-sources", "cc-options", "include-dirs", "includes"}
 
@@ -482,7 +484,7 @@ def build_inputs(stanzas, components):
         if entries is None:
             compared.append(stanza)
         else:
-            solver |= entries
+            solver |= {(ENABLED_BY.get(kind.lower(), "always"), *entry) for entry in entries}
     return compared, solver
 
 
