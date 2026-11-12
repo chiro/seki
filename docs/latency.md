@@ -107,7 +107,8 @@ failure. It never attaches to an existing compositor session.
 ## Workloads and endpoints
 
 The live workloads run on one 800 by 600 output under Tall with the default
-`Crop` policy, seed 1909, and 24 warmup actions. m1 and m2 measure 1023
+`Crop` policy, seed 1909, and 24 warmup actions. m1 and m2 draw their plans
+from the seed, and the m3 plan does not use it. m1 and m2 measure 1023
 actions, and m3 measures 2500. The pure model in
 `tools/latency/Seki/Latency/Workload.hs` names the windows, the plan, what the
 probe and an IPC subscriber observe after each action, and the expected

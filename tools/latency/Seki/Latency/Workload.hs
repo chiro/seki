@@ -2,8 +2,10 @@
 
 {- | The native latency workloads as a pure model: which windows the driver
 opens, which steps it takes, what the probe observes after each step, and
-what the output shows. The live driver interprets it, and tests check it
-without river.
+what the output shows. For the IPC driver, it also gives the command each
+step sends, the endpoints that command times, and what the subscriber
+publishes after the step. The live driver interprets it, and tests check
+it without river.
 
 Every window is named by its stack index: 0 is the newest window, which
 the WM focuses and places first.
