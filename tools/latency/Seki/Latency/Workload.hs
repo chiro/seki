@@ -2,8 +2,10 @@
 
 {- | The native latency workloads as a pure model: which windows the driver
 opens, which steps it takes, what the probe observes after each step, and
-what the output shows. The live driver interprets it, and tests check it
-without river.
+what the output shows. For the IPC driver, it also gives the command each
+step sends, the endpoints that command times, and what the subscriber
+publishes after the step. The live driver interprets it, and tests check
+it without river.
 
 Every window is named by its stack index: 0 is the newest window, which
 the WM focuses and places first.
@@ -26,7 +28,7 @@ module Seki.Latency.Workload (
   restoreSteps,
   Observation (..),
   expectedObservation,
-  Publication (..),
+  ExpectedPublication (..),
   expectedPublication,
   Endpoint (..),
   endpointText,
@@ -226,14 +228,14 @@ expectedObservation m =
       | modelFullscreen m == Just i -> (800, 600)
       | otherwise -> let (_, _, w, h) = tileBox m i in (fromIntegral w, fromIntegral h)
 
-data Publication = Publication
-  { publishedFocusedTag :: String
-  , publishedFinishedBuilds :: Int
+data ExpectedPublication = ExpectedPublication
+  { expectedFocusedTag :: String
+  , expectedFinishedBuilds :: Int
   }
   deriving (Eq, Show)
 
-expectedPublication :: Model -> Publication
-expectedPublication m = Publication (if modelShown m then "1" else "2") (modelFinishedBuilds m)
+expectedPublication :: Model -> ExpectedPublication
+expectedPublication m = ExpectedPublication (if modelShown m then "1" else "2") (modelFinishedBuilds m)
 
 data Endpoint
   = ExternalWake

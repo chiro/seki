@@ -61,7 +61,7 @@ runWM workload socket directory = do
     IPCDriver -> do
       getEnv "XDG_RUNTIME_DIR" >>= buildFailingCheck . (</> "build") >>= configureBuild policy
       path <- ipcPath
-      pure (withIPCAt path policy . (publish (directory </> "wm.ipc") path >>))
+      pure (\run -> withIPCAt path policy (writeAtomically writeFile (directory </> "wm.ipc") path >> run))
   let handlers = (policyRuntimeHandlers policy){riverSequenceRecorder = Just recorder}
   session <- openRiverSessionAt (UnixSocketPath socket) defaultObjectLimit handlers >>= requireRight "latency WM open"
   pid <- getProcessID
@@ -97,8 +97,9 @@ runWM workload socket directory = do
           index <- atomicModifyIORef' snapshots (\n -> (n + 1, n))
           stats <- getRTSStats
           let path = directory </> ("wm-checkpoint-" <> show index <> ".json")
-          BL.writeFile
-            (path <> ".tmp")
+          writeAtomically
+            BL.writeFile
+            path
             ( encode
                 ( object
                     [ "allocated_bytes" .= allocated_bytes stats
@@ -109,7 +110,6 @@ runWM workload socket directory = do
                     ]
                 )
             )
-          renameFile (path <> ".tmp") path
       )
       Nothing
   result <- serve (runRiverSession session)
@@ -172,12 +172,15 @@ buildFailingCheck :: FilePath -> IO BuildContext
 buildFailingCheck directory = do
   createDirectoryIfMissing True directory
   mapM_ (\name -> writeFile (directory </> name) "") ["Main.hs", "seki-user.cabal", "cabal.project"]
-  let stub = directory </> "compiler"
+  let wrapper = directory </> "wrapper"
       candidate = directory </> "built"
+      resources = Resources{archive = "/unused", compiler = "/unused", cabal = "cabal", environment = wrapper, templates = directory}
+      config = directory
+      state = directory
   writeFile candidate ("#!/bin/sh\necho '" <> checkFailure <> "' >&2\nexit 1\n")
-  writeFile stub ("#!/bin/sh\ncase \"$3\" in\n  build) exit 0 ;;\n  list-bin) echo '" <> candidate <> "' ;;\n  *) exit 2 ;;\nesac\n")
-  mapM_ (`setFileMode` 0o700) [stub, candidate]
-  pure (BuildContext Resources{archive = "/unused", compiler = "/unused", cabal = "cabal", environment = stub, templates = directory} Nothing directory directory)
+  writeFile wrapper ("#!/bin/sh\ncase \"$3\" in\n  build) exit 0 ;;\n  list-bin) echo '" <> candidate <> "' ;;\n  *) exit 2 ;;\nesac\n")
+  mapM_ (`setFileMode` 0o700) [wrapper, candidate]
+  pure (BuildContext resources Nothing config state)
 
 runLive :: FilePath -> WorkloadName -> Word64 -> Int -> String -> IO ()
 runLive directory workload seed steps collector = do
@@ -239,15 +242,15 @@ runLive directory workload seed steps collector = do
                           ExitFullscreen -> mapM_ (requestExitFullscreen probe . (byIndex Map.!)) (modelFullscreen model)
                           _ -> key (stepCode step + 1)
                         withDriver body = case workloadDriver workload of
-                          KeyDriver -> body (\model step _ -> [] <$ drive model step)
+                          KeyDriver -> body (\model step -> [] <$ drive model step)
                           IPCDriver -> do
                             _ <- waitUntil "WM serving IPC" assertionTimeoutMicroseconds (doesFileExist (directory </> "wm.ipc")) id
                             path <- readFile (directory </> "wm.ipc")
-                            withCommands path (\c -> body (\_ step next -> timeCommand c observe next step))
+                            withCommands path (\c -> body (timeCommand c observe))
                     withDriver $ \act -> do
                       let perform (model, timed) step = do
                             let next = stepModel model step
-                            samples <- act model step next
+                            samples <- act model step
                             await next
                             pure (next, foldl' (\m (endpoint, ns) -> Map.insertWith (<>) endpoint [ns] m) timed samples)
                           awaitPicture model =
@@ -315,22 +318,23 @@ runLive directory workload seed steps collector = do
     void (waitUntil "WM RTS checkpoint" assertionTimeoutMicroseconds (doesFileExist path) id)
 
 timeCommand :: Commands -> IO Observation -> Model -> Step -> IO [(Endpoint, Word64)]
-timeCommand commands observe next step = do
+timeCommand commands observe model step = do
   threadDelay idleGapMicroseconds
-  (operation, endpoints) <- maybe (fail ("m3 has no command for " <> show step)) pure (stepCommand step)
+  (operation, endpoints) <- maybe (fail ("the IPC driver has no command for " <> show step)) pure (stepCommand step)
   Receipt started revision <- command commands operation
   forM endpoints $ \endpoint -> do
     ended <- case endpoint of
       ExternalWake -> observed
       ScratchpadToggle -> observed
       IPCUpdate -> publishedAt <$> (awaitPublished commands assertionTimeoutMicroseconds ((>= revision) . publishedRevision) >>= publishes)
-      RecompileCompletion -> publishedAt <$> (awaitPublished commands assertionTimeoutMicroseconds (finished (publishedFinishedBuilds expected)) >>= failedByStub)
+      RecompileCompletion -> publishedAt <$> (awaitPublished commands assertionTimeoutMicroseconds (finished (expectedFinishedBuilds expected)) >>= failedByStub)
     pure (endpoint, ended - started)
  where
+  next = stepModel model step
   expected = expectedPublication next
   observed = waitUntilEvery ("probe outcome of " <> show step) assertionTimeoutMicroseconds pollMicroseconds observe (== expectedObservation next) >> getMonotonicTimeNSec
   publishes p = do
-    unless (Text.unpack (publishedFocus p) == publishedFocusedTag expected) (fail ("subscriber published " <> show p <> " for " <> show next))
+    unless (Text.unpack (publishedFocus p) == expectedFocusedTag expected) (fail ("subscriber published " <> show p <> " for " <> show next))
     pure p
   finished generation p = maybe False (\b -> buildGeneration b == fromIntegral generation && buildState b /= "building") (publishedBuild p)
   failedByStub p = do
@@ -361,8 +365,8 @@ openRole probe _ (TileRole color) = openWindow probe color
 openRole probe opened (DialogRole color (width, height) parent) = openWindowWith probe (windowSpec color){specParent = Just (opened !! parent), specCommit = CommitFixed width height}
 openRole probe _ (PadRole color) = openWindowWith probe (windowSpec color){specAppId = CustomAppId (Text.pack padAppId)}
 
-publish :: FilePath -> String -> IO ()
-publish path contents = writeFile (path <> ".tmp") contents >> renameFile (path <> ".tmp") path
+writeAtomically :: (FilePath -> contents -> IO ()) -> FilePath -> contents -> IO ()
+writeAtomically write path contents = write (path <> ".tmp") contents >> renameFile (path <> ".tmp") path
 
 writeProcesses :: FilePath -> [(String, Maybe Int)] -> IO ()
 writeProcesses directory processes = do
@@ -372,6 +376,4 @@ writeProcesses directory processes = do
     let fields = words (drop 1 (dropWhile (/= ')') raw))
         startTicks = read (fields !! 19) :: Integer
     pure (object ["role" .= role, "pid" .= pid, "start_ticks" .= startTicks, "owned_group" .= (role /= "driver")])
-  let path = directory </> "processes.json"
-  BL.writeFile (path <> ".tmp") (encode entries)
-  renameFile (path <> ".tmp") path
+  writeAtomically BL.writeFile (directory </> "processes.json") (encode entries)

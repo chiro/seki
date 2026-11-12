@@ -35,6 +35,10 @@ tests =
         expectedLayers hidden @?= []
         observedOwner (expectedObservation hidden) @?= Nothing
         pictureMismatch [] (paint []) @?= Nothing
+    , testCase "a hidden workspace keeps every window's last committed size, fullscreen included" $ do
+        let full = stepModel (stepModel (initialModel M2) FocusUp) EnterFullscreen
+            sizes = observedSizes . expectedObservation
+        sequence_ [sizes (stepModel m ViewEmpty) @?= sizes m | m <- [initialModel M1, initialModel M2, full, initialModel M3]]
     , testCase "workload names parse from their text" $
         map (parseWorkloadName . workloadText) [minBound .. maxBound] @?= map Just [M1, M2, M3]
     , testCase "the tile table agrees with the production Tall layout" $
@@ -103,6 +107,10 @@ tests =
     , testCase "the m3 plan hides the adopted pad, then cycles two views, two toggles, and a recompile" $
         take 11 (plan M3 1909 (initialModel M3))
           @?= [TogglePad, ViewEmpty, ViewPopulated, TogglePad, TogglePad, Recompile, ViewEmpty, ViewPopulated, TogglePad, TogglePad, Recompile]
+    , testCase "the m3 plan ignores the seed that m1 and m2 draw their steps from" $ do
+        let m0 = initialModel M3
+        sequence_ [take 300 (plan M3 seed m0) @?= take 300 (plan M3 1909 m0) | seed <- [0, 1, 1910, maxBound]]
+        assertBool "m2 plans differ by seed" (take 300 (plan M2 1909 (initialModel M2)) /= take 300 (plan M2 1910 (initialModel M2)))
     , testCase "every m3 step changes what the probe or the subscriber observes" $ do
         let m0 = initialModel M3
             models = scanl stepModel m0 (take 3000 (plan M3 1910 m0))
@@ -111,9 +119,9 @@ tests =
     , testCase "a recompile publishes one more finished build and leaves the probe's view alone" $ do
         let m0 = stepModel (initialModel M3) TogglePad
             built = stepModel m0 Recompile
-        (publishedFocusedTag (expectedPublication built), publishedFinishedBuilds (expectedPublication built)) @?= ("1", 1)
+        (expectedFocusedTag (expectedPublication built), expectedFinishedBuilds (expectedPublication built)) @?= ("1", 1)
         expectedObservation built @?= expectedObservation m0
-        publishedFocusedTag (expectedPublication (stepModel m0 ViewEmpty)) @?= "2"
+        expectedFocusedTag (expectedPublication (stepModel m0 ViewEmpty)) @?= "2"
     , testCase "24 warmup steps leave the pad shown, so 2500 measured m3 steps time 1001 toggles and 499 recompiles" $ do
         let m0 = initialModel M3
             warmed = foldl stepModel m0 (take 24 (plan M3 1909 m0))

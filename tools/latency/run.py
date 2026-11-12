@@ -19,10 +19,15 @@ WORKLOADS = {
     "m2": {"text": "six native tiled windows and two parent-hinted dialog floats under Tall with Crop; "
                    "focus, view, Shrink/Expand, and client fullscreen actions",
            "exercised": ["clip_resizes", "fullscreen_enters", "fullscreen_exits_by_focus",
-                         "fullscreen_exits_by_request", "hidden_fullscreen_views", "float_raises"], "live_steps": 1023},
+                         "fullscreen_exits_by_request", "hidden_fullscreen_views", "float_raises"], "live_steps": 1023,
+           "exercised_note": "Every count except float raises changed what the probe observed, so a barrier confirmed it."},
     "m3": {"text": "two native tiles and a scratchpad window adopted by app ID under Tall; IPC workspace views, "
                    "scratchpad toggles, and recompiles on idle river with no physical input",
            "exercised": [], "live_steps": 2500,
+           "endpoint_heading": "M3 command endpoints",
+           "endpoint_method": "Each sample runs from the driver's send of one IPC command to the outcome named below, on idle river after a {gap_ms:g} ms gap, "
+                              "with no physical input. Probe outcomes are polled every {poll_ms:g} ms; subscriber lines are stamped when the driver's reader thread takes them. "
+                              "No ratio compares these with the m2 sequences.",
            "endpoints": {
                "external_wake": {"text": "IPC workspace command sent to the probe's keyboard owner change", "target_p99_ms": 50},
                "ipc_update": {"text": "the same command to the subscriber line that publishes the new focused workspace", "target_p99_ms": 50},
@@ -39,12 +44,36 @@ WORKLOADS = {
            }},
 }
 
-SCHEMA = 4
+SCHEMA = 5
 
-SOURCES = {"runtime": ["src", "src-core", "src-public", "src-generated", "cbits"],
-           "driver": ["tools/latency", "integration/Seki/Integration/Harness.hs",
-                      "integration/Seki/Integration/Snapshot.hs", "tools/layer-surface-fixture/src",
-                      "tools-generated/layer-surface-fixture"]}
+PROJECT_FILES = ":(glob)cabal.project*"
+
+SOURCES = {"runtime": {"paths": ["src", "src-core", "src-public", "src-generated", "cbits"],
+                       "components": ["library", "library seki-core", "library seki-wire"]},
+           "driver": {"paths": ["tools/latency", "integration", "tools/layer-surface-fixture/src", "tools-generated/layer-surface-fixture"],
+                      "components": ["executable seki-latency", "library layer-surface-fixture"]}}
+
+METADATA_FIELDS = {"synopsis", "description", "homepage", "bug-reports", "license", "license-file", "author",
+                   "maintainer", "category", "tested-with", "extra-source-files", "extra-doc-files"}
+
+SEPARATE_KINDS = {"test-suite", "benchmark", "executable"}
+
+ENABLED_BY = {"test-suite": "tests", "benchmark": "benchmarks"}
+
+COMPILED_KINDS = {"library", "foreign-library", "executable", "test-suite", "benchmark"}
+
+LOCAL_FIELDS = {"type", "main-is", "hs-source-dirs", "exposed-modules", "other-modules", "visibility", "ghc-options",
+                "c-sources", "cc-options", "include-dirs", "includes"}
+
+LIST_FIELDS = {"build-depends", "build-tool-depends", "import"}
+
+OWN_PACKAGE = re.compile(r"seki(?![\w-])")
+
+OWN_TOOL = re.compile(r"(?<![\w-])seki:([\w-]+)")
+
+FIELD = re.compile(r"\s*([A-Za-z][\w-]*)\s*:(.*)")
+
+PATH_TOKEN = re.compile(r'"([^"]*)"|([^\s,"]+)')
 
 BUDGETS = {"pure_p99": ("pure", "p99_ms", 2), "manage_p99": ("manage", "p99_ms", 10),
            "render_p99": ("render", "p99_ms", 10), "wm_gc_max": ("wm_rts", "max_stw_pause_ms", 10)}
@@ -212,15 +241,15 @@ def revision_section(manifest, checksums):
         lines.append("One revision ran, so no sources were compared.")
     else:
         runtime, driver = sources["runtime"], sources["driver"]
-        lines.append(f"Runtime sources under {listed(runtime['paths'])} {'are identical' if runtime['identical'] else 'differ'} across the revisions.")
+        lines.append(f"Runtime sources under {compared(runtime)} {verdict(runtime)}.")
         if not driver["identical"]:
-            lines.append(f"Latency driver sources under {listed(driver['paths'])} differ across the revisions. The WM runs the driver's policy setup, and the pure interval "
+            lines.append(f"Latency driver sources under {compared(driver)} {verdict(driver)}. The WM runs the driver's policy setup, and the pure interval "
                          "includes the driver's checksum fold, so this report draws no conclusion from differences between revisions. Matching pure checksums show the same output, not the same cost.")
         elif runtime["identical"]:
-            lines.append(f"Latency driver sources under {listed(driver['paths'])} are identical across the revisions, "
+            lines.append(f"Latency driver sources under {compared(driver)} are identical across the revisions, "
                          "so manage, render, and pure differences between them are a noise floor.")
         else:
-            lines.append(f"Latency driver sources under {listed(driver['paths'])} are identical across the revisions.")
+            lines.append(f"Latency driver sources under {compared(driver)} are identical across the revisions.")
         if runtime["identical"]:
             lines.append("This report claims no speedup or regression.")
     for workload, by_revision in checksums.items():
@@ -232,32 +261,41 @@ def revision_section(manifest, checksums):
     return lines
 
 
+def compared(group):
+    return f"{listed(group['paths'])}, with the root `cabal.project*` files and the parts of `seki.cabal` that can change the build of {listed(group['components'])},"
+
+
+def verdict(group):
+    if group["identical"]:
+        return "are identical across the revisions"
+    if group["reason"]:
+        return f"count as different across the revisions, because {group['reason']}"
+    return "differ across the revisions"
+
+
 def listed(paths):
     quoted = [f"`{path}`" for path in paths]
     return quoted[0] if len(quoted) == 1 else ", ".join(quoted[:-1]) + (" and " if len(quoted) == 2 else ", and ") + quoted[-1]
 
 
 def endpoint_section(trials, river):
-    rows = [(t, name, v) for t in trials for name, v in t["endpoints"].items()]
-    if not rows:
-        return []
-    methods = {tuple(t["endpoint_method"].items()) for t, _, _ in rows}
-    require(len(methods) == 1, f"m3 trials disagree on the idle gap and poll interval: {sorted(methods)}")
-    method = dict(methods.pop())
-    lines = ["", "## M3 command endpoints", "",
-             f"Each sample runs from the driver's send of one IPC command to the outcome named below, on idle river after a {method['idle_gap_us'] / 1000:g} ms gap, "
-             f"with no physical input. Probe outcomes are polled every {method['observation_poll_us'] / 1000:g} ms; subscriber lines are stamped when the driver's reader thread takes them. "
-             "No ratio compares these with the m2 sequences.", ""]
-    for workload in dict.fromkeys(t["workload"] for t, _, _ in rows):
-        for name, spec in WORKLOADS[workload]["endpoints"].items():
-            lines.append(f"- `{name}`: {spec['text']}.")
-        for name, reason in WORKLOADS[workload].get("unsupported", {}).items():
-            lines.append(f"- `{name}` is unsupported: {reason.format(river=river.split()[0])}.")
-    lines += ["", "| Trial | Endpoint | Samples | p50 ms | p95 ms | p99 ms | Max ms | Target p99 |", "|---|---|---:|---:|---:|---:|---:|---|"]
-    for t, name, v in rows:
-        target = WORKLOADS[t["workload"]]["endpoints"][name]["target_p99_ms"]
-        lines.append(f"| {t['directory']} | {name} | {v['count']} | {v['p50_ms']:.4f} | {v['p95_ms']:.4f} | {v['p99_ms']:.4f} | {v['max_ms']:.4f} | "
-                     f"{f'< {target} ms' if target is not None else 'none'} |")
+    lines = []
+    for workload in dict.fromkeys(t["workload"] for t in trials if t["endpoints"]):
+        spec = WORKLOADS[workload]
+        timed = [t for t in trials if t["workload"] == workload]
+        methods = {tuple(t["endpoint_method"].items()) for t in timed}
+        require(len(methods) == 1, f"{workload} trials disagree on the idle gap and poll interval: {sorted(methods)}")
+        method = dict(methods.pop())
+        lines += ["", f"## {spec['endpoint_heading']}", "",
+                  spec["endpoint_method"].format(gap_ms=method["idle_gap_us"] / 1000, poll_ms=method["observation_poll_us"] / 1000), ""]
+        lines += [f"- `{name}`: {endpoint['text']}." for name, endpoint in spec["endpoints"].items()]
+        lines += [f"- `{name}` is unsupported: {reason.format(river=river.split()[0])}." for name, reason in spec.get("unsupported", {}).items()]
+        lines += ["", "| Trial | Endpoint | Samples | p50 ms | p95 ms | p99 ms | Max ms | Target p99 |", "|---|---|---:|---:|---:|---:|---:|---|"]
+        for t in timed:
+            for name, v in t["endpoints"].items():
+                target = spec["endpoints"][name]["target_p99_ms"]
+                lines.append(f"| {t['directory']} | {name} | {v['count']} | {v['p50_ms']:.4f} | {v['p95_ms']:.4f} | {v['p99_ms']:.4f} | {v['max_ms']:.4f} | "
+                             f"{f'< {target} ms' if target is not None else 'none'} |")
     return lines
 
 
@@ -304,8 +342,9 @@ def report(directory):
         names = WORKLOADS[workload]["exercised"]
         if not names:
             continue
+        note = WORKLOADS[workload].get("exercised_note")
         lines += ["", f"## Exercised {workload.upper()} features", "",
-                  "Counts come from the model's transitions over the measured actions. Every count except float raises changed what the probe observed, so a barrier confirmed it.", "",
+                  "Counts come from the model's transitions over the measured actions." + (f" {note}" if note else ""), "",
                   "| Trial | " + " | ".join(names) + " |", "|---|" + "---:|" * len(names)]
         for t in trials:
             if t["workload"] == workload:
@@ -374,7 +413,9 @@ def parse_revisions(items):
         name, separator, path = item.partition("=")
         require(separator and re.fullmatch(r"[a-z][a-z0-9]*", name) and name not in worktrees, f"invalid revision {item}")
         worktree = Path(path).resolve()
-        require(not (worktree / "cabal.project.local").exists(), f"revision {name} has {worktree / 'cabal.project.local'}, which the manifest would not record")
+        hidden = set(output(["git", "ls-files", "--others", "--", PROJECT_FILES], cwd=worktree).splitlines())
+        hidden |= {"cabal.project.local"} if (worktree / "cabal.project.local").exists() else set()
+        require(not hidden, f"revision {name} has {', '.join(str(worktree / path) for path in sorted(hidden))}, which the manifest would not record")
         worktrees[name] = worktree
     return worktrees
 
@@ -406,26 +447,144 @@ def probe_support(binary, workload, scratch):
     return workload_support(result.returncode, result.stdout)
 
 
+def cabal_stanzas(text):
+    stanzas = []
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("--"):
+            continue
+        if line[0].isspace() and stanzas:
+            stanzas[-1].append(line.rstrip())
+        else:
+            stanzas.append([line.rstrip()])
+    return stanzas
+
+
+def cabal_fields(stanza):
+    fields, indent = [], None
+    for line in stanza:
+        depth = len(line) - len(line.lstrip())
+        field = FIELD.fullmatch(line)
+        if indent is not None and depth > indent:
+            fields[-1][1].append(line.strip())
+        elif field:
+            indent = depth
+            fields.append((field[1].lower(), [field[2].strip()]))
+        else:
+            indent = None
+            fields.append((None, [line.strip()]))
+    return [(name, " ".join(filter(None, values))) for name, values in fields]
+
+
+def build_inputs(stanzas, components):
+    components = set(components)
+    while True:
+        compared, solver = split_stanzas(stanzas, components)
+        tools = {f"executable {tool}" for stanza in compared for name, value in cabal_fields(stanza)
+                 if name == "build-tool-depends" for tool in OWN_TOOL.findall(value)} - components
+        if not tools:
+            return compared, solver
+        components |= tools
+
+
+def split_stanzas(stanzas, components):
+    elsewhere = {component for group in SOURCES.values() for component in group["components"]} - components
+    compared, solver = [], set()
+    for stanza in stanzas:
+        kind, *name = stanza[0].split()
+        key = " ".join([kind.lower(), *name])
+        field = FIELD.fullmatch(stanza[0])
+        if field and field[1].lower() in METADATA_FIELDS or kind.lower() == "source-repository":
+            continue
+        entries = None if key in components or not (kind.lower() in SEPARATE_KINDS or key in elsewhere) else solver_inputs(stanza)
+        if entries is None:
+            compared.append(stanza)
+        else:
+            solver |= {(ENABLED_BY.get(kind.lower(), "always"), *entry) for entry in entries}
+    return compared, solver
+
+
+def solver_inputs(stanza):
+    entries = set()
+    for name, value in cabal_fields(stanza[1:]):
+        if name in (None, "buildable"):
+            return None
+        if name in LIST_FIELDS:
+            entries |= {(name, " ".join(item.split())) for item in value.split(",") if item.strip() and (name == "import" or not OWN_PACKAGE.match(item.strip()))}
+        elif name not in LOCAL_FIELDS:
+            entries.add((name, value))
+    return entries
+
+
+def runs_setup_script(stanzas):
+    for stanza in stanzas:
+        field = FIELD.fullmatch(stanza[0])
+        if field and field[1].lower() == "build-type" and field[2].strip().lower() != "simple" or stanza[0].split()[0].lower() == "custom-setup":
+            return True
+    return False
+
+
+def unparsed_layout(stanzas):
+    return any("{" in line for stanza in stanzas for line in stanza) or stanzas[0][0][0].isspace()
+
+
+def names_other_packages(project):
+    return any(path != "." for block in cabal_stanzas(project) for name, value in cabal_fields(block) if name in ("packages", "optional-packages") for path in cabal_paths(value))
+
+
+def cabal_paths(value):
+    return [os.path.normpath(quoted or bare) for quoted, bare in PATH_TOKEN.findall(value)]
+
+
+def source_paths(stanzas, declared):
+    named = set()
+    for stanza in stanzas:
+        fields = cabal_fields(stanza)
+        named |= {path for name, value in fields if name and name.endswith(("-dirs", "-sources")) for path in cabal_paths(value)}
+        if stanza[0].split()[0].lower() in COMPILED_KINDS and "hs-source-dirs" not in {name for name, _ in fields}:
+            named.add(".")
+    return sorted(path for path in named if not any(path == p or path.startswith(p + "/") for p in declared))
+
+
 def compare_sources(revisions):
     named = [r for r in revisions.values() if r["git_sha"]]
     if len(named) < 2:
         return None
     first = named[0]
-    same = lambda paths: all(subprocess.run(["git", "diff", "--quiet", first["git_sha"], r["git_sha"], "--", *paths], cwd=first["worktree"]).returncode == 0
-                             for r in named[1:])
-    return {name: {"paths": paths, "identical": same(paths)} for name, paths in SOURCES.items()}
+    git = lambda *args: subprocess.check_output(["git", *args], cwd=first["worktree"], text=True)
+    cabal = {r["git_sha"]: cabal_stanzas(git("show", f"{r['git_sha']}:seki.cabal")) for r in named}
+    projects = [(path, git("show", f"{r['git_sha']}:{path}")) for r in named
+                for path in git("ls-tree", "--name-only", r["git_sha"]).splitlines() if path.startswith("cabal.project")]
+    importing = sorted({path for path, text in projects if re.search(r"^\s*import\s*:", text, re.M | re.I)})
+    packaging = sorted({path for path, text in projects if names_other_packages(text)})
+    custom = [r["git_sha"][:7] for r in named if runs_setup_script(cabal[r["git_sha"]])]
+    unparsed = [r["git_sha"][:7] for r in named if unparsed_layout(cabal[r["git_sha"]])]
+    found = [(importing, "{} import{s} another project file, which the runner does not compare"),
+             (packaging, "{} name{s} another local package, which the runner does not compare"),
+             (custom, "`seki.cabal` at {} builds through a setup script, which the runner does not compare"),
+             (unparsed, "`seki.cabal` at {} uses brace or indented layout, which the runner does not parse")]
+    reason = "; ".join(message.format(listed(items), s="s" if len(items) == 1 else "") for items, message in found if items) or None
+    sources = {}
+    for name, group in SOURCES.items():
+        compared = {sha: build_inputs(stanzas, group["components"]) for sha, stanzas in cabal.items()}
+        paths = group["paths"] + source_paths([stanza for stanzas, _ in compared.values() for stanza in stanzas], group["paths"])
+        identical = reason is None and all(
+            compared[r["git_sha"]] == compared[first["git_sha"]]
+            and subprocess.run(["git", "diff", "--quiet", first["git_sha"], r["git_sha"], "--", *paths, PROJECT_FILES], cwd=first["worktree"]).returncode == 0
+            for r in named[1:])
+        sources[name] = {"paths": paths, "components": group["components"], "identical": identical, "reason": reason}
+    return sources
 
 
-def run_trial(trial, binary, workload, collector, steps, args):
+def run_live(trial, binary, workload, collector, steps, seed, profile):
     with (trial / "driver.log").open("w") as log:
-        command = [str(binary),"live",str(trial),str(args.seed),str(steps),collector,workload,"+RTS","-N1","-RTS"]
+        command = [str(binary),"live",str(trial),str(seed),str(steps),collector,workload,"+RTS","-N1","-RTS"]
         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         cpu = []
         deadline = time.monotonic() + max(120, steps)
         try:
             while process.poll() is None:
                 require(time.monotonic() < deadline, "live trial timed out")
-                if args.profile:
+                if profile:
                     snapshot = process_cpu(trial)
                     if snapshot:
                         cpu.append(snapshot)
@@ -440,14 +599,14 @@ def run_trial(trial, binary, workload, collector, steps, args):
                     process.kill()
                     process.wait()
             cleanup_groups(trial)
-            if args.profile:
+            if profile:
                 write(trial / "cpu.json", cpu)
-    if args.profile:
-        return
+
+
+def run_pure(trial, binary, workload, collector, seed, windows, steps):
     with (trial / "pure.rts").open("w") as log:
         flags = ["-N1","-T","-s"] + (["--nonmoving-gc"] if collector == "nonmoving" else [])
-        subprocess.run([str(binary),"pure",str(trial/"pure.json"),str(args.seed),str(args.pure_windows),str(args.pure_steps),workload,"+RTS",*flags,"-RTS"], stdout=log, stderr=subprocess.STDOUT, check=True, timeout=120)
-    summarize_trial(trial, workload)
+        subprocess.run([str(binary),"pure",str(trial/"pure.json"),str(seed),str(windows),str(steps),workload,"+RTS",*flags,"-RTS"], stdout=log, stderr=subprocess.STDOUT, check=True, timeout=120)
 
 
 def main():
@@ -514,12 +673,16 @@ def main():
                 "load_before": os.getloadavg(), "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime())}
         manifest["trials"].append(item)
         write(directory / "manifest.json", manifest)
-        run_trial(trial, revisions[name]["binary"], workload, collector, live_steps[workload], args)
+        binary = revisions[name]["binary"]
+        run_live(trial, binary, workload, collector, live_steps[workload], args.seed, args.profile)
+        if not args.profile:
+            run_pure(trial, binary, workload, collector, args.seed, args.pure_windows, args.pure_steps)
+            summarize_trial(trial, workload)
+            print(f"validated {trial.name}", flush=True)
         item["load_after"] = os.getloadavg()
         write(directory / "manifest.json", manifest)
         if args.profile:
             return
-        print(f"validated {trial.name}", flush=True)
     for name, r in revisions.items():
         require(sha256(r["binary"]) == r["binary_sha256"] and all(sha256(path) == digest for path, digest in r["linked_seki_libraries"].items()),
                 f"revision {name}'s binary or seki libraries changed during the trials")

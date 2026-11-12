@@ -9,8 +9,8 @@ import Data.Bits (shiftR)
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Word (Word64)
-import Seki.Internal.Core.Action (Intent (..))
-import Seki.Internal.Core.Event (drainCore)
+import Seki.Internal.Core.Action (Intent (..), windows)
+import Seki.Internal.Core.Event (CoreEvent (RunAction), drainCore)
 import Seki.Internal.Core.Geometry (OutputRect (..), Point (..), mkRect, mkSize)
 import Seki.Internal.Core.Layout (SizePolicy (..))
 import Seki.Internal.Core.ManageHook (idHook)
@@ -67,6 +67,11 @@ tests =
         case coreWorkspaces (run [19]) of
           AttachedState ss _ -> Map.lookup (S.WindowId 3) (S.floating ss) @?= Just S.ClientSized
           _ -> assertFailure "unexpected headless fixture"
+    , testCase "the core drops m2's client fullscreen request unless window 2 is focused" $ do
+        let fullscreenAfter events = coreFullscreen (fst (drainCore idHook events (initialState M2 8)))
+            focusTwo = RunAction (windows (S.focusWindow (S.WindowId 2)))
+        fullscreenAfter [eventFor M2 8 17] @?= Set.empty
+        fullscreenAfter [focusTwo, eventFor M2 8 17] @?= Set.singleton (S.WindowId 2)
     , testCase "m1 keeps its sixteen operation codes, m2 adds four, and m3 two more" $ do
         operationCodes M1 1909 200 @?= [fromIntegral ((x `shiftR` 32) `mod` 16) | x <- take 200 (tail (iterate lcg 1909))]
         operationCodes M2 1909 200 @?= [fromIntegral ((x `shiftR` 32) `mod` 20) | x <- take 200 (tail (iterate lcg 1909))]
