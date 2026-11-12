@@ -4,6 +4,8 @@
  */
 #define WLR_USE_UNSTABLE
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <xkbcommon/xkbcommon.h>
 #include <stdio.h>
@@ -22,6 +24,7 @@ static struct wlr_backend *backend;
 static struct wl_event_source *keytimer;
 static struct wl_event_source *timer;
 static struct wl_event_source *cycle_timer;
+static int ack_fd=-1;
 static int stage;
 static bool active;
 static struct wlr_keyboard keyboard;
@@ -50,16 +53,23 @@ static int press(void *data) {
  }
  return 0;
 }
+/* With SEKI_FIXTURE_LAYOUT_ACK, a tick changes the layout only when it can
+ * take one byte from that FIFO. The reader writes a byte after it has seen
+ * the change before, so it sees every change. */
+static bool acknowledged(void) {
+ char byte;
+ return ack_fd<0 || read(ack_fd,&byte,1)==1;
+}
 static int cycle(void *data) {
  static uint32_t group;
- if (active) {
+ if (active && acknowledged()) {
   group=1-group;
   struct timespec stamp; clock_gettime(CLOCK_MONOTONIC,&stamp);
   wlr_keyboard_notify_modifiers(&keyboard,0,0,0,group);
   const char *path=getenv("SEKI_FIXTURE_LAYOUT_RECEIPTS");
   if (path) { FILE *file=fopen(path,"a"); if (!file) abort(); fprintf(file,"%lld %u\n",(long long)stamp.tv_sec*1000000000LL+stamp.tv_nsec,group); fclose(file); }
  }
- (void)data; wl_event_source_timer_update(cycle_timer,getenv("SEKI_FIXTURE_FAST_CYCLE") ? 10 : 2000);
+ (void)data; wl_event_source_timer_update(cycle_timer,ack_fd<0 ? 2000 : 10);
  return 0;
 }
 static int add(void *data) {
@@ -117,6 +127,8 @@ struct wlr_backend *wlr_backend_autocreate(struct wl_event_loop *loop, struct wl
  keytimer=wl_event_loop_add_timer(loop,press,NULL);
  wl_event_source_timer_update(keytimer,1800);
  if (getenv("SEKI_FIXTURE_LAYOUT_CYCLE")) {
+  const char *ack=getenv("SEKI_FIXTURE_LAYOUT_ACK");
+  if (ack && (mkfifo(ack,0600)!=0 || (ack_fd=open(ack,O_RDONLY|O_NONBLOCK|O_CLOEXEC))<0)) abort();
   cycle_timer=wl_event_loop_add_timer(loop,cycle,NULL);
   wl_event_source_timer_update(cycle_timer,2000);
  }
