@@ -524,7 +524,7 @@ def runs_setup_script(stanzas):
 
 
 def unparsed_layout(stanzas):
-    return any("{" in line for stanza in stanzas for line in stanza) or bool(stanzas) and stanzas[0][0][0].isspace()
+    return any("{" in line for stanza in stanzas for line in stanza) or stanzas[0][0][0].isspace()
 
 
 def names_other_packages(project):
