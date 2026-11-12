@@ -393,5 +393,186 @@ class ReportTest(unittest.TestCase):
         self.assertIn("00-head-m3-normal external_wake_p99 = 70.0000 ms (budget < 50 ms)", text)
 
 
+CABAL = """cabal-version: 3.0
+name: seki
+version: 0.1.0.0
+build-type: Simple
+extra-doc-files: README.md
+
+common warnings
+  ghc-options: -Wall
+
+library
+  import: warnings
+  hs-source-dirs: src-public
+  exposed-modules: Seki
+  build-depends: base, seki:seki-core, seki:seki-wire
+
+library seki-core
+  import: warnings
+  visibility: private
+  hs-source-dirs: src-core
+  exposed-modules: Seki.Core
+  ghc-options: -O2
+  build-depends: base, text >=2.1
+
+library seki-wire
+  import: warnings
+  visibility: private
+  hs-source-dirs: src
+  exposed-modules: Seki.Wire
+  build-depends: base, seki:seki-core
+
+library layer-surface-fixture
+  import: warnings
+  visibility: private
+  hs-source-dirs: tools/layer-surface-fixture/src
+  exposed-modules: Fixture
+  build-depends: base, seki:seki-wire
+
+executable seki-latency
+  import: warnings
+  hs-source-dirs: tools/latency integration
+  main-is: Main.hs
+  other-modules: Seki.Integration.Harness
+  build-depends: base, text >=2.1, seki:seki-core, seki:layer-surface-fixture
+
+test-suite seki-test
+  import: warnings
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Main.hs
+  ghc-options: -threaded
+  build-tool-depends: seki:seki-latency
+  build-depends: base, seki
+
+source-repository head
+  type: git
+  location: https://example.invalid/seki.git
+"""
+
+
+def edit(text, old, new):
+    assert text.count(old) == 1, old
+    return text.replace(old, new)
+
+
+class SourceComparisonTest(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.repo = Path(temp.name)
+        self.git("init", "-q")
+
+    def git(self, *args):
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+
+    def commit(self, files):
+        for path, text in files.items():
+            (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / path).write_text(text)
+        self.git("add", "-A")
+        self.git("commit", "-q", "--allow-empty", "-m", "snapshot")
+        return self.git("rev-parse", "HEAD")
+
+    def sources(self, before, after):
+        base = {"seki.cabal": CABAL, "cabal.project": "packages: .\n", "src-core/Seki/Core.hs": "module Seki.Core where\n"}
+        trunk, head = self.commit(base | before), self.commit(after)
+        return runner.compare_sources({"trunk": dict(git_sha=trunk, worktree=str(self.repo)), "head": dict(git_sha=head, worktree=str(self.repo))})
+
+    def identical(self, before, after):
+        return {name: group["identical"] for name, group in self.sources(before, after).items()}
+
+    @unittest.expectedFailure
+    def test_a_column_zero_comment_hides_no_field_below_it(self):
+        commented = edit(CABAL, "  ghc-options: -O2\n", "-- the core is pure\n  ghc-options: -O2\n")
+        self.assertEqual(self.identical({"seki.cabal": commented}, {"seki.cabal": edit(commented, "-O2", "-O0")}), {"runtime": False, "driver": True})
+
+    @unittest.expectedFailure
+    def test_a_common_stanza_that_a_component_imports_is_compared(self):
+        perf = edit(edit(CABAL, "common warnings\n", "common perf\n  ghc-options: -O2\n\ncommon warnings\n"),
+                    "library seki-core\n  import: warnings\n", "library seki-core\n  import: warnings, perf\n")
+        self.assertEqual(self.identical({"seki.cabal": perf}, {"seki.cabal": edit(perf, "common perf\n  ghc-options: -O2", "common perf\n  ghc-options: -O0")}),
+                         {"runtime": False, "driver": False})
+
+    def proto(self):
+        return edit(edit(CABAL, "  build-depends: base, seki:seki-core\n", "  build-depends: base, seki:seki-core, seki:seki-proto\n"),
+                    "library layer-surface-fixture\n", "library seki-proto\n  import: warnings\n  visibility: private\n  hs-source-dirs: src-proto\n"
+                                                       "  exposed-modules: Seki.Proto\n  ghc-options: -O2\n\nlibrary layer-surface-fixture\n")
+
+    @unittest.expectedFailure
+    def test_a_library_that_no_group_names_is_compared(self):
+        proto = self.proto()
+        self.assertEqual(self.identical({"seki.cabal": proto}, {"seki.cabal": edit(proto, "Seki.Proto\n  ghc-options: -O2", "Seki.Proto\n  ghc-options: -O0")}),
+                         {"runtime": False, "driver": False})
+
+    @unittest.expectedFailure
+    def test_the_sources_of_a_library_that_no_group_names_are_compared(self):
+        self.assertEqual(self.identical({"seki.cabal": self.proto(), "src-proto/Seki/Proto.hs": "module Seki.Proto where\n"},
+                                        {"src-proto/Seki/Proto.hs": "module Seki.Proto where\nslow :: Int\nslow = 1\n"}),
+                         {"runtime": False, "driver": False})
+
+    @unittest.expectedFailure
+    def test_a_flag_default_is_compared(self):
+        flagged = edit(edit(CABAL, "common warnings\n", "flag fast\n  default: True\n  manual: True\n\ncommon warnings\n"),
+                       "  ghc-options: -O2\n", "  if flag(fast)\n    ghc-options: -O2\n  else\n    ghc-options: -O0\n")
+        self.assertEqual(self.identical({"seki.cabal": flagged}, {"seki.cabal": edit(flagged, "default: True", "default: False")}),
+                         {"runtime": False, "driver": False})
+
+    @unittest.expectedFailure
+    def test_a_custom_build_type_is_compared(self):
+        custom = edit(edit(CABAL, "build-type: Simple", "build-type: Custom"), "common warnings\n", "custom-setup\n  setup-depends: base, Cabal\n\ncommon warnings\n")
+        self.assertEqual(self.identical({"Setup.hs": "import Distribution.Simple\nmain = defaultMain\n"},
+                                        {"seki.cabal": custom, "Setup.hs": "import Distribution.Simple\nmain = defaultMainWithHooks simpleUserHooks\n"}),
+                         {"runtime": False, "driver": False})
+
+    @unittest.expectedFailure
+    def test_the_cabal_version_is_compared(self):
+        self.assertEqual(self.identical({}, {"seki.cabal": edit(CABAL, "cabal-version: 3.0", "cabal-version: 3.4")}), {"runtime": False, "driver": False})
+
+    @unittest.expectedFailure
+    def test_a_setup_script_counts_as_different_under_a_custom_build_type(self):
+        custom = edit(CABAL, "build-type: Simple", "build-type: Custom")
+        self.assertEqual(self.identical({"seki.cabal": custom, "Setup.hs": "main = defaultMain\n"}, {"Setup.hs": "main = defaultMainWithHooks simpleUserHooks\n"}),
+                         {"runtime": False, "driver": False})
+
+    @unittest.expectedFailure
+    def test_a_freeze_file_is_compared(self):
+        self.assertEqual(self.identical({}, {"cabal.project.freeze": "package seki\n  ghc-options: -O0\n"}), {"runtime": False, "driver": False})
+
+    @unittest.expectedFailure
+    def test_a_project_file_that_imports_another_counts_as_different(self):
+        imports = {"cabal.project": "packages: .\nimport: build.project\n"}
+        self.assertEqual(self.identical(imports | {"build.project": "package seki\n  ghc-options: -O2\n"}, {"build.project": "package seki\n  ghc-options: -O0\n"}),
+                         {"runtime": False, "driver": False})
+
+    @unittest.expectedFailure
+    def test_a_component_header_in_another_case_is_still_compared(self):
+        capital = edit(CABAL, "library seki-core\n", "Library seki-core\n")
+        self.assertEqual(self.identical({"seki.cabal": capital}, {"seki.cabal": edit(capital, "-O2", "-O0")}), {"runtime": False, "driver": True})
+
+    @unittest.expectedFailure
+    def test_a_test_suite_dependency_bound_is_compared(self):
+        self.assertEqual(self.identical({}, {"seki.cabal": edit(CABAL, "  build-depends: base, seki\n", "  build-depends: base, seki, text <2.1\n")}),
+                         {"runtime": False, "driver": False})
+
+    def test_a_change_only_inside_a_test_suite_stays_identical(self):
+        tests = edit(edit(CABAL, "-threaded", "-threaded -rtsopts"), "  main-is: Main.hs\n  ghc-options", "  main-is: Spec.hs\n  other-modules: Seki.CoreTest\n  ghc-options")
+        self.assertEqual(self.identical({}, {"seki.cabal": tests}), {"runtime": True, "driver": True})
+
+    def test_an_executable_that_adds_no_dependency_constraint_stays_identical(self):
+        daily = edit(edit(CABAL, "test-suite seki-test\n", "executable seki-daily-config\n  import: warnings\n  hs-source-dirs: test-public\n"
+                                                           "  main-is: DailyConfigMain.hs\n  build-depends: base, seki\n\ntest-suite seki-test\n"),
+                     "seki:seki-latency", "seki:seki-latency, seki:seki-daily-config")
+        self.assertEqual(self.identical({}, {"seki.cabal": daily}), {"runtime": True, "driver": True})
+
+    @unittest.expectedFailure
+    def test_a_revision_with_an_untracked_project_file_is_refused(self):
+        self.commit({"cabal.project": "packages: .\n"})
+        (self.repo / "cabal.project.freeze").write_text("constraints: any.text ==2.0.2\n")
+        with self.assertRaisesRegex(ValueError, "cabal.project.freeze"):
+            runner.parse_revisions([f"trunk={self.repo}"])
+
+
 if __name__ == "__main__":
     unittest.main()
