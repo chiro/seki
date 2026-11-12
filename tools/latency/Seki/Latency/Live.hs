@@ -61,7 +61,7 @@ runWM workload socket directory = do
     IPCDriver -> do
       getEnv "XDG_RUNTIME_DIR" >>= buildFailingCheck . (</> "build") >>= configureBuild policy
       path <- ipcPath
-      pure (withIPCAt path policy . (publish (directory </> "wm.ipc") path >>))
+      pure (\run -> withIPCAt path policy (writeAtomically writeFile (directory </> "wm.ipc") path >> run))
   let handlers = (policyRuntimeHandlers policy){riverSequenceRecorder = Just recorder}
   session <- openRiverSessionAt (UnixSocketPath socket) defaultObjectLimit handlers >>= requireRight "latency WM open"
   pid <- getProcessID
@@ -97,8 +97,9 @@ runWM workload socket directory = do
           index <- atomicModifyIORef' snapshots (\n -> (n + 1, n))
           stats <- getRTSStats
           let path = directory </> ("wm-checkpoint-" <> show index <> ".json")
-          BL.writeFile
-            (path <> ".tmp")
+          writeAtomically
+            BL.writeFile
+            path
             ( encode
                 ( object
                     [ "allocated_bytes" .= allocated_bytes stats
@@ -109,7 +110,6 @@ runWM workload socket directory = do
                     ]
                 )
             )
-          renameFile (path <> ".tmp") path
       )
       Nothing
   result <- serve (runRiverSession session)
@@ -361,8 +361,8 @@ openRole probe _ (TileRole color) = openWindow probe color
 openRole probe opened (DialogRole color (width, height) parent) = openWindowWith probe (windowSpec color){specParent = Just (opened !! parent), specCommit = CommitFixed width height}
 openRole probe _ (PadRole color) = openWindowWith probe (windowSpec color){specAppId = CustomAppId (Text.pack padAppId)}
 
-publish :: FilePath -> String -> IO ()
-publish path contents = writeFile (path <> ".tmp") contents >> renameFile (path <> ".tmp") path
+writeAtomically :: (FilePath -> contents -> IO ()) -> FilePath -> contents -> IO ()
+writeAtomically write path contents = write (path <> ".tmp") contents >> renameFile (path <> ".tmp") path
 
 writeProcesses :: FilePath -> [(String, Maybe Int)] -> IO ()
 writeProcesses directory processes = do
@@ -372,6 +372,4 @@ writeProcesses directory processes = do
     let fields = words (drop 1 (dropWhile (/= ')') raw))
         startTicks = read (fields !! 19) :: Integer
     pure (object ["role" .= role, "pid" .= pid, "start_ticks" .= startTicks, "owned_group" .= (role /= "driver")])
-  let path = directory </> "processes.json"
-  BL.writeFile (path <> ".tmp") (encode entries)
-  renameFile (path <> ".tmp") path
+  writeAtomically BL.writeFile (directory </> "processes.json") (encode entries)
