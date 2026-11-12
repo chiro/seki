@@ -325,6 +325,7 @@ class ReportTest(unittest.TestCase):
         text = (self.path / "report.md").read_text()
         self.assertIn("## Exercised M3 features", text)
         self.assertNotIn("M2", text)
+        self.assertNotIn("Every count except float raises", text)
 
     def test_endpoint_method_comes_from_the_trials(self):
         driver = driver_for("m3") | dict(idle_gap_us=2500, observation_poll_us=200)
