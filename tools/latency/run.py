@@ -46,11 +46,13 @@ WORKLOADS = {
 
 SCHEMA = 5
 
-SOURCES = {"runtime": {"paths": ["src", "src-core", "src-public", "src-generated", "cbits", "cabal.project"],
+PROJECT_FILES = ":(glob)cabal.project*"
+
+SOURCES = {"runtime": {"paths": ["src", "src-core", "src-public", "src-generated", "cbits"],
                        "stanzas": ["common warnings", "library", "library seki-core", "library seki-wire"]},
            "driver": {"paths": ["tools/latency", "integration/Seki/Integration/Harness.hs",
                                 "integration/Seki/Integration/Snapshot.hs", "tools/layer-surface-fixture/src",
-                                "tools-generated/layer-surface-fixture", "cabal.project"],
+                                "tools-generated/layer-surface-fixture"],
                       "stanzas": ["common warnings", "executable seki-latency", "library layer-surface-fixture"]}}
 
 BUDGETS = {"pure_p99": ("pure", "p99_ms", 2), "manage_p99": ("manage", "p99_ms", 10),
@@ -219,9 +221,9 @@ def revision_section(manifest, checksums):
         lines.append("One revision ran, so no sources were compared.")
     else:
         runtime, driver = sources["runtime"], sources["driver"]
-        lines.append(f"Runtime sources under {compared(runtime)} {'are identical' if runtime['identical'] else 'differ'} across the revisions.")
+        lines.append(f"Runtime sources under {compared(runtime)} {verdict(runtime)}.")
         if not driver["identical"]:
-            lines.append(f"Latency driver sources under {compared(driver)} differ across the revisions. The WM runs the driver's policy setup, and the pure interval "
+            lines.append(f"Latency driver sources under {compared(driver)} {verdict(driver)}. The WM runs the driver's policy setup, and the pure interval "
                          "includes the driver's checksum fold, so this report draws no conclusion from differences between revisions. Matching pure checksums show the same output, not the same cost.")
         elif runtime["identical"]:
             lines.append(f"Latency driver sources under {compared(driver)} are identical across the revisions, "
@@ -240,7 +242,15 @@ def revision_section(manifest, checksums):
 
 
 def compared(group):
-    return f"{listed(group['paths'])}, with the {listed(group['stanzas'])} stanzas of `seki.cabal`,"
+    return f"{listed(group['paths'])}, with the root `cabal.project*` files and the {listed(group['stanzas'])} stanzas of `seki.cabal`,"
+
+
+def verdict(group):
+    if group["identical"]:
+        return "are identical across the revisions"
+    if group["reason"]:
+        return f"count as different across the revisions, because {group['reason']}"
+    return "differ across the revisions"
 
 
 def listed(paths):
@@ -383,7 +393,9 @@ def parse_revisions(items):
         name, separator, path = item.partition("=")
         require(separator and re.fullmatch(r"[a-z][a-z0-9]*", name) and name not in worktrees, f"invalid revision {item}")
         worktree = Path(path).resolve()
-        require(not (worktree / "cabal.project.local").exists(), f"revision {name} has {worktree / 'cabal.project.local'}, which the manifest would not record")
+        hidden = set(output(["git", "ls-files", "--others", "--", PROJECT_FILES], cwd=worktree).splitlines())
+        hidden |= {"cabal.project.local"} if (worktree / "cabal.project.local").exists() else set()
+        require(not hidden, f"revision {name} has {', '.join(str(worktree / path) for path in sorted(hidden))}, which the manifest would not record")
         worktrees[name] = worktree
     return worktrees
 
@@ -432,13 +444,18 @@ def compare_sources(revisions):
     if len(named) < 2:
         return None
     first = named[0]
+    git = lambda *args: output(["git", *args], cwd=first["worktree"])
     def stanzas(sha, names):
-        blocks = {block[0]: block for block in cabal_stanzas(output(["git", "show", f"{sha}:seki.cabal"], cwd=first["worktree"]))}
+        blocks = {block[0]: block for block in cabal_stanzas(git("show", f"{sha}:seki.cabal"))}
         return [blocks.get(name) for name in names]
+    importing = sorted({path for r in named for path in git("ls-tree", "--name-only", r["git_sha"]).splitlines()
+                        if path.startswith("cabal.project") and re.search(r"^\s*import\s*:", git("show", f"{r['git_sha']}:{path}"), re.M | re.I)})
+    reason = f"{listed(importing)} {'imports' if len(importing) == 1 else 'import'} another project file, which the runner does not compare" if importing else None
     def same(group):
-        return all(subprocess.run(["git", "diff", "--quiet", first["git_sha"], r["git_sha"], "--", *group["paths"]], cwd=first["worktree"]).returncode == 0
-                   and stanzas(r["git_sha"], group["stanzas"]) == stanzas(first["git_sha"], group["stanzas"]) for r in named[1:])
-    return {name: group | {"identical": same(group)} for name, group in SOURCES.items()}
+        return reason is None and all(
+            subprocess.run(["git", "diff", "--quiet", first["git_sha"], r["git_sha"], "--", *group["paths"], PROJECT_FILES], cwd=first["worktree"]).returncode == 0
+            and stanzas(r["git_sha"], group["stanzas"]) == stanzas(first["git_sha"], group["stanzas"]) for r in named[1:])
+    return {name: group | {"identical": same(group), "reason": reason} for name, group in SOURCES.items()}
 
 
 def run_live(trial, binary, workload, collector, steps, seed, profile):
