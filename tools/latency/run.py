@@ -50,9 +50,7 @@ PROJECT_FILES = ":(glob)cabal.project*"
 
 SOURCES = {"runtime": {"paths": ["src", "src-core", "src-public", "src-generated", "cbits"],
                        "components": ["library", "library seki-core", "library seki-wire"]},
-           "driver": {"paths": ["tools/latency", "integration/Seki/Integration/Harness.hs",
-                                "integration/Seki/Integration/Snapshot.hs", "tools/layer-surface-fixture/src",
-                                "tools-generated/layer-surface-fixture"],
+           "driver": {"paths": ["tools/latency", "integration", "tools/layer-surface-fixture/src", "tools-generated/layer-surface-fixture"],
                       "components": ["executable seki-latency", "library layer-surface-fixture"]}}
 
 METADATA_FIELDS = {"synopsis", "description", "homepage", "bug-reports", "license", "license-file", "author",
@@ -523,7 +521,7 @@ def source_paths(stanzas, declared):
         named |= {path for name, value in fields if name and name.endswith(("-dirs", "-sources")) for path in cabal_paths(value)}
         if stanza[0].split()[0].lower() in COMPILED_KINDS and "hs-source-dirs" not in {name for name, _ in fields}:
             named.add(".")
-    return sorted(path for path in named if not any(path == p or path.startswith(p + "/") or p.startswith(path + "/") for p in declared))
+    return sorted(path for path in named if not any(path == p or path.startswith(p + "/") for p in declared))
 
 
 def compare_sources(revisions):
