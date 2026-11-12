@@ -47,7 +47,13 @@ def source(ack_path, source_path, latency_ms, fault):
             time.sleep(latency_ms / 1000)
             while (fault, change) == ('unpublished', FAULTY):
                 print(snapshot([keyboard(1 - group)]), flush=True)
-            print(snapshot([keyboard(group)]), flush=True)
+            line = snapshot([keyboard(group)])
+            if (fault, change) == ('split', FAULTY):
+                sys.stdout.write(line[:len(line) // 2])
+                sys.stdout.flush()
+                time.sleep(0.05)
+                line = line[len(line) // 2:]
+            print(line, flush=True)
 
 
 def hung(signum, frame):
@@ -75,6 +81,21 @@ class SubscriberTest(unittest.TestCase):
 
     def test_a_latency_below_the_ceilings_passes(self):
         self.assertEqual(len(self.measure()), subscriber.CHANGES)
+
+    def test_a_line_split_across_reads_is_one_change(self):
+        self.assertEqual(len(self.measure(fault='split')), subscriber.CHANGES)
+
+    def test_the_ceilings_hold_at_their_exact_bounds(self):
+        def run(latencies):
+            for count in range(1, len(latencies) + 1):
+                subscriber.check_ceilings(latencies[:count])
+        allowed = subscriber.CHANGES - subscriber.P99_RANK
+        run([1.0] * (subscriber.CHANGES - allowed) + [float(subscriber.P99_MS)] * allowed)
+        run([subscriber.MAX_MS - 0.01] * allowed)
+        with self.assertRaisesRegex(RuntimeError, f'{allowed + 1} changes have taken'):
+            run([float(subscriber.P99_MS)] * (allowed + 1))
+        with self.assertRaisesRegex(RuntimeError, 'the maximum is'):
+            run([float(subscriber.MAX_MS)])
 
     def test_a_latency_above_the_ceiling_is_reported_and_fails(self):
         with self.assertRaisesRegex(
