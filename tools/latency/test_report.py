@@ -525,6 +525,20 @@ class SourceComparisonTest(unittest.TestCase):
                                         {"Seki/Proto.hs": "module Seki.Proto where\nslow :: Int\nslow = 1\n"}),
                          {"runtime": False, "driver": False})
 
+    @unittest.expectedFailure
+    def test_an_integration_module_the_driver_does_not_list_is_a_driver_source(self):
+        fixture = "integration/Seki/Integration/Fixture.hs"
+        self.assertEqual(self.identical({fixture: "module Seki.Integration.Fixture where\n"}, {fixture: "module Seki.Integration.Fixture where\nn :: Int\nn = 1\n"}),
+                         {"runtime": True, "driver": False})
+
+    @unittest.expectedFailure
+    def test_a_source_directory_that_holds_a_declared_one_is_compared_whole(self):
+        shared = edit(edit(CABAL, "seki:layer-surface-fixture\n", "seki:layer-surface-fixture, seki:latency-shared\n"), "executable seki-latency\n",
+                      "library latency-shared\n  import: warnings\n  visibility: private\n  hs-source-dirs: tools\n  exposed-modules: Shared.Clock\n\nexecutable seki-latency\n")
+        self.assertEqual(self.identical({"seki.cabal": shared, "tools/Shared/Clock.hs": "module Shared.Clock where\n"},
+                                        {"tools/Shared/Clock.hs": "module Shared.Clock where\ntick :: Int\ntick = 1\n"}),
+                         {"runtime": False, "driver": False})
+
     def test_a_flag_default_is_compared(self):
         flagged = edit(edit(CABAL, "common warnings\n", "flag fast\n  default: True\n  manual: True\n\ncommon warnings\n"),
                        "  ghc-options: -O2\n", "  if flag(fast)\n    ghc-options: -O2\n  else\n    ghc-options: -O0\n")
