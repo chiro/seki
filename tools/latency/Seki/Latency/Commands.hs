@@ -17,7 +17,7 @@ import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import Network.Socket
 import Network.Socket.ByteString (sendAll)
-import Seki.Integration.Harness (BuildView, Snapshot (..), appliedRevision, bufferedLine, connectUnix, focusedTag, withSnapshotPump)
+import Seki.Integration.Harness (BuildView, Snapshot (..), appliedRevision, bufferedLine, bufferedLineWithoutDeadline, connectUnix, focusedTag, withSnapshotPump)
 import Seki.Run.IPCSchema (Operation (Subscribe), Request (..), encodeLine)
 import System.Timeout (timeout)
 
@@ -43,7 +43,7 @@ withCommands path body =
     bracket (connectUnix path) close $ \subscriber -> do
       sendLine subscriber Subscribe
       readReply <- bufferedLine commander
-      readSnapshot <- bufferedLine subscriber
+      readSnapshot <- bufferedLineWithoutDeadline subscriber
       withSnapshotPump readSnapshot $ \arrivals ->
         body (Commands commander readReply ((>>= publication) <$> arrivals))
 
