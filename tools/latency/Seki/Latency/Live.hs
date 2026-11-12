@@ -172,12 +172,15 @@ buildFailingCheck :: FilePath -> IO BuildContext
 buildFailingCheck directory = do
   createDirectoryIfMissing True directory
   mapM_ (\name -> writeFile (directory </> name) "") ["Main.hs", "seki-user.cabal", "cabal.project"]
-  let stub = directory </> "compiler"
+  let wrapper = directory </> "wrapper"
       candidate = directory </> "built"
+      resources = Resources{archive = "/unused", compiler = "/unused", cabal = "cabal", environment = wrapper, templates = directory}
+      config = directory
+      state = directory
   writeFile candidate ("#!/bin/sh\necho '" <> checkFailure <> "' >&2\nexit 1\n")
-  writeFile stub ("#!/bin/sh\ncase \"$3\" in\n  build) exit 0 ;;\n  list-bin) echo '" <> candidate <> "' ;;\n  *) exit 2 ;;\nesac\n")
-  mapM_ (`setFileMode` 0o700) [stub, candidate]
-  pure (BuildContext Resources{archive = "/unused", compiler = "/unused", cabal = "cabal", environment = stub, templates = directory} Nothing directory directory)
+  writeFile wrapper ("#!/bin/sh\ncase \"$3\" in\n  build) exit 0 ;;\n  list-bin) echo '" <> candidate <> "' ;;\n  *) exit 2 ;;\nesac\n")
+  mapM_ (`setFileMode` 0o700) [wrapper, candidate]
+  pure (BuildContext resources Nothing config state)
 
 runLive :: FilePath -> WorkloadName -> Word64 -> Int -> String -> IO ()
 runLive directory workload seed steps collector = do
