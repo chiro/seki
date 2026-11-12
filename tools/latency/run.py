@@ -49,11 +49,18 @@ SCHEMA = 5
 PROJECT_FILES = ":(glob)cabal.project*"
 
 SOURCES = {"runtime": {"paths": ["src", "src-core", "src-public", "src-generated", "cbits"],
-                       "stanzas": ["common warnings", "library", "library seki-core", "library seki-wire"]},
+                       "components": ["library", "library seki-core", "library seki-wire"]},
            "driver": {"paths": ["tools/latency", "integration/Seki/Integration/Harness.hs",
                                 "integration/Seki/Integration/Snapshot.hs", "tools/layer-surface-fixture/src",
                                 "tools-generated/layer-surface-fixture"],
-                      "stanzas": ["common warnings", "executable seki-latency", "library layer-surface-fixture"]}}
+                      "components": ["executable seki-latency", "library layer-surface-fixture"]}}
+
+METADATA_FIELDS = {"synopsis", "description", "homepage", "bug-reports", "license", "license-file", "author",
+                   "maintainer", "category", "tested-with", "extra-source-files", "extra-doc-files"}
+
+SEPARATE_KINDS = {"test-suite", "benchmark", "executable"}
+
+FIELD = re.compile(r"\s*([A-Za-z][\w-]*)\s*:(.*)")
 
 BUDGETS = {"pure_p99": ("pure", "p99_ms", 2), "manage_p99": ("manage", "p99_ms", 10),
            "render_p99": ("render", "p99_ms", 10), "wm_gc_max": ("wm_rts", "max_stw_pause_ms", 10)}
@@ -242,7 +249,7 @@ def revision_section(manifest, checksums):
 
 
 def compared(group):
-    return f"{listed(group['paths'])}, with the root `cabal.project*` files and the {listed(group['stanzas'])} stanzas of `seki.cabal`,"
+    return f"{listed(group['paths'])}, with the root `cabal.project*` files and the parts of `seki.cabal` that can change the build of {listed(group['components'])},"
 
 
 def verdict(group):
@@ -439,23 +446,60 @@ def cabal_stanzas(text):
     return stanzas
 
 
+def cabal_fields(stanza):
+    fields, indent = [], None
+    for line in stanza:
+        depth = len(line) - len(line.lstrip())
+        field = FIELD.fullmatch(line)
+        if indent is not None and depth > indent:
+            fields[-1][1].append(line.strip())
+        elif field:
+            indent = depth
+            fields.append((field[1].lower(), [field[2].strip()]))
+        else:
+            indent = None
+            fields.append((None, [line.strip()]))
+    return [(name, " ".join(filter(None, values))) for name, values in fields]
+
+
+def compared_stanzas(stanzas, components):
+    elsewhere = {component for group in SOURCES.values() for component in group["components"]} - set(components)
+    for stanza in stanzas:
+        kind, *name = stanza[0].split()
+        key = " ".join([kind.lower(), *name])
+        field = FIELD.fullmatch(stanza[0])
+        if field and field[1].lower() in METADATA_FIELDS or kind.lower() == "source-repository":
+            continue
+        if key in components or not (kind.lower() in SEPARATE_KINDS or key in elsewhere):
+            yield stanza
+
+
+def source_paths(stanzas, declared):
+    named = {os.path.normpath(path) for stanza in stanzas for name, value in cabal_fields(stanza)
+             if name and name.endswith(("-dirs", "-sources")) for path in value.replace(",", " ").split()}
+    return sorted(path for path in named if not any(path == p or path.startswith(p + "/") or p.startswith(path + "/") for p in declared))
+
+
 def compare_sources(revisions):
     named = [r for r in revisions.values() if r["git_sha"]]
     if len(named) < 2:
         return None
     first = named[0]
     git = lambda *args: output(["git", *args], cwd=first["worktree"])
-    def stanzas(sha, names):
-        blocks = {block[0]: block for block in cabal_stanzas(git("show", f"{sha}:seki.cabal"))}
-        return [blocks.get(name) for name in names]
+    cabal = {r["git_sha"]: cabal_stanzas(git("show", f"{r['git_sha']}:seki.cabal")) for r in named}
     importing = sorted({path for r in named for path in git("ls-tree", "--name-only", r["git_sha"]).splitlines()
                         if path.startswith("cabal.project") and re.search(r"^\s*import\s*:", git("show", f"{r['git_sha']}:{path}"), re.M | re.I)})
     reason = f"{listed(importing)} {'imports' if len(importing) == 1 else 'import'} another project file, which the runner does not compare" if importing else None
-    def same(group):
-        return reason is None and all(
-            subprocess.run(["git", "diff", "--quiet", first["git_sha"], r["git_sha"], "--", *group["paths"], PROJECT_FILES], cwd=first["worktree"]).returncode == 0
-            and stanzas(r["git_sha"], group["stanzas"]) == stanzas(first["git_sha"], group["stanzas"]) for r in named[1:])
-    return {name: group | {"identical": same(group), "reason": reason} for name, group in SOURCES.items()}
+    sources = {}
+    for name, group in SOURCES.items():
+        compared = {sha: list(compared_stanzas(stanzas, group["components"])) for sha, stanzas in cabal.items()}
+        paths = group["paths"] + source_paths([stanza for stanzas in compared.values() for stanza in stanzas], group["paths"])
+        identical = reason is None and all(
+            compared[r["git_sha"]] == compared[first["git_sha"]]
+            and subprocess.run(["git", "diff", "--quiet", first["git_sha"], r["git_sha"], "--", *paths, PROJECT_FILES], cwd=first["worktree"]).returncode == 0
+            for r in named[1:])
+        sources[name] = {"paths": paths, "components": group["components"], "identical": identical, "reason": reason}
+    return sources
 
 
 def run_live(trial, binary, workload, collector, steps, seed, profile):
