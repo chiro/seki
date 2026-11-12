@@ -579,6 +579,13 @@ class SourceComparisonTest(unittest.TestCase):
         self.assertEqual(self.identical({"cabal.project": "packages: .\ntests: false\n", "seki.cabal": in_test}, {"seki.cabal": in_exe}),
                          {"runtime": False, "driver": False})
 
+    @unittest.expectedFailure
+    def test_a_common_stanza_named_like_the_package_counts_where_a_test_suite_imports_it(self):
+        named = edit(CABAL, "common warnings\n", "common seki\n  build-depends: text <2.1\n\ncommon warnings\n")
+        imported = edit(named, "test-suite seki-test\n  import: warnings\n", "test-suite seki-test\n  import: warnings, seki\n")
+        self.assertEqual(self.identical({"cabal.project": "packages: .\ntests: true\n", "seki.cabal": named}, {"seki.cabal": imported}),
+                         {"runtime": False, "driver": False})
+
     def test_a_change_only_inside_a_test_suite_stays_identical(self):
         tests = edit(edit(CABAL, "-threaded", "-threaded -rtsopts"), "  main-is: Main.hs\n  ghc-options", "  main-is: Spec.hs\n  other-modules: Seki.CoreTest\n  ghc-options")
         self.assertEqual(self.identical({}, {"seki.cabal": tests}), {"runtime": True, "driver": True})
