@@ -100,13 +100,18 @@ Both groups count as different in the cases below, because the runner cannot
 tell what the build reads. The report names the reason.
 
 - A project file uses `import:`. The runner does not compare the imported file.
-- A `packages:` field in a project file names a package other than `.`. The
-  runner does not compare the other package.
+- A `packages:` or `optional-packages:` field in a project file names a
+  package other than `.`. The runner does not compare the other package.
 - `seki.cabal` builds through a setup script, with a `build-type` other than
   `Simple` or a `custom-setup` stanza. The runner does not compare `Setup.hs`.
 - `seki.cabal` uses brace layout, with a `{` outside a comment, or indents its
   first field. The runner parses only stanza headers at column 0 with
   indented bodies.
+
+The runner does not yet compare four inputs, so a change to one of them can
+still read as identical: a header directory named in `cc-options`, the
+target of a symlinked source file or `cabal.project`, and an untracked
+source file that shadows a tracked module. Issue #88 tracks them.
 
 Some changes count as different even though they cannot change a binary. A
 warning flag in `common warnings`, a comment in `cabal.project`, and an edit
