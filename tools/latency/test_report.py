@@ -526,10 +526,14 @@ class SourceComparisonTest(unittest.TestCase):
     def test_the_cabal_version_is_compared(self):
         self.assertEqual(self.identical({}, {"seki.cabal": edit(CABAL, "cabal-version: 3.0", "cabal-version: 3.4")}), {"runtime": False, "driver": False})
 
-    @unittest.expectedFailure
     def test_a_setup_script_counts_as_different_under_a_custom_build_type(self):
         custom = edit(CABAL, "build-type: Simple", "build-type: Custom")
         self.assertEqual(self.identical({"seki.cabal": custom, "Setup.hs": "main = defaultMain\n"}, {"Setup.hs": "main = defaultMainWithHooks simpleUserHooks\n"}),
+                         {"runtime": False, "driver": False})
+
+    def test_a_setup_script_counts_as_different_when_a_custom_setup_stanza_implies_custom(self):
+        implied = edit(edit(CABAL, "build-type: Simple\n", ""), "common warnings\n", "custom-setup\n  setup-depends: base, Cabal\n\ncommon warnings\n")
+        self.assertEqual(self.identical({"seki.cabal": implied, "Setup.hs": "main = defaultMain\n"}, {"Setup.hs": "main = defaultMainWithHooks simpleUserHooks\n"}),
                          {"runtime": False, "driver": False})
 
     def test_a_freeze_file_is_compared(self):

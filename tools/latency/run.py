@@ -498,6 +498,14 @@ def solver_inputs(stanza):
     return entries
 
 
+def runs_setup_script(stanzas):
+    for stanza in stanzas:
+        field = FIELD.fullmatch(stanza[0])
+        if field and field[1].lower() == "build-type" and field[2].strip().lower() != "simple" or stanza[0].split()[0].lower() == "custom-setup":
+            return True
+    return False
+
+
 def source_paths(stanzas, declared):
     named = {os.path.normpath(path) for stanza in stanzas for name, value in cabal_fields(stanza)
              if name and name.endswith(("-dirs", "-sources")) for path in value.replace(",", " ").split()}
@@ -513,7 +521,10 @@ def compare_sources(revisions):
     cabal = {r["git_sha"]: cabal_stanzas(git("show", f"{r['git_sha']}:seki.cabal")) for r in named}
     importing = sorted({path for r in named for path in git("ls-tree", "--name-only", r["git_sha"]).splitlines()
                         if path.startswith("cabal.project") and re.search(r"^\s*import\s*:", git("show", f"{r['git_sha']}:{path}"), re.M | re.I)})
-    reason = f"{listed(importing)} {'imports' if len(importing) == 1 else 'import'} another project file, which the runner does not compare" if importing else None
+    custom = [r["git_sha"][:7] for r in named if runs_setup_script(cabal[r["git_sha"]])]
+    reasons = ([f"{listed(importing)} {'imports' if len(importing) == 1 else 'import'} another project file, which the runner does not compare"] if importing else []) + \
+              ([f"`seki.cabal` at {listed(custom)} builds through a setup script, which the runner does not compare"] if custom else [])
+    reason = "; ".join(reasons) or None
     sources = {}
     for name, group in SOURCES.items():
         compared = {sha: build_inputs(stanzas, group["components"]) for sha, stanzas in cabal.items()}
