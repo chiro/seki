@@ -594,6 +594,28 @@ class SourceComparisonTest(unittest.TestCase):
         self.assertEqual({name: group["identical"] for name, group in sources.items()}, {"runtime": False, "driver": False})
         self.assertEqual({group["reason"] for group in sources.values()}, {"`cabal.project` names another local package, which the runner does not compare"})
 
+    def layout_reason(self):
+        trunk, head = self.git("rev-parse", "--short=7", "HEAD~1"), self.git("rev-parse", "--short=7", "HEAD")
+        return f"`seki.cabal` at `{trunk}` and `{head}` uses brace or indented layout, which the runner does not parse"
+
+    @unittest.expectedFailure
+    def test_brace_layout_counts_as_different(self):
+        braces = edit(edit(CABAL, "test-suite seki-test\n", "test-suite seki-test { build-depends: text >=2.1\n"), "  build-depends: base, seki\n", "  build-depends: base, seki\n}\n")
+        sources = self.sources({"seki.cabal": braces}, {"seki.cabal": edit(braces, "{ build-depends: text >=2.1\n", "{ build-depends: text <2.1\n")})
+        self.assertEqual({name: group["identical"] for name, group in sources.items()}, {"runtime": False, "driver": False})
+        self.assertEqual({group["reason"] for group in sources.values()}, {self.layout_reason()})
+
+    @unittest.expectedFailure
+    def test_indented_top_level_fields_count_as_different(self):
+        indented = "".join(" " + line if line.strip() else line for line in edit(CABAL, "build-type: Simple", "build-type: Custom").splitlines(keepends=True))
+        sources = self.sources({"seki.cabal": indented, "Setup.hs": "main = defaultMain\n"}, {"Setup.hs": "main = defaultMainWithHooks simpleUserHooks\n"})
+        self.assertEqual({name: group["identical"] for name, group in sources.items()}, {"runtime": False, "driver": False})
+        self.assertEqual({group["reason"] for group in sources.values()}, {self.layout_reason()})
+
+    def test_a_comment_only_change_stays_identical(self):
+        commented = edit(CABAL, "library seki-core\n", "-- the core is pure { no IO }\nlibrary seki-core\n  -- built with -O2\n")
+        self.assertEqual(self.identical({}, {"seki.cabal": commented}), {"runtime": True, "driver": True})
+
     def test_a_component_header_in_another_case_is_still_compared(self):
         capital = edit(CABAL, "library seki-core\n", "Library seki-core\n")
         self.assertEqual(self.identical({"seki.cabal": capital}, {"seki.cabal": edit(capital, "-O2", "-O0")}), {"runtime": False, "driver": True})
