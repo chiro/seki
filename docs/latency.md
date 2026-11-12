@@ -27,7 +27,7 @@ nix develop --no-write-lock-file .#ci --command python3 tools/latency/run.py art
 `--workload` is required to collect trials, and you can repeat it. `m2` is the
 M2 gate. `m3` times the M3 command paths. `m1` is the M1 workload, still
 runnable on current code for comparison. Report-only mode reads the workloads
-from `manifest.json` and accepts only the schema the runner writes, schema 4.
+from `manifest.json` and accepts only the schema the runner writes, schema 5.
 It needs the full trial directories, so it cannot regenerate a retained
 compact report. It rewrites `report.md` and `summary.json` and leaves any
 other file in the directory alone.
@@ -60,12 +60,18 @@ round runs the normal collector and then the nonmoving collector. Each
 collector runs every workload at each revision that supports it. Odd rounds
 reverse the order of the revisions.
 
-The runner compares two groups of sources across the revisions with `git
-diff`. The runtime group is `src`, `src-core`, `src-public`, `src-generated`,
-and `cbits`. The latency driver group is `tools/latency`,
-`integration/Seki/Integration/Harness.hs`,
+The runner compares two groups of sources across the revisions. Each group
+has paths, which it compares with `git diff`, and `seki.cabal` stanzas, which
+it compares as text. The runtime group is `src`, `src-core`, `src-public`,
+`src-generated`, `cbits`, and `cabal.project`, with the `common warnings`,
+`library`, `library seki-core`, and `library seki-wire` stanzas. The latency
+driver group is `tools/latency`, `integration/Seki/Integration/Harness.hs`,
 `integration/Seki/Integration/Snapshot.hs`, `tools/layer-surface-fixture/src`,
-and `tools-generated/layer-surface-fixture`. When the runtime group is
+`tools-generated/layer-surface-fixture`, and `cabal.project`, with the
+`common warnings`, `executable seki-latency`, and
+`library layer-surface-fixture` stanzas. The runner does not compare the
+other stanzas, such as the test suites, or the package fields at the top of
+`seki.cabal`, such as `extra-source-files`. When the runtime group is
 identical, the report calls the m2 manage and render differences a noise
 floor and claims no speedup or regression. The pure interval also runs the
 driver's checksum fold, so the report extends the noise floor to pure m2 only
