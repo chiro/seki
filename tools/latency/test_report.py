@@ -206,7 +206,7 @@ class ReportTest(unittest.TestCase):
     def test_a_revision_with_cabal_project_local_is_refused(self):
         clean, local = self.path / "clean", self.path / "local"
         for worktree in (clean, local):
-            worktree.mkdir()
+            subprocess.run(["git", "init", "-q", str(worktree)], check=True)
         (local / "cabal.project.local").write_text("optimization: False\n")
         self.assertEqual(runner.parse_revisions([f"trunk={clean}"]), {"trunk": clean.resolve()})
         with self.assertRaisesRegex(ValueError, "cabal.project.local"):
@@ -222,7 +222,7 @@ class ReportTest(unittest.TestCase):
         for item in ["wm.rts", "pure.rts", "wm-checkpoint-0.json", "wm-checkpoint-1.json"]:
             (trial / item).write_text((self.path / item).read_text())
 
-    def campaign(self, runtime=True, driver=True, head_m2_checksum=123):
+    def campaign(self, runtime=True, driver=True, head_m2_checksum=123, reason=None):
         self.write_trial("00-trunk-m2-normal", "m2")
         self.write_trial("01-head-m2-normal", "m2", head_m2_checksum)
         self.write_trial("02-head-m3-normal", "m3", 456)
@@ -230,7 +230,7 @@ class ReportTest(unittest.TestCase):
             [("00-trunk-m2-normal", "trunk", "m2"), ("01-head-m2-normal", "head", "m2"), ("02-head-m3-normal", "head", "m3")],
             revisions={"trunk": revision("c2b7851"), "head": revision("abc1234")},
             unsupported=[dict(revision="trunk", workload="m3", reason="invalid workload: m3")],
-            sources={name: group | dict(identical=same) for (name, group), same in zip(runner.SOURCES.items(), [runtime, driver])}))
+            sources={name: group | dict(identical=same, reason=None if same else reason) for (name, group), same in zip(runner.SOURCES.items(), [runtime, driver])}))
         return runner.report(self.path)
 
     def test_campaign_report_groups_by_revision_and_names_the_noise_floor(self):
@@ -263,14 +263,21 @@ class ReportTest(unittest.TestCase):
     def test_campaign_report_names_every_compared_path(self):
         self.campaign()
         text = (self.path / "report.md").read_text()
-        self.assertIn("Runtime sources under `src`, `src-core`, `src-public`, `src-generated`, `cbits`, and `cabal.project`, "
-                      "with the `common warnings`, `library`, `library seki-core`, and `library seki-wire` stanzas of `seki.cabal`, "
+        self.assertIn("Runtime sources under `src`, `src-core`, `src-public`, `src-generated`, and `cbits`, with the root `cabal.project*` files and "
+                      "the `common warnings`, `library`, `library seki-core`, and `library seki-wire` stanzas of `seki.cabal`, "
                       "are identical across the revisions.", text)
         self.assertIn("Latency driver sources under `tools/latency`, `integration/Seki/Integration/Harness.hs`, "
                       "`integration/Seki/Integration/Snapshot.hs`, `tools/layer-surface-fixture/src`, "
-                      "`tools-generated/layer-surface-fixture`, and `cabal.project`, "
-                      "with the `common warnings`, `executable seki-latency`, and `library layer-surface-fixture` stanzas of `seki.cabal`, "
+                      "and `tools-generated/layer-surface-fixture`, with the root `cabal.project*` files and "
+                      "the `common warnings`, `executable seki-latency`, and `library layer-surface-fixture` stanzas of `seki.cabal`, "
                       "are identical across the revisions, so manage, render, and pure differences between them are a noise floor.", text)
+
+    def test_a_group_that_counts_as_different_names_the_reason(self):
+        self.campaign(runtime=False, driver=False, reason="`cabal.project` imports another project file, which the runner does not compare")
+        text = (self.path / "report.md").read_text()
+        self.assertIn("stanzas of `seki.cabal`, count as different across the revisions, because `cabal.project` imports another project file, "
+                      "which the runner does not compare. The WM runs the driver's policy setup", text)
+        self.assertNotIn("noise floor", text)
 
     def test_driver_group_covers_every_integration_module_the_driver_compiles(self):
         cabal = (Path(__file__).resolve().parents[2] / "seki.cabal").read_text()
@@ -288,7 +295,6 @@ class ReportTest(unittest.TestCase):
         latency = next("\n".join(block) for block in runner.cabal_stanzas(cabal) if block[0] == "executable seki-latency")
         for group in runner.SOURCES.values():
             self.assertLessEqual(set(group["stanzas"]), headers)
-            self.assertIn("cabal.project", group["paths"])
         for library in re.findall(r"\bseki:([\w-]+)", latency):
             self.assertTrue(any(f"library {library}" in group["stanzas"] for group in runner.SOURCES.values()), library)
 
@@ -297,8 +303,8 @@ class ReportTest(unittest.TestCase):
         text = (self.path / "report.md").read_text()
         self.assertIn("Latency driver sources under `tools/latency`, `integration/Seki/Integration/Harness.hs`, "
                       "`integration/Seki/Integration/Snapshot.hs`, `tools/layer-surface-fixture/src`, "
-                      "`tools-generated/layer-surface-fixture`, and `cabal.project`, "
-                      "with the `common warnings`, `executable seki-latency`, and `library layer-surface-fixture` stanzas of `seki.cabal`, "
+                      "and `tools-generated/layer-surface-fixture`, with the root `cabal.project*` files and "
+                      "the `common warnings`, `executable seki-latency`, and `library layer-surface-fixture` stanzas of `seki.cabal`, "
                       "differ across the revisions.", text)
         self.assertIn("The WM runs the driver's policy setup", text)
         self.assertNotIn("noise floor", text)
@@ -535,15 +541,14 @@ class SourceComparisonTest(unittest.TestCase):
         self.assertEqual(self.identical({"seki.cabal": custom, "Setup.hs": "main = defaultMain\n"}, {"Setup.hs": "main = defaultMainWithHooks simpleUserHooks\n"}),
                          {"runtime": False, "driver": False})
 
-    @unittest.expectedFailure
     def test_a_freeze_file_is_compared(self):
         self.assertEqual(self.identical({}, {"cabal.project.freeze": "package seki\n  ghc-options: -O0\n"}), {"runtime": False, "driver": False})
 
-    @unittest.expectedFailure
     def test_a_project_file_that_imports_another_counts_as_different(self):
         imports = {"cabal.project": "packages: .\nimport: build.project\n"}
-        self.assertEqual(self.identical(imports | {"build.project": "package seki\n  ghc-options: -O2\n"}, {"build.project": "package seki\n  ghc-options: -O0\n"}),
-                         {"runtime": False, "driver": False})
+        sources = self.sources(imports | {"build.project": "package seki\n  ghc-options: -O2\n"}, {"build.project": "package seki\n  ghc-options: -O0\n"})
+        self.assertEqual({name: group["identical"] for name, group in sources.items()}, {"runtime": False, "driver": False})
+        self.assertEqual({group["reason"] for group in sources.values()}, {"`cabal.project` imports another project file, which the runner does not compare"})
 
     @unittest.expectedFailure
     def test_a_component_header_in_another_case_is_still_compared(self):
@@ -565,7 +570,6 @@ class SourceComparisonTest(unittest.TestCase):
                      "seki:seki-latency", "seki:seki-latency, seki:seki-daily-config")
         self.assertEqual(self.identical({}, {"seki.cabal": daily}), {"runtime": True, "driver": True})
 
-    @unittest.expectedFailure
     def test_a_revision_with_an_untracked_project_file_is_refused(self):
         self.commit({"cabal.project": "packages: .\n"})
         (self.repo / "cabal.project.freeze").write_text("constraints: any.text ==2.0.2\n")
