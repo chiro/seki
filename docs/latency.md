@@ -48,7 +48,12 @@ executables link the seki libraries dynamically, so a binary copied out of its
 worktree still loads the libraries of the last build there. Building in place
 keeps each revision's code separate. The runner refuses a revision with
 uncommitted tracked changes or a `cabal.project.local`, which would change the
-build without appearing in the manifest. It also refuses a binary that loads a
+build without appearing in the manifest. A user-level cabal config, such as
+`~/.config/cabal/config` or the file that `CABAL_CONFIG` names, can also
+change the build, for example with `ghc-options`, and the manifest does not
+record it. Every revision in one run reads the same config, so it cannot make
+two revisions differ, but it can make two runs differ. Keep build settings out
+of it when you collect a report. The runner also refuses a binary that loads a
 seki library from outside its worktree. It records each revision's commit,
 binary hash, and the hash of every linked seki library, and checks those
 hashes again after the last trial.
