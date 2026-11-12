@@ -550,6 +550,12 @@ class SourceComparisonTest(unittest.TestCase):
         self.assertEqual(self.identical({}, {"seki.cabal": edit(CABAL, "  build-depends: base, seki\n", "  build-depends: base, seki, text <2.1\n")}),
                          {"runtime": False, "driver": False})
 
+    @unittest.expectedFailure
+    def test_a_test_suite_dependency_moved_under_a_conditional_is_compared(self):
+        bounded = edit(CABAL, "  build-depends: base, seki\n", "  build-depends: base, seki, text <2.1\n")
+        conditional = edit(CABAL, "  build-depends: base, seki\n", "  build-depends: base, seki\n  if flag(old)\n    build-depends: text <2.1\n")
+        self.assertEqual(self.identical({"seki.cabal": bounded}, {"seki.cabal": conditional}), {"runtime": False, "driver": False})
+
     def test_a_change_only_inside_a_test_suite_stays_identical(self):
         tests = edit(edit(CABAL, "-threaded", "-threaded -rtsopts"), "  main-is: Main.hs\n  ghc-options", "  main-is: Spec.hs\n  other-modules: Seki.CoreTest\n  ghc-options")
         self.assertEqual(self.identical({}, {"seki.cabal": tests}), {"runtime": True, "driver": True})
