@@ -19,10 +19,15 @@ WORKLOADS = {
     "m2": {"text": "six native tiled windows and two parent-hinted dialog floats under Tall with Crop; "
                    "focus, view, Shrink/Expand, and client fullscreen actions",
            "exercised": ["clip_resizes", "fullscreen_enters", "fullscreen_exits_by_focus",
-                         "fullscreen_exits_by_request", "hidden_fullscreen_views", "float_raises"], "live_steps": 1023},
+                         "fullscreen_exits_by_request", "hidden_fullscreen_views", "float_raises"], "live_steps": 1023,
+           "exercised_note": "Every count except float raises changed what the probe observed, so a barrier confirmed it."},
     "m3": {"text": "two native tiles and a scratchpad window adopted by app ID under Tall; IPC workspace views, "
                    "scratchpad toggles, and recompiles on idle river with no physical input",
            "exercised": [], "live_steps": 2500,
+           "endpoint_heading": "M3 command endpoints",
+           "endpoint_method": "Each sample runs from the driver's send of one IPC command to the outcome named below, on idle river after a {gap_ms:g} ms gap, "
+                              "with no physical input. Probe outcomes are polled every {poll_ms:g} ms; subscriber lines are stamped when the driver's reader thread takes them. "
+                              "No ratio compares these with the m2 sequences.",
            "endpoints": {
                "external_wake": {"text": "IPC workspace command sent to the probe's keyboard owner change", "target_p99_ms": 50},
                "ipc_update": {"text": "the same command to the subscriber line that publishes the new focused workspace", "target_p99_ms": 50},
@@ -238,26 +243,23 @@ def listed(paths):
 
 
 def endpoint_section(trials, river):
-    rows = [(t, name, v) for t in trials for name, v in t["endpoints"].items()]
-    if not rows:
-        return []
-    methods = {tuple(t["endpoint_method"].items()) for t, _, _ in rows}
-    require(len(methods) == 1, f"m3 trials disagree on the idle gap and poll interval: {sorted(methods)}")
-    method = dict(methods.pop())
-    lines = ["", "## M3 command endpoints", "",
-             f"Each sample runs from the driver's send of one IPC command to the outcome named below, on idle river after a {method['idle_gap_us'] / 1000:g} ms gap, "
-             f"with no physical input. Probe outcomes are polled every {method['observation_poll_us'] / 1000:g} ms; subscriber lines are stamped when the driver's reader thread takes them. "
-             "No ratio compares these with the m2 sequences.", ""]
-    for workload in dict.fromkeys(t["workload"] for t, _, _ in rows):
-        for name, spec in WORKLOADS[workload]["endpoints"].items():
-            lines.append(f"- `{name}`: {spec['text']}.")
-        for name, reason in WORKLOADS[workload].get("unsupported", {}).items():
-            lines.append(f"- `{name}` is unsupported: {reason.format(river=river.split()[0])}.")
-    lines += ["", "| Trial | Endpoint | Samples | p50 ms | p95 ms | p99 ms | Max ms | Target p99 |", "|---|---|---:|---:|---:|---:|---:|---|"]
-    for t, name, v in rows:
-        target = WORKLOADS[t["workload"]]["endpoints"][name]["target_p99_ms"]
-        lines.append(f"| {t['directory']} | {name} | {v['count']} | {v['p50_ms']:.4f} | {v['p95_ms']:.4f} | {v['p99_ms']:.4f} | {v['max_ms']:.4f} | "
-                     f"{f'< {target} ms' if target is not None else 'none'} |")
+    lines = []
+    for workload in dict.fromkeys(t["workload"] for t in trials if t["endpoints"]):
+        spec = WORKLOADS[workload]
+        timed = [t for t in trials if t["workload"] == workload]
+        methods = {tuple(t["endpoint_method"].items()) for t in timed}
+        require(len(methods) == 1, f"{workload} trials disagree on the idle gap and poll interval: {sorted(methods)}")
+        method = dict(methods.pop())
+        lines += ["", f"## {spec['endpoint_heading']}", "",
+                  spec["endpoint_method"].format(gap_ms=method["idle_gap_us"] / 1000, poll_ms=method["observation_poll_us"] / 1000), ""]
+        lines += [f"- `{name}`: {endpoint['text']}." for name, endpoint in spec["endpoints"].items()]
+        lines += [f"- `{name}` is unsupported: {reason.format(river=river.split()[0])}." for name, reason in spec.get("unsupported", {}).items()]
+        lines += ["", "| Trial | Endpoint | Samples | p50 ms | p95 ms | p99 ms | Max ms | Target p99 |", "|---|---|---:|---:|---:|---:|---:|---|"]
+        for t in timed:
+            for name, v in t["endpoints"].items():
+                target = spec["endpoints"][name]["target_p99_ms"]
+                lines.append(f"| {t['directory']} | {name} | {v['count']} | {v['p50_ms']:.4f} | {v['p95_ms']:.4f} | {v['p99_ms']:.4f} | {v['max_ms']:.4f} | "
+                             f"{f'< {target} ms' if target is not None else 'none'} |")
     return lines
 
 
@@ -304,8 +306,9 @@ def report(directory):
         names = WORKLOADS[workload]["exercised"]
         if not names:
             continue
+        note = WORKLOADS[workload].get("exercised_note")
         lines += ["", f"## Exercised {workload.upper()} features", "",
-                  "Counts come from the model's transitions over the measured actions. Every count except float raises changed what the probe observed, so a barrier confirmed it.", "",
+                  "Counts come from the model's transitions over the measured actions." + (f" {note}" if note else ""), "",
                   "| Trial | " + " | ".join(names) + " |", "|---|" + "---:|" * len(names)]
         for t in trials:
             if t["workload"] == workload:
