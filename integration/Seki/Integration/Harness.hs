@@ -54,6 +54,7 @@ module Seki.Integration.Harness (
   ipcSocketIn,
   connectUnix,
   bufferedLine,
+  bufferedLineWithoutDeadline,
   appliedRevision,
   withSnapshotPump,
   module Seki.Integration.Snapshot,
@@ -305,6 +306,11 @@ connectUnix path = do
 
 bufferedLine :: Socket -> IO (IO ByteString)
 bufferedLine client = do
+  readLine <- bufferedLineWithoutDeadline client
+  pure (timeout assertionTimeoutMicroseconds readLine >>= maybe (failIntegration "timed out waiting for an IPC line") pure)
+
+bufferedLineWithoutDeadline :: Socket -> IO (IO ByteString)
+bufferedLineWithoutDeadline client = do
   pending <- newIORef ByteString.empty
   let readOne = do
         bytes <- readIORef pending
@@ -316,7 +322,7 @@ bufferedLine client = do
           Nothing -> do
             chunk <- SocketByteString.recv client 4096
             if ByteString.null chunk then failIntegration "unexpected IPC disconnect" else writeIORef pending (bytes <> chunk) >> readOne
-  pure (timeout assertionTimeoutMicroseconds readOne >>= maybe (failIntegration "timed out waiting for an IPC line") pure)
+  pure readOne
 
 appliedRevision :: ByteString -> IO Integer
 appliedRevision bytes = do
