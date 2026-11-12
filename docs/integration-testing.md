@@ -527,10 +527,25 @@ when river ends with both loads still held. The suite links the threaded RTS,
 as generated user configurations do; on the single-threaded RTS a held load
 would stall the whole runtime. `m3-input-output-mapping` disables and re-enables
 a private headless output and checks unavailable then resubmitted mapping. It
-claims submission, not applied pointer coordinates. `m3-input-perf` retains 1000 contiguous native
-layout-to-subscriber receipts with a 50 ms p99 ceiling. Its bounded process budget
-is 30 seconds because the source emits at 10 ms intervals; ordinary assertions
-retain their 10-second budget. The full suite has a 480-second outer limit for the input cases and five
+claims submission, not applied pointer coordinates.
+
+`m3-input-perf` times 1000 native layout changes. Each sample runs from the
+fixture backend's `wlr_keyboard_notify_modifiers` call to the complete
+`sekictl subscribe` line that shows the new layout. The source is closed-loop.
+The backend makes the FIFO that `SEKI_FIXTURE_LAYOUT_ACK` names, and on a 10 ms
+tick it changes the layout only when it can read one byte from that FIFO.
+`integration/input/subscriber.py` writes one byte after it reads each change.
+So each receipt belongs to exactly one source event, consecutive changes are at
+least 10 ms apart, and a change and its reversal cannot both fall between two
+snapshots. The p99 must stay below 50 ms and the maximum below 100 ms. The
+subscriber fails as soon as one change takes 100 ms or more, or an 11th change
+takes 50 ms or more. A change that does not arrive within 5 seconds fails with
+its index, and the error says whether the backend emitted the change. A normal
+run takes about 10 seconds. The process budget is 60 seconds, because 1000
+changes that just meet the ceilings take about 50 seconds; ordinary assertions
+retain their 10-second budget.
+
+The full suite has a 480-second outer limit for the input cases and five
 1,000-toggle scratchpad trials. With the seven daily scenarios added, the complete suite took about 300
 seconds in CI in November 2026. Individual assertion and latency budgets stay fixed.
 
