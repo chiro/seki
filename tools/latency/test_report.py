@@ -565,7 +565,6 @@ class SourceComparisonTest(unittest.TestCase):
         conditional = edit(CABAL, "  build-depends: base, seki\n", "  build-depends: base, seki\n  if flag(old)\n    build-depends: text <2.1\n")
         self.assertEqual(self.identical({"seki.cabal": bounded}, {"seki.cabal": conditional}), {"runtime": False, "driver": False})
 
-    @unittest.expectedFailure
     def test_a_buildable_field_moved_between_test_suites_is_compared(self):
         suites = edit(edit(CABAL, "  build-depends: base, seki\n", "  build-depends: base, seki, text <2.1\n"), "source-repository head\n",
                       "test-suite seki-public\n  type: exitcode-stdio-1.0\n  hs-source-dirs: test-public\n  main-is: Main.hs\n  build-depends: base\n\nsource-repository head\n")
