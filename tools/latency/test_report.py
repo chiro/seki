@@ -565,6 +565,22 @@ class SourceComparisonTest(unittest.TestCase):
         conditional = edit(CABAL, "  build-depends: base, seki\n", "  build-depends: base, seki\n  if flag(old)\n    build-depends: text <2.1\n")
         self.assertEqual(self.identical({"seki.cabal": bounded}, {"seki.cabal": conditional}), {"runtime": False, "driver": False})
 
+    @unittest.expectedFailure
+    def test_a_buildable_field_moved_between_test_suites_is_compared(self):
+        suites = edit(edit(CABAL, "  build-depends: base, seki\n", "  build-depends: base, seki, text <2.1\n"), "source-repository head\n",
+                      "test-suite seki-public\n  type: exitcode-stdio-1.0\n  hs-source-dirs: test-public\n  main-is: Main.hs\n  build-depends: base\n\nsource-repository head\n")
+        dormant = edit(suites, "  ghc-options: -threaded\n", "  ghc-options: -threaded\n  buildable: False\n")
+        live = edit(suites, "  main-is: Main.hs\n  build-depends: base\n", "  main-is: Main.hs\n  buildable: False\n  build-depends: base\n")
+        self.assertEqual(self.identical({"seki.cabal": dormant}, {"seki.cabal": live}), {"runtime": False, "driver": False})
+
+    @unittest.expectedFailure
+    def test_a_bound_moved_from_a_disabled_test_suite_to_an_executable_is_compared(self):
+        exe = edit(CABAL, "test-suite seki-test\n", "executable seki-default\n  hs-source-dirs: app\n  main-is: Main.hs\n  build-depends: base\n\ntest-suite seki-test\n")
+        in_test = edit(exe, "  build-depends: base, seki\n", "  build-depends: base, seki, text <2.1\n")
+        in_exe = edit(exe, "  build-depends: base\n\ntest-suite", "  build-depends: base, text <2.1\n\ntest-suite")
+        self.assertEqual(self.identical({"cabal.project": "packages: .\ntests: false\n", "seki.cabal": in_test}, {"seki.cabal": in_exe}),
+                         {"runtime": False, "driver": False})
+
     def test_a_change_only_inside_a_test_suite_stays_identical(self):
         tests = edit(edit(CABAL, "-threaded", "-threaded -rtsopts"), "  main-is: Main.hs\n  ghc-options", "  main-is: Spec.hs\n  other-modules: Seki.CoreTest\n  ghc-options")
         self.assertEqual(self.identical({}, {"seki.cabal": tests}), {"runtime": True, "driver": True})
