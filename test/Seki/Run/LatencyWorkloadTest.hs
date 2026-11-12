@@ -35,6 +35,10 @@ tests =
         expectedLayers hidden @?= []
         observedOwner (expectedObservation hidden) @?= Nothing
         pictureMismatch [] (paint []) @?= Nothing
+    , testCase "a hidden workspace keeps every window's last committed size, fullscreen included" $ do
+        let full = stepModel (stepModel (initialModel M2) FocusUp) EnterFullscreen
+            sizes = observedSizes . expectedObservation
+        sequence_ [sizes (stepModel m ViewEmpty) @?= sizes m | m <- [initialModel M1, initialModel M2, full, initialModel M3]]
     , testCase "workload names parse from their text" $
         map (parseWorkloadName . workloadText) [minBound .. maxBound] @?= map Just [M1, M2, M3]
     , testCase "the tile table agrees with the production Tall layout" $
@@ -103,6 +107,10 @@ tests =
     , testCase "the m3 plan hides the adopted pad, then cycles two views, two toggles, and a recompile" $
         take 11 (plan M3 1909 (initialModel M3))
           @?= [TogglePad, ViewEmpty, ViewPopulated, TogglePad, TogglePad, Recompile, ViewEmpty, ViewPopulated, TogglePad, TogglePad, Recompile]
+    , testCase "the m3 plan ignores the seed that m1 and m2 draw their steps from" $ do
+        let m0 = initialModel M3
+        sequence_ [take 300 (plan M3 seed m0) @?= take 300 (plan M3 1909 m0) | seed <- [0, 1, 1910, maxBound]]
+        assertBool "m2 plans differ by seed" (take 300 (plan M2 1909 (initialModel M2)) /= take 300 (plan M2 1910 (initialModel M2)))
     , testCase "every m3 step changes what the probe or the subscriber observes" $ do
         let m0 = initialModel M3
             models = scanl stepModel m0 (take 3000 (plan M3 1910 m0))
