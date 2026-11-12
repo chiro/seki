@@ -239,15 +239,15 @@ runLive directory workload seed steps collector = do
                           ExitFullscreen -> mapM_ (requestExitFullscreen probe . (byIndex Map.!)) (modelFullscreen model)
                           _ -> key (stepCode step + 1)
                         withDriver body = case workloadDriver workload of
-                          KeyDriver -> body (\model step _ -> [] <$ drive model step)
+                          KeyDriver -> body (\model step -> [] <$ drive model step)
                           IPCDriver -> do
                             _ <- waitUntil "WM serving IPC" assertionTimeoutMicroseconds (doesFileExist (directory </> "wm.ipc")) id
                             path <- readFile (directory </> "wm.ipc")
-                            withCommands path (\c -> body (\_ step next -> timeCommand c observe next step))
+                            withCommands path (\c -> body (timeCommand c observe))
                     withDriver $ \act -> do
                       let perform (model, timed) step = do
                             let next = stepModel model step
-                            samples <- act model step next
+                            samples <- act model step
                             await next
                             pure (next, foldl' (\m (endpoint, ns) -> Map.insertWith (<>) endpoint [ns] m) timed samples)
                           awaitPicture model =
@@ -315,7 +315,7 @@ runLive directory workload seed steps collector = do
     void (waitUntil "WM RTS checkpoint" assertionTimeoutMicroseconds (doesFileExist path) id)
 
 timeCommand :: Commands -> IO Observation -> Model -> Step -> IO [(Endpoint, Word64)]
-timeCommand commands observe next step = do
+timeCommand commands observe model step = do
   threadDelay idleGapMicroseconds
   (operation, endpoints) <- maybe (fail ("the IPC driver has no command for " <> show step)) pure (stepCommand step)
   Receipt started revision <- command commands operation
@@ -327,6 +327,7 @@ timeCommand commands observe next step = do
       RecompileCompletion -> publishedAt <$> (awaitPublished commands assertionTimeoutMicroseconds (finished (publishedFinishedBuilds expected)) >>= failedByStub)
     pure (endpoint, ended - started)
  where
+  next = stepModel model step
   expected = expectedPublication next
   observed = waitUntilEvery ("probe outcome of " <> show step) assertionTimeoutMicroseconds pollMicroseconds observe (== expectedObservation next) >> getMonotonicTimeNSec
   publishes p = do
