@@ -47,8 +47,10 @@ The runner builds `seki-latency` in each worktree before the first trial. The
 executables link the seki libraries dynamically, so a binary copied out of its
 worktree still loads the libraries of the last build there. Building in place
 keeps each revision's code separate. The runner refuses a revision with
-uncommitted tracked changes or a `cabal.project.local`, which would change the
-build without appearing in the manifest. A user-level cabal config, such as
+uncommitted tracked changes or with an untracked `cabal.project*` file at the
+repository root, ignored or not, such as `cabal.project.local`. Either would
+change the build without appearing in the manifest. A user-level cabal
+config, such as
 `~/.config/cabal/config` or the file that `CABAL_CONFIG` names, can also
 change the build, for example with `ghc-options`, and the manifest does not
 record it. Every revision in one run reads the same config, so it cannot make
@@ -70,9 +72,8 @@ a group identical only when none of the group's inputs differ. The runtime
 group builds `library`, `library seki-core`, and `library seki-wire` from
 `src`, `src-core`, `src-public`, `src-generated`, and `cbits`. The latency
 driver group builds `executable seki-latency` and `library layer-surface-fixture`
-from `tools/latency`, `integration/Seki/Integration/Harness.hs`,
-`integration/Seki/Integration/Snapshot.hs`, `tools/layer-surface-fixture/src`,
-and `tools-generated/layer-surface-fixture`. For each group, the runner also
+from `tools/latency`, `integration`, `tools/layer-surface-fixture/src`, and
+`tools-generated/layer-surface-fixture`. For each group, the runner also
 compares these inputs:
 
 - Every `cabal.project*` file at the repository root.
@@ -81,19 +82,38 @@ compares these inputs:
   and the `source-repository` stanza.
 - For the test suites, benchmarks, other executables, and the other group's
   components, only what they give Cabal's dependency solve: their
-  dependencies, their imports, and any field not known to be local to the
-  stanza. Cabal solves one version of each dependency for the whole package,
-  so a bound in a test suite can change what a library links. A stanza with a
-  conditional is compared whole.
-- Every source directory that a compared stanza names.
+  dependencies on other packages, their imports, and any field not known to
+  be local to the stanza. Cabal solves one version of each dependency for the
+  whole package, so a bound in a test suite can change what a library links.
+  Each entry also records what enables its stanza: `tests:`, `benchmarks:`,
+  or nothing. A disabled stanza adds nothing to the solve, so moving a bound
+  between a disabled stanza and an enabled one changes the solve. A stanza
+  with a conditional or a `buildable` field is compared whole.
+- Each executable of this package that a compared stanza names in
+  `build-tool-depends`. The group's build runs that executable, so the
+  runner compares its stanza whole.
+- Every source directory and source file that a compared stanza names. A
+  library, executable, test suite, or benchmark without `hs-source-dirs`
+  builds from the package root, so its group compares the whole tree.
 
-Both groups count as different when a project file uses `import:`, or when
-`seki.cabal` builds through a setup script, with a `build-type` other than
-`Simple` or a `custom-setup` stanza. The runner compares neither the imported
-files nor the setup script, and the report names the reason. A few changes
-count as different even though they cannot change a binary, such as a warning
-flag in `common warnings` or a comment in `cabal.project`. Such a false
-difference only withholds the noise-floor claim.
+Both groups count as different in the cases below, because the runner cannot
+tell what the build reads. The report names the reason.
+
+- A project file uses `import:`. The runner does not compare the imported file.
+- A `packages:` field in a project file names a package other than `.`. The
+  runner does not compare the other package.
+- `seki.cabal` builds through a setup script, with a `build-type` other than
+  `Simple` or a `custom-setup` stanza. The runner does not compare `Setup.hs`.
+- `seki.cabal` uses brace layout, with a `{` outside a comment, or indents its
+  first field. The runner parses only stanza headers at column 0 with
+  indented bodies.
+
+Some changes count as different even though they cannot change a binary. A
+warning flag in `common warnings`, a comment in `cabal.project`, and an edit
+to an integration test under `integration` are examples. So are a bound that
+moves from a test suite to an executable while `tests: true` is set, and a
+dependency set such as `seki:{seki-core, seki-wire}`, whose brace reads as
+brace layout. Such a false difference only withholds the noise-floor claim.
 
 When the runtime group is
 identical, the report calls the m2 manage and render differences a noise
