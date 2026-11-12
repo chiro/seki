@@ -317,7 +317,7 @@ runLive directory workload seed steps collector = do
 timeCommand :: Commands -> IO Observation -> Model -> Step -> IO [(Endpoint, Word64)]
 timeCommand commands observe next step = do
   threadDelay idleGapMicroseconds
-  (operation, endpoints) <- maybe (fail ("m3 has no command for " <> show step)) pure (stepCommand step)
+  (operation, endpoints) <- maybe (fail ("the IPC driver has no command for " <> show step)) pure (stepCommand step)
   Receipt started revision <- command commands operation
   forM endpoints $ \endpoint -> do
     ended <- case endpoint of
