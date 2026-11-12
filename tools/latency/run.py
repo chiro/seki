@@ -60,6 +60,13 @@ METADATA_FIELDS = {"synopsis", "description", "homepage", "bug-reports", "licens
 
 SEPARATE_KINDS = {"test-suite", "benchmark", "executable"}
 
+LOCAL_FIELDS = {"type", "main-is", "hs-source-dirs", "exposed-modules", "other-modules", "visibility", "ghc-options",
+                "c-sources", "cc-options", "include-dirs", "includes"}
+
+LIST_FIELDS = {"build-depends", "build-tool-depends", "import"}
+
+OWN_PACKAGE = re.compile(r"seki(?![\w-])")
+
 FIELD = re.compile(r"\s*([A-Za-z][\w-]*)\s*:(.*)")
 
 BUDGETS = {"pure_p99": ("pure", "p99_ms", 2), "manage_p99": ("manage", "p99_ms", 10),
@@ -462,16 +469,33 @@ def cabal_fields(stanza):
     return [(name, " ".join(filter(None, values))) for name, values in fields]
 
 
-def compared_stanzas(stanzas, components):
+def build_inputs(stanzas, components):
     elsewhere = {component for group in SOURCES.values() for component in group["components"]} - set(components)
+    compared, solver = [], set()
     for stanza in stanzas:
         kind, *name = stanza[0].split()
         key = " ".join([kind.lower(), *name])
         field = FIELD.fullmatch(stanza[0])
         if field and field[1].lower() in METADATA_FIELDS or kind.lower() == "source-repository":
             continue
-        if key in components or not (kind.lower() in SEPARATE_KINDS or key in elsewhere):
-            yield stanza
+        entries = None if key in components or not (kind.lower() in SEPARATE_KINDS or key in elsewhere) else solver_inputs(stanza)
+        if entries is None:
+            compared.append(stanza)
+        else:
+            solver |= entries
+    return compared, solver
+
+
+def solver_inputs(stanza):
+    entries = set()
+    for name, value in cabal_fields(stanza[1:]):
+        if name is None:
+            return None
+        if name in LIST_FIELDS:
+            entries |= {(name, " ".join(item.split())) for item in value.split(",") if item.strip() and not OWN_PACKAGE.match(item.strip())}
+        elif name not in LOCAL_FIELDS:
+            entries.add((name, value))
+    return entries
 
 
 def source_paths(stanzas, declared):
@@ -492,8 +516,8 @@ def compare_sources(revisions):
     reason = f"{listed(importing)} {'imports' if len(importing) == 1 else 'import'} another project file, which the runner does not compare" if importing else None
     sources = {}
     for name, group in SOURCES.items():
-        compared = {sha: list(compared_stanzas(stanzas, group["components"])) for sha, stanzas in cabal.items()}
-        paths = group["paths"] + source_paths([stanza for stanzas in compared.values() for stanza in stanzas], group["paths"])
+        compared = {sha: build_inputs(stanzas, group["components"]) for sha, stanzas in cabal.items()}
+        paths = group["paths"] + source_paths([stanza for stanzas, _ in compared.values() for stanza in stanzas], group["paths"])
         identical = reason is None and all(
             compared[r["git_sha"]] == compared[first["git_sha"]]
             and subprocess.run(["git", "diff", "--quiet", first["git_sha"], r["git_sha"], "--", *paths, PROJECT_FILES], cwd=first["worktree"]).returncode == 0

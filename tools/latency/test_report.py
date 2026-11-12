@@ -545,12 +545,10 @@ class SourceComparisonTest(unittest.TestCase):
         capital = edit(CABAL, "library seki-core\n", "Library seki-core\n")
         self.assertEqual(self.identical({"seki.cabal": capital}, {"seki.cabal": edit(capital, "-O2", "-O0")}), {"runtime": False, "driver": True})
 
-    @unittest.expectedFailure
     def test_a_test_suite_dependency_bound_is_compared(self):
         self.assertEqual(self.identical({}, {"seki.cabal": edit(CABAL, "  build-depends: base, seki\n", "  build-depends: base, seki, text <2.1\n")}),
                          {"runtime": False, "driver": False})
 
-    @unittest.expectedFailure
     def test_a_test_suite_dependency_moved_under_a_conditional_is_compared(self):
         bounded = edit(CABAL, "  build-depends: base, seki\n", "  build-depends: base, seki, text <2.1\n")
         conditional = edit(CABAL, "  build-depends: base, seki\n", "  build-depends: base, seki\n  if flag(old)\n    build-depends: text <2.1\n")
