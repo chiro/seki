@@ -579,7 +579,6 @@ class SourceComparisonTest(unittest.TestCase):
         self.assertEqual(self.identical({"cabal.project": "packages: .\ntests: false\n", "seki.cabal": in_test}, {"seki.cabal": in_exe}),
                          {"runtime": False, "driver": False})
 
-    @unittest.expectedFailure
     def test_a_common_stanza_named_like_the_package_counts_where_a_test_suite_imports_it(self):
         named = edit(CABAL, "common warnings\n", "common seki\n  build-depends: text <2.1\n\ncommon warnings\n")
         imported = edit(named, "test-suite seki-test\n  import: warnings\n", "test-suite seki-test\n  import: warnings, seki\n")

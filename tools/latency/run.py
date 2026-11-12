@@ -494,7 +494,7 @@ def solver_inputs(stanza):
         if name in (None, "buildable"):
             return None
         if name in LIST_FIELDS:
-            entries |= {(name, " ".join(item.split())) for item in value.split(",") if item.strip() and not OWN_PACKAGE.match(item.strip())}
+            entries |= {(name, " ".join(item.split())) for item in value.split(",") if item.strip() and (name == "import" or not OWN_PACKAGE.match(item.strip()))}
         elif name not in LOCAL_FIELDS:
             entries.add((name, value))
     return entries
