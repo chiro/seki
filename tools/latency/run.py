@@ -69,6 +69,8 @@ LIST_FIELDS = {"build-depends", "build-tool-depends", "import"}
 
 OWN_PACKAGE = re.compile(r"seki(?![\w-])")
 
+OWN_TOOL = re.compile(r"(?<![\w-])seki:([\w-]+)")
+
 FIELD = re.compile(r"\s*([A-Za-z][\w-]*)\s*:(.*)")
 
 PATH_TOKEN = re.compile(r'"([^"]*)"|([^\s,"]+)')
@@ -474,7 +476,18 @@ def cabal_fields(stanza):
 
 
 def build_inputs(stanzas, components):
-    elsewhere = {component for group in SOURCES.values() for component in group["components"]} - set(components)
+    components = set(components)
+    while True:
+        compared, solver = split_stanzas(stanzas, components)
+        tools = {f"executable {tool}" for stanza in compared for name, value in cabal_fields(stanza)
+                 if name == "build-tool-depends" for tool in OWN_TOOL.findall(value)} - components
+        if not tools:
+            return compared, solver
+        components |= tools
+
+
+def split_stanzas(stanzas, components):
+    elsewhere = {component for group in SOURCES.values() for component in group["components"]} - components
     compared, solver = [], set()
     for stanza in stanzas:
         kind, *name = stanza[0].split()

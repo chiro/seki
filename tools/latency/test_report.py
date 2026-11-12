@@ -537,12 +537,10 @@ class SourceComparisonTest(unittest.TestCase):
         return edit(edit(CABAL, "  build-depends: base, seki:seki-core\n", "  build-depends: base, seki:seki-core\n  build-tool-depends: seki:seki-gen\n"), "executable seki-latency\n",
                     "executable seki-gen\n  hs-source-dirs: tools/gen\n  main-is: Main.hs\n  ghc-options: -O2\n  build-depends: base\n\nexecutable seki-latency\n")
 
-    @unittest.expectedFailure
     def test_the_sources_of_a_build_tool_from_this_package_are_compared(self):
         self.assertEqual(self.identical({"seki.cabal": self.generator(), "tools/gen/Main.hs": 'main = putStrLn "fast"\n'}, {"tools/gen/Main.hs": 'main = putStrLn "slow"\n'}),
                          {"runtime": False, "driver": True})
 
-    @unittest.expectedFailure
     def test_the_stanza_of_a_build_tool_from_this_package_is_compared(self):
         generator = self.generator()
         self.assertEqual(self.identical({"seki.cabal": generator}, {"seki.cabal": edit(generator, "  main-is: Main.hs\n  ghc-options: -O2\n", "  main-is: Main.hs\n  ghc-options: -O0\n")}),
