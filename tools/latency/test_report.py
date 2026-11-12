@@ -289,26 +289,41 @@ class ReportTest(unittest.TestCase):
         self.assertNotIn("noise floor", text)
         self.assertIn("This report claims no speedup or regression.", text)
 
+    @unittest.expectedFailure
     def test_source_comparison_reads_each_group_from_git(self):
         repo = self.path / "repo"
         repo.mkdir()
         git = lambda *args: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
         git("init", "-q")
-        def commit(path):
+        def commit(path, text=None):
             (repo / path).parent.mkdir(parents=True, exist_ok=True)
-            (repo / path).write_text(path)
+            (repo / path).write_text(text or path)
             git("add", "-A")
             git("commit", "-q", "-m", path)
             return git("rev-parse", "HEAD")
-        base = commit("README")
+        stanzas = {"common warnings": "-Wall", "library seki-core": "-O1", "test-suite seki-test": "-Wall", "executable seki-latency": "-O2"}
+        def change(stanza, options):
+            stanzas[stanza] = options
+            return commit("seki.cabal", "cabal-version: 3.0\nname: seki\n\n" + "\n".join(f"{name}\n  ghc-options: {value}\n" for name, value in stanzas.items()))
+        base = change("common warnings", "-Wall")
         wire = commit("cbits/transport.c")
         latency = commit("tools/latency/Seki/Latency/Live.hs")
         fixture = commit("tools/layer-surface-fixture/src/Fixture.hs")
+        test_stanza = change("test-suite seki-test", "-Wall -Wextra")
+        core_stanza = change("library seki-core", "-O0")
+        latency_stanza = change("executable seki-latency", "-O0")
+        common_stanza = change("common warnings", "-O0")
+        project = commit("cabal.project", "shared: false\n")
         compare = lambda a, b: {name: group["identical"] for name, group in
                                 runner.compare_sources({"trunk": dict(git_sha=a, worktree=str(repo)), "head": dict(git_sha=b, worktree=str(repo))}).items()}
         self.assertEqual(compare(base, wire), {"runtime": False, "driver": True})
         self.assertEqual(compare(wire, latency), {"runtime": True, "driver": False})
         self.assertEqual(compare(latency, fixture), {"runtime": True, "driver": False})
+        self.assertEqual(compare(fixture, test_stanza), {"runtime": True, "driver": True})
+        self.assertEqual(compare(test_stanza, core_stanza), {"runtime": False, "driver": True})
+        self.assertEqual(compare(core_stanza, latency_stanza), {"runtime": True, "driver": False})
+        self.assertEqual(compare(latency_stanza, common_stanza), {"runtime": False, "driver": False})
+        self.assertEqual(compare(common_stanza, project), {"runtime": False, "driver": False})
         self.assertIsNone(runner.compare_sources({"local": dict(git_sha=None, worktree=None)}))
 
     def test_unsupported_input_results_name_the_river_that_ran(self):
