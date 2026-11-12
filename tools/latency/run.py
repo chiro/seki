@@ -528,7 +528,7 @@ def unparsed_layout(stanzas):
 
 
 def names_other_packages(project):
-    return any(path != "." for block in cabal_stanzas(project) for name, value in cabal_fields(block) if name == "packages" for path in cabal_paths(value))
+    return any(path != "." for block in cabal_stanzas(project) for name, value in cabal_fields(block) if name in ("packages", "optional-packages") for path in cabal_paths(value))
 
 
 def cabal_paths(value):
