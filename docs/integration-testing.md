@@ -541,9 +541,11 @@ snapshots. The p99 must stay below 50 ms and the maximum below 100 ms. The
 subscriber fails as soon as one change takes 100 ms or more, or an 11th change
 takes 50 ms or more. A change that does not arrive within 5 seconds fails with
 its index, and the error says whether the backend emitted the change. A normal
-run takes about 10 seconds. The process budget is 60 seconds, because 1000
-changes that just meet the ceilings take about 50 seconds; ordinary assertions
-retain their 10-second budget.
+run takes about 10 seconds. The process budget is 75 seconds, because 1000
+changes that just meet the ceilings take up to about 61 seconds: a change that
+misses a 10 ms tick waits for the next one. The fixture's virtual keyboard
+lives for 180 seconds in this case. Ordinary assertions retain their 10-second
+budget.
 
 The full suite has a 480-second outer limit for the input cases and five
 1,000-toggle scratchpad trials. With the seven daily scenarios added, the complete suite took about 300

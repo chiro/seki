@@ -127,11 +127,11 @@ inputPerf = withSystemTempDirectory "seki-input-perf" $ \directory -> do
       ack = directory </> "ack"
       result = directory </> "subscriber.json"
       rules = [InputRule patternValue (Just Keyboard) [Keymap (takeDirectory backend </> "two-layouts.xkb"), RepeatInfo 37 410, CapsLock True]]
-      environment = [("LD_PRELOAD", backend), ("SEKI_FIXTURE_LAYOUT_CYCLE", "1"), ("SEKI_FIXTURE_LAYOUT_ACK", ack), ("SEKI_FIXTURE_LAYOUT_RECEIPTS", receipts)]
+      environment = [("LD_PRELOAD", backend), ("SEKI_FIXTURE_LAYOUT_CYCLE", "1"), ("SEKI_FIXTURE_LAYOUT_ACK", ack), ("SEKI_FIXTURE_LAYOUT_RECEIPTS", receipts), ("SEKI_FIXTURE_LONG_KEYBOARD", "1")]
   withInputFixture environment (policyConfigOf def{inputRules = rules}) "m3-input-perf" 1 $ \fixture _ -> do
     root <- maybe (failIntegration "missing private runtime") pure (lookup "XDG_RUNTIME_DIR" (mEnvironment fixture))
     withIPCAt (ipcSocketIn root) (mPolicy fixture) $ do
-      summary <- runProcessCaptureWithin 60000000 (mEnvironment fixture) "python3" [cwd </> "integration/input/subscriber.py", ack, receipts, result]
+      summary <- runProcessCaptureWithin 75000000 (mEnvironment fixture) "python3" [cwd </> "integration/input/subscriber.py", ack, receipts, result]
       announce ("M3_INPUT_PERF " <> show summary)
     lookupEnv "SEKI_INTEGRATION_ARTIFACT_DIR" >>= mapM_ (\path -> copyFile result (path </> "input-perf.json"))
 
