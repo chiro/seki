@@ -419,16 +419,16 @@ def compare_sources(revisions):
     return {name: {"paths": paths, "identical": same(paths)} for name, paths in SOURCES.items()}
 
 
-def run_trial(trial, binary, workload, collector, steps, args):
+def run_live(trial, binary, workload, collector, steps, seed, profile):
     with (trial / "driver.log").open("w") as log:
-        command = [str(binary),"live",str(trial),str(args.seed),str(steps),collector,workload,"+RTS","-N1","-RTS"]
+        command = [str(binary),"live",str(trial),str(seed),str(steps),collector,workload,"+RTS","-N1","-RTS"]
         process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         cpu = []
         deadline = time.monotonic() + max(120, steps)
         try:
             while process.poll() is None:
                 require(time.monotonic() < deadline, "live trial timed out")
-                if args.profile:
+                if profile:
                     snapshot = process_cpu(trial)
                     if snapshot:
                         cpu.append(snapshot)
@@ -443,14 +443,14 @@ def run_trial(trial, binary, workload, collector, steps, args):
                     process.kill()
                     process.wait()
             cleanup_groups(trial)
-            if args.profile:
+            if profile:
                 write(trial / "cpu.json", cpu)
-    if args.profile:
-        return
+
+
+def run_pure(trial, binary, workload, collector, seed, windows, steps):
     with (trial / "pure.rts").open("w") as log:
         flags = ["-N1","-T","-s"] + (["--nonmoving-gc"] if collector == "nonmoving" else [])
-        subprocess.run([str(binary),"pure",str(trial/"pure.json"),str(args.seed),str(args.pure_windows),str(args.pure_steps),workload,"+RTS",*flags,"-RTS"], stdout=log, stderr=subprocess.STDOUT, check=True, timeout=120)
-    summarize_trial(trial, workload)
+        subprocess.run([str(binary),"pure",str(trial/"pure.json"),str(seed),str(windows),str(steps),workload,"+RTS",*flags,"-RTS"], stdout=log, stderr=subprocess.STDOUT, check=True, timeout=120)
 
 
 def main():
@@ -517,12 +517,16 @@ def main():
                 "load_before": os.getloadavg(), "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime())}
         manifest["trials"].append(item)
         write(directory / "manifest.json", manifest)
-        run_trial(trial, revisions[name]["binary"], workload, collector, live_steps[workload], args)
+        binary = revisions[name]["binary"]
+        run_live(trial, binary, workload, collector, live_steps[workload], args.seed, args.profile)
+        if not args.profile:
+            run_pure(trial, binary, workload, collector, args.seed, args.pure_windows, args.pure_steps)
+            summarize_trial(trial, workload)
+            print(f"validated {trial.name}", flush=True)
         item["load_after"] = os.getloadavg()
         write(directory / "manifest.json", manifest)
         if args.profile:
             return
-        print(f"validated {trial.name}", flush=True)
     for name, r in revisions.items():
         require(sha256(r["binary"]) == r["binary_sha256"] and all(sha256(path) == digest for path, digest in r["linked_seki_libraries"].items()),
                 f"revision {name}'s binary or seki libraries changed during the trials")
