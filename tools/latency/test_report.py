@@ -587,7 +587,6 @@ class SourceComparisonTest(unittest.TestCase):
         self.assertEqual({name: group["identical"] for name, group in sources.items()}, {"runtime": False, "driver": False})
         self.assertEqual({group["reason"] for group in sources.values()}, {"`cabal.project` imports another project file, which the runner does not compare"})
 
-    @unittest.expectedFailure
     def test_a_project_file_that_names_another_local_package_counts_as_different(self):
         vendored = {"cabal.project": "packages: .\n          vendor/text\n", "vendor/text/text.cabal": "cabal-version: 3.0\nname: text\nversion: 2.1.3\n"}
         sources = self.sources(vendored | {"vendor/text/src/Data/Text.hs": "module Data.Text where\n"},

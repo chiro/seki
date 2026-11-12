@@ -523,6 +523,10 @@ def runs_setup_script(stanzas):
     return False
 
 
+def names_other_packages(project):
+    return any(path != "." for block in cabal_stanzas(project) for name, value in cabal_fields(block) if name == "packages" for path in cabal_paths(value))
+
+
 def cabal_paths(value):
     return [os.path.normpath(quoted or bare) for quoted, bare in PATH_TOKEN.findall(value)]
 
@@ -544,12 +548,15 @@ def compare_sources(revisions):
     first = named[0]
     git = lambda *args: output(["git", *args], cwd=first["worktree"])
     cabal = {r["git_sha"]: cabal_stanzas(git("show", f"{r['git_sha']}:seki.cabal")) for r in named}
-    importing = sorted({path for r in named for path in git("ls-tree", "--name-only", r["git_sha"]).splitlines()
-                        if path.startswith("cabal.project") and re.search(r"^\s*import\s*:", git("show", f"{r['git_sha']}:{path}"), re.M | re.I)})
+    projects = [(path, git("show", f"{r['git_sha']}:{path}")) for r in named
+                for path in git("ls-tree", "--name-only", r["git_sha"]).splitlines() if path.startswith("cabal.project")]
+    importing = sorted({path for path, text in projects if re.search(r"^\s*import\s*:", text, re.M | re.I)})
+    packaging = sorted({path for path, text in projects if names_other_packages(text)})
     custom = [r["git_sha"][:7] for r in named if runs_setup_script(cabal[r["git_sha"]])]
-    reasons = ([f"{listed(importing)} {'imports' if len(importing) == 1 else 'import'} another project file, which the runner does not compare"] if importing else []) + \
-              ([f"`seki.cabal` at {listed(custom)} builds through a setup script, which the runner does not compare"] if custom else [])
-    reason = "; ".join(reasons) or None
+    found = [(importing, "{} import{s} another project file, which the runner does not compare"),
+             (packaging, "{} name{s} another local package, which the runner does not compare"),
+             (custom, "`seki.cabal` at {} builds through a setup script, which the runner does not compare")]
+    reason = "; ".join(message.format(listed(items), s="s" if len(items) == 1 else "") for items, message in found if items) or None
     sources = {}
     for name, group in SOURCES.items():
         compared = {sha: build_inputs(stanzas, group["components"]) for sha, stanzas in cabal.items()}
