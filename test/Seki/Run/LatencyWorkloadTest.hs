@@ -119,9 +119,9 @@ tests =
     , testCase "a recompile publishes one more finished build and leaves the probe's view alone" $ do
         let m0 = stepModel (initialModel M3) TogglePad
             built = stepModel m0 Recompile
-        (publishedFocusedTag (expectedPublication built), publishedFinishedBuilds (expectedPublication built)) @?= ("1", 1)
+        (expectedFocusedTag (expectedPublication built), expectedFinishedBuilds (expectedPublication built)) @?= ("1", 1)
         expectedObservation built @?= expectedObservation m0
-        publishedFocusedTag (expectedPublication (stepModel m0 ViewEmpty)) @?= "2"
+        expectedFocusedTag (expectedPublication (stepModel m0 ViewEmpty)) @?= "2"
     , testCase "24 warmup steps leave the pad shown, so 2500 measured m3 steps time 1001 toggles and 499 recompiles" $ do
         let m0 = initialModel M3
             warmed = foldl stepModel m0 (take 24 (plan M3 1909 m0))

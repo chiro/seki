@@ -327,14 +327,14 @@ timeCommand commands observe model step = do
       ExternalWake -> observed
       ScratchpadToggle -> observed
       IPCUpdate -> publishedAt <$> (awaitPublished commands assertionTimeoutMicroseconds ((>= revision) . publishedRevision) >>= publishes)
-      RecompileCompletion -> publishedAt <$> (awaitPublished commands assertionTimeoutMicroseconds (finished (publishedFinishedBuilds expected)) >>= failedByStub)
+      RecompileCompletion -> publishedAt <$> (awaitPublished commands assertionTimeoutMicroseconds (finished (expectedFinishedBuilds expected)) >>= failedByStub)
     pure (endpoint, ended - started)
  where
   next = stepModel model step
   expected = expectedPublication next
   observed = waitUntilEvery ("probe outcome of " <> show step) assertionTimeoutMicroseconds pollMicroseconds observe (== expectedObservation next) >> getMonotonicTimeNSec
   publishes p = do
-    unless (Text.unpack (publishedFocus p) == publishedFocusedTag expected) (fail ("subscriber published " <> show p <> " for " <> show next))
+    unless (Text.unpack (publishedFocus p) == expectedFocusedTag expected) (fail ("subscriber published " <> show p <> " for " <> show next))
     pure p
   finished generation p = maybe False (\b -> buildGeneration b == fromIntegral generation && buildState b /= "building") (publishedBuild p)
   failedByStub p = do
