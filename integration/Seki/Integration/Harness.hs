@@ -316,7 +316,7 @@ bufferedLine client = do
           Nothing -> do
             chunk <- SocketByteString.recv client 4096
             if ByteString.null chunk then failIntegration "unexpected IPC disconnect" else writeIORef pending (bytes <> chunk) >> readOne
-  pure (timeout assertionTimeoutMicroseconds readOne >>= maybe (failIntegration "IPC perf timeout") pure)
+  pure (timeout assertionTimeoutMicroseconds readOne >>= maybe (failIntegration "timed out waiting for an IPC line") pure)
 
 appliedRevision :: ByteString -> IO Integer
 appliedRevision bytes = do
