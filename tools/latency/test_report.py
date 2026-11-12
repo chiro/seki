@@ -531,6 +531,13 @@ class SourceComparisonTest(unittest.TestCase):
         self.assertEqual(self.identical({"seki.cabal": custom, "Setup.hs": "main = defaultMain\n"}, {"Setup.hs": "main = defaultMainWithHooks simpleUserHooks\n"}),
                          {"runtime": False, "driver": False})
 
+    def test_a_setup_script_reason_names_the_revisions_that_run_it(self):
+        custom = edit(CABAL, "build-type: Simple", "build-type: Custom")
+        sources = self.sources({}, {"seki.cabal": custom})
+        head = self.git("rev-parse", "--short=7", "HEAD")
+        self.assertEqual({group["reason"] for group in sources.values()},
+                         {f"`seki.cabal` at `{head}` builds through a setup script, which the runner does not compare"})
+
     def test_a_setup_script_counts_as_different_when_a_custom_setup_stanza_implies_custom(self):
         implied = edit(edit(CABAL, "build-type: Simple\n", ""), "common warnings\n", "custom-setup\n  setup-depends: base, Cabal\n\ncommon warnings\n")
         self.assertEqual(self.identical({"seki.cabal": implied, "Setup.hs": "main = defaultMain\n"}, {"Setup.hs": "main = defaultMainWithHooks simpleUserHooks\n"}),
