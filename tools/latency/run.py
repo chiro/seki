@@ -62,6 +62,8 @@ SEPARATE_KINDS = {"test-suite", "benchmark", "executable"}
 
 ENABLED_BY = {"test-suite": "tests", "benchmark": "benchmarks"}
 
+COMPILED_KINDS = {"library", "foreign-library", "executable", "test-suite", "benchmark"}
+
 LOCAL_FIELDS = {"type", "main-is", "hs-source-dirs", "exposed-modules", "other-modules", "visibility", "ghc-options",
                 "c-sources", "cc-options", "include-dirs", "includes"}
 
@@ -70,6 +72,8 @@ LIST_FIELDS = {"build-depends", "build-tool-depends", "import"}
 OWN_PACKAGE = re.compile(r"seki(?![\w-])")
 
 FIELD = re.compile(r"\s*([A-Za-z][\w-]*)\s*:(.*)")
+
+PATH_TOKEN = re.compile(r'"([^"]*)"|([^\s,"]+)')
 
 BUDGETS = {"pure_p99": ("pure", "p99_ms", 2), "manage_p99": ("manage", "p99_ms", 10),
            "render_p99": ("render", "p99_ms", 10), "wm_gc_max": ("wm_rts", "max_stw_pause_ms", 10)}
@@ -508,9 +512,17 @@ def runs_setup_script(stanzas):
     return False
 
 
+def cabal_paths(value):
+    return [os.path.normpath(quoted or bare) for quoted, bare in PATH_TOKEN.findall(value)]
+
+
 def source_paths(stanzas, declared):
-    named = {os.path.normpath(path) for stanza in stanzas for name, value in cabal_fields(stanza)
-             if name and name.endswith(("-dirs", "-sources")) for path in value.replace(",", " ").split()}
+    named = set()
+    for stanza in stanzas:
+        fields = cabal_fields(stanza)
+        named |= {path for name, value in fields if name and name.endswith(("-dirs", "-sources")) for path in cabal_paths(value)}
+        if stanza[0].split()[0].lower() in COMPILED_KINDS and "hs-source-dirs" not in {name for name, _ in fields}:
+            named.add(".")
     return sorted(path for path in named if not any(path == p or path.startswith(p + "/") or p.startswith(path + "/") for p in declared))
 
 

@@ -319,9 +319,11 @@ class ReportTest(unittest.TestCase):
             git("commit", "-q", "-m", path)
             return git("rev-parse", "HEAD")
         stanzas = {"common warnings": "-Wall", "library seki-core": "-O1", "test-suite seki-test": "-Wall", "executable seki-latency": "-O2"}
+        dirs = {"library seki-core": "src-core", "test-suite seki-test": "test", "executable seki-latency": "tools/latency"}
         def change(stanza, options):
             stanzas[stanza] = options
-            return commit("seki.cabal", "cabal-version: 3.0\nname: seki\n\n" + "\n".join(f"{name}\n  ghc-options: {value}\n" for name, value in stanzas.items()))
+            return commit("seki.cabal", "cabal-version: 3.0\nname: seki\n\n" + "\n".join(
+                f"{name}\n  ghc-options: {value}\n" + (f"  hs-source-dirs: {dirs[name]}\n" if name in dirs else "") for name, value in stanzas.items()))
         base = change("common warnings", "-Wall")
         wire = commit("cbits/transport.c")
         latency = commit("tools/latency/Seki/Latency/Live.hs")
@@ -511,14 +513,12 @@ class SourceComparisonTest(unittest.TestCase):
                                         {"src-proto/Seki/Proto.hs": "module Seki.Proto where\nslow :: Int\nslow = 1\n"}),
                          {"runtime": False, "driver": False})
 
-    @unittest.expectedFailure
     def test_quoted_source_directories_in_a_comma_list_are_compared(self):
         quoted = edit(self.proto(), "  hs-source-dirs: src-proto\n", '  hs-source-dirs: "src-a", "src-proto"\n')
         self.assertEqual(self.identical({"seki.cabal": quoted, "src-proto/Seki/Proto.hs": "module Seki.Proto where\n"},
                                         {"src-proto/Seki/Proto.hs": "module Seki.Proto where\nslow :: Int\nslow = 1\n"}),
                          {"runtime": False, "driver": False})
 
-    @unittest.expectedFailure
     def test_a_component_without_source_directories_compares_the_package_root(self):
         rooted = edit(self.proto(), "  hs-source-dirs: src-proto\n", "")
         self.assertEqual(self.identical({"seki.cabal": rooted, "Seki/Proto.hs": "module Seki.Proto where\n"},
