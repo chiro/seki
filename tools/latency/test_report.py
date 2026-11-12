@@ -1,5 +1,4 @@
 import importlib.util
-import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -266,8 +265,7 @@ class ReportTest(unittest.TestCase):
         self.assertIn("Runtime sources under `src`, `src-core`, `src-public`, `src-generated`, and `cbits`, with the root `cabal.project*` files and "
                       "the parts of `seki.cabal` that can change the build of `library`, `library seki-core`, and `library seki-wire`, "
                       "are identical across the revisions.", text)
-        self.assertIn("Latency driver sources under `tools/latency`, `integration/Seki/Integration/Harness.hs`, "
-                      "`integration/Seki/Integration/Snapshot.hs`, `tools/layer-surface-fixture/src`, "
+        self.assertIn("Latency driver sources under `tools/latency`, `integration`, `tools/layer-surface-fixture/src`, "
                       "and `tools-generated/layer-surface-fixture`, with the root `cabal.project*` files and "
                       "the parts of `seki.cabal` that can change the build of `executable seki-latency` and `library layer-surface-fixture`, "
                       "are identical across the revisions, so manage, render, and pure differences between them are a noise floor.", text)
@@ -279,15 +277,14 @@ class ReportTest(unittest.TestCase):
                       "which the runner does not compare. The WM runs the driver's policy setup", text)
         self.assertNotIn("noise floor", text)
 
-    def test_driver_group_covers_every_integration_module_the_driver_compiles(self):
-        cabal = (Path(__file__).resolve().parents[2] / "seki.cabal").read_text()
-        stanzas = ["\n".join(s) for s in runner.cabal_stanzas(cabal) if s[0] == "executable seki-latency"]
-        self.assertEqual(len(stanzas), 1, "seki.cabal has one executable seki-latency stanza")
-        modules = set(re.findall(r"\bSeki\.Integration(?:\.\w+)+", stanzas[0]))
-        self.assertLessEqual({"Seki.Integration.Harness", "Seki.Integration.Snapshot"}, modules)
-        for module in modules:
-            path = "integration/" + module.replace(".", "/") + ".hs"
-            self.assertTrue(any(path == source or path.startswith(source + "/") for source in runner.SOURCES["driver"]["paths"]), path)
+    def test_each_group_declares_every_source_directory_of_its_components(self):
+        stanzas = {s[0]: s for s in runner.cabal_stanzas((Path(__file__).resolve().parents[2] / "seki.cabal").read_text())}
+        for group in runner.SOURCES.values():
+            for component in group["components"]:
+                directories = [path for name, value in runner.cabal_fields(stanzas[component]) if name == "hs-source-dirs" for path in value.split()]
+                self.assertTrue(directories, component)
+                for path in directories:
+                    self.assertTrue(any(path == p or path.startswith(p + "/") for p in group["paths"]), f"{component} builds from {path}")
 
     def test_build_stanzas_each_group_owns_are_in_seki_cabal(self):
         cabal = (Path(__file__).resolve().parents[2] / "seki.cabal").read_text()
@@ -298,8 +295,7 @@ class ReportTest(unittest.TestCase):
     def test_a_driver_difference_claims_no_noise_floor(self):
         self.campaign(driver=False)
         text = (self.path / "report.md").read_text()
-        self.assertIn("Latency driver sources under `tools/latency`, `integration/Seki/Integration/Harness.hs`, "
-                      "`integration/Seki/Integration/Snapshot.hs`, `tools/layer-surface-fixture/src`, "
+        self.assertIn("Latency driver sources under `tools/latency`, `integration`, `tools/layer-surface-fixture/src`, "
                       "and `tools-generated/layer-surface-fixture`, with the root `cabal.project*` files and "
                       "the parts of `seki.cabal` that can change the build of `executable seki-latency` and `library layer-surface-fixture`, "
                       "differ across the revisions.", text)
@@ -525,13 +521,11 @@ class SourceComparisonTest(unittest.TestCase):
                                         {"Seki/Proto.hs": "module Seki.Proto where\nslow :: Int\nslow = 1\n"}),
                          {"runtime": False, "driver": False})
 
-    @unittest.expectedFailure
     def test_an_integration_module_the_driver_does_not_list_is_a_driver_source(self):
         fixture = "integration/Seki/Integration/Fixture.hs"
         self.assertEqual(self.identical({fixture: "module Seki.Integration.Fixture where\n"}, {fixture: "module Seki.Integration.Fixture where\nn :: Int\nn = 1\n"}),
                          {"runtime": True, "driver": False})
 
-    @unittest.expectedFailure
     def test_a_source_directory_that_holds_a_declared_one_is_compared_whole(self):
         shared = edit(edit(CABAL, "seki:layer-surface-fixture\n", "seki:layer-surface-fixture, seki:latency-shared\n"), "executable seki-latency\n",
                       "library latency-shared\n  import: warnings\n  visibility: private\n  hs-source-dirs: tools\n  exposed-modules: Shared.Clock\n\nexecutable seki-latency\n")
