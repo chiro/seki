@@ -415,13 +415,25 @@ def probe_support(binary, workload, scratch):
     return workload_support(result.returncode, result.stdout)
 
 
+def cabal_stanzas(text):
+    stanzas = []
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("--"):
+            continue
+        if line[0].isspace() and stanzas:
+            stanzas[-1].append(line.rstrip())
+        else:
+            stanzas.append([line.rstrip()])
+    return stanzas
+
+
 def compare_sources(revisions):
     named = [r for r in revisions.values() if r["git_sha"]]
     if len(named) < 2:
         return None
     first = named[0]
     def stanzas(sha, names):
-        blocks = {block.split("\n", 1)[0].rstrip(): block for block in re.split(r"\n(?=\S)", output(["git", "show", f"{sha}:seki.cabal"], cwd=first["worktree"]))}
+        blocks = {block[0]: block for block in cabal_stanzas(output(["git", "show", f"{sha}:seki.cabal"], cwd=first["worktree"]))}
         return [blocks.get(name) for name in names]
     def same(group):
         return all(subprocess.run(["git", "diff", "--quiet", first["git_sha"], r["git_sha"], "--", *group["paths"]], cwd=first["worktree"]).returncode == 0

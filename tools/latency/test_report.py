@@ -274,7 +274,7 @@ class ReportTest(unittest.TestCase):
 
     def test_driver_group_covers_every_integration_module_the_driver_compiles(self):
         cabal = (Path(__file__).resolve().parents[2] / "seki.cabal").read_text()
-        stanzas = [s for s in re.split(r"\n(?=\S)", cabal) if s.startswith("executable seki-latency\n")]
+        stanzas = ["\n".join(s) for s in runner.cabal_stanzas(cabal) if s[0] == "executable seki-latency"]
         self.assertEqual(len(stanzas), 1, "seki.cabal has one executable seki-latency stanza")
         modules = set(re.findall(r"\bSeki\.Integration(?:\.\w+)+", stanzas[0]))
         self.assertLessEqual({"Seki.Integration.Harness", "Seki.Integration.Snapshot"}, modules)
@@ -284,8 +284,8 @@ class ReportTest(unittest.TestCase):
 
     def test_build_stanzas_name_what_builds_the_driver_and_its_libraries(self):
         cabal = (Path(__file__).resolve().parents[2] / "seki.cabal").read_text()
-        headers = {block.split("\n", 1)[0] for block in re.split(r"\n(?=\S)", cabal)}
-        latency = next(block for block in re.split(r"\n(?=\S)", cabal) if block.startswith("executable seki-latency\n"))
+        headers = {block[0] for block in runner.cabal_stanzas(cabal)}
+        latency = next("\n".join(block) for block in runner.cabal_stanzas(cabal) if block[0] == "executable seki-latency")
         for group in runner.SOURCES.values():
             self.assertLessEqual(set(group["stanzas"]), headers)
             self.assertIn("cabal.project", group["paths"])
@@ -483,7 +483,6 @@ class SourceComparisonTest(unittest.TestCase):
     def identical(self, before, after):
         return {name: group["identical"] for name, group in self.sources(before, after).items()}
 
-    @unittest.expectedFailure
     def test_a_column_zero_comment_hides_no_field_below_it(self):
         commented = edit(CABAL, "  ghc-options: -O2\n", "-- the core is pure\n  ghc-options: -O2\n")
         self.assertEqual(self.identical({"seki.cabal": commented}, {"seki.cabal": edit(commented, "-O2", "-O0")}), {"runtime": False, "driver": True})
