@@ -65,18 +65,37 @@ round runs the normal collector and then the nonmoving collector. Each
 collector runs every workload at each revision that supports it. Odd rounds
 reverse the order of the revisions.
 
-The runner compares two groups of sources across the revisions. Each group
-has paths, which it compares with `git diff`, and `seki.cabal` stanzas, which
-it compares as text. The runtime group is `src`, `src-core`, `src-public`,
-`src-generated`, `cbits`, and `cabal.project`, with the `common warnings`,
-`library`, `library seki-core`, and `library seki-wire` stanzas. The latency
-driver group is `tools/latency`, `integration/Seki/Integration/Harness.hs`,
+The runner compares two groups of build inputs across the revisions. It calls
+a group identical only when none of the group's inputs differ. The runtime
+group builds `library`, `library seki-core`, and `library seki-wire` from
+`src`, `src-core`, `src-public`, `src-generated`, and `cbits`. The latency
+driver group builds `executable seki-latency` and `library layer-surface-fixture`
+from `tools/latency`, `integration/Seki/Integration/Harness.hs`,
 `integration/Seki/Integration/Snapshot.hs`, `tools/layer-surface-fixture/src`,
-`tools-generated/layer-surface-fixture`, and `cabal.project`, with the
-`common warnings`, `executable seki-latency`, and
-`library layer-surface-fixture` stanzas. The runner does not compare the
-other stanzas, such as the test suites, or the package fields at the top of
-`seki.cabal`, such as `extra-source-files`. When the runtime group is
+and `tools-generated/layer-surface-fixture`. For each group, the runner also
+compares these inputs:
+
+- Every `cabal.project*` file at the repository root.
+- Every top-level field and stanza of `seki.cabal`, with comments dropped,
+  except the metadata fields such as `description` and `extra-source-files`
+  and the `source-repository` stanza.
+- For the test suites, benchmarks, other executables, and the other group's
+  components, only what they give Cabal's dependency solve: their
+  dependencies, their imports, and any field not known to be local to the
+  stanza. Cabal solves one version of each dependency for the whole package,
+  so a bound in a test suite can change what a library links. A stanza with a
+  conditional is compared whole.
+- Every source directory that a compared stanza names.
+
+Both groups count as different when a project file uses `import:`, or when
+`seki.cabal` builds through a setup script, with a `build-type` other than
+`Simple` or a `custom-setup` stanza. The runner compares neither the imported
+files nor the setup script, and the report names the reason. A few changes
+count as different even though they cannot change a binary, such as a warning
+flag in `common warnings` or a comment in `cabal.project`. Such a false
+difference only withholds the noise-floor claim.
+
+When the runtime group is
 identical, the report calls the m2 manage and render differences a noise
 floor and claims no speedup or regression. The pure interval also runs the
 driver's checksum fold, so the report extends the noise floor to pure m2 only
