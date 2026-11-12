@@ -26,7 +26,7 @@ module Seki.Latency.Workload (
   restoreSteps,
   Observation (..),
   expectedObservation,
-  Publication (..),
+  ExpectedPublication (..),
   expectedPublication,
   Endpoint (..),
   endpointText,
@@ -226,14 +226,14 @@ expectedObservation m =
       | modelFullscreen m == Just i -> (800, 600)
       | otherwise -> let (_, _, w, h) = tileBox m i in (fromIntegral w, fromIntegral h)
 
-data Publication = Publication
-  { publishedFocusedTag :: String
-  , publishedFinishedBuilds :: Int
+data ExpectedPublication = ExpectedPublication
+  { expectedFocusedTag :: String
+  , expectedFinishedBuilds :: Int
   }
   deriving (Eq, Show)
 
-expectedPublication :: Model -> Publication
-expectedPublication m = Publication (if modelShown m then "1" else "2") (modelFinishedBuilds m)
+expectedPublication :: Model -> ExpectedPublication
+expectedPublication m = ExpectedPublication (if modelShown m then "1" else "2") (modelFinishedBuilds m)
 
 data Endpoint
   = ExternalWake
