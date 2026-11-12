@@ -511,6 +511,20 @@ class SourceComparisonTest(unittest.TestCase):
                                         {"src-proto/Seki/Proto.hs": "module Seki.Proto where\nslow :: Int\nslow = 1\n"}),
                          {"runtime": False, "driver": False})
 
+    @unittest.expectedFailure
+    def test_quoted_source_directories_in_a_comma_list_are_compared(self):
+        quoted = edit(self.proto(), "  hs-source-dirs: src-proto\n", '  hs-source-dirs: "src-a", "src-proto"\n')
+        self.assertEqual(self.identical({"seki.cabal": quoted, "src-proto/Seki/Proto.hs": "module Seki.Proto where\n"},
+                                        {"src-proto/Seki/Proto.hs": "module Seki.Proto where\nslow :: Int\nslow = 1\n"}),
+                         {"runtime": False, "driver": False})
+
+    @unittest.expectedFailure
+    def test_a_component_without_source_directories_compares_the_package_root(self):
+        rooted = edit(self.proto(), "  hs-source-dirs: src-proto\n", "")
+        self.assertEqual(self.identical({"seki.cabal": rooted, "Seki/Proto.hs": "module Seki.Proto where\n"},
+                                        {"Seki/Proto.hs": "module Seki.Proto where\nslow :: Int\nslow = 1\n"}),
+                         {"runtime": False, "driver": False})
+
     def test_a_flag_default_is_compared(self):
         flagged = edit(edit(CABAL, "common warnings\n", "flag fast\n  default: True\n  manual: True\n\ncommon warnings\n"),
                        "  ghc-options: -O2\n", "  if flag(fast)\n    ghc-options: -O2\n  else\n    ghc-options: -O0\n")
