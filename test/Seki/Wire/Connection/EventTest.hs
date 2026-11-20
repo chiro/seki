@@ -82,7 +82,7 @@ testDestructorFinalization = do
     Done (Wayland.WlCallbackDone 1) remaining [] -> assertEqual "complete payload" ByteString.empty remaining
     result -> assertFailure ("unexpected decode result: " <> show result)
   finalized <- expectRight (finalizeDecodedEvent Wayland.wlCallbackInterface prepared table)
-  assertEqual "retired after decode" (Just ObjectAwaitingDeleteId) (objectInfoLifecycle <$> lookupObjectInfo (objectId callback) finalized)
+  assertEqual "retired after decode" (Just ObjectRetired) (objectInfoLifecycle <$> lookupObjectInfo (objectId callback) finalized)
 
 testSenderMismatch :: Assertion
 testSenderMismatch = do

@@ -77,7 +77,7 @@ data ObjectOrigin
 
 data ObjectLifecycle
   = ObjectActive
-  | ObjectAwaitingDeleteId
+  | ObjectRetired
   deriving (Eq, Show)
 
 data ObjectInfo = ObjectInfo
@@ -201,7 +201,7 @@ requireActiveObject identifier table = do
   entry <- maybe (Left (UnknownObject identifier)) Right (Map.lookup (objectIdValue identifier) (tableEntries table))
   case objectInfoLifecycle (entryInfo entry) of
     ObjectActive -> Right (entryInfo entry)
-    ObjectAwaitingDeleteId -> Left (ObjectNotActive identifier)
+    ObjectRetired -> Left (ObjectNotActive identifier)
 
 -- | Validate that a typed handle still names the same active table generation.
 validateObject :: Interface interface -> Object interface -> ObjectTable -> Either ObjectTableError ObjectInfo
@@ -254,7 +254,7 @@ objectCount :: ObjectTable -> Int
 objectCount = Map.size . tableEntries
 
 retiredObjectCount :: ObjectTable -> Int
-retiredObjectCount = length . filter ((== ObjectAwaitingDeleteId) . objectInfoLifecycle . entryInfo) . Map.elems . tableEntries
+retiredObjectCount = length . filter ((== ObjectRetired) . objectInfoLifecycle . entryInfo) . Map.elems . tableEntries
 
 -- | Drop all objects and make subsequent operations fail deterministically.
 closeObjectTable :: ObjectTable -> ObjectTable
@@ -272,7 +272,7 @@ destroyObject object table = do
   case objectInfoOrigin (entryInfo entry) of
     DisplayObject -> Left DisplayObjectCannotBeDestroyed
     ClientCreatedObject ->
-      let retiredInfo = (entryInfo entry){objectInfoLifecycle = ObjectAwaitingDeleteId}
+      let retiredInfo = (entryInfo entry){objectInfoLifecycle = ObjectRetired}
        in Right table{tableEntries = Map.insert rawId entry{entryInfo = retiredInfo} (tableEntries table)}
     ServerCreatedObject -> Right table{tableEntries = Map.delete rawId (tableEntries table)}
  where
@@ -282,7 +282,7 @@ validateHandle :: Object interface -> ObjectTable -> Either ObjectTableError Obj
 validateHandle object table = do
   entry <- maybe (Left (UnknownObject (objectId object))) Right (Map.lookup rawId (tableEntries table))
   case objectInfoLifecycle (entryInfo entry) of
-    ObjectAwaitingDeleteId -> Left (ObjectNotActive (objectId object))
+    ObjectRetired -> Left (ObjectNotActive (objectId object))
     ObjectActive
       | entryGeneration entry /= objectGeneration object -> Left (StaleObjectHandle (objectId object))
       | objectInfoInterfaceName (entryInfo entry) /= objectInterfaceName object ->
