@@ -119,7 +119,7 @@ tests =
     , testCase "finished optional input manager remains unavailable with core live" testInputFinished
     , testCase "libinput custom curves success rejection removal v1/v2" (mapM_ (\v -> mapM_ (testCustomLibinput v) [0, 1, 2, 3, 4]) [1, 2])
     , testCase "retired libinput requests do not exhaust admission" (mapM_ (testRetiredLibinputRequests False) [255, 256, 512] >> testRetiredLibinputRequests True 256)
-    , testCase "river's libinput removal after a device removal ends the session" testDeviceRemovalWithLibinputRemoval
+    , testCase "a device removal survives river's libinput removal that follows it" testDeviceRemovalWithLibinputRemoval
     , testCase "XKB retains two distinct keyboards with empty rules" testTwoXkbKeyboards
     , testCase "XKB synthetic v1/v2/v3 batching, feedback and scrolllock gate" (mapM_ testXkbConfig [1, 2, 3])
     , testCase "libinput full synthetic peer surface and acknowledgements v1/v2" (mapM_ (\v -> mapM_ (testLibinput False v) [0, 1, 2]) [1, 2])
@@ -1760,11 +1760,12 @@ testDeviceRemovalWithLibinputRemoval = withRuntimePair $ \target peer -> do
     sendFrames peer [encodedFrame generic (Opcode 0) (pure ()), encodedFrame device (Opcode 0) (pure ())]
     receiveExpectedRequest reader peer device (Opcode 0) (pure ())
     receiveExpectedRequest reader peer generic (Opcode 0) (pure ())
-    pure device
+    sendFrames peer [encodedFrame manager (Opcode 2) (pure ())]
+    receiveSequenceCompletion reader peer manager (Opcode 2)
+    closeTransport peer
   session <- expectRight =<< openRiverSessionAt target defaultObjectLimit ((runtimeHandlers (\_ -> pure ())){riverInputRules = [InputRule patternValue Nothing [Tap True]]})
-  result <- runRiverSession session
-  device <- expectMockSuccess mockDone
-  assertEqual "the libinput removal has no route" (Left (RiverRuntimeConnectionError (ConnectionEventRouteMissing device))) result
+  assertEqual "the session outlives the device" (Right RiverEnded) =<< runRiverSession session
+  expectMockSuccess mockDone
 
 testRetiredLibinputRequests :: Bool -> Int -> Assertion
 testRetiredLibinputRequests facetOnly races = withRuntimePair $ \target peer -> do

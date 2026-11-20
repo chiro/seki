@@ -174,12 +174,13 @@ registerServerObject ::
   Either ObjectTableError (ObjectTable, Object interface)
 registerServerObject allocatedId interface version table = do
   requireOpen table
-  ensureCapacity table
   let rawId = objectIdValue allocatedId
   when (rawId < serverObjectIdMinimum) $
     Left (ServerObjectIdOutOfRange rawId)
-  when (Map.member rawId (tableEntries table)) $
-    Left (ObjectIdAlreadyRegistered allocatedId)
+  case entryInfo <$> Map.lookup rawId (tableEntries table) of
+    Nothing -> ensureCapacity table
+    Just ObjectInfo{objectInfoLifecycle = ObjectRetired} -> pure ()
+    Just _ -> Left (ObjectIdAlreadyRegistered allocatedId)
   validateVersion interface version
   let generation = tableNextGeneration table
       object = makeObject allocatedId interface version generation
@@ -209,7 +210,7 @@ validateObject interface object table =
   requireActiveObject (objectId object) table >> validateObjectHandle interface object table
 
 {- | Validate that a typed handle still names the same table generation,
-which may have been destroyed and still await @delete_id@.
+which may have been destroyed and retired.
 -}
 validateObjectHandle :: Interface interface -> Object interface -> ObjectTable -> Either ObjectTableError ObjectInfo
 validateObjectHandle interface object table = do
@@ -226,13 +227,18 @@ validateObjectHandle interface object table = do
     then Left (StaleObjectHandle (objectId object))
     else Right info
 
--- | Apply a generated destructor request to an active object.
+{- | Apply a generated destructor request to an active object.
+
+The compositor may have sent the object events before it reads the
+request, so the object is retired rather than removed. A server-created
+object stays retired until the compositor reuses its ID.
+-}
 destroyObjectByRequest :: Object interface -> ObjectTable -> Either ObjectTableError ObjectTable
-destroyObjectByRequest = destroyObject
+destroyObjectByRequest = destroyObject (const True)
 
 -- | Apply a generated destructor event after it has decoded successfully.
 destroyObjectByEvent :: Object interface -> ObjectTable -> Either ObjectTableError ObjectTable
-destroyObjectByEvent = destroyObject
+destroyObjectByEvent = destroyObject (/= ServerCreatedObject)
 
 -- | Release a client ID after @wl_display.delete_id@.
 acknowledgeDeleteId :: Word32 -> ObjectTable -> Either ObjectTableError ObjectTable
@@ -265,16 +271,17 @@ closeObjectTable table =
     , tableClosed = True
     }
 
-destroyObject :: Object interface -> ObjectTable -> Either ObjectTableError ObjectTable
-destroyObject object table = do
+destroyObject :: (ObjectOrigin -> Bool) -> Object interface -> ObjectTable -> Either ObjectTableError ObjectTable
+destroyObject retains object table = do
   requireOpen table
   entry <- validateHandle object table
   case objectInfoOrigin (entryInfo entry) of
     DisplayObject -> Left DisplayObjectCannotBeDestroyed
-    ClientCreatedObject ->
-      let retiredInfo = (entryInfo entry){objectInfoLifecycle = ObjectRetired}
-       in Right table{tableEntries = Map.insert rawId entry{entryInfo = retiredInfo} (tableEntries table)}
-    ServerCreatedObject -> Right table{tableEntries = Map.delete rawId (tableEntries table)}
+    origin
+      | retains origin ->
+          let retiredInfo = (entryInfo entry){objectInfoLifecycle = ObjectRetired}
+           in Right table{tableEntries = Map.insert rawId entry{entryInfo = retiredInfo} (tableEntries table)}
+      | otherwise -> Right table{tableEntries = Map.delete rawId (tableEntries table)}
  where
   rawId = objectIdValue (objectId object)
 

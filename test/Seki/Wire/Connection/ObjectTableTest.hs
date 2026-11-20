@@ -56,6 +56,7 @@ tests =
     , testCase "accepts delete_id for an active client object" testActiveDeleteId
     , testCase "rejects invalid delete_id events" testInvalidDeleteId
     , testCase "tracks the separate server ID namespace" testServerObjects
+    , testCase "retires a destroyed server object until the server reuses its ID" testServerObjectRetirement
     , testCase "rejects mismatched descriptors" testInterfaceMismatch
     , testCase "closes the table idempotently" testClose
     , QuickCheck.testProperty "matches an allocate/destroy/reuse model" propObjectLifecycleModel
@@ -142,8 +143,23 @@ testServerObjects = do
   expectLeft (DeleteIdForServerObject serverId) (acknowledgeDeleteId serverObjectIdMinimum table1)
   expectLeft (ObjectIdAlreadyRegistered serverId) (registerServerObject serverId betaInterface 1 table1)
   expectLeft (ServerObjectIdOutOfRange 2) (registerServerObject (requireObjectId 2) betaInterface 1 table1)
+  table2 <- expectRight (destroyObjectByEvent serverObject table1)
+  assertEqual "server destructor event removes the object" Nothing (lookupObjectInfo serverId table2)
+
+testServerObjectRetirement :: Assertion
+testServerObjectRetirement = do
+  (table0, _) <- expectRight (newObjectTable defaultObjectLimit displayInterface)
+  let serverId = requireObjectId serverObjectIdMinimum
+  (table1, serverObject) <- expectRight (registerServerObject serverId alphaInterface 2 table0)
   table2 <- expectRight (destroyObjectByRequest serverObject table1)
-  assertEqual "server object removed immediately" Nothing (lookupObjectInfo serverId table2)
+  assertEqual "destroy request retires the server object" (Just ObjectRetired) (objectInfoLifecycle <$> lookupObjectInfo serverId table2)
+  expectLeft (DeleteIdForServerObject serverId) (acknowledgeDeleteId serverObjectIdMinimum table2)
+  (table3, reused) <- expectRight (registerServerObject serverId betaInterface 1 table2)
+  reusedInfo <- expectRight (requireActiveObject serverId table3)
+  assertEqual "reused ID names the new interface" "beta" (objectInfoInterfaceName reusedInfo)
+  assertBool "retired handle no longer validates" (not (isRight (validateObject alphaInterface serverObject table3)))
+  assertBool "reused handle is valid" (isRight (validateObject betaInterface reused table3))
+  assertEqual "reuse replaces the retired entry" (objectCount table2) (objectCount table3)
 
 testInterfaceMismatch :: Assertion
 testInterfaceMismatch = do
