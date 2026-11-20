@@ -564,7 +564,7 @@ dispatchFrame connection frame =
                in pure (ConnectionFailed errorValue, DispatchFailed errorValue)
             Just (RegisteredEventRoute interface object decoder finalize handler)
               | Right info <- validateObjectHandle interface object (connectionObjects connectionData)
-              , objectInfoLifecycle info == ObjectAwaitingDeleteId ->
+              , objectInfoLifecycle info == ObjectRetired ->
                   case prepareDroppedEvent interface object decoder frame (connectionObjects connectionData) of
                     Left eventError ->
                       let errorValue = ConnectionEventError eventError

@@ -90,7 +90,7 @@ testDestructor = do
   (table1, parent) <- expectRight (allocateClientObject parentInterface 1 table0)
   (table2, _) <- expectRight (prepareRequest parentInterface parent (emptyRequest "destroy" 1 True) table1)
   assertEqual "sender retired" 1 (retiredObjectCount table2)
-  assertEqual "retired lifecycle" (Just ObjectAwaitingDeleteId) (objectInfoLifecycle <$> lookupObjectInfo (objectId parent) table2)
+  assertEqual "retired lifecycle" (Just ObjectRetired) (objectInfoLifecycle <$> lookupObjectInfo (objectId parent) table2)
 
 testArgumentFailure :: Assertion
 testArgumentFailure = do
