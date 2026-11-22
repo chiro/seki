@@ -52,6 +52,8 @@ import Data.Text.IO qualified as TextIO
 import Foreign.C.Error (eINTR, eWOULDBLOCK, getErrno, throwErrno)
 import Foreign.C.Types (CInt (..))
 import GHC.Clock (getMonotonicTimeNSec)
+import GHC.Foreign qualified as Foreign
+import GHC.IO.Encoding (getFileSystemEncoding)
 import GHC.IO.Handle (hDuplicate)
 import System.Directory hiding (isSymbolicLink)
 import System.Environment (getEnvironment, lookupEnv)
@@ -246,7 +248,7 @@ buildLocked (Resolution resources warning) config state reportLog = bracket (ope
         runLogged binLog handle (Just (30, 65536)) ((command ("list-bin" : flags)){std_err = UseHandle logHandle})
         hFlush handle
         hSeek handle AbsoluteSeek 0
-        B8.unpack . B8.strip <$> BS.hGet handle 65536
+        BS.hGet handle 65536 >>= pathText . B8.strip
       unless (isAbsolute resolved && '\n' `notElem` resolved) (ioError (userError ("invalid Cabal list-bin result: " <> binLog)))
       (candidate, handle) <- openBinaryTempFile state "candidate"
       hClose handle
@@ -254,7 +256,7 @@ buildLocked (Resolution resources warning) config state reportLog = bracket (ope
       setFileMode candidate 0o500
       runLogged logPath logHandle (Just (10, 1048576)) (proc candidate ["--check"])
       hFlush logHandle
-      writeFile (recordPath candidate) (renderResources resources)
+      pathBytes (renderResources resources) >>= BS.writeFile (recordPath candidate)
       pure (ValidatedTarget candidate logPath (state </> "profile") resources)
     )
     `catch` \(e :: IOException) -> do
@@ -352,9 +354,9 @@ startImage installed state = do
     Left _ -> pure (DefaultImage NoProfile)
     Right target -> do
       let candidate = state </> target
-      record <- try @IOException (BS.readFile (recordPath candidate))
+      record <- try @IOException (BS.readFile (recordPath candidate) >>= pathText)
       unproven <- readUnproven state
-      pure $ case parseResources . B8.unpack <$> record of
+      pure $ case parseResources <$> record of
         Right (Right built)
           | built /= installed -> DefaultImage (OtherDelivery (archive built))
           | unproven == Just candidate -> DefaultImage (DiedUnproven candidate)
@@ -372,14 +374,24 @@ a profile writes this first, so a candidate that dies leaves its name behind.
 -}
 markUnproven :: FilePath -> FilePath -> IO ()
 markUnproven state candidate = do
-  (temporary, handle) <- openTempFile state "unproven-next"
-  (hPutStr handle candidate >> hClose handle >> renameFile temporary (unprovenPath state)) `onException` (hClose handle >> removeFile temporary)
+  (temporary, handle) <- openBinaryTempFile state "unproven-next"
+  ((pathBytes candidate >>= BS.hPut handle) >> hClose handle >> renameFile temporary (unprovenPath state)) `onException` (hClose handle >> removeFile temporary)
 
 readUnproven :: FilePath -> IO (Maybe FilePath)
 readUnproven state =
   try @IOException (BS.readFile (unprovenPath state)) >>= \case
-    Right content | not (BS.null content) -> pure (Just (B8.unpack content))
+    Right content | not (BS.null content) -> Just <$> pathText content
     _ -> pure Nothing
+
+{- | The bytes the operating system knows a path by. The marker and the build
+record hold their paths as these bytes, so a path that is not ASCII reads
+back as the 'FilePath' it was written from.
+-}
+pathBytes :: String -> IO BS.ByteString
+pathBytes text = getFileSystemEncoding >>= \encoding -> Foreign.withCStringLen encoding text BS.packCStringLen
+
+pathText :: BS.ByteString -> IO String
+pathText bytes = getFileSystemEncoding >>= \encoding -> BS.useAsCStringLen bytes (Foreign.peekCStringLen encoding)
 
 {- | Remove the marker when it names this image, compared by device and inode
 because the running executable's path is resolved and the marker's is not.

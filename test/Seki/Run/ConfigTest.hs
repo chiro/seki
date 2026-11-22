@@ -6,9 +6,12 @@ import Control.Concurrent (forkFinally)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (bracket)
 import Data.Bits ((.|.))
+import Data.ByteString qualified as BS
 import Data.Map.Strict qualified as Map
 import Data.Monoid (Endo (..))
 import Data.Text qualified as Text
+import GHC.Foreign (peekCStringLen)
+import GHC.IO.Encoding (getFileSystemEncoding)
 import Seki.Internal.Config
 import Seki.Internal.Core.Action qualified as Action
 import Seki.Internal.Core.Layout (CLR (..), Choose (..), Mirror (..), description)
@@ -244,6 +247,18 @@ tests =
               target <- build resources config stateDir
               _ <- withTrial (\_ -> pure ()) target (pure ())
               readUnproven stateDir >>= assertEqual "no candidate on trial" Nothing
+        , testCase "a leftover marker holds the profile back under a state path that is not ASCII" $
+            withStateAt accented $ \stateDir -> do
+              candidate <- recorded stateDir "candidate1" installed
+              createSymbolicLink candidate (stateDir </> "profile")
+              markUnproven stateDir candidate
+              readUnproven stateDir >>= assertEqual "the marker reads back as the path it was written from" (Just candidate)
+              startImage installed stateDir >>= assertEqual "leftover marker" (DefaultImage (DiedUnproven candidate))
+        , testCase "a candidate built from resources under a path that is not ASCII is the start image" $
+            withBuildAt accented $ \resources config stateDir -> do
+              target <- build resources config stateDir
+              createSymbolicLink (validatedPath target) (stateDir </> "profile")
+              startImage resources stateDir >>= assertEqual "record written and read" (ProfileImage (stateDir </> "profile") (validatedPath target))
         , testCase "two builds of one configuration never run their tools at once" $
             withBuild $ \resources config stateDir -> do
               let busy = stateDir </> "busy"
@@ -270,10 +285,17 @@ installed :: Resources
 installed = Resources "/store/source/seki-0.1.0.0.tar.gz" "/store/ghc/bin/ghc" "/store/cabal/bin/cabal" "/store/env/bin/seki-config-env" "/store/templates"
 
 withState :: (FilePath -> IO a) -> IO a
-withState body = withSystemTempDirectory "seki-start-test" $ \directory -> do
-  let stateDir = directory </> "state"
+withState = withStateAt (pure "state")
+
+withStateAt :: IO FilePath -> (FilePath -> IO a) -> IO a
+withStateAt name body = withSystemTempDirectory "seki-start-test" $ \directory -> do
+  stateDir <- (directory </>) <$> name
   createDirectory stateDir
   body stateDir
+
+-- | A file name that holds the UTF-8 bytes of @josé@, whatever characters the locale reads them as.
+accented :: IO FilePath
+accented = getFileSystemEncoding >>= \encoding -> BS.useAsCStringLen (BS.pack [0x6a, 0x6f, 0x73, 0xc3, 0xa9]) (peekCStringLen encoding)
 
 -- | A candidate file with the record that a build from these resources leaves.
 recorded :: FilePath -> FilePath -> Resources -> IO FilePath
@@ -285,7 +307,10 @@ recorded stateDir name resources = do
 
 -- | Resources whose build tool resolves a script that passes its own check.
 withBuild :: (Resources -> FilePath -> FilePath -> IO a) -> IO a
-withBuild body = withState $ \stateDir -> do
+withBuild = withBuildAt (pure "state")
+
+withBuildAt :: IO FilePath -> (Resources -> FilePath -> FilePath -> IO a) -> IO a
+withBuildAt name body = withStateAt name $ \stateDir -> do
   let config = stateDir <> "-config"
       wrapper = config </> "environment"
       templatesPath = config </> "templates"
