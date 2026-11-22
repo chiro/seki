@@ -78,3 +78,4 @@ m4-recompile-coalesce=passed
 m4-check-sync=passed
 m4-crash-recovery=passed
 m4-crash-no-loop=passed
+m4-kill-recovery=passed

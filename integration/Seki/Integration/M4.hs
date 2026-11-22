@@ -47,6 +47,7 @@ m4Scenarios =
   , ("m4-check-sync", checkSync)
   , ("m4-crash-recovery", crashRecovery)
   , ("m4-crash-no-loop", crashNoLoop)
+  , ("m4-kill-recovery", killRecovery)
   ]
 
 {- | Run this executable as a user image whose startup hook throws. The
@@ -88,8 +89,8 @@ socketOf = riverSocket . homeRiver
 
 {- | A stub delivery. Its build step records itself, waits while @hold@
 exists, and fails while @fail@ exists. Its list-bin step prints the path in
-@built@. A second build step that starts while one runs is recorded in
-@overlaps@.
+@built@, or in @built.N@ when that file exists for the Nth build. A second
+build step that starts while one runs is recorded in @overlaps@.
 -}
 delivery :: Home -> String -> IO [(String, String)]
 delivery home name = do
@@ -111,7 +112,9 @@ delivery home name = do
       , "    rm -f '" <> file "busy" <> "'"
       , "    if [ -e '" <> file "fail" <> "' ]; then echo 'Main.hs:1:1: error: deliberate compile error'; exit 1; fi"
       , "    exit 0 ;;"
-      , "  list-bin) cat '" <> file "built" <> "' ;;"
+      , "  list-bin)"
+      , "    this=\"" <> file "built" <> ".$(grep -c '^build$' '" <> stepsFile home name <> "')\""
+      , "    if [ -e \"$this\" ]; then cat \"$this\"; else cat '" <> file "built" <> "'; fi ;;"
       , "  *) exit 64 ;;"
       , "esac"
       ]
@@ -135,6 +138,10 @@ release home = removeFile (control home "hold")
 -- | What the next build yields.
 builds :: Home -> FilePath -> IO ()
 builds home image = writeFile (control home "built") (image <> "\n")
+
+-- | What the build with this number yields, counted from the delivery's first build step.
+buildYields :: Home -> Int -> FilePath -> IO ()
+buildYields home number image = writeFile (control home ("built." <> show number)) (image <> "\n")
 
 -- | The executable with other bytes: a configuration that behaves the same and is not the same image.
 variant :: Home -> String -> FilePath -> IO FilePath
@@ -253,6 +260,10 @@ candidatesOf home = sort . filter (\name -> "candidate" `isPrefixOf` name && not
 onTrial :: Home -> IO Bool
 onTrial home = doesFileExist (stateOf home </> "unproven")
 
+-- | End an image as a power loss does: it runs no code and records nothing.
+killImage :: Home -> Int -> IO ()
+killImage home pid = void (runProcessCapture (clientEnvironment home) "kill" ["-KILL", show pid])
+
 -- | The running image is a checked candidate with these bytes, restored by a handover, and the profile names it.
 builtProfile :: Home -> String -> Int -> FilePath -> IO FilePath
 builtProfile home phase pid expected = do
@@ -275,6 +286,33 @@ defaultBorders = BorderStyle 2 (BS.pack [0, 127, 255]) (BS.pack [63, 63, 63])
 
 tiled :: String -> Home -> Text -> BorderStyle -> String -> [Paint] -> IO ()
 tiled scenario home output style phase = outputPicture scenario (socketOf home) output phase . pictureErrorWith style
+
+{- | Wait until the output shows these windows. The answer is when the
+capture that shows them returned, in milliseconds since @start@, so the
+windows were tiled no later than that. The time to check the pixels is
+reported and does not count.
+-}
+tiledWithin :: String -> Home -> Text -> BorderStyle -> String -> Integer -> [Paint] -> IO Integer
+tiledWithin scenario home output style phase start paints = loop
+ where
+  loop = do
+    frame <- captureOutput (socketOf home) output
+    captured <- millisecondsSince start
+    case pictureErrorWith style paints frame of
+      Nothing -> do
+        checked <- millisecondsSince start
+        captured <$ announce (scenario <> ": " <> phase <> " pixels verified, captured after " <> show captured <> " ms, checked after " <> show checked <> " ms")
+      Just e
+        | captured < toInteger assertionTimeoutMicroseconds `div` 1000 -> threadDelay 5000 >> loop
+        | otherwise -> failIntegration (phase <> ": " <> e)
+
+{- | The plan's budget for the first managed window, from the start of
+@seki@. The measured time starts before the launcher's process exists and
+ends when the capture that shows the tiled windows returns, so it bounds the
+real time from above and needs no slack.
+-}
+managedBudgetMilliseconds :: Integer
+managedBudgetMilliseconds = 1000
 
 -- | The probe colors an output shows anywhere.
 shownColors :: Home -> Text -> IO [Color]
@@ -320,8 +358,9 @@ firstStart = withHome $ \home -> do
     withSeki "m4-first-start" home resources $ \pid _ -> do
       _ <- openWindow probe Blue
       _ <- openWindow probe Green
-      tiled "m4-first-start" home output defaultBorders "the default runtime tiles both windows during the build" [Paint Green leftTile True, Paint Blue rightTile False]
-      millisecondsSince start >>= report "FIRST_START_MANAGED_MS" . show
+      managed <- tiledWithin "m4-first-start" home output defaultBorders "the default runtime tiles both windows during the build" start [Paint Green leftTile True, Paint Blue rightTile False]
+      report "FIRST_START_MANAGED_MS" (show managed)
+      assertEqual ("both windows are tiled within the budget, after " <> show managed <> " ms") True (managed <= managedBudgetMilliseconds)
       elapsed <- millisecondsSince start
       when (elapsed < 1000) (threadDelay (fromInteger (1000 - elapsed) * 1000))
       capture home "first-start"
@@ -361,7 +400,10 @@ firstStartFailed = withHome $ \home -> do
 
 {- | Lane 3. A current profile, started twice, the second time after a touch
 on a source file: the profile execs directly, its build ends unchanged in the
-same session, and its startup hook runs once per start.
+same session, and its startup hook runs once per start. The parent ran a
+Cabal no-op before its exec, which the stub delivery makes free, so the time
+to the first managed window has the first start's ceiling and no comparison
+with the parent.
 -}
 currentProfile :: IO ()
 currentProfile = withHome $ \home -> do
@@ -377,8 +419,9 @@ currentProfile = withHome $ \home -> do
       start <- toInteger <$> getMonotonicTimeNSec
       withSeki "m4-current-profile" home resources $ \pid _ -> do
         _ <- openWindow probe Blue
-        tiled "m4-current-profile" home output portedBorders (phase <> ": the profile tiles a window") [Paint Blue portedTile True]
-        millisecondsSince start >>= report "CURRENT_PROFILE_MANAGED_MS" . ((phase <> ": ") <>) . show
+        managed <- tiledWithin "m4-current-profile" home output portedBorders (phase <> ": the profile tiles a window") start [Paint Blue portedTile True]
+        report "CURRENT_PROFILE_MANAGED_MS" (phase <> ": " <> show managed)
+        assertEqual (phase <> ": the window is tiled within the first start's budget, after " <> show managed <> " ms") True (managed <= managedBudgetMilliseconds)
         startedImage (phase <> ": the launcher execs the profile's candidate") pid candidate
         first <- waitShot home (phase <> ": the session answers") (const True)
         settled <- waitShot home (phase <> ": the startup build ends unchanged") (buildIs "unchanged")
@@ -535,8 +578,10 @@ the second build.
 recompileCoalesce :: IO ()
 recompileCoalesce = withHome $ \home -> do
   resources <- delivery home "delivery"
-  user <- variant home "user" (homeDefault home)
-  builds home user
+  first <- variant home "first-build" (homeDefault home)
+  second <- variant home "second-build" (homeDefault home)
+  buildYields home 1 first
+  buildYields home 2 second
   hold home
   output <- placedOutput home
   withKeyboard (clientEnvironment home) . withProbe (socketOf home) $ \probe -> withSeki "m4-recompile-coalesce" home resources $ \pid _ -> do
@@ -552,13 +597,15 @@ recompileCoalesce = withHome $ \home -> do
     _ <- forkIO (watch [])
     release home
     _ <- waitShot home "the second build starts a new IPC session" ((/= snapSession before) . snapSession)
-    _ <- builtProfile home "after the second build" pid user
+    image <- builtProfile home "after the second build" pid second
     threadDelay 1500000
     putMVar stop ()
     takeMVar sessions >>= assertEqual "the session execs once" 2 . length
     steps home "delivery" >>= assertEqual "two builds ran, one after the other" ["build", "list-bin", "build", "list-bin"]
     doesFileExist (control home "overlaps") >>= assertEqual "two compilers ran at once" False
-    length <$> candidatesOf home >>= assertEqual "the discarded first result and the profile" 2
+    discarded <- filter (/= takeFileName image) <$> candidatesOf home
+    assertEqual "one candidate besides the profile" 1 (length discarded)
+    mapM (sameContent first . (stateOf home </>)) discarded >>= assertEqual "the discarded candidate is the first build's result" [True]
     tiled "m4-recompile-coalesce" home output defaultBorders "the second build keeps the window tiled" [Paint Blue fullTile True]
     capture home "recompile-coalesce"
 
@@ -592,8 +639,8 @@ checkSync = withHome $ \home -> do
 
 {- | Lane 11. A profile whose startup hook throws, and a configuration that
 is fixed before river's init loop starts @seki@ again: the second start runs
-the default runtime, the fixed configuration takes over, and the broken
-profile is not exec'd again.
+the default runtime, the fixed configuration takes over, and the start after
+that execs the fixed profile, not the broken one.
 -}
 crashRecovery :: IO ()
 crashRecovery = withHome $ \home -> do
@@ -610,22 +657,23 @@ crashRecovery = withHome $ \home -> do
     recovering <- waitShot home "the second start runs the default runtime" (buildIs "building")
     startedImage "the default runtime replaces the profile that died" (sessionPid recovering) (homeDefault home)
     exits home >>= assertEqual "the broken profile died once" ["exit 1"]
-    diagnostics >>= assertEqual "the launcher says the profile died before it proved healthy" True . isInfixOf "died before it proved healthy"
+    diagnostics >>= assertEqual "the launcher says the profile crashed before it proved healthy" True . isInfixOf (broken <> " crashed before it proved healthy")
     tiled "m4-crash-recovery" home output defaultBorders "the default runtime tiles the window" [Paint Blue fullTile True]
     release home
     recovered <- waitShot home "the fixed configuration takes over" ((/= snapSession recovering) . snapSession)
-    _ <- builtProfile home "after the fix" (sessionPid recovered) fixed
+    image <- builtProfile home "after the fix" (sessionPid recovered) fixed
     _ <- waitUntil "the fixed configuration proves healthy" assertionTimeoutMicroseconds (onTrial home) not
     tiled "m4-crash-recovery" home output defaultBorders "the fixed configuration keeps the window tiled" [Paint Blue fullTile True]
-    threadDelay 2500000
-    exits home >>= assertEqual "the broken profile was not exec'd again" ["exit 1"]
-    assertEqual "the fixed configuration keeps its session" (snapSession recovered) . snapSession =<< waitShot home "the session answers" (const True)
     capture home "crash-recovery"
+    killImage home (sessionPid recovered)
+    next <- waitShot home "the init loop starts seki once more" ((/= snapSession recovered) . snapSession)
+    startedImage "the next start execs the fixed profile" (sessionPid next) image
+    exits home >>= assertEqual "the broken profile ran once, and nothing but the kill ended the fixed one" ["exit 1", "exit 137"]
 
 {- | A configuration that stays broken. The default runtime does not hand
-over to the image that died. A recompile request tries it once more, and the
-launcher then starts the default runtime again. The two images never take
-turns on their own.
+over to the image that crashed. A recompile request tries it once more, and
+the launcher then starts the default runtime again. The two images never
+take turns on their own.
 -}
 crashNoLoop :: IO ()
 crashNoLoop = withHome $ \home -> do
@@ -635,9 +683,9 @@ crashNoLoop = withHome $ \home -> do
   output <- placedOutput home
   withKeyboard (clientEnvironment home) . withProbe (socketOf home) $ \probe -> withInitLoop "m4-crash-no-loop" home resources $ \_ -> do
     _ <- openWindow probe Blue
-    refused <- waitShot home "the default runtime refuses the image that died" (buildIs "failed")
+    refused <- waitShot home "the default runtime refuses the image that crashed" (buildIs "failed")
     report "REFUSED_BUILD" (show (snapBuild refused))
-    assertEqual "the failure names the image that died" (Just True) (Text.isInfixOf "died before it proved healthy" <$> (snapBuild refused >>= buildError))
+    assertEqual "the failure says that the reproduced image crashed" (Just True) (Text.isInfixOf "crashed before it proved healthy" <$> (snapBuild refused >>= buildError))
     startedImage "the default runtime manages" (sessionPid refused) (homeDefault home)
     exits home >>= assertEqual "the broken profile died once" ["exit 1"]
     sekictl home ["recompile"]
@@ -649,3 +697,39 @@ crashNoLoop = withHome $ \home -> do
     exits home >>= assertEqual "nothing was exec'd without a request" ["exit 1", "exit 1"]
     assertEqual "the default runtime keeps its session" (snapSession again) . snapSession =<< waitShot home "the session answers" (const True)
     capture home "crash-no-loop"
+
+{- | A healthy profile that is killed before it proved healthy, as by a power
+loss. The next start runs the default runtime, whose build reproduces the
+profile and hands over to it in that same start. The profile then proves
+healthy, and the start after that execs it directly.
+-}
+killRecovery :: IO ()
+killRecovery = withHome $ \home -> do
+  resources <- delivery home "delivery"
+  user <- variant home "user" (homeDefault home)
+  builds home user
+  candidate <- checkedCandidate home resources
+  installProfile home candidate
+  hold home
+  output <- placedOutput home
+  withKeyboard (clientEnvironment home) . withProbe (socketOf home) $ \probe -> withInitLoop "m4-kill-recovery" home resources $ \diagnostics -> do
+    _ <- openWindow probe Blue
+    first <- waitShot home "the profile runs its startup build" (buildIs "building")
+    startedImage "the launcher execs the profile" (sessionPid first) candidate
+    readFile (stateOf home </> "unproven") >>= assertEqual "the profile is on its first trial" ("first\n" <> candidate)
+    killImage home (sessionPid first)
+    second <- waitShot home "the next start runs the default runtime" (\s -> snapSession s /= snapSession first && buildIs "building" s)
+    startedImage "the launcher holds the profile back" (sessionPid second) (homeDefault home)
+    diagnostics >>= assertEqual "the launcher says that the profile left no record" True . isInfixOf (candidate <> " ended its last start before it proved healthy, and left no record of why")
+    tiled "m4-kill-recovery" home output defaultBorders "the default runtime tiles the window" [Paint Blue fullTile True]
+    release home
+    third <- waitShot home "the reproduced profile takes over in the same start" ((/= snapSession second) . snapSession)
+    image <- builtProfile home "on its second trial" (sessionPid third) user
+    assertEqual "the handover kept the pid" (sessionPid second) (sessionPid third)
+    _ <- waitUntil "the profile proves healthy" assertionTimeoutMicroseconds (onTrial home) not
+    tiled "m4-kill-recovery" home output defaultBorders "the profile keeps the window tiled" [Paint Blue fullTile True]
+    capture home "kill-recovery"
+    killImage home (sessionPid third)
+    fourth <- waitShot home "the init loop starts seki once more" ((/= snapSession third) . snapSession)
+    startedImage "a profile that proved healthy execs directly" (sessionPid fourth) image
+    exits home >>= assertEqual "only the two kills ended an image" ["exit 137", "exit 137"]
