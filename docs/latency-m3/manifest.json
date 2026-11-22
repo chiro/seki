@@ -12,7 +12,7 @@
   "renderer": "pixman",
   "revisions": {
     "trunk": {
-      "worktree": "/tmp/m3-07-trunk",
+      "worktree": ".",
       "build_command": [
         "cabal",
         "build",
@@ -27,17 +27,17 @@
       "compiler": "9.10.3",
       "git_sha": "3c3037369eed28e5dc59528046afa4b7a1309cae",
       "dirty_paths": [],
-      "binary": "/tmp/m3-07-trunk/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/x/seki-latency/opt/build/seki-latency/seki-latency",
+      "binary": "dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/x/seki-latency/opt/build/seki-latency/seki-latency",
       "binary_sha256": "47c3269edab5dd4455b0e742b6764816c94d9e26aac31123795c24f5ebc5a354",
       "binary_reported_compiler": "ghc 9.10",
       "linked_seki_libraries": {
-        "/tmp/m3-07-trunk/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/layer-surface-fixture/opt/build/layer-surface-fixture/libHSseki-0.1.0.0-inplace-layer-surface-fixture-ghc9.10.3.so": "5b4398a6e2dbe724b2e8eee821d753d9c012931fff04545e1b6691d590a87703",
-        "/tmp/m3-07-trunk/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-wire/opt/build/seki-wire/libHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so": "2d86dec6f516cd264129458591f2c935e0180bf2fe6d6ac1b731ce3743c2343c",
-        "/tmp/m3-07-trunk/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-core/opt/build/seki-core/libHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so": "377a4cfc5d9d49f30fc13c75d5e7253c578c63046b94bd57bf8a9d447c1c6eba"
+        "dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/layer-surface-fixture/opt/build/layer-surface-fixture/libHSseki-0.1.0.0-inplace-layer-surface-fixture-ghc9.10.3.so": "5b4398a6e2dbe724b2e8eee821d753d9c012931fff04545e1b6691d590a87703",
+        "dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-wire/opt/build/seki-wire/libHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so": "2d86dec6f516cd264129458591f2c935e0180bf2fe6d6ac1b731ce3743c2343c",
+        "dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-core/opt/build/seki-core/libHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so": "377a4cfc5d9d49f30fc13c75d5e7253c578c63046b94bd57bf8a9d447c1c6eba"
       }
     },
     "head": {
-      "worktree": "/home/chir/.t3/worktrees/seki/t3-af48a817",
+      "worktree": ".",
       "build_command": [
         "cabal",
         "build",
@@ -52,13 +52,13 @@
       "compiler": "9.10.3",
       "git_sha": "82a31cc298f9f5200788b2898a36dd248cfefdd0",
       "dirty_paths": [],
-      "binary": "/home/chir/.t3/worktrees/seki/t3-af48a817/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/x/seki-latency/opt/build/seki-latency/seki-latency",
+      "binary": "dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/x/seki-latency/opt/build/seki-latency/seki-latency",
       "binary_sha256": "9df3839cd62f480d8d7cbdb503595c9b61453660f4308b73bc4194db91248fb8",
       "binary_reported_compiler": "ghc 9.10",
       "linked_seki_libraries": {
-        "/home/chir/.t3/worktrees/seki/t3-af48a817/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/layer-surface-fixture/opt/build/layer-surface-fixture/libHSseki-0.1.0.0-inplace-layer-surface-fixture-ghc9.10.3.so": "01a441aace501b6441dd8e355a3992bdf57362c646afcd73c87c1fb5fdfec152",
-        "/home/chir/.t3/worktrees/seki/t3-af48a817/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-wire/opt/build/seki-wire/libHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so": "99ff735438a64e5bcdf1792439a464333c64967c8ee7569c799d2e380d14fba4",
-        "/home/chir/.t3/worktrees/seki/t3-af48a817/dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-core/opt/build/seki-core/libHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so": "377a4cfc5d9d49f30fc13c75d5e7253c578c63046b94bd57bf8a9d447c1c6eba"
+        "dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/layer-surface-fixture/opt/build/layer-surface-fixture/libHSseki-0.1.0.0-inplace-layer-surface-fixture-ghc9.10.3.so": "01a441aace501b6441dd8e355a3992bdf57362c646afcd73c87c1fb5fdfec152",
+        "dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-wire/opt/build/seki-wire/libHSseki-0.1.0.0-inplace-seki-wire-ghc9.10.3.so": "99ff735438a64e5bcdf1792439a464333c64967c8ee7569c799d2e380d14fba4",
+        "dist-newstyle/latency/build/x86_64-linux/ghc-9.10.3/seki-0.1.0.0/l/seki-core/opt/build/seki-core/libHSseki-0.1.0.0-inplace-seki-core-ghc9.10.3.so": "377a4cfc5d9d49f30fc13c75d5e7253c578c63046b94bd57bf8a9d447c1c6eba"
       }
     }
   },

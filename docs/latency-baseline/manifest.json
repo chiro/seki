@@ -16,7 +16,7 @@
     "--builddir=dist-newstyle/latency"
   ],
   "build_provenance": "built by runner",
-  "binary": "/home/chir/src/github.com/chiro/seki/dist-newstyle/latency/build/x86_64-linux/ghc-9.6.7/seki-0.1.0.0/x/seki-latency/opt/build/seki-latency/seki-latency",
+  "binary": "dist-newstyle/latency/build/x86_64-linux/ghc-9.6.7/seki-0.1.0.0/x/seki-latency/opt/build/seki-latency/seki-latency",
   "binary_sha256": "9cc63fa9f521e2b0e29f0c1c7a18783662e7d98dc4b15431717291a4051bcc5b",
   "seed": 1909,
   "live_steps": 1023,
