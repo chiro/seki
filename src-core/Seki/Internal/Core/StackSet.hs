@@ -107,8 +107,11 @@ and the hidden ones, plus the floating windows' rectangles.
 -}
 data StackSet i l = StackSet
   { current :: !(Screen i l)
+  -- ^ The focused output and the workspace it shows.
   , visible :: [Screen i l]
+  -- ^ The other outputs and the workspaces they show.
   , hidden :: [Workspace i l]
+  -- ^ The workspaces no output shows.
   , floating :: Map WindowId FloatGeom
   }
   deriving (Eq, Show)

@@ -15,6 +15,10 @@ import Seki.Internal.Core.Geometry (Rect, splitHorizontallyBy, splitVertically)
 import Seki.Internal.Core.Layout (IncMasterN (..), LayoutClass (..), Resize (..), fromMessage)
 import Seki.Internal.Core.StackSet (integrate)
 
+{- | A master column on the left and the other windows stacked on the right.
+'Shrink' and 'Expand' change the ratio, and t'IncMasterN' changes the number of
+masters. @def@ uses @Tall 1 (3 / 100) (1 / 2)@.
+-}
 data Tall = Tall
   { tallNMaster :: !Int
   -- ^ The number of master windows.

@@ -74,6 +74,10 @@ data OutputArea = OutputArea
   }
   deriving (Eq, Show)
 
+{- | A border color as red, green, blue, and alpha, each an unsigned 32-bit
+channel with premultiplied alpha, so 0xffffffff is full intensity. No color
+channel may exceed alpha. @BorderColor 0 0 0xffffffff 0xffffffff@ is opaque blue.
+-}
 data BorderColor = BorderColor Word32 Word32 Word32 Word32 deriving (Eq, Show)
 
 data SceneStyle = SceneStyle

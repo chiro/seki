@@ -57,6 +57,7 @@ class (Typeable a) => Message a
 -- | Any 'Message', to be recovered with 'fromMessage'.
 data SomeMessage = forall a. (Message a) => SomeMessage a
 
+-- | The message inside, when it has the type the caller asks for.
 fromMessage :: (Message m) => SomeMessage -> Maybe m
 fromMessage (SomeMessage m) = cast m
 
@@ -91,6 +92,11 @@ at the tile's top-left and proposes the tile clamped to the client's size hints.
 data SizePolicy = Crop | Tolerate
   deriving (Eq, Show)
 
+{- | A layout: a value that places windows and changes when it receives a
+message. Every method has a default, so @instance LayoutClass MyLayout@ alone
+gives a layout that shows the focused window at the whole rectangle. 'Show'
+and 'Read' let a restart save each workspace's layout and read it back.
+-}
 class (Show l, Read l) => LayoutClass l where
   -- | Place windows of a non-empty stack. Windows left out are hidden.
   pureLayout :: l -> Rect -> Stack WindowId -> [(WindowId, Rect)]
@@ -104,6 +110,7 @@ class (Show l, Read l) => LayoutClass l where
   description :: l -> String
   description = show
 
+  -- | What a tile shows when its client commits another size. The default is 'Crop'.
   sizePolicy :: l -> SizePolicy
   sizePolicy _ = Crop
 
