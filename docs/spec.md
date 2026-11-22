@@ -425,11 +425,21 @@ link, or removes the new link when no previous profile existed, then reconnects
 with fresh policy, IPC, input adapters, and build ownership. User configuration
 and hooks are trusted code. Candidate checking does not sandbox their IO or
 provide a supervisor for arbitrary crashes after exec. One case is covered.
-The launcher and a handover mark a candidate before its exec, and the image
-clears the mark once its startup build has ended and a manage sequence
-follows the one that ran its startup hook. The launcher starts the default
-runtime instead of a profile that died with its mark, and the default
-runtime does not hand over to a build that has that profile's bytes.
+The launcher and a handover mark a candidate as on its first trial before
+its exec. A handover onto the bytes of the marked candidate marks its second
+trial instead, and a failed exec puts the earlier mark back. Only the marked
+image changes its mark. It clears the mark when it proves healthy, which is
+when its startup build has ended and a manage sequence follows the one that
+ran its startup hook. It also clears the mark when its session ends cleanly
+or river refuses it. It records a crash when its session ends with a runtime
+error, or with an exception other than the interrupt signal. The launcher
+starts the default runtime instead of any marked profile. An end that runs no
+code, such as a kill, a power loss, or a loader failure, leaves the first
+trial in place. A startup build that reproduces the bytes of a candidate on
+its first trial therefore hands over to them once more. A startup build that
+reproduces the bytes of a candidate that crashed, or that is on its second
+trial, ends `failed` and does not hand over. A requested build ignores the
+mark.
 
 Surviving windows whose workspace tag disappeared use the new manage hook; the
 default rules place them on the current workspace. An unreadable saved layout

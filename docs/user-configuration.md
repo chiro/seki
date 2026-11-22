@@ -187,8 +187,8 @@ skeleton offline, repeats the unchanged build, checks a valid and an invalid
 configuration, and checks the compiler, state, and restore failure paths. It
 then starts `seki` against a sentinel Wayland socket and reads which image
 connects: the default runtime with no profile, with a profile that has no
-record, with a profile from another delivery, and with a profile that died
-on trial, and the profile itself when its candidate is current. It also checks that the wrapper exports the path it was
+record, with a profile from another delivery, and with a profile whose
+candidate is on trial, and the profile itself when its candidate is current. It also checks that the wrapper exports the path it was
 started through, and that `seki --resources` through that path names the
 archive of the delivery.
 
