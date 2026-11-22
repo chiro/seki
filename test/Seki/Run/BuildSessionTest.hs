@@ -43,8 +43,8 @@ tests =
     [ testCase "duplicate requests bound queue and invalidate older failure" $ do
         let running = transitionBuild BuildIdle BuildRequested
             queued = foldl (\state _ -> transitionBuild state BuildRequested) running [1 .. 1000 :: Int]
-        queued @?= BuildRunning 1 True Nothing
-        transitionBuild queued (BuildFinished (Left ("obsolete", Nothing))) @?= BuildRunning 2 False Nothing
+        queued @?= BuildRunning 1 Superseded Nothing
+        transitionBuild queued (BuildFinished (Left ("obsolete", Nothing))) @?= BuildRunning 2 OnRequest Nothing
     , testCase "policy build completion wakes the owner through a full command queue" $
         fixture "exit 0" $ \context@(BuildContext resources _ _ _) directory -> do
           writeFile (environment resources) ("#!/bin/sh\nfor arg do\ncase \"$arg\" in\nbuild) touch '" <> directory </> "started'; while [ ! -f '" <> directory </> "release' ]; do sleep 0.02; done; exit 0;;\nlist-bin) printf '%s\\n' '" <> directory </> "image'; exit 0;;\nesac\ndone\nexit 2\n")

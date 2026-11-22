@@ -5,6 +5,7 @@
 module Seki.Run.BuildSession (
   BuildSession,
   BuildState (..),
+  BuildPurpose (..),
   BuildEvent (..),
   newBuildSession,
   newUnavailableBuildSession,
@@ -32,9 +33,17 @@ import System.IO (IOMode (ReadMode), SeekMode (AbsoluteSeek), hFileSize, hPutStr
 
 newtype BuildGeneration = BuildGeneration Integer deriving (Eq, Show, Num, ToJSON)
 
+-- | What the running build's result is for.
+data BuildPurpose
+  = -- | The restart action or @recompile@ asked for it.
+    OnRequest
+  | -- | A request arrived during the build. The result is discarded and one more build runs.
+    Superseded
+  deriving (Eq, Show)
+
 data BuildState
   = BuildIdle
-  | BuildRunning BuildGeneration Bool (Maybe FilePath)
+  | BuildRunning BuildGeneration BuildPurpose (Maybe FilePath)
   | BuildFailed BuildGeneration String (Maybe FilePath)
   | BuildReady BuildGeneration ValidatedTarget
   deriving (Eq, Show)
@@ -47,17 +56,17 @@ data BuildEvent
 
 transitionBuild :: BuildState -> BuildEvent -> BuildState
 transitionBuild state event = case (state, event) of
-  (BuildRunning generation _ logPath, BuildRequested) -> BuildRunning generation True logPath
-  (BuildRunning generation queued _, BuildLogged path) -> BuildRunning generation queued (Just path)
-  (BuildRunning generation True _, BuildFinished _) -> start (generation + 1)
-  (BuildRunning generation False _, BuildFinished (Left (message, logPath))) -> BuildFailed generation message logPath
-  (BuildRunning generation False _, BuildFinished (Right target)) -> BuildReady generation target
+  (BuildRunning generation _ logPath, BuildRequested) -> BuildRunning generation Superseded logPath
+  (BuildRunning generation purpose _, BuildLogged path) -> BuildRunning generation purpose (Just path)
+  (BuildRunning generation Superseded _, BuildFinished _) -> start (generation + 1)
+  (BuildRunning generation OnRequest _, BuildFinished (Left (message, logPath))) -> BuildFailed generation message logPath
+  (BuildRunning generation OnRequest _, BuildFinished (Right target)) -> BuildReady generation target
   (BuildIdle, BuildRequested) -> start 1
   (BuildFailed generation _ _, BuildRequested) -> start (generation + 1)
   (BuildReady generation _, BuildRequested) -> start (generation + 1)
   _ -> state
  where
-  start generation = BuildRunning generation False Nothing
+  start generation = BuildRunning generation OnRequest Nothing
 
 data BuildSession = BuildSession (TVar BuildState) (TVar (Maybe String)) ThreadId (MVar ())
 
@@ -136,7 +145,7 @@ buildStatus (BuildSession state warning _ _) = do
   readStatus =
     readTVarIO state >>= \case
       BuildIdle -> pure (value "idle" 0 Nothing Nothing)
-      BuildRunning generation queued logPath -> pure (object ["log_path" .= logPath, "state" .= ("building" :: String), "generation" .= generation, "queued" .= if queued then Just (generation + 1) else Nothing])
+      BuildRunning generation purpose logPath -> pure (object ["log_path" .= logPath, "state" .= ("building" :: String), "generation" .= generation, "queued" .= if purpose == Superseded then Just (generation + 1) else Nothing])
       BuildFailed generation message logPath -> pure (value "failed" generation (Just (take 8192 message)) logPath)
       BuildReady generation target -> pure (value "validated" generation Nothing (Just (validatedLog target)))
   value :: String -> BuildGeneration -> Maybe String -> Maybe FilePath -> Value
