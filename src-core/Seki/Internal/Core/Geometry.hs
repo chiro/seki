@@ -53,14 +53,18 @@ data Point = Point
 -- | A non-negative width and height. Build one with 'mkSize'.
 data Size = Size
   { sizeWidth :: !Int32
+  -- ^ The width in logical pixels.
   , sizeHeight :: !Int32
+  -- ^ The height in logical pixels.
   }
   deriving (Eq, Ord, Show)
 
 -- | A rectangle whose far edges fit in 'Int32'. Build one with 'mkRect'.
 data Rect = Rect
   { rectOrigin :: !Point
+  -- ^ The top-left corner.
   , rectSize :: !Size
+  -- ^ The width and height.
   }
   deriving (Eq, Ord, Show)
 
@@ -77,14 +81,17 @@ data GeometryError
     RectOutOfRange !Int64 !Int64 !Int32 !Int32
   deriving (Eq, Show)
 
+-- | A size of this width and height, or 'NegativeSize' when either is negative.
 mkSize :: Int32 -> Int32 -> Either GeometryError Size
 mkSize width height
   | width < 0 || height < 0 = Left (NegativeSize width height)
   | otherwise = Right (Size width height)
 
+-- | A rectangle at this top-left corner, or 'RectOutOfRange' when its far edge passes @maxBound :: Int32@.
 mkRect :: Point -> Size -> Either GeometryError Rect
 mkRect (Point x y) = checkedRect (fromIntegral x) (fromIntegral y)
 
+-- | A rectangle's left edge, top edge, width, and height.
 rectX, rectY, rectWidth, rectHeight :: Rect -> Int32
 rectX = pointX . rectOrigin
 rectY = pointY . rectOrigin

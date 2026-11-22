@@ -100,6 +100,7 @@ title = fromProps (maybe "" Text.unpack . propTitle)
 isDialog :: Query Bool
 isDialog = fromProps (isJust . propParent)
 
+-- | Whether the query's answer equals the value, as in @appId =? "mpv"@.
 (=?) :: (Eq a) => Query a -> a -> Query Bool
 q =? x = fmap (== x) q
 
@@ -113,6 +114,7 @@ p --> f = p >>= \b -> if b then f else pure mempty
 composeAll :: (Monoid m) => [m] -> m
 composeAll = mconcat
 
+-- | The hook that changes nothing.
 idHook :: (Monoid m) => m
 idHook = mempty
 

@@ -51,9 +51,21 @@ import Seki.Internal.Input (InputRule)
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 
+{- | What a binding or hook does to seki's state, for layout type @l@. An action
+is pure: it changes workspaces, windows, and layouts, and records effects such
+as launching a command, which seki runs after the action returns.
+-}
 type Action l a = Core.Action String l a
+
+-- | Key bindings as pairs of a key and the action it runs.
 type Bindings l = [(KeyBinding, Action l ())]
+
+{- | A rule that runs on each new window and can move, float, or tile it. Build
+one from 'Query' predicates with '(-->)' and 'composeAll'.
+-}
 type ManageHook l = Core.ManageHook String l
+
+-- | The layout type of 'def': Tall, Mirror Tall, and Full, cycled with 'NextLayout'.
 type StdLayouts = Choose Tall (Choose (Mirror Tall) Full)
 
 -- | XKB modifier bits. Combine modifiers with @(.|.)@.
@@ -61,6 +73,10 @@ newtype Mods = Mods Word32
   deriving stock (Eq, Show)
   deriving newtype (Bits)
 
+{- | The named XKB modifiers. 'Mod1' is usually Alt and 'Mod4' the logo key.
+There is no @Mod2@: it is usually Num Lock, and river ignores locked modifiers
+when it matches a binding.
+-}
 pattern Shift, Control, Mod1, Mod3, Mod4, Mod5 :: Mods
 pattern Shift = Mods 1
 pattern Control = Mods 4
@@ -72,9 +88,12 @@ pattern Mod5 = Mods 128
 -- | An XKB keysym number, such as @Keysym 0xff0d@ for Return.
 newtype Keysym = Keysym Word32 deriving (Eq, Show)
 
+-- | A key chord: the modifiers that must be held and the key pressed with them.
 data KeyBinding = KeyBinding
   { bindingModifiers :: Mods
+  -- ^ The modifiers held with the key, such as @'Mod4' .|. 'Shift'@, or @Mods 0@ for none.
   , bindingKeysym :: Keysym
+  -- ^ The key, as the keysym it produces.
   }
   deriving (Eq, Show)
 
@@ -87,9 +106,12 @@ pattern Button1 = Button 0x110
 pattern Button2 = Button 0x112
 pattern Button3 = Button 0x111
 
+-- | A pointer chord: the modifiers that must be held and the button pressed with them.
 data PointerBinding = PointerBinding
   { pointerModifiers :: Mods
+  -- ^ The modifiers held with the button, combined with @(.|.)@.
   , pointerButton :: Button
+  -- ^ The button that starts the drag.
   }
   deriving (Eq, Show)
 
@@ -99,25 +121,42 @@ it is shown, once the pointer moves.
 -}
 data PointerAction = MoveWindow | ResizeWindow deriving (Eq, Show)
 
+-- | Pointer bindings as pairs of a chord and the drag it starts.
 type PointerBindings = [(PointerBinding, PointerAction)]
 
+-- | The borders river draws around every window seki shows.
 data BorderConfig = BorderConfig
   { borderWidth :: Int32
+  -- ^ The width in logical pixels, drawn outside the window's content. 0 draws none, and a negative width fails validation.
   , focusedBorderColor :: BorderColor
+  -- ^ The color of the focused window's border.
   , unfocusedBorderColor :: BorderColor
+  -- ^ The color of every other window's border.
   }
   deriving (Eq, Show)
 
+{- | A complete seki configuration for layout type @l@. Start from 'def' and
+override fields with a record update, then pass the result to @seki@.
+seki validates it before it connects to river.
+-}
 data Config l = Config
   { scratchpads :: [Scratchpad]
+  -- ^ Named scratchpads. The first one whose query matches a new window owns it.
   , inputRules :: [InputRule]
+  -- ^ Input device settings, applied in order. See "Seki.Input".
   , modMask :: Mods
+  -- ^ The modifier that 'defaultKeys' and 'defaultPointerBindings' put in every chord.
   , terminal :: String
+  -- ^ The shell command that Mod-Shift-Return launches in 'defaultKeys'.
   , workspaces :: [String]
+  -- ^ The workspace tags, in order. The list must be non-empty and hold no duplicate tags.
   , layoutHook :: l
+  -- ^ The layout every workspace starts with.
   , keys :: Config l -> Bindings l
+  -- ^ The key bindings. The function receives the final configuration, so the bindings see every other override.
   , borders :: BorderConfig
   , bindingsUseFixedLayout :: Bool
+  -- ^ When 'True', river reads a binding's keysym from the keyboard's first layout, whichever layout is active, so each binding stays on the same physical key. When 'False', river reads it from the active layout.
   , manageHook :: ManageHook l
   -- ^ Runs on every new window, after it is inserted above the focus.
   , startupHook :: Action l ()
@@ -126,6 +165,7 @@ data Config l = Config
   -- type names the layout, so an update that changes the layout type sets it
   -- again, as it does 'keys' and 'manageHook'.
   , pointerBindings :: Config l -> PointerBindings
+  -- ^ The pointer bindings. Like 'keys', the function receives the final configuration.
   }
 
 -- | Nine workspaces, Tall, Mirror Tall, Full, xmonad-style key and pointer bindings, floating dialogs, and no startup hook.

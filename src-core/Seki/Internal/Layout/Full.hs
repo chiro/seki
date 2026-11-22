@@ -9,6 +9,7 @@ module Seki.Internal.Layout.Full (
 
 import Seki.Internal.Core.Layout (LayoutClass)
 
+-- | Show only the focused window, at the whole rectangle, and hide the others.
 data Full = Full
   deriving (Eq, Show, Read)
 
