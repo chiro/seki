@@ -258,6 +258,8 @@ Splitting the WM from the compositor changes the behavior of restarts, failures,
 ## Requirements
 
 - **river 0.4.5 or later** (0.4.5 added the modifier-watching requests seki uses)
+- **river 0.5.0** is the release-tested compositor. CI runs the real-river
+  integration suite against it.
 - GHC 9.10.3 and cabal-install 3.10 or later
 - No `libwayland` dependency: the Wayland wire protocol is implemented in Haskell, with a code generator for the protocol XML
 
