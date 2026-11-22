@@ -24,7 +24,7 @@ import Seki.Integration.Harness
 import Seki.Internal.Config (Config (..), def)
 import Seki.Run.Config (runConfig)
 import Seki.Run.ConfigBuild (startupArguments)
-import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, doesPathExist, listDirectory)
+import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, doesPathExist, listDirectory, removeFile)
 import System.Environment (getExecutablePath, lookupEnv)
 import System.Exit (ExitCode (..), exitFailure)
 import System.FilePath (takeDirectory, takeFileName, (</>))
@@ -130,7 +130,7 @@ hold :: Home -> IO ()
 hold home = writeFile (control home "hold") ""
 
 release :: Home -> IO ()
-release home = void (runProcessCapture (clientEnvironment home) "rm" ["-f", control home "hold"])
+release home = removeFile (control home "hold")
 
 -- | What the next build yields.
 builds :: Home -> FilePath -> IO ()
