@@ -258,7 +258,7 @@ buildLocked (Resolution resources warning) config state reportLog = bracket (ope
       setFileMode candidate 0o500
       runLogged logPath logHandle (Just (10, 1048576)) (proc candidate ["--check"])
       hFlush logHandle
-      pathBytes (renderResources resources) >>= BS.writeFile (recordPath candidate)
+      pathBytes (renderResources resources) >>= writeAtomic (recordPath candidate)
       pure (ValidatedTarget candidate logPath (state </> "profile") resources)
     )
     `catch` \(e :: IOException) -> do
