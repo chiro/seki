@@ -34,6 +34,7 @@ module Seki.Run.ConfigBuild (
   markUnproven,
   readUnproven,
   clearUnproven,
+  recordCrash,
   withTrial,
   sameBytes,
   discardCandidate,
@@ -427,19 +428,31 @@ pathBytes text = getFileSystemEncoding >>= \encoding -> Foreign.withCStringLen e
 pathText :: BS.ByteString -> IO String
 pathText bytes = getFileSystemEncoding >>= \encoding -> BS.useAsCStringLen bytes (Foreign.peekCStringLen encoding)
 
-{- | Remove the marker when it names this image, compared by device and inode
-because the running executable's path is resolved and the marker's is not.
+{- | The marker, when it names this image. The two are compared by device
+and inode, because the running executable's path is resolved and the
+marker's is not.
+-}
+ownTrial :: FilePath -> FilePath -> IO (Maybe Unproven)
+ownTrial state image =
+  readUnproven state >>= \case
+    Nothing -> pure Nothing
+    Just unproven -> do
+      same <- try @IOException ((,) <$> getFileStatus (unprovenCandidate unproven) <*> getFileStatus image)
+      pure $ case same of
+        Right (a, b) | (deviceID a, fileID a) == (deviceID b, fileID b) -> Just unproven
+        _ -> Nothing
+
+{- | This image leaves its trial: it proved healthy, it never managed, or its
+session ended cleanly. A marker that names another image stays.
 -}
 clearUnproven :: FilePath -> FilePath -> IO ()
-clearUnproven state image =
-  readUnproven state
-    >>= mapM_
-      ( \(Unproven marked _) -> do
-          same <- try @IOException ((,) <$> getFileStatus marked <*> getFileStatus image)
-          case same of
-            Right (a, b) | (deviceID a, fileID a) == (deviceID b, fileID b) -> removeFile (unprovenPath state) `catch` \(_ :: IOException) -> pure ()
-            _ -> pure ()
-      )
+clearUnproven state image = ownTrial state image >>= mapM_ (\_ -> removeFile (unprovenPath state) `catch` \(_ :: IOException) -> pure ())
+
+{- | This image says that its session failed. A marker that names it then
+holds 'Crashed', so no start and no startup build runs these bytes again.
+-}
+recordCrash :: FilePath -> FilePath -> IO ()
+recordCrash state image = ownTrial state image >>= mapM_ (\unproven -> markUnproven state unproven{unprovenTrial = Crashed})
 
 {- | Run a handover's exec with its candidate on trial. The exec returns only
 when it failed. The profile link is back on the earlier candidate by then, so

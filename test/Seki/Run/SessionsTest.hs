@@ -3,7 +3,7 @@
 
 module Seki.Run.SessionsTest (tests) where
 
-import Control.Exception (ErrorCall, bracket, onException, throwIO, try)
+import Control.Exception (AsyncException (UserInterrupt), ErrorCall, bracket, onException, throw, throwIO, try)
 import Control.Monad (when)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.List (isPrefixOf)
@@ -20,7 +20,7 @@ import Seki.Run.IPC (withIPCAt)
 import Seki.Run.MockRiver (FrameReader, encodedPayload, event, expectMockSuccess, handshake, newFrameReader, openRuntimePair, readUntil, receiveFrame, receiveLayerShellOutputRequest, receiveNewIdRequest, requests, requireObjectId, runMock, sendFrames)
 import Seki.Run.Policy (PolicyConfig (..), newPolicy)
 import Seki.Run.Restart (Launch (..), RestartRefusal (..))
-import Seki.Wire.Arguments (putInt, putNewId, putString, putUint)
+import Seki.Wire.Arguments (putInt, putNewId, putObject, putString, putUint)
 import Seki.Wire.Transport (ConnectionDiscoveryError (..), ConnectionTarget (..), ReceivedChunk (..), Transport, closeTransport, receiveChunk)
 import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..))
 import System.Directory (createDirectoryIfMissing, listDirectory)
@@ -45,7 +45,10 @@ tests =
     , testCase "unavailable at startup retries on the socket path" testUnavailableRetry
     , testCase "a state file of an unknown version starts fresh and is deleted" testUnknownVersion
     , testCase "an image that cannot reach river is no longer on trial" testNeverManaged
-    , testCase "an image that dies in its startup hook stays on trial" testDiesOnTrial
+    , testCase "an image whose session ends cleanly before it proved healthy is no longer on trial" testCleanEndOnTrial
+    , testCase "an image that dies in its startup hook records that it crashed" testDiesOnTrial
+    , testCase "an image that river stops for a protocol error records that it crashed" testProtocolErrorOnTrial
+    , testCase "an interrupt records nothing, so the image is still on its first trial" testInterruptedOnTrial
     ]
 
 -- | A window with this identifier on an output named 56, then manage_start; returns the requests of that manage sequence.
@@ -180,12 +183,14 @@ testUnknownVersion = withSystemTempDirectory "seki-sessions" $ \dir -> do
   listDirectory dir >>= (@?= [])
 
 {- | An installed session whose state directory holds a marker that names
-this test executable, as if the launcher had just exec'd it.
+this test executable, as if the launcher had just exec'd it. The
+configuration directory is the test's own, because a session that manages
+builds there.
 -}
 onTrial :: (FilePath -> IO a) -> IO a
 onTrial body = withSystemTempDirectory "seki-trial" $ \dir -> do
   let state = dir </> "state" </> "seki"
-      installed = ("XDG_STATE_HOME", dir </> "state") : [("SEKI_CONFIG_" <> name, "/store" </> name) | name <- ["ARCHIVE", "GHC", "CABAL", "ENV", "TEMPLATES"]]
+      installed = ("XDG_STATE_HOME", dir </> "state") : ("XDG_CONFIG_HOME", dir </> "config") : [("SEKI_CONFIG_" <> name, "/store" </> name) | name <- ["ARCHIVE", "GHC", "CABAL", "ENV", "TEMPLATES"]]
   createDirectoryIfMissing True state
   getExecutablePath >>= markUnproven state . (`Unproven` FirstTrial)
   foldr (uncurry withEnv) (body state) installed
@@ -198,24 +203,71 @@ testNeverManaged = onTrial $ \state -> do
   either (const (pure ())) (const (assertFailure "expected the connection to fail")) result
   readUnproven state >>= (@?= Nothing)
 
-testDiesOnTrial :: Assertion
-testDiesOnTrial = onTrial $ \state -> do
+testCleanEndOnTrial :: Assertion
+testCleanEndOnTrial = onTrial $ \state -> do
   (target, peer) <- openRuntimePair
   logged <- newIORef []
   done <- runMock $ flip onException (closeTransport peer) $ do
     reader <- newFrameReader
     globals <- handshake reader peer
-    window <- requireObjectId 0xff000050
-    output <- requireObjectId 0xff000051
-    let (manager, _, _) = globals
-    sendFrames peer [event manager 6 (putNewId window), event manager 7 (putNewId output), event manager 2 (pure ())]
-    expectClosedAfterRequests peer
-  let launch = Launch (Right target) (Left XdgRuntimeDirMissing) (Right "/opt/seki") (Left NoStateDirectory) (\_ _ _ -> throwIO (userError "unused"))
+    _ <- enumerate reader peer globals 0xff000060 "w1"
+    closeTransport peer
+  result <- runSessions (singleSession target) (const (sessionConfig logged (Just ())){policyStartupHook = pure ()}) (Fresh StartupBuild)
+  expectMockSuccess done
+  result @?= Right ()
+  readUnproven state >>= (@?= Nothing)
+
+-- | One window and one output, then a manage sequence that runs the startup hook.
+hookSequence :: Transport -> IO ()
+hookSequence peer = do
+  reader <- newFrameReader
+  (manager, _, _) <- handshake reader peer
+  window <- requireObjectId 0xff000050
+  output <- requireObjectId 0xff000051
+  sendFrames peer [event manager 6 (putNewId window), event manager 7 (putNewId output), event manager 2 (pure ())]
+  expectClosedAfterRequests peer
+
+singleSession :: ConnectionTarget -> Launch
+singleSession target = Launch (Right target) (Left XdgRuntimeDirMissing) (Right "/opt/seki") (Left NoStateDirectory) (\_ _ _ -> throwIO (userError "unused"))
+
+testDiesOnTrial :: Assertion
+testDiesOnTrial = onTrial $ \state -> do
+  (target, peer) <- openRuntimePair
+  logged <- newIORef []
+  done <- runMock (hookSequence peer `onException` closeTransport peer)
   image <- getExecutablePath
-  outcome <- try @ErrorCall (runSessions launch (const (sessionConfig logged (Just ())){policyStartupHook = error "the startup hook throws"}) (Fresh StartupBuild))
+  outcome <- try @ErrorCall (runSessions (singleSession target) (const (sessionConfig logged (Just ())){policyStartupHook = error "the startup hook throws"}) (Fresh StartupBuild))
   either (const (pure ())) (assertFailure . ("expected the hook to end the process, got " <>) . show) outcome
   expectMockSuccess done
+  readUnproven state >>= (@?= Just (Unproven image Crashed))
+
+testInterruptedOnTrial :: Assertion
+testInterruptedOnTrial = onTrial $ \state -> do
+  (target, peer) <- openRuntimePair
+  logged <- newIORef []
+  done <- runMock (hookSequence peer `onException` closeTransport peer)
+  image <- getExecutablePath
+  outcome <- try @AsyncException (runSessions (singleSession target) (const (sessionConfig logged (Just ())){policyStartupHook = throw UserInterrupt}) (Fresh StartupBuild))
+  outcome @?= Left UserInterrupt
+  expectMockSuccess done
   readUnproven state >>= (@?= Just (Unproven image FirstTrial))
+
+testProtocolErrorOnTrial :: Assertion
+testProtocolErrorOnTrial = onTrial $ \state -> do
+  (target, peer) <- openRuntimePair
+  logged <- newIORef []
+  done <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    globals@(manager, _, _) <- handshake reader peer
+    _ <- enumerate reader peer globals 0xff000070 "w1"
+    display <- requireObjectId 1
+    sendFrames peer [event display 0 (putObject manager >> putUint 0 >> putString "sequence order violated")]
+    expectClosedAfterRequests peer
+  image <- getExecutablePath
+  result <- runSessions (singleSession target) (const (sessionConfig logged (Just ())){policyStartupHook = pure ()}) (Fresh StartupBuild)
+  expectMockSuccess done
+  either (const (pure ())) (const (assertFailure "expected the protocol error to end the session")) result
+  readUnproven state >>= (@?= Just (Unproven image Crashed))
 
 -- | Read whatever the runtime still sends until it closes the connection.
 expectClosedAfterRequests :: Transport -> Assertion

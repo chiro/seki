@@ -15,8 +15,8 @@ module Seki.Run.Config (
 ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, finally, try)
-import Control.Monad (void, when)
+import Control.Exception (AsyncException (UserInterrupt), IOException, SomeException, finally, fromException, handle, throwIO, try)
+import Control.Monad (unless, void, when)
 import System.Directory (removeFile)
 
 import Seki.Internal.Config (BorderConfig (..), Button (..), Config (..), KeyBinding (..), Keysym (..), Mods (..), PointerAction (..), PointerBinding (..))
@@ -26,7 +26,7 @@ import Seki.Internal.Core.Restore (RestoreState)
 import Seki.Internal.Core.Scene (SceneStyle (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.BuildSession (StartupBuild (..))
-import Seki.Run.ConfigBuild (BuildContext (..), clearUnproven, installedContext, startupArguments, validatedProfile, withTrial)
+import Seki.Run.ConfigBuild (BuildContext (..), clearUnproven, installedContext, recordCrash, startupArguments, validatedProfile, withTrial)
 import Seki.Run.IPC (withIPC)
 import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Policy (Policy, PolicyConfig (..), PolicyError, closePolicy, configureBuildSession, launchDetached, newPolicy, policyRuntimeHandlers, policyValidatedTarget, readRestoreState, recordPolicyRecoveryFailure)
@@ -127,12 +127,21 @@ saved after @finished@ and execed; if the exec fails, the next pass restores
 the same state in this process on the socket path. River answers a manager
 that binds while another still holds window management with
 @unavailable@, which a crash restart can race, so that is retried briefly.
+
+An image that the launcher or a handover put on trial says here how its
+trial ended. A clean end and a refusal by river take it off trial. An error
+or an exception records a crash. The interrupt signal records nothing, as
+does any end that runs no code.
 -}
 runSessions :: (LayoutClass l) => Launch -> (Maybe (RestoreState String) -> PolicyConfig String l) -> Entry -> IO (Either ConfigRunError ())
-runSessions launch configFor = pass (launchFirstTarget launch) unavailableRetries Nothing
+runSessions launch configFor entry =
+  handle (\(e :: SomeException) -> unless (fromException e == Just UserInterrupt) crashed >> throwIO e) $ do
+    result <- pass (launchFirstTarget launch) unavailableRetries Nothing entry
+    either (const crashed) pure result
+    pure result
  where
   logLine message = void (try @IOException (policyLog (configFor Nothing) message))
-  pass target retries previousFailure entry = case target of
+  pass target retries previousFailure current = case target of
     Left e -> neverManaged (RiverRuntimeStartupError (WaylandConnectionDiscoveryError e))
     Right connection ->
       newPolicy (configFor restore){policyRestore = restore} >>= \case
@@ -152,17 +161,17 @@ runSessions launch configFor = pass (launchFirstTarget launch) unavailableRetrie
                   | retries > 0 -> do
                       logLine "window management unavailable, retrying"
                       threadDelay 100000
-                      pass (launchReconnectTarget launch) (retries - 1) previousFailure entry
+                      pass (launchReconnectTarget launch) (retries - 1) previousFailure current
                 Left RiverRuntimeWindowManagerUnavailable -> neverManaged RiverRuntimeWindowManagerUnavailable
                 Left e -> pure (Left (ConfigRuntimeError e))
-                Right RiverEnded -> pure (Right ())
+                Right RiverEnded -> leaveTrial >> pure (Right ())
                 Right RiverStopped -> do
                   saved <- readRestoreState policy
                   candidate <- policyValidatedTarget policy
                   failure <- handOver candidate saved
                   pass (launchReconnectTarget launch) unavailableRetries failure (Resumed saved)
    where
-    (restore, owed) = case entry of
+    (restore, owed) = case current of
       Fresh startup -> (Nothing, startup)
       Resumed saved -> (Just saved, NoStartupBuild)
   handOver candidate saved = case launchStateDir launch of
@@ -176,9 +185,10 @@ runSessions launch configFor = pass (launchFirstTarget launch) unavailableRetrie
           reportFailure ("restart: exec of " <> maybe (either show id (launchTarget launch)) validatedProfile candidate <> " failed (" <> show failure <> "); restoring in this process")
   reportFailure message = logLine message >> pure (Just message)
   -- River refused this image or could not be reached. The image did not die of its configuration, so it leaves its trial.
-  neverManaged e = do
-    _ <- try @IOException (installedContext >>= mapM_ (\context -> getExecutablePath >>= clearUnproven (buildStateDirectory context)))
-    pure (Left (ConfigRuntimeError e))
+  neverManaged e = leaveTrial >> pure (Left (ConfigRuntimeError e))
+  leaveTrial = onOwnTrial clearUnproven
+  crashed = onOwnTrial recordCrash
+  onOwnTrial record = void (try @IOException (installedContext >>= mapM_ (\context -> getExecutablePath >>= record (buildStateDirectory context))))
 
 unavailableRetries :: Int
 unavailableRetries = 10
