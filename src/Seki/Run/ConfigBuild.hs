@@ -410,6 +410,7 @@ markUnproven state (Unproven candidate trial) = do
   path <- pathBytes candidate
   writeAtomic (unprovenPath state) (trialWord trial <> B8.singleton '\n' <> path)
 
+-- | The candidate on trial. A missing file, or one that does not hold a trial's word and a path, names none.
 readUnproven :: FilePath -> IO (Maybe Unproven)
 readUnproven state =
   try @IOException (BS.readFile (unprovenPath state)) >>= \case
@@ -458,7 +459,8 @@ clearUnproven :: FilePath -> FilePath -> IO ()
 clearUnproven state image = ownTrial state image >>= mapM_ (\_ -> removeFile (unprovenPath state) `catch` \(_ :: IOException) -> pure ())
 
 {- | This image says that its session failed. A marker that names it then
-holds 'Crashed', so no start and no startup build runs these bytes again.
+holds 'Crashed', so neither the launcher nor a startup build runs these
+bytes again.
 -}
 recordCrash :: FilePath -> FilePath -> IO ()
 recordCrash state image = ownTrial state image >>= mapM_ (\unproven -> markUnproven state unproven{unprovenTrial = Crashed})

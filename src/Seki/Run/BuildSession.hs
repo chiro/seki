@@ -214,8 +214,8 @@ refuseTarget session refusal = atomically (modifyTVar' (sessionState session) (`
 has run by now. The first call releases a startup build. The image proves
 healthy, and clears a marker that names it, at a call that follows the one
 that first reported the hook, once the startup build has ended. A profile
-that dies earlier leaves its marker, so the launcher starts the default
-runtime, and a build of the current configuration still runs to its end.
+that dies earlier stays marked, so the launcher starts the default runtime,
+and a build of the current configuration still runs to its end.
 -}
 ownerManaged :: BuildSession -> Bool -> IO ()
 ownerManaged session hookRan = do
