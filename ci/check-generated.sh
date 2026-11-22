@@ -35,7 +35,6 @@ trap 'rm -rf "$scratch"' EXIT
 failures=0
 expected=()
 
-# generate MODULE PIN OUTPUT PRIMARY [REFERENCE...]
 generate() {
   local module=$1 pin=$2 output=$3 primary=$4
   shift 4
