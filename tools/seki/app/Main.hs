@@ -40,7 +40,6 @@ launch option = do
       config <- xdg "XDG_CONFIG_HOME" ".config"
       state <- stateDirectory
       privateDirectory state
-      generate resources (config </> "seki")
       candidate <- build resources (config </> "seki") state
       case option of
         Check -> diagnostic ("seki: candidate validated: " <> validatedPath candidate)

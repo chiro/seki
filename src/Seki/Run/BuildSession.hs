@@ -109,7 +109,7 @@ runNextBuild context state warning wake = do
     Left message -> ioError (userError message)
     Right installed@(BuildContext _ _ config directory) -> do
       resolution <- resolveAndWarn warning wake installed
-      privateDirectory directory >> generate (resolvedResources resolution) config >> buildWithLog resolution config directory report
+      privateDirectory directory >> buildWithLog resolution config directory report
   path <- readIORef logPath
   outcome <- case result of
     Left err -> do

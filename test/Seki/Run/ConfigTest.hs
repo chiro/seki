@@ -2,6 +2,8 @@
 
 module Seki.Run.ConfigTest (tests) where
 
+import Control.Concurrent (forkFinally)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (bracket)
 import Data.Bits ((.|.))
 import Data.Map.Strict qualified as Map
@@ -19,11 +21,16 @@ import Seki.Internal.Layout.Full (Full (..))
 import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Config (ConfigRunError (..), policyConfigOf, prepareConfig, runConfig)
+import Seki.Run.ConfigBuild
 import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Policy (PolicyConfig (..), PolicyError (..), policyRuntimeHandlers)
 import Seki.Run.Runtime (RiverRuntimeHandlers (..))
 import Seki.Run.Xkb (RiverKeyBinding (..))
+import System.Directory (createDirectory, doesFileExist, doesPathExist, listDirectory)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
+import System.FilePath ((</>))
+import System.IO.Temp (withSystemTempDirectory)
+import System.Posix.Files (createSymbolicLink, setFileMode)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertEqual, assertFailure, testCase)
 
@@ -163,6 +170,77 @@ tests =
             , def{borders = (borders def){focusedBorderColor = BorderColor 2 0 0 1}}
             , def{keys = \_ -> [(KeyBinding Mod4 (Keysym 1), pure ()), (KeyBinding Mod4 (Keysym 1), pure ())]}
             ]
+    , testGroup
+        "the image a fresh start execs"
+        [ testCase "a profile whose candidate records the installed resources is the start image" $
+            withState $ \stateDir -> do
+              candidate <- recorded stateDir "candidate1" installed
+              createSymbolicLink candidate (stateDir </> "profile")
+              startImage installed stateDir >>= assertEqual "start image" (ProfileImage (stateDir </> "profile") candidate)
+        , testCase "no profile link gives the default image" $
+            withState $ \stateDir -> do
+              startImage installed stateDir >>= assertEqual "no link" (DefaultImage NoProfile)
+              writeFile (stateDir </> "profile") "a file, not a link"
+              startImage installed stateDir >>= assertEqual "not a link" (DefaultImage NoProfile)
+        , testCase "a profile whose candidate has no record gives the default image" $
+            withState $ \stateDir -> do
+              writeFile (stateDir </> "candidate1") "image built before the record existed"
+              createSymbolicLink (stateDir </> "candidate1") (stateDir </> "profile")
+              startImage installed stateDir >>= assertEqual "no record" (DefaultImage (NoBuildRecord (stateDir </> "candidate1")))
+        , testCase "a profile recorded for another archive gives the default image" $
+            withState $ \stateDir -> do
+              candidate <- recorded stateDir "candidate1" installed{archive = "/store/old/seki-0.0.9.tar.gz"}
+              createSymbolicLink candidate (stateDir </> "profile")
+              startImage installed stateDir >>= assertEqual "other delivery" (DefaultImage (OtherDelivery "/store/old/seki-0.0.9.tar.gz"))
+        , testCase "a profile that died before it proved healthy gives the default image" $
+            withState $ \stateDir -> do
+              candidate <- recorded stateDir "candidate1" installed
+              createSymbolicLink candidate (stateDir </> "profile")
+              markUnproven stateDir candidate
+              startImage installed stateDir >>= assertEqual "leftover marker" (DefaultImage (DiedUnproven candidate))
+        , testCase "a marker that names another candidate does not hold the profile back" $
+            withState $ \stateDir -> do
+              candidate <- recorded stateDir "candidate2" installed
+              createSymbolicLink candidate (stateDir </> "profile")
+              markUnproven stateDir (stateDir </> "candidate1")
+              startImage installed stateDir >>= assertEqual "stale marker" (ProfileImage (stateDir </> "profile") candidate)
+        , testCase "the choice runs no build tool and writes nothing" $
+            withState $ \stateDir -> do
+              candidate <- recorded stateDir "candidate1" installed
+              createSymbolicLink candidate (stateDir </> "profile")
+              before <- listDirectory stateDir
+              _ <- startImage installed stateDir
+              listDirectory stateDir >>= assertEqual "state directory" before
+        , testCase "a candidate that build validated is the start image for the same resources" $
+            withBuild $ \resources config stateDir -> do
+              target <- build resources config stateDir
+              createSymbolicLink (validatedPath target) (stateDir </> "profile")
+              startImage resources stateDir >>= assertEqual "record written and read" (ProfileImage (stateDir </> "profile") (validatedPath target))
+        , testCase "a check builds and validates before it returns, and selects no profile" $
+            withBuild $ \resources config stateDir -> do
+              target <- build resources config stateDir
+              doesFileExist (validatedPath target) >>= assertBool "validated candidate exists"
+              doesPathExist (stateDir </> "profile") >>= assertEqual "no profile" False
+        , testCase "only the image a marker names clears it" $
+            withState $ \stateDir -> do
+              candidate <- recorded stateDir "candidate1" installed
+              other <- recorded stateDir "candidate2" installed
+              createSymbolicLink stateDir (stateDir <> "-link")
+              markUnproven stateDir candidate
+              clearUnproven stateDir other
+              readUnproven stateDir >>= assertEqual "another image leaves it" (Just candidate)
+              clearUnproven stateDir (stateDir <> "-link" </> "candidate1")
+              readUnproven stateDir >>= assertEqual "the named image clears it through another path" Nothing
+        , testCase "two builds of one configuration never run their tools at once" $
+            withBuild $ \resources config stateDir -> do
+              let busy = stateDir </> "busy"
+                  overlaps = stateDir </> "overlaps"
+              writeFile (environment resources) ("#!/bin/sh\nfor arg do\ncase \"$arg\" in\nbuild) [ -e '" <> busy <> "' ] && echo overlap >> '" <> overlaps <> "'; touch '" <> busy <> "'; sleep 0.3; rm '" <> busy <> "'; exit 0;;\nlist-bin) printf '%s\\n' '" <> config </> "image'; exit 0;;\nesac\ndone\nexit 2\n")
+              done <- newEmptyMVar
+              mapM_ (\_ -> forkFinally (build resources config stateDir) (putMVar done)) [1, 2 :: Int]
+              mapM_ (\_ -> takeMVar done >>= either (assertFailure . show) (const (pure ()))) [1, 2 :: Int]
+              doesFileExist overlaps >>= assertEqual "overlapping build tools" False
+        ]
     ]
  where
   restore = maybe (unsetEnv "WAYLAND_DISPLAY") (setEnv "WAYLAND_DISPLAY")
@@ -174,6 +252,38 @@ tests =
     assertEqual ("view " ++ tag) tag (currentTag (press def (Mods 0) symbol initial))
     let moved = state (press def Shift symbol initial)
     assertEqual ("shift " ++ tag) (Just tag) (findTagState (StackSet.WindowId 2) moved)
+
+installed :: Resources
+installed = Resources "/store/source/seki-0.1.0.0.tar.gz" "/store/ghc/bin/ghc" "/store/cabal/bin/cabal" "/store/env/bin/seki-config-env" "/store/templates"
+
+withState :: (FilePath -> IO a) -> IO a
+withState body = withSystemTempDirectory "seki-start-test" $ \directory -> do
+  let stateDir = directory </> "state"
+  createDirectory stateDir
+  body stateDir
+
+-- | A candidate file with the record that a build from these resources leaves.
+recorded :: FilePath -> FilePath -> Resources -> IO FilePath
+recorded stateDir name resources = do
+  let candidate = stateDir </> name
+  writeFile candidate ("image " <> name)
+  writeFile (candidate <> ".resources") (renderResources resources)
+  pure candidate
+
+-- | Resources whose build tool resolves a script that passes its own check.
+withBuild :: (Resources -> FilePath -> FilePath -> IO a) -> IO a
+withBuild body = withState $ \stateDir -> do
+  let config = stateDir <> "-config"
+      wrapper = config </> "environment"
+      templatesPath = config </> "templates"
+  createDirectory config
+  createDirectory templatesPath
+  mapM_ (\name -> writeFile (templatesPath </> name) "") ["Main.hs", "seki-user.cabal", "cabal.project"]
+  writeFile (config </> "image") "#!/bin/sh\nexit 0\n"
+  setFileMode (config </> "image") 0o700
+  writeFile wrapper ("#!/bin/sh\nfor arg do\ncase \"$arg\" in\nbuild) exit 0;;\nlist-bin) printf '%s\\n' '" <> config </> "image'; exit 0;;\nesac\ndone\nexit 2\n")
+  setFileMode wrapper 0o700
+  body (Resources "/archive" "/compiler" "/cabal" wrapper templatesPath) config stateDir
 
 tall :: Tall
 tall = Tall 1 (3 / 100) (1 / 2)
