@@ -27,12 +27,14 @@ import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.ConfigBuild (installedContext, validatedProfile)
 import Seki.Run.IPC (withIPC)
 import Seki.Run.Pointer (RiverPointerBinding (..))
-import Seki.Run.Policy (Policy, PolicyConfig (..), PolicyError, closePolicy, configureBuild, configureBuildFailure, launchDetached, newPolicy, policyRuntimeHandlers, policyValidatedTarget, readRestoreState, recordPolicyRecoveryFailure)
+import Seki.Run.Policy (Policy, PolicyConfig (..), PolicyError, closePolicy, configureBuild, configureBuildSession, launchDetached, newPolicy, policyRuntimeHandlers, policyValidatedTarget, readRestoreState, recordPolicyRecoveryFailure)
 import Seki.Run.Restart (Launch (..), RestartRefusal (..), checkRestartTarget, describeLoadError, discoverLaunch, execRestart, execValidatedRestart, loadRestoreFile, reapInheritedChildren, writeRestoreFile)
 import Seki.Run.Runtime (RiverExit (..), RiverRuntimeError (..), closeRiverSession, openRiverSessionAt, runRiverSession)
 import Seki.Run.Startup (WaylandStartupError (..))
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
+import Seki.Run.BuildSession (StartupBuild (..))
+import System.Environment (getExecutablePath)
 import System.IO (hPutStrLn, stderr)
 
 data ConfigRunError
@@ -130,7 +132,7 @@ runSessions launch configFor = pass (launchFirstTarget launch) unavailableRetrie
           context <- try @IOException installedContext
           case context of
             Right (Just buildContext) -> configureBuild policy buildContext
-            Left err -> configureBuildFailure policy ("build context unavailable: " <> show err)
+            Left err -> configureBuildSession policy NoStartupBuild getExecutablePath (Left ("build context unavailable: " <> show err))
             _ -> pure ()
           mapM_ (recordPolicyRecoveryFailure policy) previousFailure
           openRiverSessionAt connection defaultObjectLimit (policyRuntimeHandlers policy) >>= \case
