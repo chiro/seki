@@ -52,14 +52,14 @@ Compare revisions with the same compiler, compositor, workload, collector, and h
   - [ ] M4-02 after M4-01. M4-03 after M4-02. M4-04 after M4-03.
   - [ ] M4-05 after M4-04. M4-06 after M4-05. M4-07 after M4-06.
   - [ ] M4-08 after M4-07.
-- [ ] Hold the file boundaries. M4-01 touches only `ci/`, `.github/workflows/`, `README.md`, `docs/latency-*/`, and Haddock comments in `src-public/`. M4-08 touches only documentation, the `copyright` field of `seki.cabal`, `CHANGELOG.md`, and `examples/`. Each package from M4-02 to M4-07 documents every export it adds, and the M4-01 coverage check fails it otherwise. Record any other scope change before editing another package's files.
+- [ ] Hold the file boundaries. M4-01 touches only `ci/`, `.github/workflows/`, `README.md`, `docs/latency-*/`, Haddock comments in `src-public/` and in the `src-core/` definitions that `src-public/` re-exports, and an `OPTIONS_HADDOCK hide` pragma on `Seki.Internal.Input`. M4-08 touches only documentation, the `copyright` field of `seki.cabal`, `CHANGELOG.md`, and `examples/`. Each package from M4-02 to M4-07 documents every export it adds, and the M4-01 coverage check fails it otherwise. Record any other scope change before editing another package's files.
 - [ ] Hold the review gate. M4-02, M4-03, M4-04, M4-05, M4-06, and M4-07 change an interaction. They wait for the operator's review in chat with screenshots and a video before merge.
 
 ### PR mechanics, for every PR
 
 - [ ] Resolve the forge once. Default to `gh`; if `command -v origin` succeeds and Origin can resolve the repository, use `origin pr` for every PR operation. Record any fallback to `gh`. Never require `gt`.
 - [ ] Open the PR ready, never draft, per **Opening a PR**. Use the run's built-in PR tool when it has one, else `origin pr create --status open --base <base-branch>` or `gh pr create --base <base-branch>` according to the resolved forge. A stack child targets its parent branch.
-- [ ] Run `cabal build all`, `cabal test all`, `bash ci/check-phase-types.sh`, `ci/check-package.sh`, and the formatter once before the PR-facing push. Build with `PATH=$HOME/.cache/claude-ghc/9.10.3/bin:$PATH` outside Nix. Push with hooks on.
+- [ ] Run `cabal build all`, `cabal test all`, `bash ci/check-phase-types.sh`, `ci/check-package.sh`, and the formatter once before the PR-facing push. Build inside `nix develop .#unit`, which gives GHC 9.10.3 and cabal 3.16.1 as CI does. Push with hooks on.
 - [ ] Run `/deslop` before each commit and `/no-comments` before review.
 - [ ] Triage every review-bot and security-reviewer comment per `../references/bugbot-triage.md`.
 - [ ] Before the code-ready report and babysit, and again after merge prep, record the base and head SHAs prepared by the topology owner under the execution playbook.
@@ -91,7 +91,7 @@ Each live lane runs in its own worktree at the PR head. Drive through the skill 
 - [ ] Edit `.github/workflows/ci.yml` and `ci/check-package.sh`.
 - [ ] Edit `README.md` for the river version lines.
 - [ ] Edit `docs/latency-baseline/`, `docs/latency-m2/`, and `docs/latency-m3/` manifests and summaries to remove local paths.
-- [ ] Edit the Haddock comments of `src-public/` modules that lack them. Change no code.
+- [ ] Edit the Haddock comments that `src-public/` exports lack. Haddock cannot attach a comment to a re-export, so most of them go on the definitions in `src-core/`. Hide `Seki.Internal.Input` with `{-# OPTIONS_HADDOCK hide #-}` so the `Seki.Input` page lists its exports. Change no code.
 
 **Build.**
 
@@ -117,8 +117,8 @@ Each live lane runs in its own worktree at the PR head. Drive through the skill 
 - [ ] Lane 3. Plant a generated-file edit on a scratch branch. Save `regen-planted.png`. Pass when the regeneration step fails and names the file.
 - [ ] Lane 4. Plant an undocumented export in `src-public/Seki.hs` on a scratch branch. Save `haddock-planted.png`. Pass when `ci/check-package.sh` fails and names the export's module.
 - [ ] Lane 5. Open the Haddock index of the `seki` library. Save `haddock-index.png`. Pass when every public module lists a comment for each export.
-- [ ] Lane 6. Grep the retained latency directories and the sdist tarball for `/home/`. Save `no-home-paths.png`. Pass when no match remains.
-- [ ] Lane 7. Run `python3 tools/latency/run.py <dir> --report-only` on each edited latency directory. Save `latency-report-only.png`. Pass when each report regenerates without error.
+- [ ] Lane 6. Grep the retained latency directories and the sdist tarball for `/home/`. Save `no-home-paths.png`. Pass when no match is a local path. The made-up `/home/u` arguments in `test/Seki/Run/RestartTest.hs` are test data, and the lane lists them.
+- [ ] Lane 7. Load each edited latency JSON file at `main` and at the head and compare them. `--report-only` reads only schema 5, and the retained directories are schemas 1, 2, and 4 with no trials, so it cannot regenerate them at either revision. Save `latency-paths-only.png`. Pass when every file parses and the only changed values are build paths, now relative to the repository.
 - [ ] Lane 8. Run `m3-daily-build` and `m3-daily-delivery`. Save `daily-delivery.png`. Pass when both pass.
 - [ ] Lane 9. Run `python3 ci/check-product.py` against `.#config-delivery`. Save `product.png`. Pass when it exits zero.
 - [ ] Lane 10. Start seki from the head build in nested river with two outputs and three windows. Save `nested-smoke.png`. Pass when the capture shows the Tall layout and `sekictl` reports the focused window.
@@ -128,7 +128,7 @@ Each live lane runs in its own worktree at the PR head. Drive through the skill 
 - [ ] Metric. The m2 and m3 workloads' pure p99, sequence p99, maximum pause, and m3 endpoint p99.
 - [ ] Probe. Run `python3 tools/latency/run.py artifacts/latency/m4-01 --workload m2 --workload m3 --revision parent=<parent worktree> --revision head=<head worktree>`, which interleaves the revisions.
 - [ ] Baseline. Record the parent values first.
-- [ ] Rule. Head meets every existing budget and the regression margin in **How to read this**. The report's source comparison calls the runtime group different, because it reads `src-public/`. The PR lists each difference the report names. The gate fails if the report names a difference other than Haddock comments in `src-public/`.
+- [ ] Rule. Head meets every existing budget and the regression margin in **How to read this**. The report's source comparison calls the runtime group different, because it reads `src-public/`. The PR lists each difference the report names. The gate fails if the report names a difference other than Haddock comments in `src-public/` and `src-core/` and the `OPTIONS_HADDOCK` pragma.
 
 **Review gate.** None. M4-01 is not review-gated.
 
