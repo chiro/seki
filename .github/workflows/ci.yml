@@ -30,6 +30,9 @@ jobs:
       - name: Build all components
         run: nix develop --no-write-lock-file .#unit --command cabal build all
 
+      - name: Regenerate protocol bindings and reject any difference
+        run: nix develop --no-write-lock-file .#unit --command ci/check-generated.sh
+
       - name: Run ordinary test suite
         run: nix develop --no-write-lock-file .#unit --command cabal test all
 
