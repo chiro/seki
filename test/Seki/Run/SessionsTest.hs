@@ -15,7 +15,7 @@ import Seki.Internal.Core.Scene (defaultSceneStyle)
 import Seki.Internal.Layout.Full (Full (..))
 import Seki.Run.BuildSession (StartupBuild (..))
 import Seki.Run.Config (Entry (..), SekiArgs (..), parseSekiArgs, runConfig, runSessions)
-import Seki.Run.ConfigBuild (markUnproven, readUnproven, startupArguments)
+import Seki.Run.ConfigBuild (Trial (..), Unproven (..), markUnproven, readUnproven, startupArguments)
 import Seki.Run.IPC (withIPCAt)
 import Seki.Run.MockRiver (FrameReader, encodedPayload, event, expectMockSuccess, handshake, newFrameReader, openRuntimePair, readUntil, receiveFrame, receiveLayerShellOutputRequest, receiveNewIdRequest, requests, requireObjectId, runMock, sendFrames)
 import Seki.Run.Policy (PolicyConfig (..), newPolicy)
@@ -187,7 +187,7 @@ onTrial body = withSystemTempDirectory "seki-trial" $ \dir -> do
   let state = dir </> "state" </> "seki"
       installed = ("XDG_STATE_HOME", dir </> "state") : [("SEKI_CONFIG_" <> name, "/store" </> name) | name <- ["ARCHIVE", "GHC", "CABAL", "ENV", "TEMPLATES"]]
   createDirectoryIfMissing True state
-  getExecutablePath >>= markUnproven state
+  getExecutablePath >>= markUnproven state . (`Unproven` FirstTrial)
   foldr (uncurry withEnv) (body state) installed
 
 testNeverManaged :: Assertion
@@ -215,7 +215,7 @@ testDiesOnTrial = onTrial $ \state -> do
   outcome <- try @ErrorCall (runSessions launch (const (sessionConfig logged (Just ())){policyStartupHook = error "the startup hook throws"}) (Fresh StartupBuild))
   either (const (pure ())) (assertFailure . ("expected the hook to end the process, got " <>) . show) outcome
   expectMockSuccess done
-  readUnproven state >>= (@?= Just image)
+  readUnproven state >>= (@?= Just (Unproven image FirstTrial))
 
 -- | Read whatever the runtime still sends until it closes the connection.
 expectClosedAfterRequests :: Transport -> Assertion

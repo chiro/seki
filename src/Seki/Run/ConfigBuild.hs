@@ -29,6 +29,8 @@ module Seki.Run.ConfigBuild (
   describeGap,
   startImage,
   startupArguments,
+  Unproven (..),
+  Trial (..),
   markUnproven,
   readUnproven,
   clearUnproven,
@@ -328,8 +330,8 @@ data ProfileGap
     NoBuildRecord FilePath
   | -- | The candidate was built from this archive, not the installed one.
     OtherDelivery FilePath
-  | -- | The candidate was started and died before it proved healthy.
-    DiedUnproven FilePath
+  | -- | The candidate was started and has not proved healthy.
+    HeldBack Unproven
   deriving (Eq, Show)
 
 describeGap :: ProfileGap -> String
@@ -337,7 +339,7 @@ describeGap = \case
   NoProfile -> "no profile yet"
   NoBuildRecord candidate -> candidate <> " has no record of the delivery it was built from"
   OtherDelivery built -> "the profile was built from " <> built <> ", not from the installed delivery"
-  DiedUnproven candidate -> candidate <> " died before it proved healthy"
+  HeldBack unproven -> unprovenCandidate unproven <> " died before it proved healthy"
 
 -- | What the launcher passes to the image it starts. The image then owes one build.
 startupArguments :: [String]
@@ -359,7 +361,7 @@ startImage installed state = do
       pure $ case parseResources <$> record of
         Right (Right built)
           | built /= installed -> DefaultImage (OtherDelivery (archive built))
-          | unproven == Just candidate -> DefaultImage (DiedUnproven candidate)
+          | Just held <- unproven, unprovenCandidate held == candidate -> DefaultImage (HeldBack held)
           | otherwise -> ProfileImage profile candidate
         _ -> DefaultImage (NoBuildRecord candidate)
 
@@ -369,19 +371,51 @@ recordPath candidate = candidate <> ".resources"
 unprovenPath :: FilePath -> FilePath
 unprovenPath state = state </> "unproven"
 
+-- | The candidate that was exec'd and has not proved healthy, and what is known of its trial.
+data Unproven = Unproven {unprovenCandidate :: FilePath, unprovenTrial :: Trial}
+  deriving (Eq, Show)
+
+-- | What is known of a candidate's trial.
+data Trial
+  = -- | Exec'd once. It runs now, or it ended and left no record of why.
+    FirstTrial
+  | -- | Exec'd again, after a first trial of the same bytes ended with no record.
+    SecondTrial
+  | -- | Its own image recorded that its session failed.
+    Crashed
+  deriving (Eq, Show, Enum, Bounded)
+
+trialWord :: Trial -> BS.ByteString
+trialWord = \case
+  FirstTrial -> B8.pack "first"
+  SecondTrial -> B8.pack "second"
+  Crashed -> B8.pack "crashed"
+
 {- | Name the candidate that is about to be exec'd as on trial. Whoever execs
 a profile writes this first, so a candidate that dies leaves its name behind.
+The file holds the trial's word, a line feed, and the candidate's path.
 -}
-markUnproven :: FilePath -> FilePath -> IO ()
-markUnproven state candidate = do
-  (temporary, handle) <- openBinaryTempFile state "unproven-next"
-  ((pathBytes candidate >>= BS.hPut handle) >> hClose handle >> renameFile temporary (unprovenPath state)) `onException` (hClose handle >> removeFile temporary)
+markUnproven :: FilePath -> Unproven -> IO ()
+markUnproven state (Unproven candidate trial) = do
+  path <- pathBytes candidate
+  writeAtomic (unprovenPath state) (trialWord trial <> B8.singleton '\n' <> path)
 
-readUnproven :: FilePath -> IO (Maybe FilePath)
+readUnproven :: FilePath -> IO (Maybe Unproven)
 readUnproven state =
   try @IOException (BS.readFile (unprovenPath state)) >>= \case
-    Right content | not (BS.null content) -> Just <$> pathText content
+    Right content
+      | (word, rest) <- B8.break (== '\n') content
+      , Just trial <- List.find ((== word) . trialWord) [minBound ..]
+      , Just (_, path) <- B8.uncons rest
+      , not (BS.null path) ->
+          Just . (`Unproven` trial) <$> pathText path
     _ -> pure Nothing
+
+-- | Replace a file in one step, so a reader sees its old bytes or its new ones.
+writeAtomic :: FilePath -> BS.ByteString -> IO ()
+writeAtomic path bytes = do
+  (temporary, handle) <- openBinaryTempFile (takeDirectory path) (takeFileName path <> "-next")
+  (BS.hPut handle bytes >> hClose handle >> renameFile temporary path) `onException` (hClose handle >> removeFile temporary)
 
 {- | The bytes the operating system knows a path by. The marker and the build
 record hold their paths as these bytes, so a path that is not ASCII reads
@@ -400,7 +434,7 @@ clearUnproven :: FilePath -> FilePath -> IO ()
 clearUnproven state image =
   readUnproven state
     >>= mapM_
-      ( \marked -> do
+      ( \(Unproven marked _) -> do
           same <- try @IOException ((,) <$> getFileStatus marked <*> getFileStatus image)
           case same of
             Right (a, b) | (deviceID a, fileID a) == (deviceID b, fileID b) -> removeFile (unprovenPath state) `catch` \(_ :: IOException) -> pure ()
@@ -416,7 +450,7 @@ withTrial report target exec = do
   let state = takeDirectory (validatedProfile target)
       attempt action = try @IOException action >>= either (\e -> report ("cannot record the trial of " <> validatedPath target <> " (" <> show e <> ")")) pure
   earlier <- readUnproven state
-  attempt (markUnproven state (validatedPath target))
+  attempt (markUnproven state (Unproven (validatedPath target) FirstTrial))
   result <- exec
   attempt (maybe (clearUnproven state (validatedPath target)) (markUnproven state) earlier)
   pure result

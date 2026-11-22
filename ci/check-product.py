@@ -177,7 +177,7 @@ def prove(command, root, env, archive, provisioned=False):
 
         def selected(cmdline):
             assert cmdline[0] == os.fsencode(profile) and cmdline[1:3] == [b"--startup-build", b""], cmdline
-            assert unproven.read_text() == str(checked)
+            assert unproven.read_text() == f"first\n{checked}"
 
         start("", before_close=selected)
         # The kill above left the candidate on trial, so the next start does not exec it again.

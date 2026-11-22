@@ -454,7 +454,7 @@ tests =
           let dead = directory </> "candidate-dead"
           readFile (directory </> "image") >>= writeFile dead
           writeFile (directory </> "other") "the default runtime has other bytes"
-          markUnproven directory dead
+          markUnproven directory (Unproven dead FirstTrial)
           session <- startupSession (pure ()) (directory </> "other") context
           ( do
               ownerManaged session False
@@ -462,26 +462,26 @@ tests =
               buildStatus session >>= assertBool "the error names the candidate that died" . maybe False (\case String message -> Text.pack dead `Text.isInfixOf` message; _ -> False) . field "error"
               readyTarget session >>= (@?= Nothing)
               candidates directory >>= assertEqual "only the dead candidate remains" ["candidate-dead"]
-              readUnproven directory >>= (@?= Just dead)
+              readUnproven directory >>= (@?= Just (Unproven dead FirstTrial))
             )
             `finally` closeBuildSession session
     , testCase "a request under the default runtime tries the candidate that died again" $
         fixture "exit 0" $ \context directory -> do
           let dead = directory </> "candidate-dead"
           readFile (directory </> "image") >>= writeFile dead
-          markUnproven directory dead
+          markUnproven directory (Unproven dead FirstTrial)
           session <- requestedSession (pure ()) context
           (requestBuild session >> void (awaitReady session)) `finally` closeBuildSession session
     , testCase "an image stays on trial until its startup build ends and a manage sequence follows the one that ran its hook" $
         fixture "exit 0" $ \context@(BuildContext resources _ _ _) directory -> do
           let image = directory </> "image"
           writeScript (environment resources) (buildTool directory ("while [ ! -f '" <> directory </> "release' ]; do sleep 0.02; done"))
-          markUnproven directory image
+          markUnproven directory (Unproven image FirstTrial)
           session <- startupSession (pure ()) image context
           ( do
               ownerManaged session True
               ownerManaged session True
-              readUnproven directory >>= assertEqual "on trial while the startup build runs" (Just image)
+              readUnproven directory >>= assertEqual "on trial while the startup build runs" (Just (Unproven image FirstTrial))
               writeFile (directory </> "release") ""
               awaitStatus session "unchanged" 1
               ownerManaged session True
@@ -491,14 +491,14 @@ tests =
     , testCase "an image that owes no build stays on trial until a manage sequence follows the one that ran its hook" $
         fixture "exit 0" $ \context directory -> do
           let image = directory </> "image"
-          markUnproven directory image
+          markUnproven directory (Unproven image FirstTrial)
           session <- newBuildSession (pure ()) NoStartupBuild (pure image) (Right context)
           ( do
               ownerManaged session False
               ownerManaged session False
-              readUnproven directory >>= assertEqual "the hook has not run" (Just image)
+              readUnproven directory >>= assertEqual "the hook has not run" (Just (Unproven image FirstTrial))
               ownerManaged session True
-              readUnproven directory >>= assertEqual "the hook ran in this sequence" (Just image)
+              readUnproven directory >>= assertEqual "the hook ran in this sequence" (Just (Unproven image FirstTrial))
               ownerManaged session True
               readUnproven directory >>= assertEqual "proved healthy" Nothing
             )
@@ -507,9 +507,9 @@ tests =
         fixture "exit 0" $ \context directory -> do
           let dead = directory </> "candidate-dead"
           writeFile dead "died"
-          markUnproven directory dead
+          markUnproven directory (Unproven dead FirstTrial)
           session <- newBuildSession (pure ()) NoStartupBuild (pure (directory </> "image")) (Right context)
-          (ownerManaged session True >> ownerManaged session True >> readUnproven directory >>= (@?= Just dead)) `finally` closeBuildSession session
+          (ownerManaged session True >> ownerManaged session True >> readUnproven directory >>= (@?= Just (Unproven dead FirstTrial))) `finally` closeBuildSession session
     , testCase "a refused ready target becomes a failure with the refusal" $
         fixture "exit 0" $ \context _ -> do
           session <- requestedSession (pure ()) context

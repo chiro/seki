@@ -62,8 +62,8 @@ data BuildState
 data Reproduced
   = NewImage
   | RunningImage
-  | -- | The candidate that died before it proved healthy.
-    UnprovenImage FilePath
+  | -- | The candidate that was exec'd and has not proved healthy.
+    UnprovenImage Unproven
   deriving (Eq, Show)
 
 data BuildEvent
@@ -85,7 +85,7 @@ transitionBuild state event = case (state, event) of
   (BuildRunning generation Superseded _, BuildFinished _) -> start (generation + 1)
   (BuildRunning generation _ _, BuildFinished (Left (message, logPath))) -> BuildFailed generation message logPath
   (BuildRunning generation AtStartup _, BuildFinished (Right (target, RunningImage))) -> BuildUnchanged generation (validatedLog target)
-  (BuildRunning generation AtStartup _, BuildFinished (Right (target, UnprovenImage dead))) ->
+  (BuildRunning generation AtStartup _, BuildFinished (Right (target, UnprovenImage (Unproven dead _)))) ->
     BuildFailed generation ("the build reproduced " <> dead <> ", which died before it proved healthy; change the configuration, or use the restart binding to try it again") (Just (validatedLog target))
   (BuildRunning generation _ _, BuildFinished (Right (target, _))) -> BuildReady generation target
   (BuildReady generation target, TargetRefused refusal) -> BuildFailed generation ("restart refused: " <> refusal) (Just (validatedLog target))
@@ -186,13 +186,13 @@ runNextBuild context image state owner warning wake = do
         False ->
           readUnproven directory >>= \case
             Nothing -> pure NewImage
-            Just dead -> bool NewImage (UnprovenImage dead) <$> sameBytes dead candidate
+            Just held -> bool NewImage (UnprovenImage held) <$> sameBytes (unprovenCandidate held) candidate
     built <- describe candidate
     current <- describe running
     diagnostic $ case known of
       NewImage -> "candidate " <> built <> " differs from the running image " <> current
       RunningImage -> "candidate " <> built <> " has the bytes of the running image " <> current
-      UnprovenImage dead -> "candidate " <> built <> " has the bytes of " <> dead <> ", which died before it proved healthy"
+      UnprovenImage (Unproven dead _) -> "candidate " <> built <> " has the bytes of " <> dead <> ", which died before it proved healthy"
     pure known
   describe file =
     try @IOException ((,) <$> getFileSize file <*> getFileHash file) >>= \case

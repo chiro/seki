@@ -199,13 +199,13 @@ tests =
             withState $ \stateDir -> do
               candidate <- recorded stateDir "candidate1" installed
               createSymbolicLink candidate (stateDir </> "profile")
-              markUnproven stateDir candidate
-              startImage installed stateDir >>= assertEqual "leftover marker" (DefaultImage (DiedUnproven candidate))
+              markUnproven stateDir (Unproven candidate FirstTrial)
+              startImage installed stateDir >>= assertEqual "leftover marker" (DefaultImage (HeldBack (Unproven candidate FirstTrial)))
         , testCase "a marker that names another candidate does not hold the profile back" $
             withState $ \stateDir -> do
               candidate <- recorded stateDir "candidate2" installed
               createSymbolicLink candidate (stateDir </> "profile")
-              markUnproven stateDir (stateDir </> "candidate1")
+              markUnproven stateDir (Unproven (stateDir </> "candidate1") FirstTrial)
               startImage installed stateDir >>= assertEqual "stale marker" (ProfileImage (stateDir </> "profile") candidate)
         , testCase "the choice runs no build tool and writes nothing" $
             withState $ \stateDir -> do
@@ -229,19 +229,19 @@ tests =
               candidate <- recorded stateDir "candidate1" installed
               other <- recorded stateDir "candidate2" installed
               createSymbolicLink stateDir (stateDir <> "-link")
-              markUnproven stateDir candidate
+              markUnproven stateDir (Unproven candidate FirstTrial)
               clearUnproven stateDir other
-              readUnproven stateDir >>= assertEqual "another image leaves it" (Just candidate)
+              readUnproven stateDir >>= assertEqual "another image leaves it" (Just (Unproven candidate FirstTrial))
               clearUnproven stateDir (stateDir <> "-link" </> "candidate1")
               readUnproven stateDir >>= assertEqual "the named image clears it through another path" Nothing
         , testCase "a handover puts its candidate on trial, and a failed exec puts the earlier trial back" $
             withBuild $ \resources config stateDir -> do
               target <- build resources config stateDir
               dead <- recorded stateDir "candidate-dead" resources
-              markUnproven stateDir dead
+              markUnproven stateDir (Unproven dead FirstTrial)
               during <- withTrial (\_ -> pure ()) target (readUnproven stateDir)
-              assertEqual "on trial during the exec" (Just (validatedPath target)) during
-              readUnproven stateDir >>= assertEqual "the profile that died stays marked" (Just dead)
+              assertEqual "on trial during the exec" (Just (Unproven (validatedPath target) FirstTrial)) during
+              readUnproven stateDir >>= assertEqual "the profile that died stays marked" (Just (Unproven dead FirstTrial))
         , testCase "a failed handover exec with no earlier trial leaves none" $
             withBuild $ \resources config stateDir -> do
               target <- build resources config stateDir
@@ -251,9 +251,9 @@ tests =
             withStateAt accented $ \stateDir -> do
               candidate <- recorded stateDir "candidate1" installed
               createSymbolicLink candidate (stateDir </> "profile")
-              markUnproven stateDir candidate
-              readUnproven stateDir >>= assertEqual "the marker reads back as the path it was written from" (Just candidate)
-              startImage installed stateDir >>= assertEqual "leftover marker" (DefaultImage (DiedUnproven candidate))
+              markUnproven stateDir (Unproven candidate FirstTrial)
+              readUnproven stateDir >>= assertEqual "the marker reads back as the path it was written from" (Just (Unproven candidate FirstTrial))
+              startImage installed stateDir >>= assertEqual "leftover marker" (DefaultImage (HeldBack (Unproven candidate FirstTrial)))
         , testCase "a candidate built from resources under a path that is not ASCII is the start image" $
             withBuildAt accented $ \resources config stateDir -> do
               target <- build resources config stateDir

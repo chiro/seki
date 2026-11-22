@@ -43,7 +43,7 @@ launch option = do
       state <- stateDirectory
       privateDirectory state
       startImage installed state >>= \case
-        ProfileImage profile candidate -> markUnproven state candidate >> executeFile profile False startupArguments Nothing
+        ProfileImage profile candidate -> markUnproven state (Unproven candidate FirstTrial) >> executeFile profile False startupArguments Nothing
         DefaultImage gap -> do
           diagnostic ("seki: starting the shipped default WM while the configuration builds (" <> describeGap gap <> ")")
           defaultRuntime
