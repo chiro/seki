@@ -283,12 +283,25 @@ tests =
               startImage resources stateDir >>= assertEqual "record written and read" (ProfileImage (stateDir </> "profile") (validatedPath target))
         , testCase "two builds of one configuration never run their tools at once" $
             withBuild $ \resources config stateDir -> do
-              let busy = stateDir </> "busy"
+              let started = stateDir </> "started"
+                  finished = stateDir </> "finished"
                   overlaps = stateDir </> "overlaps"
-              writeFile (environment resources) ("#!/bin/sh\nfor arg do\ncase \"$arg\" in\nbuild) [ -e '" <> busy <> "' ] && echo overlap >> '" <> overlaps <> "'; touch '" <> busy <> "'; sleep 0.3; rm '" <> busy <> "'; exit 0;;\nlist-bin) printf '%s\\n' '" <> config </> "image'; exit 0;;\nesac\ndone\nexit 2\n")
+                  count = "$(wc -l < '" <> started <> "')"
+                  -- The first tool holds until the second starts or a second passes. The second finds whether the first is done.
+                  step =
+                    unwords
+                      [ "echo started >> '" <> started <> "';"
+                      , "if [ " <> count <> " -eq 1 ]; then"
+                      , "n=0; while [ " <> count <> " -lt 2 ] && [ $n -lt 20 ]; do sleep 0.05; n=$((n+1)); done;"
+                      , "[ " <> count <> " -ge 2 ] && echo overlap >> '" <> overlaps <> "';"
+                      , "elif [ ! -e '" <> finished <> "' ]; then echo overlap >> '" <> overlaps <> "'; fi;"
+                      , ": > '" <> finished <> "'"
+                      ]
+              writeFile (environment resources) ("#!/bin/sh\nfor arg do\ncase \"$arg\" in\nbuild) " <> step <> "; exit 0;;\nlist-bin) printf '%s\\n' '" <> config </> "image'; exit 0;;\nesac\ndone\nexit 2\n")
               done <- newEmptyMVar
               mapM_ (\_ -> forkFinally (build resources config stateDir) (putMVar done)) [1, 2 :: Int]
               mapM_ (\_ -> takeMVar done >>= either (assertFailure . show) (const (pure ()))) [1, 2 :: Int]
+              readFile started >>= assertEqual "both build tools ran" "started\nstarted\n"
               doesFileExist overlaps >>= assertEqual "overlapping build tools" False
         ]
     ]
