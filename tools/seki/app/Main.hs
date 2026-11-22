@@ -12,7 +12,6 @@ import System.FilePath ((</>))
 import System.IO (hPutStrLn, stderr)
 import System.Posix.Process (executeFile)
 
--- A start passes 'startupArguments' to the image, and a restore passes its file.
 data Options = Start | Check | Restore FilePath
 
 main :: IO ()

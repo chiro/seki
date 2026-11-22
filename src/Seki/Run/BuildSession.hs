@@ -139,7 +139,7 @@ resolveAndWarn warning wake context = do
   let current = resolvedWarning resolution
   changed <- atomically (stateTVar warning (\previous -> (previous /= current, current)))
   when changed $ do
-    mapM_ (\message -> void (try @IOException (hPutStrLn stderr ("seki: " <> message)))) current
+    mapM_ diagnostic current
     wake
   pure resolution
 
