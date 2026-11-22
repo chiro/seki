@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Regenerates every committed protocol binding with seki-scanner and fails,
-# naming the file, when a committed binding differs from the scanner's output
-# or when a file under src-generated/ or tools-generated/ has no generation rule.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
