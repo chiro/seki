@@ -195,12 +195,22 @@ tests =
               candidate <- recorded stateDir "candidate1" installed{archive = "/store/old/seki-0.0.9.tar.gz"}
               createSymbolicLink candidate (stateDir </> "profile")
               startImage installed stateDir >>= assertEqual "other delivery" (DefaultImage (OtherDelivery "/store/old/seki-0.0.9.tar.gz"))
-        , testCase "a profile that died before it proved healthy gives the default image" $
+        , testCase "a profile whose first trial left its marker gives the default image" $
             withState $ \stateDir -> do
               candidate <- recorded stateDir "candidate1" installed
               createSymbolicLink candidate (stateDir </> "profile")
               markUnproven stateDir (Unproven candidate FirstTrial)
               startImage installed stateDir >>= assertEqual "leftover marker" (DefaultImage (HeldBack (Unproven candidate FirstTrial)))
+        , testCase "a profile is held back whatever is known of its trial" $
+            withState $ \stateDir -> do
+              candidate <- recorded stateDir "candidate1" installed
+              createSymbolicLink candidate (stateDir </> "profile")
+              mapM_
+                ( \trial -> do
+                    markUnproven stateDir (Unproven candidate trial)
+                    startImage installed stateDir >>= assertEqual (show trial) (DefaultImage (HeldBack (Unproven candidate trial)))
+                )
+                [SecondTrial, Crashed]
         , testCase "a marker that names another candidate does not hold the profile back" $
             withState $ \stateDir -> do
               candidate <- recorded stateDir "candidate2" installed
@@ -242,6 +252,18 @@ tests =
               during <- withTrial (\_ -> pure ()) target (readUnproven stateDir)
               assertEqual "on trial during the exec" (Just (Unproven (validatedPath target) FirstTrial)) during
               readUnproven stateDir >>= assertEqual "the profile that died stays marked" (Just (Unproven dead FirstTrial))
+        , testCase "a handover onto the bytes of the candidate on trial is their second trial" $
+            withBuild $ \resources config stateDir -> do
+              target <- build resources config stateDir
+              let unrecorded = stateDir </> "candidate-unrecorded"
+              readFile (validatedPath target) >>= writeFile unrecorded
+              mapM_
+                ( \trial -> do
+                    markUnproven stateDir (Unproven unrecorded trial)
+                    withTrial (\_ -> pure ()) target (readUnproven stateDir) >>= assertEqual ("after " <> show trial) (Just (Unproven (validatedPath target) SecondTrial))
+                    readUnproven stateDir >>= assertEqual "a failed exec puts the earlier trial back" (Just (Unproven unrecorded trial))
+                )
+                [FirstTrial, SecondTrial, Crashed]
         , testCase "a failed handover exec with no earlier trial leaves none" $
             withBuild $ \resources config stateDir -> do
               target <- build resources config stateDir
@@ -310,7 +332,7 @@ withBuild :: (Resources -> FilePath -> FilePath -> IO a) -> IO a
 withBuild = withBuildAt (pure "state")
 
 withBuildAt :: IO FilePath -> (Resources -> FilePath -> FilePath -> IO a) -> IO a
-withBuildAt name body = withStateAt name $ \stateDir -> do
+withBuildAt stateName body = withStateAt stateName $ \stateDir -> do
   let config = stateDir <> "-config"
       wrapper = config </> "environment"
       templatesPath = config </> "templates"

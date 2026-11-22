@@ -180,8 +180,8 @@ def prove(command, root, env, archive, provisioned=False):
             assert unproven.read_text() == f"first\n{checked}"
 
         start("", before_close=selected)
-        # The kill above left the candidate on trial, so the next start does not exec it again.
-        default_runtime(start("died before it proved healthy"))
+        # The kill above left the candidate on trial with no record, so the launcher does not exec it again.
+        default_runtime(start("ended its last start before it proved healthy, and left no record of why"))
         unproven.unlink()
         record = checked.with_name(checked.name + ".resources")
         record.write_text(record.read_text().replace(str(archive), "/nix/store/0-old-seki-config-source/seki-0.0.1.tar.gz"))

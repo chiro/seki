@@ -449,27 +449,29 @@ tests =
             buildStatus session >>= assertBool "the reason reaches the status" . maybe False (\case String message -> "XDG_STATE_HOME must be absolute" `Text.isInfixOf` message; _ -> False) . field "error"
           )
           `finally` closeBuildSession session
-    , testCase "a startup build that reproduces the candidate that died is not handed over, and the marker stays" $
+    , testCase "a startup build that reproduces a candidate that crashed is not handed over, and the marker stays" $
+        heldBack Crashed "crashed before it proved healthy"
+    , testCase "a startup build that reproduces a candidate whose second trial left no record is not handed over" $
+        heldBack SecondTrial "ended two starts before it proved healthy"
+    , testCase "a startup build that reproduces a candidate whose first trial left no record is ready for one more trial" $
         fixture "exit 0" $ \context directory -> do
-          let dead = directory </> "candidate-dead"
-          readFile (directory </> "image") >>= writeFile dead
+          let unrecorded = directory </> "candidate-unrecorded"
+          readFile (directory </> "image") >>= writeFile unrecorded
           writeFile (directory </> "other") "the default runtime has other bytes"
-          markUnproven directory (Unproven dead FirstTrial)
+          markUnproven directory (Unproven unrecorded FirstTrial)
           session <- startupSession (pure ()) (directory </> "other") context
           ( do
               ownerManaged session False
-              awaitStatus session "failed" 1
-              buildStatus session >>= assertBool "the error names the candidate that died" . maybe False (\case String message -> Text.pack dead `Text.isInfixOf` message; _ -> False) . field "error"
-              readyTarget session >>= (@?= Nothing)
-              candidates directory >>= assertEqual "only the dead candidate remains" ["candidate-dead"]
-              readUnproven directory >>= (@?= Just (Unproven dead FirstTrial))
+              target <- awaitReady session
+              readFile (validatedPath target) >>= \copy -> readFile unrecorded >>= (@?= copy)
+              readUnproven directory >>= (@?= Just (Unproven unrecorded FirstTrial))
             )
             `finally` closeBuildSession session
-    , testCase "a request under the default runtime tries the candidate that died again" $
+    , testCase "a request under the default runtime tries the candidate that crashed again" $
         fixture "exit 0" $ \context directory -> do
           let dead = directory </> "candidate-dead"
           readFile (directory </> "image") >>= writeFile dead
-          markUnproven directory (Unproven dead FirstTrial)
+          markUnproven directory (Unproven dead Crashed)
           session <- requestedSession (pure ()) context
           (requestBuild session >> void (awaitReady session)) `finally` closeBuildSession session
     , testCase "an image stays on trial until its startup build ends and a manage sequence follows the one that ran its hook" $
@@ -577,6 +579,27 @@ tests =
           doesFileExist (directory </> "escaped") >>= (@?= False)
           readFile (directory </> "started") >>= assertEqual "closed session starts no compiler" "started\n"
     ]
+
+{- | The default runtime's startup build reproduces a candidate whose trial
+ended this way. It ends failed with this reason, keeps no copy, and leaves
+the marker.
+-}
+heldBack :: Trial -> Text.Text -> IO ()
+heldBack trial reason = fixture "exit 0" $ \context directory -> do
+  let dead = directory </> "candidate-dead"
+  readFile (directory </> "image") >>= writeFile dead
+  writeFile (directory </> "other") "the default runtime has other bytes"
+  markUnproven directory (Unproven dead trial)
+  session <- startupSession (pure ()) (directory </> "other") context
+  ( do
+      ownerManaged session False
+      awaitStatus session "failed" 1
+      buildStatus session >>= assertBool "the error names the candidate and what happened to it" . maybe False (\case String message -> Text.pack dead `Text.isInfixOf` message && reason `Text.isInfixOf` message; _ -> False) . field "error"
+      readyTarget session >>= (@?= Nothing)
+      candidates directory >>= assertEqual "only the held candidate remains" ["candidate-dead"]
+      readUnproven directory >>= (@?= Just (Unproven dead trial))
+    )
+    `finally` closeBuildSession session
 
 delivery :: Resources
 delivery = Resources "/store/source/seki-0.1.0.0.tar.gz" "/store/ghc/bin/ghc" "/store/cabal/bin/cabal" "/store/env/bin/seki-config-env" "/store/templates"

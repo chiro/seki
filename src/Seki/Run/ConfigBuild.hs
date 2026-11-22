@@ -31,6 +31,7 @@ module Seki.Run.ConfigBuild (
   startupArguments,
   Unproven (..),
   Trial (..),
+  describeUnproven,
   markUnproven,
   readUnproven,
   clearUnproven,
@@ -331,7 +332,7 @@ data ProfileGap
     NoBuildRecord FilePath
   | -- | The candidate was built from this archive, not the installed one.
     OtherDelivery FilePath
-  | -- | The candidate was started and has not proved healthy.
+  | -- | The candidate was started and has not proved healthy. The launcher never starts it again.
     HeldBack Unproven
   deriving (Eq, Show)
 
@@ -340,7 +341,7 @@ describeGap = \case
   NoProfile -> "no profile yet"
   NoBuildRecord candidate -> candidate <> " has no record of the delivery it was built from"
   OtherDelivery built -> "the profile was built from " <> built <> ", not from the installed delivery"
-  HeldBack unproven -> unprovenCandidate unproven <> " died before it proved healthy"
+  HeldBack unproven -> describeUnproven unproven
 
 -- | What the launcher passes to the image it starts. The image then owes one build.
 startupArguments :: [String]
@@ -385,6 +386,14 @@ data Trial
   | -- | Its own image recorded that its session failed.
     Crashed
   deriving (Eq, Show, Enum, Bounded)
+
+-- | What is known of a candidate that is held back, for a diagnostic.
+describeUnproven :: Unproven -> String
+describeUnproven (Unproven candidate trial) =
+  candidate <> case trial of
+    FirstTrial -> " ended its last start before it proved healthy, and left no record of why"
+    SecondTrial -> " ended two starts before it proved healthy, and left no record of why"
+    Crashed -> " crashed before it proved healthy"
 
 trialWord :: Trial -> BS.ByteString
 trialWord = \case
@@ -454,18 +463,22 @@ holds 'Crashed', so no start and no startup build runs these bytes again.
 recordCrash :: FilePath -> FilePath -> IO ()
 recordCrash state image = ownTrial state image >>= mapM_ (\unproven -> markUnproven state unproven{unprovenTrial = Crashed})
 
-{- | Run a handover's exec with its candidate on trial. The exec returns only
-when it failed. The profile link is back on the earlier candidate by then, so
-that candidate's trial comes back too: a profile that died stays marked.
+{- | Run a handover's exec with its candidate on trial. A candidate with the
+bytes of the one that the marker already names is on its second trial, so
+the same bytes get at most one trial that nobody asked for after their first.
+The exec returns only when it failed. The profile link is back on the earlier
+candidate by then, so that candidate's trial comes back too.
 -}
 withTrial :: (String -> IO ()) -> ValidatedTarget -> IO a -> IO a
 withTrial report target exec = do
   let state = takeDirectory (validatedProfile target)
-      attempt action = try @IOException action >>= either (\e -> report ("cannot record the trial of " <> validatedPath target <> " (" <> show e <> ")")) pure
+      candidate = validatedPath target
+      attempt action = try @IOException action >>= either (\e -> report ("cannot record the trial of " <> candidate <> " (" <> show e <> ")")) pure
   earlier <- readUnproven state
-  attempt (markUnproven state (Unproven (validatedPath target) FirstTrial))
+  again <- maybe (pure False) (\held -> sameBytes (unprovenCandidate held) candidate) earlier
+  attempt (markUnproven state (Unproven candidate (if again then SecondTrial else FirstTrial)))
   result <- exec
-  attempt (maybe (clearUnproven state (validatedPath target)) (markUnproven state) earlier)
+  attempt (maybe (clearUnproven state candidate) (markUnproven state) earlier)
   pure result
 
 -- | Whether two files hold the same bytes. A file that cannot be read equals nothing.
