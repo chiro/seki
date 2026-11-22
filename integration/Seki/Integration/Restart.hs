@@ -20,7 +20,8 @@ import Seki.Internal.Core.Action (restart, windows)
 import Seki.Internal.Core.Scene (BorderColor (..), SceneStyle (..))
 import Seki.Internal.Core.StackSet qualified as SS
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
-import Seki.Run.Config (policyConfigOf, runSessions)
+import Seki.Run.BuildSession (StartupBuild (..))
+import Seki.Run.Config (Entry (..), policyConfigOf, runSessions)
 import Seki.Run.Policy (PolicyConfig (..))
 import Seki.Run.Restart (Launch (..), checkRestartTarget)
 import Seki.Run.Xkb (RiverKeyBinding (..))
@@ -160,7 +161,7 @@ restartFallback = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-r
           }
       config = fallbackConfig{policyCheckRestart = checkRestartTarget launch}
   result <- newEmptyMVar
-  void (forkIO (runSessions launch (const config) Nothing >>= putMVar result))
+  void (forkIO (runSessions launch (const config) (Fresh NoStartupBuild) >>= putMVar result))
   flip onException (tryReadMVar result >>= announce . ("m2-restart-fallback sessions: " <>) . show) $ do
     [(_, output)] <- waitUntil "seki shows the output" assertionTimeoutMicroseconds (outputNames socket) ((== 1) . length)
     placeOutputs environment [output]

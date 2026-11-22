@@ -3,7 +3,7 @@
 
 module Seki.Run.SessionsTest (tests) where
 
-import Control.Exception (bracket, onException, throwIO)
+import Control.Exception (ErrorCall, bracket, onException, throwIO, try)
 import Control.Monad (when)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.List (isPrefixOf)
@@ -13,16 +13,18 @@ import Seki.Internal.Core.Action (restart)
 import Seki.Internal.Core.ManageHook (doShift, idHook)
 import Seki.Internal.Core.Scene (defaultSceneStyle)
 import Seki.Internal.Layout.Full (Full (..))
-import Seki.Run.Config (SekiArgs (..), parseSekiArgs, runConfig, runSessions)
+import Seki.Run.BuildSession (StartupBuild (..))
+import Seki.Run.Config (Entry (..), SekiArgs (..), parseSekiArgs, runConfig, runSessions)
+import Seki.Run.ConfigBuild (markUnproven, readUnproven, startupArguments)
 import Seki.Run.IPC (withIPCAt)
 import Seki.Run.MockRiver (FrameReader, encodedPayload, event, expectMockSuccess, handshake, newFrameReader, openRuntimePair, readUntil, receiveFrame, receiveLayerShellOutputRequest, receiveNewIdRequest, requests, requireObjectId, runMock, sendFrames)
 import Seki.Run.Policy (PolicyConfig (..), newPolicy)
 import Seki.Run.Restart (Launch (..), RestartRefusal (..))
 import Seki.Wire.Arguments (putInt, putNewId, putString, putUint)
-import Seki.Wire.Transport (ConnectionTarget (..), ReceivedChunk (..), Transport, closeTransport, receiveChunk)
+import Seki.Wire.Transport (ConnectionDiscoveryError (..), ConnectionTarget (..), ReceivedChunk (..), Transport, closeTransport, receiveChunk)
 import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..))
-import System.Directory (listDirectory)
-import System.Environment (lookupEnv, setEnv, unsetEnv)
+import System.Directory (createDirectoryIfMissing, listDirectory)
+import System.Environment (getExecutablePath, lookupEnv, setEnv, unsetEnv)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Types (Fd (..))
@@ -33,14 +35,17 @@ tests :: TestTree
 tests =
   testGroup
     "restart sessions"
-    [ testCase "no arguments start fresh" $ parseSekiArgs [] @?= Right Run
+    [ testCase "no arguments start fresh and owe no build" $ parseSekiArgs [] @?= Right (Run NoStartupBuild)
+    , testCase "the launcher's arguments start fresh and owe one build" $ parseSekiArgs startupArguments @?= Right (Run StartupBuild)
     , testCase "--restore names the state file" $ parseSekiArgs ["--restore", "/run/seki/x.state"] @?= Right (Restore "/run/seki/x.state")
     , testCase "--check selects candidate validation" $ parseSekiArgs ["--check"] @?= Right Check
-    , testCase "any other arguments are a usage error" $ mapM_ (either (const (pure ())) (assertFailure . show) . parseSekiArgs) [["--restore"], ["--restore", "--check"], ["-v"], ["--restore", "a", "b"], ["--check", "--restore", "a"], ["--restore", "a", "--check"], ["--check", "--check"], ["--check", "extra"]]
+    , testCase "any other arguments are a usage error" $ mapM_ (either (const (pure ())) (assertFailure . show) . parseSekiArgs) [["--restore"], ["--restore", "--check"], ["-v"], ["--restore", "a", "b"], ["--check", "--restore", "a"], ["--restore", "a", "--check"], ["--check", "--check"], ["--check", "extra"], startupArguments <> ["--check"], "--check" : startupArguments, startupArguments <> ["--restore", "a"], "--restore" : startupArguments, startupArguments <> startupArguments]
     , testCase "a failed exec reconnects on the socket path and restores in the same process" testFallback
     , testCase "failed exec reconnects when diagnostic logging fails" (fallbackSession True)
     , testCase "unavailable at startup retries on the socket path" testUnavailableRetry
     , testCase "a state file of an unknown version starts fresh and is deleted" testUnknownVersion
+    , testCase "an image that cannot reach river is no longer on trial" testNeverManaged
+    , testCase "an image that dies in its startup hook stays on trial" testDiesOnTrial
     ]
 
 -- | A window with this identifier on an output named 56, then manage_start; returns the requests of that manage sequence.
@@ -113,7 +118,7 @@ fallbackSession brokenLog = withSystemTempDirectory "seki-sessions" $ \dir -> do
               modifyIORef' logged (line :)
               when (brokenLog && "restart: exec of " `isPrefixOf` line) (throwIO (userError "diagnostic logging unavailable"))
           }
-  result <- runSessions launch configFor Nothing
+  result <- runSessions launch configFor (Fresh NoStartupBuild)
   expectMockSuccess firstDone
   expectMockSuccess secondDone
   result @?= Right ()
@@ -146,7 +151,7 @@ testUnavailableRetry = withSystemTempDirectory "seki-retry-ipc" $ \dir -> do
   result <-
     withEnv "XDG_RUNTIME_DIR" dir $
       withIPCAt (dir </> "seki" </> "ipc.sock") owner $
-        runSessions launch (const (sessionConfig logged (Just ())){policyStartupHook = pure ()}) Nothing
+        runSessions launch (const (sessionConfig logged (Just ())){policyStartupHook = pure ()}) (Fresh NoStartupBuild)
   expectMockSuccess firstDone
   expectMockSuccess secondDone
   result @?= Right ()
@@ -173,6 +178,52 @@ testUnknownVersion = withSystemTempDirectory "seki-sessions" $ \dir -> do
   expectMockSuccess done
   either (assertFailure . show) pure result
   listDirectory dir >>= (@?= [])
+
+{- | An installed session whose state directory holds a marker that names
+this test executable, as if the launcher had just exec'd it.
+-}
+onTrial :: (FilePath -> IO a) -> IO a
+onTrial body = withSystemTempDirectory "seki-trial" $ \dir -> do
+  let state = dir </> "state" </> "seki"
+      installed = ("XDG_STATE_HOME", dir </> "state") : [("SEKI_CONFIG_" <> name, "/store" </> name) | name <- ["ARCHIVE", "GHC", "CABAL", "ENV", "TEMPLATES"]]
+  createDirectoryIfMissing True state
+  getExecutablePath >>= markUnproven state
+  foldr (uncurry withEnv) (body state) installed
+
+testNeverManaged :: Assertion
+testNeverManaged = onTrial $ \state -> do
+  logged <- newIORef []
+  let launch = Launch (Left XdgRuntimeDirMissing) (Left XdgRuntimeDirMissing) (Right "/opt/seki") (Left NoStateDirectory) (\_ _ _ -> throwIO (userError "unused"))
+  result <- runSessions launch (const (sessionConfig logged (Just ()))) (Fresh StartupBuild)
+  either (const (pure ())) (const (assertFailure "expected the connection to fail")) result
+  readUnproven state >>= (@?= Nothing)
+
+testDiesOnTrial :: Assertion
+testDiesOnTrial = onTrial $ \state -> do
+  (target, peer) <- openRuntimePair
+  logged <- newIORef []
+  done <- runMock $ flip onException (closeTransport peer) $ do
+    reader <- newFrameReader
+    globals <- handshake reader peer
+    window <- requireObjectId 0xff000050
+    output <- requireObjectId 0xff000051
+    let (manager, _, _) = globals
+    sendFrames peer [event manager 6 (putNewId window), event manager 7 (putNewId output), event manager 2 (pure ())]
+    expectClosedAfterRequests peer
+  let launch = Launch (Right target) (Left XdgRuntimeDirMissing) (Right "/opt/seki") (Left NoStateDirectory) (\_ _ _ -> throwIO (userError "unused"))
+  image <- getExecutablePath
+  outcome <- try @ErrorCall (runSessions launch (const (sessionConfig logged (Just ())){policyStartupHook = error "the startup hook throws"}) (Fresh StartupBuild))
+  either (const (pure ())) (assertFailure . ("expected the hook to end the process, got " <>) . show) outcome
+  expectMockSuccess done
+  readUnproven state >>= (@?= Just image)
+
+-- | Read whatever the runtime still sends until it closes the connection.
+expectClosedAfterRequests :: Transport -> Assertion
+expectClosedAfterRequests peer =
+  receiveChunk peer 4096 >>= \case
+    Right Nothing -> pure ()
+    Right (Just _) -> expectClosedAfterRequests peer
+    Left e -> assertFailure ("expected the runtime to close the connection, got " <> show e)
 
 withEnv :: String -> String -> IO a -> IO a
 withEnv name value action = bracket (lookupEnv name) (maybe (unsetEnv name) (setEnv name)) (\_ -> setEnv name value >> action)
