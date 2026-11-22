@@ -32,6 +32,7 @@ module Seki.Run.ConfigBuild (
   markUnproven,
   readUnproven,
   clearUnproven,
+  withTrial,
   sameBytes,
   discardCandidate,
 ) where
@@ -393,6 +394,20 @@ clearUnproven state image =
             Right (a, b) | (deviceID a, fileID a) == (deviceID b, fileID b) -> removeFile (unprovenPath state) `catch` \(_ :: IOException) -> pure ()
             _ -> pure ()
       )
+
+{- | Run a handover's exec with its candidate on trial. The exec returns only
+when it failed. The profile link is back on the earlier candidate by then, so
+that candidate's trial comes back too: a profile that died stays marked.
+-}
+withTrial :: (String -> IO ()) -> ValidatedTarget -> IO a -> IO a
+withTrial report target exec = do
+  let state = takeDirectory (validatedProfile target)
+      attempt action = try @IOException action >>= either (\e -> report ("cannot record the trial of " <> validatedPath target <> " (" <> show e <> ")")) pure
+  earlier <- readUnproven state
+  attempt (markUnproven state (validatedPath target))
+  result <- exec
+  attempt (maybe (clearUnproven state (validatedPath target)) (markUnproven state) earlier)
+  pure result
 
 -- | Whether two files hold the same bytes. A file that cannot be read equals nothing.
 sameBytes :: FilePath -> FilePath -> IO Bool

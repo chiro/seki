@@ -26,7 +26,7 @@ import Seki.Internal.Core.Restore (RestoreState)
 import Seki.Internal.Core.Scene (SceneStyle (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.BuildSession (StartupBuild (..))
-import Seki.Run.ConfigBuild (BuildContext (..), clearUnproven, installedContext, markUnproven, startupArguments, validatedPath, validatedProfile)
+import Seki.Run.ConfigBuild (BuildContext (..), clearUnproven, installedContext, startupArguments, validatedProfile, withTrial)
 import Seki.Run.IPC (withIPC)
 import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Policy (Policy, PolicyConfig (..), PolicyError, closePolicy, configureBuildSession, launchDetached, newPolicy, policyRuntimeHandlers, policyValidatedTarget, readRestoreState, recordPolicyRecoveryFailure)
@@ -36,7 +36,6 @@ import Seki.Run.Startup (WaylandStartupError (..))
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
 import System.Environment (getExecutablePath)
-import System.FilePath (takeDirectory)
 import System.IO (hPutStrLn, stderr)
 
 data ConfigRunError
@@ -172,7 +171,7 @@ runSessions launch configFor = pass (launchFirstTarget launch) unavailableRetrie
       writeRestoreFile dir saved >>= \case
         Left e -> reportFailure ("restart: cannot write the state (" <> show e <> "); restoring in this process")
         Right file -> do
-          failure <- maybe (execRestart launch file) (\target -> onTrial target (execValidatedRestart launch target file)) candidate
+          failure <- maybe (execRestart launch file) (\target -> withTrial (logLine . ("restart: " <>)) target (execValidatedRestart launch target file)) candidate
           _ <- try @IOException (removeFile file)
           reportFailure ("restart: exec of " <> maybe (either show id (launchTarget launch)) validatedProfile candidate <> " failed (" <> show failure <> "); restoring in this process")
   reportFailure message = logLine message >> pure (Just message)
@@ -180,13 +179,6 @@ runSessions launch configFor = pass (launchFirstTarget launch) unavailableRetrie
   neverManaged e = do
     _ <- try @IOException (installedContext >>= mapM_ (\context -> getExecutablePath >>= clearUnproven (buildStateDirectory context)))
     pure (Left (ConfigRuntimeError e))
-  -- The candidate is marked before the exec, so one that dies after a handover is not started again by the launcher.
-  onTrial target exec = do
-    let state = takeDirectory (validatedProfile target)
-    try @IOException (markUnproven state (validatedPath target)) >>= either (\e -> logLine ("restart: cannot put " <> validatedPath target <> " on trial (" <> show e <> ")")) pure
-    failure <- exec
-    clearUnproven state (validatedPath target)
-    pure failure
 
 unavailableRetries :: Int
 unavailableRetries = 10

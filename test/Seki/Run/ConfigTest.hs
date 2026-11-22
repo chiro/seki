@@ -231,6 +231,19 @@ tests =
               readUnproven stateDir >>= assertEqual "another image leaves it" (Just candidate)
               clearUnproven stateDir (stateDir <> "-link" </> "candidate1")
               readUnproven stateDir >>= assertEqual "the named image clears it through another path" Nothing
+        , testCase "a handover puts its candidate on trial, and a failed exec puts the earlier trial back" $
+            withBuild $ \resources config stateDir -> do
+              target <- build resources config stateDir
+              dead <- recorded stateDir "candidate-dead" resources
+              markUnproven stateDir dead
+              during <- withTrial (\_ -> pure ()) target (readUnproven stateDir)
+              assertEqual "on trial during the exec" (Just (validatedPath target)) during
+              readUnproven stateDir >>= assertEqual "the profile that died stays marked" (Just dead)
+        , testCase "a failed handover exec with no earlier trial leaves none" $
+            withBuild $ \resources config stateDir -> do
+              target <- build resources config stateDir
+              _ <- withTrial (\_ -> pure ()) target (pure ())
+              readUnproven stateDir >>= assertEqual "no candidate on trial" Nothing
         , testCase "two builds of one configuration never run their tools at once" $
             withBuild $ \resources config stateDir -> do
               let busy = stateDir </> "busy"
