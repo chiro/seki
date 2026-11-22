@@ -30,14 +30,15 @@ process groups are killed after completion or refusal. Output goes directly to
 private log files; failure diagnostics read at most the last 8 KiB. Build logs
 are retained in `$XDG_STATE_HOME/seki` (default `~/.local/state/seki`). Failed
 builds and unused checked copies are retained for diagnosis; remove unused files
-only when no session or profile references them.
+only when no session, no profile, and no `unproven` file references them. The
+`unproven` file names the candidate that is on trial.
 
 Run `seki` to start a session. The launcher does not build. It execs the
 image that the stable `profile` symlink in the state directory names, and
 keeps the link's path as runtime argv0 for M2 restart. It starts
 `seki-default` instead in four cases: no profile exists, the profile's
 candidate has no record of the delivery it was built from, the record names
-another delivery, or the candidate died before it proved healthy. The launcher
+another delivery, or the `unproven` file names the candidate. The launcher
 prints the reason. The started image gets `--startup-build`. It manages
 windows at once and builds the configuration one time in the background, as
 a recompile does. Only a session's handover changes the `profile` link.
@@ -57,8 +58,10 @@ Nothing on screen reports it. Run `sekictl snapshot` and read `build.state`,
 `seki-default` is `seki def`. It has workspaces `1` to `9`, Mod4, and the
 terminal `foot`. A window on a tag that your configuration lacks goes
 through your manage hook after the handover, and the default rules place it
-on the shown workspace. The shown workspace is then the first tag that both
-configurations have, or your first tag when they share none.
+on the shown workspace. A workspace that was shown stays shown when your
+configuration has its tag. When your configuration lacks that tag, the output
+shows the first tag that both configurations have, or your first tag when
+they share none.
 
 The first start after you install another delivery shows `seki-default`
 during the rebuild, because the old profile runs the old seki library. This
@@ -71,16 +74,44 @@ configuration while logged out, the old profile runs its hook, and the new
 image runs its hook after the handover. A `spawnOnce` command runs once. A
 plain `spawn` runs in both.
 
-Before the launcher execs a profile, it writes the candidate's path to
-`unproven` in the state directory, and a handover does the same for its new
-candidate. The image removes the file once its startup build has ended and a
-manage sequence follows the one that ran its startup hook. An image that
-river refuses, such as a second `seki` in a running session, also removes
-it. If the image dies first, the file stays, and the next `seki` starts
-`seki-default`, which builds the configuration. A build that yields the
-image that died is not started. Its build state is `failed`, and the error
-names the candidate. Change the configuration, or use the restart binding to
-try the same image again.
+Before the launcher execs a profile, it puts the candidate on trial: it
+writes `first` and the candidate's path to `unproven` in the state
+directory. A handover does the same for its new candidate. While the file
+names the profile's candidate, `seki` starts `seki-default`, so the launcher
+never starts a candidate twice on its own.
+
+The image on trial changes the file itself.
+
+- It removes the file once its startup build has ended and a manage sequence
+  follows the one that ran its startup hook. The image has then proved
+  healthy.
+- It removes the file when river ends the session, for example when you log
+  out. A clean end is not a failure.
+- It removes the file when river refuses it, as for a second `seki` in a
+  running session.
+- It writes `crashed` when its session fails: a startup hook or a layout
+  that throws, or a protocol error from river.
+
+An image that is killed, that loses power, or that the loader cannot start
+runs no code, so the file still says `first`. That does not say whether the
+image is at fault. The next `seki` starts `seki-default`, whose startup build
+decides.
+
+- A build that yields other bytes hands over to them, as always.
+- A build that yields the bytes of a candidate whose first trial left no
+  record hands over to them once more, and writes `second`. A profile that
+  was only interrupted is back within that one start.
+- A build that yields the bytes of a candidate that crashed, or whose second
+  trial also left no record, is not started. Its build state is `failed`,
+  and the error names the candidate. `seki-default` keeps managing. Change
+  the configuration, or use the restart binding to try the same image again.
+
+So a profile that throws at start runs once. A profile that dies without a
+record, such as one that a foreign library aborts, runs twice. In both
+cases `seki-default` builds the present configuration to its end, so a fixed
+configuration takes over at the next start. A startup hook that ends the
+session leaves no file, because that end is clean. Remove the `profile` link
+to start `seki-default` instead of such a profile.
 
 Each validated candidate has a `candidate*.resources` file that records the
 delivery it was built from. `seki --check` and a session's build take an

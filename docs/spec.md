@@ -387,8 +387,9 @@ The installed launcher, shipped default runtime, and compiled user image are
 separate executables.
 
 At startup, the launcher does not build. It execs the selected profile when
-that profile was built from the installed delivery and did not die before it
-proved healthy, and the shipped default runtime otherwise. The started image
+that profile was built from the installed delivery and is not on trial, and
+the shipped default runtime otherwise. A profile is on trial from its exec
+until it proves healthy or its session ends cleanly. The started image
 manages windows and builds the project once through the build lifecycle
 below. Every build copies Cabal's resolved executable to a unique candidate
 and runs that exact copy with `--check`. Only success can select the

@@ -158,7 +158,7 @@ Each live lane runs in its own worktree at the PR head. Drive through the skill 
 - [ ] Keep `seki --check` synchronous, and keep `seki --restore FILE` unchanged.
 - [ ] Report the build in the IPC snapshot's existing `build` field while it runs and after it fails. A failed first build leaves the running image in place.
 - [ ] Answer #90's open question for outputs. If river removes every output during the build, the built profile still receives outputs and devices when they return, and its startup hook still runs. A nested river cannot disable the seat, so file the seat half as a follow-up issue that names what stays inferred.
-- [ ] Never exec a profile again that died before it proved healthy. The launcher starts `seki-default` instead, which builds and hands over, so a fixed configuration can replace a profile that crashes at start.
+- [ ] Never exec a profile again that crashed before it proved healthy. The launcher starts `seki-default` instead, which builds and hands over, so a fixed configuration can replace a profile that crashes at start. A profile whose start ended cleanly is not held back. One whose start left no record, as after a power loss, gets one more trial behind `seki-default`'s validated build.
 - [ ] Serialize builds. `seki --check` and the session's build take one exclusive lock in the state directory, because they share the Cabal project directory and the private store.
 
 **You see.**
@@ -181,7 +181,7 @@ Each live lane runs in its own worktree at the PR head. Drive through the skill 
 - [ ] Lane 8. Send `sekictl recompile` during the first build. Save `recompile-coalesce.png`. Pass when the first build's result is discarded, one more build runs after it with no two compilers at once, and seki execs once into the second build.
 - [ ] Lane 9. Run `seki --check` with a fresh state directory. Save `check-sync.png`. Pass when it builds, prints the validated path, and starts no window manager.
 - [ ] Lane 10. Run `m3-daily-build`, `m3-daily-delivery`, and the restart scenarios. Save `daily-handover.png`. Pass when all pass.
-- [ ] Lane 11. Build a profile whose startup hook throws, start it, then fix the configuration and let river's init loop start `seki` again. Save `crash-recovery.png`. Pass when the second start runs `seki-default`, the fixed configuration builds and takes over, and the broken profile is not exec'd again.
+- [ ] Lane 11. Build a profile whose startup hook throws, start it, then fix the configuration and let river's init loop start `seki` again. Save `crash-recovery.png`. Pass when the second start runs `seki-default`, the fixed configuration builds and takes over, and the broken profile is not exec'd again. Also kill a healthy profile before it proved healthy and let the init loop start `seki` again. Save `kill-recovery.png`. Pass when that start runs `seki-default`, hands over to the reproduced profile, and the start after it execs the profile directly.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
