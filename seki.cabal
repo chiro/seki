@@ -441,6 +441,7 @@ test-suite seki-integration
     Seki.Integration.Scratchpad
     Seki.Integration.ScratchpadRestore
     Seki.Integration.Daily
+    Seki.Integration.M4
   build-depends:
     containers >=0.7 && <0.8,
     seki:layer-surface-fixture,

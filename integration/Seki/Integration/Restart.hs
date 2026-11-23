@@ -3,12 +3,13 @@
 -- | Real-river restart scenarios (WP8).
 module Seki.Integration.Restart (restartScenarios) where
 
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (forkFinally, killThread, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar, tryReadMVar)
-import Control.Exception (SomeException, bracket, onException, try)
-import Control.Monad (forM_, unless, void, (>=>))
+import Control.Exception (SomeException, bracket, bracket_, finally, onException, try)
+import Control.Monad (forM_, unless, (>=>))
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
+import Data.List (isPrefixOf)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import GHC.Clock (getMonotonicTimeNSec)
@@ -20,13 +21,14 @@ import Seki.Internal.Core.Action (restart, windows)
 import Seki.Internal.Core.Scene (BorderColor (..), SceneStyle (..))
 import Seki.Internal.Core.StackSet qualified as SS
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
-import Seki.Run.Config (policyConfigOf, runSessions)
+import Seki.Run.BuildSession (StartupBuild (..))
+import Seki.Run.Config (Entry (..), policyConfigOf, runSessions)
 import Seki.Run.Policy (PolicyConfig (..))
 import Seki.Run.Restart (Launch (..), checkRestartTarget)
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Transport (ConnectionTarget (UnixSocketPath))
-import System.Directory (createDirectoryIfMissing, getSymbolicLinkTarget, listDirectory)
-import System.Environment (lookupEnv)
+import System.Directory (createDirectory, createDirectoryIfMissing, getSymbolicLinkTarget, listDirectory)
+import System.Environment (getEnvironment, lookupEnv, setEnv, unsetEnv)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Files (createSymbolicLink)
@@ -144,7 +146,7 @@ Workspace 1 keeps its tile and its floating dialog, although river does not
 send the dialog's parent again (M2-D08); workspace 2 keeps its window.
 -}
 restartFallback :: IO ()
-restartFallback = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-restart-target" $ \dir -> do
+restartFallback = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-restart-target" $ \dir -> withPrivateEnvironment dir (riverRuntimeDirectory nested) $ do
   let target = dir </> "seki"
       socket = riverSocket nested
       environment = riverEnvironment nested
@@ -160,8 +162,9 @@ restartFallback = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-r
           }
       config = fallbackConfig{policyCheckRestart = checkRestartTarget launch}
   result <- newEmptyMVar
-  void (forkIO (runSessions launch (const config) Nothing >>= putMVar result))
-  flip onException (tryReadMVar result >>= announce . ("m2-restart-fallback sessions: " <>) . show) $ do
+  ended <- newEmptyMVar
+  sessions <- forkFinally (runSessions launch (const config) (Fresh NoStartupBuild) >>= putMVar result) (\_ -> putMVar ended ())
+  flip finally (timeout (10 * 1000 * 1000) (killThread sessions >> takeMVar ended)) . flip onException (tryReadMVar result >>= announce . ("m2-restart-fallback sessions: " <>) . show) $ do
     [(_, output)] <- waitUntil "seki shows the output" assertionTimeoutMicroseconds (outputNames socket) ((== 1) . length)
     placeOutputs environment [output]
     withKeyboard environment . withProbe socket $ \probe -> do
@@ -183,6 +186,22 @@ restartFallback = withNestedRiver 1 $ \nested -> withSystemTempDirectory "seki-r
     timeout (10 * 1000 * 1000) (takeMVar result) >>= assertEqual "the restored session ends when river does" (Just (Right ()))
  where
   before = [Paint Red (Box 2 2 796 596) False, Paint Green (Box 250 200 300 200) True]
+
+{- | Run with a home and XDG directories under this directory, the nested
+river's runtime directory, and no seki configuration variable or Wayland
+display of the host, so that the sessions in this process build and bind
+nothing of the host's.
+-}
+withPrivateEnvironment :: FilePath -> FilePath -> IO a -> IO a
+withPrivateEnvironment dir runtime body = do
+  seki <- filter ("SEKI_CONFIG_" `isPrefixOf`) . map fst <$> getEnvironment
+  let homes = [(name, dir </> leaf) | (name, leaf) <- [("HOME", "home"), ("XDG_CONFIG_HOME", "config"), ("XDG_STATE_HOME", "state"), ("XDG_CACHE_HOME", "cache"), ("XDG_DATA_HOME", "data")]]
+      owned = [(name, Nothing) | name <- "WAYLAND_DISPLAY" : "WAYLAND_SOCKET" : seki] <> [(name, Just path) | (name, path) <- ("XDG_RUNTIME_DIR", runtime) : homes]
+  mapM_ (createDirectory . snd) homes
+  earlier <- mapM (\(name, _) -> (name,) <$> lookupEnv name) owned
+  bracket_ (assign owned) (assign earlier) body
+ where
+  assign = mapM_ (\(name, value) -> maybe (unsetEnv name) (setEnv name) value)
 
 -- | F1 and F2 view workspaces 1 and 2; F3 restarts.
 fallbackConfig :: PolicyConfig String StdLayouts

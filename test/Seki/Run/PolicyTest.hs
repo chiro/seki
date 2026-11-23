@@ -15,9 +15,10 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust)
 import Data.Text qualified as Text
 import Data.Word (Word32)
-import Seki.Internal.Core.Action (Action, kill, screenWorkspace, spawn, windows)
+import Seki.Internal.Core.Action (Action, kill, runAction, screenWorkspace, spawn, spawnOnce, windows)
 import Seki.Internal.Core.ManageHook (ManageHook, appId, doShift, idHook, (-->), (=?))
 import Seki.Internal.Core.PointerOp (HEdge (..), OpKind (..), ResizeEdges (..), VEdge (..))
+import Seki.Internal.Core.Restore (LiveInventory (..), RestoreState, saveCore)
 import Seki.Internal.Core.Scene (BorderColor (..), SceneStyle (..), defaultSceneStyle)
 import Seki.Internal.Core.StackSet (
   OutputId (..),
@@ -107,6 +108,7 @@ tests =
     , testCase "sets no layer-shell default while headless" testSetDefaultHeadless
     , testCase "counts screens from left to right by river's output positions" testScreenOrder
     , testCase "runs the startup hook once, after the first output attaches" testStartupHookOnce
+    , testCase "a session restored with no output launches no saved spawnOnce command when its first output arrives" testRestoredHeadlessSpawnOnce
     , testCase "launches a command without waiting for it" testLaunchDetached
     , testCase "a launched command is not left as seki's child" testLaunchNotChild
     , testCase "parses resize edges to one edge or a corner and drops none or opposite edges" $
@@ -442,6 +444,26 @@ testStartupHookOnce =
     assertEqual "launches seen before each drain" [[], [], ["startup"], ["startup"]] (map drainLaunchesBefore drains)
     assertEqual "the hook launched once across detach and reattach" ["startup"] launches
 
+testRestoredHeadlessSpawnOnce :: Assertion
+testRestoredHeadlessSpawnOnce =
+  withRuntimePair $ \target peer -> do
+    output <- requireObjectId 0xff0000b0
+    mockDone <- runMock $ do
+      reader <- newFrameReader
+      (managerId, _, layerShellId) <- handshake reader peer
+      sendFrames peer [manageStart managerId]
+      finishManage reader peer managerId
+      sendFrames peer [newOutput managerId output, manageStart managerId]
+      layerShellOutput <- receiveLayerShellOutputRequest reader peer layerShellId output
+      finishManageDefault reader peer managerId layerShellOutput
+      closeTransport peer
+    fresh <- expectRight (newCoreState Full [1, 2, 3 :: Int])
+    let (_, earlier, _) = runAction (spawnOnce "bar") fresh
+        saved = saveCore (LiveInventory Map.empty Map.empty) earlier
+    (launches, drains) <- runPolicyRestoring (Just saved) idHook (spawnOnce "bar" >> spawnOnce "added") target mockDone []
+    assertEqual "restored headless, then attached" [Nothing, Just (1, oid output)] (map (currentScreenOf . drainAfter) drains)
+    assertEqual "only the command the earlier image did not launch" ["added"] launches
+
 testLaunchDetached :: Assertion
 testLaunchDetached =
   withSystemTempDirectory "seki-launch" $ \dir -> do
@@ -496,10 +518,20 @@ runPolicyWith ::
   MVar (Either SomeException ()) ->
   [(RiverKeyBinding, Action Int Full ())] ->
   IO ([String], [Drain])
-runPolicyWith hook startup target mockDone bindings = do
+runPolicyWith = runPolicyRestoring Nothing
+
+runPolicyRestoring ::
+  Maybe (RestoreState Int) ->
+  ManageHook Int Full ->
+  Action Int Full () ->
+  ConnectionTarget ->
+  MVar (Either SomeException ()) ->
+  [(RiverKeyBinding, Action Int Full ())] ->
+  IO ([String], [Drain])
+runPolicyRestoring saved hook startup target mockDone bindings = do
   launches <- newIORef []
   drains <- newIORef []
-  policy <- expectRight =<< newPolicy (PolicyConfig [] [] Full [1, 2, 3] bindings defaultSceneStyle (record launches) hook startup [] Nothing (const (pure (Right ()))) (\_ -> pure ()))
+  policy <- expectRight =<< newPolicy (PolicyConfig [] [] Full [1, 2, 3] bindings defaultSceneStyle (record launches) hook startup [] saved (const (pure (Right ()))) (\_ -> pure ()))
   let handlers = policyRuntimeHandlers policy
       observed =
         handlers

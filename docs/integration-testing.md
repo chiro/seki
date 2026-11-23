@@ -643,3 +643,30 @@ side by side, and each subscription's JSONL. The log has one
 `M3_DAILY_CAPTURE` line per capture and `M3_DAILY_*` lines for the observed
 values, including the load scenario's key-to-focus time measured from
 wtype's launch.
+
+The `m4-*` scenarios run the installed launcher, `seki`, against a stub
+delivery in a private `HOME`. `SEKI_CONFIG_DEFAULT` names `seki-default`.
+The delivery's build step waits while a `hold` file exists and fails while a
+`fail` file exists, and its list-bin step prints the path of a prebuilt
+executable, so a scenario decides when a build ends and what it yields. A
+built configuration is a copy of `seki-default` or `seki-daily-config` with
+trailing bytes. A `built.N` file names what the delivery's Nth build yields.
+`m4-crash-recovery` and `m4-crash-no-loop` build the
+integration executable itself, which runs as a configuration whose startup
+hook throws when it is started with a seki command line. The log has
+`M4_*` lines for the observed images, build states, and times.
+
+| Manifest entry | What it verifies | Additional programs |
+| --- | --- | --- |
+| `m4-first-start` | With no profile and a build that still runs, `seki-default` tiles two windows within one second of the start and reports the build; the built configuration then takes over under the same pid with both windows tiled | `wlr-randr` |
+| `m4-first-start-failed` | A build that fails leaves `seki-default` managing, selects no profile, and reaches the snapshot with its error | `wlr-randr` |
+| `m4-current-profile` | A current profile execs directly and tiles a window within one second, its startup build ends `unchanged` in the same session, the copy is deleted, and the startup hook runs once, on two starts with a touched source between them | `wlr-randr` |
+| `m4-handover-windows` | Three windows opened during the build keep workspaces `1` to `3` under a configuration with those tags, and go through the manage hook under one with other tags | `wlr-randr` |
+| `m4-handover-spawnonce` | A current profile hands over to an edited configuration, and each `spawnOnce` program starts once | `wlr-randr` |
+| `m4-upgrade-start` | A profile from another delivery starts `seki-default`, and the session ends on a profile that records the installed delivery | `wlr-randr` |
+| `m4-output-lost` | With the only output off during the build, the session hands over while headless, and the built profile runs its startup hook when the output returns | `wlr-randr` |
+| `m4-recompile-coalesce` | A recompile during the startup build discards its result, runs one more build after it, and execs once, into the second build's bytes | `wlr-randr` |
+| `m4-check-sync` | `seki --check` returns after its build, prints the validated path, and starts no session | `wlr-randr` |
+| `m4-crash-recovery` | In river's init loop, a profile whose startup hook throws dies once, `seki-default` runs next, the fixed configuration takes over, and the start after that execs the fixed profile | `wlr-randr` |
+| `m4-crash-no-loop` | While the configuration stays broken, `seki-default` refuses the image that crashed, and a recompile that tries it again does not start a loop | `wlr-randr` |
+| `m4-kill-recovery` | A healthy profile that is killed before it proved healthy starts `seki-default` once, which reproduces it and hands over in that start; the profile proves healthy, and the next start execs it directly | `wlr-randr` |

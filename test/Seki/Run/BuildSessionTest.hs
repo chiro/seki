@@ -5,7 +5,7 @@ module Seki.Run.BuildSessionTest (tests) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically, tryTakeTMVar)
-import Control.Exception (IOException, bracket, bracket_, finally, throwIO, try)
+import Control.Exception (IOException, bracket, finally, throwIO, try)
 import Control.Monad (void)
 import Data.Aeson (Value (..))
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -21,12 +21,13 @@ import Seki.Run.BuildSession
 import Seki.Run.ConfigBuild
 import Seki.Run.External
 import Seki.Run.Inventory (emptyRiverInventory)
-import Seki.Run.Policy (ExternalInput (..), PolicyConfig (..), closePolicy, configureBuild, newPolicy, policyIngress, policyRuntimeHandlers, policyValidatedTarget)
+import Seki.Run.MockRiver (withSandbox, withVariables)
+import Seki.Run.Policy (ExternalInput (..), Policy, PolicyConfig (..), closePolicy, configureBuild, configureBuildSession, newPolicy, policyBuildStatus, policyIngress, policyRuntimeHandlers, policyValidatedTarget)
 import Seki.Run.Restart
 import Seki.Run.Runtime (RiverInputSnapshot (..), RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
 import Seki.Wire.Transport (ConnectionDiscoveryError (..), ConnectionTarget (..))
 import System.Directory
-import System.Environment (setEnv, unsetEnv)
+import System.Environment (getExecutablePath)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Files (createSymbolicLink, readSymbolicLink, setFileMode)
@@ -43,8 +44,8 @@ tests =
     [ testCase "duplicate requests bound queue and invalidate older failure" $ do
         let running = transitionBuild BuildIdle BuildRequested
             queued = foldl (\state _ -> transitionBuild state BuildRequested) running [1 .. 1000 :: Int]
-        queued @?= BuildRunning 1 True Nothing
-        transitionBuild queued (BuildFinished (Left ("obsolete", Nothing))) @?= BuildRunning 2 False Nothing
+        queued @?= BuildRunning 1 Superseded Nothing
+        transitionBuild queued (BuildFinished (Left ("obsolete", Nothing))) @?= BuildRunning 2 OnRequest Nothing
     , testCase "policy build completion wakes the owner through a full command queue" $
         fixture "exit 0" $ \context@(BuildContext resources _ _ _) directory -> do
           writeFile (environment resources) ("#!/bin/sh\nfor arg do\ncase \"$arg\" in\nbuild) touch '" <> directory </> "started'; while [ ! -f '" <> directory </> "release' ]; do sleep 0.02; done; exit 0;;\nlist-bin) printf '%s\\n' '" <> directory </> "image'; exit 0;;\nesac\ndone\nexit 2\n")
@@ -134,7 +135,7 @@ tests =
           writeScript (directory </> "second-launcher") (answering second)
           pointAt launcher (directory </> "first-launcher")
           writeFile project (projectFor started{archive = "/store/started/seki-0.1.0.0.tar.gz", compiler = "/store/started-ghc/bin/ghc"})
-          session <- newBuildSession (pure ()) (BuildContext started (Just (Right launcher)) config state)
+          session <- requestedSession (pure ()) (BuildContext started (Just (Right launcher)) config state)
           ( do
               requestBuild session
               awaitStatus session "validated" 1
@@ -154,7 +155,7 @@ tests =
               launcher = directory </> "launcher"
           writeScript launcher "#!/bin/sh\necho 'usage: seki [--check | --recompile | --restore FILE]' >&2\nexit 1\n"
           writeFile project "packages: . \"/store/older/seki-0.1.0.0.tar.gz\"\n"
-          session <- newBuildSession (pure ()) (BuildContext running (Just (Right launcher)) config state)
+          session <- requestedSession (pure ()) (BuildContext running (Just (Right launcher)) config state)
           ( do
               requestBuild session
               target <- awaitReady session
@@ -166,7 +167,7 @@ tests =
             `finally` closeBuildSession session
     , testCase "a launcher setting that is not an absolute path leaves builds on the resources the session runs, with a warning" $
         fixture "exit 0" $ \(BuildContext started _ _ _) _ ->
-          withVariables (("SEKI_CONFIG_LAUNCHER", "bin/seki") : resourceVariables started) $ do
+          withVariables (map (fmap Just) (("SEKI_CONFIG_LAUNCHER", "bin/seki") : resourceVariables started)) $ do
             context <- installedContext >>= maybe (assertFailure "no build context") pure
             Resolution resources warning <- resolve context
             resources @?= started
@@ -184,8 +185,8 @@ tests =
         fixture "exit 0" $ \(BuildContext started _ config state) directory -> do
           let launcher = directory </> "launcher"
           writeScript launcher "#!/bin/sh\nenv | grep '^SEKI_CONFIG_'\n"
-          session <- newBuildSession (pure ()) (BuildContext started (Just (Right launcher)) config state)
-          withVariables (resourceVariables started{archive = "/store/echo/seki-0.1.0.0.tar.gz"}) $
+          session <- requestedSession (pure ()) (BuildContext started (Just (Right launcher)) config state)
+          withVariables (map (fmap Just) (resourceVariables started{archive = "/store/echo/seki-0.1.0.0.tar.gz"})) $
             ( do
                 requestBuild session
                 target <- awaitReady session
@@ -201,7 +202,7 @@ tests =
                 Just (String message) -> ("cannot read the installed delivery through " <> Text.pack launcher) `Text.isPrefixOf` message
                 _ -> False
           wakes <- newIORef (0 :: Int)
-          session <- newBuildSession (modifyIORef' wakes (+ 1)) (BuildContext started (Just (Right launcher)) config state)
+          session <- requestedSession (modifyIORef' wakes (+ 1)) (BuildContext started (Just (Right launcher)) config state)
           ( do
               await (warned <$> buildStatus session)
               idle <- buildStatus session
@@ -220,7 +221,7 @@ tests =
           writeScript (directory </> "installed-launcher") (answering installed)
           writeScript (directory </> "running-launcher") (answering running)
           pointAt launcher (directory </> "installed-launcher")
-          session <- newBuildSession (pure ()) (BuildContext running (Just (Right launcher)) config state)
+          session <- requestedSession (pure ()) (BuildContext running (Just (Right launcher)) config state)
           ( do
               await ((== Just (String "this session does not run the installed delivery (installed archive /store/installed/seki-0.2.0.0.tar.gz, session archive /store/running/seki-0.1.0.0.tar.gz); a recompile builds against the installed delivery")) . field "warning" <$> buildStatus session)
               pointAt launcher (directory </> "running-launcher")
@@ -232,7 +233,7 @@ tests =
     , testCase "worker validates immutable copy, reports full log and wakes the owner" $
         fixture "exit 0" $ \context directory -> do
           wakes <- newIORef (0 :: Int)
-          session <- newBuildSession (modifyIORef' wakes (+ 1)) context
+          session <- requestedSession (modifyIORef' wakes (+ 1)) context
           ( do
               requestBuild session
               target <- awaitReady session
@@ -245,7 +246,7 @@ tests =
             `finally` closeBuildSession session
     , testCase "compile success and invalid checker never become ready" $
         fixture "exit 78" $ \context _ -> do
-          session <- newBuildSession (pure ()) context
+          session <- requestedSession (pure ()) context
           ( do
               requestBuild session
               awaitStatus session "failed" 1
@@ -254,7 +255,7 @@ tests =
             `finally` closeBuildSession session
     , testCase "diagnostic write failure does not abort the owner or future builds" $
         fixture "exit 78" $ \context directory -> do
-          session <- newBuildSession (pure ()) context
+          session <- requestedSession (pure ()) context
           ( do
               bracket (dup (Fd 2)) closeFd $ \saved ->
                 bracket (openFd "/dev/full" WriteOnly defaultFileFlags) closeFd $ \full ->
@@ -313,7 +314,7 @@ tests =
                   , launchStateDir = Right directory
                   , launchExec = \_ _ env -> writeIORef handed env >> throwIO (userError "injected exec failure")
                   }
-          _ <- withVariables (("SEKI_CONFIG_LAUNCHER", "/installed/bin/seki") : resourceVariables started) (execValidatedRestart launch target (directory </> "saved"))
+          _ <- withVariables (map (fmap Just) (("SEKI_CONFIG_LAUNCHER", "/installed/bin/seki") : resourceVariables started)) (execValidatedRestart launch target (directory </> "saved"))
           env <- readIORef handed
           sort [variable | variable@(name, _) <- env, "SEKI_CONFIG_" `isPrefixOf` name]
             @?= sort (("SEKI_CONFIG_LAUNCHER", "/installed/bin/seki") : resourceVariables installed)
@@ -352,11 +353,217 @@ tests =
           _ <- execValidatedRestart launch target (directory </> "saved")
           doesPathExist profile >>= (@?= False)
           readFile raw >>= (@?= "raw default stays intact")
+    , testCase "a request during a startup build supersedes it, and its result starts the next generation on request" $ do
+        let superseded = transitionBuild (BuildRunning 1 AtStartup Nothing) BuildRequested
+        superseded @?= BuildRunning 1 Superseded Nothing
+        transitionBuild superseded (BuildFinished (Left ("obsolete", Nothing))) @?= BuildRunning 2 OnRequest Nothing
+    , testCase "a session that owes a startup build shows it as building before its owner manages, and runs no tool until then" $
+        fixture "exit 0" $ \context@(BuildContext resources _ _ _) directory -> do
+          writeScript (environment resources) (buildTool directory ("touch '" <> directory </> "started'"))
+          session <- startupSession (pure ()) (directory </> "other") context
+          ( do
+              awaitStatus session "building" 1
+              threadDelay 200000
+              doesFileExist (directory </> "started") >>= assertEqual "the tool ran before the owner managed" False
+              ownerManaged session False
+              await (doesFileExist (directory </> "started"))
+            )
+            `finally` closeBuildSession session
+    , testCase "a session that owes no startup build starts idle" $
+        fixture "exit 0" $ \context _ -> do
+          session <- requestedSession (pure ()) context
+          (buildStatus session >>= (@?= Just (String "idle")) . field "state") `finally` closeBuildSession session
+    , testCase "a startup build that reproduces the running image ends unchanged, wakes the owner, and keeps no copy" $
+        fixture "exit 0" $ \context directory -> do
+          wakes <- newIORef (0 :: Int)
+          session <- startupSession (modifyIORef' wakes (+ 1)) (directory </> "image") context
+          ( do
+              ownerManaged session False
+              awaitStatus session "unchanged" 1
+              readyTarget session >>= (@?= Nothing)
+              await ((>= 2) <$> readIORef wakes)
+              status <- buildStatus session
+              assertBool "the unchanged build shows its log path" (maybe False isString (field "log_path" status))
+              candidates directory >>= assertEqual "copies of the reproduced image" []
+            )
+            `finally` closeBuildSession session
+    , testCase "a startup build that differs from the running image is ready" $
+        fixture "exit 0" $ \context directory -> do
+          writeFile (directory </> "other") "the running image has other bytes"
+          session <- startupSession (pure ()) (directory </> "other") context
+          (ownerManaged session False >> awaitStatus session "validated" 1 >> void (awaitReady session)) `finally` closeBuildSession session
+    , testCase "a running image that cannot be read counts as different" $
+        fixture "exit 0" $ \context directory -> do
+          session <- startupSession (pure ()) (directory </> "deleted-image") context
+          (ownerManaged session False >> void (awaitReady session)) `finally` closeBuildSession session
+    , testCase "a failed startup build reports its error and log, wakes the owner, and is never ready" $
+        fixture "exit 78" $ \context directory -> do
+          wakes <- newIORef (0 :: Int)
+          session <- startupSession (modifyIORef' wakes (+ 1)) (directory </> "other") context
+          ( do
+              ownerManaged session False
+              awaitStatus session "failed" 1
+              status <- buildStatus session
+              assertBool "the failure carries an error" (maybe False isString (field "error" status))
+              assertBool "the failure carries its log path" (maybe False isString (field "log_path" status))
+              await ((>= 2) <$> readIORef wakes)
+              readyTarget session >>= (@?= Nothing)
+            )
+            `finally` closeBuildSession session
+    , testCase "a request after an unchanged startup build restarts onto the same bytes" $
+        fixture "exit 0" $ \context directory -> do
+          session <- startupSession (pure ()) (directory </> "image") context
+          ( do
+              ownerManaged session False
+              awaitStatus session "unchanged" 1
+              requestBuild session
+              awaitStatus session "validated" 2
+              target <- awaitReady session
+              readFile (validatedPath target) >>= \copy -> readFile (directory </> "image") >>= (@?= copy)
+            )
+            `finally` closeBuildSession session
+    , testCase "a request during a startup build runs the tool twice in order, and only the second result is ready" $
+        fixture "exit 0" $ \context@(BuildContext resources _ _ _) directory -> do
+          let busy = directory </> "busy"
+          writeScript (environment resources) (buildTool directory ("[ -e '" <> busy <> "' ] && echo overlap >> '" <> directory </> "overlaps'; touch '" <> busy <> "'; echo started >> '" <> directory </> "started'; while [ ! -f '" <> directory </> "release' ]; do sleep 0.02; done; rm '" <> busy <> "'"))
+          writeFile (directory </> "other") "the running image has other bytes"
+          session <- startupSession (pure ()) (directory </> "other") context
+          ( do
+              ownerManaged session False
+              await (doesFileExist (directory </> "started"))
+              requestBuild session
+              held <- buildStatus session
+              (field "generation" held, field "queued" held) @?= (Just (Number 1), Just (Number 2))
+              readyTarget session >>= (@?= Nothing)
+              writeFile (directory </> "release") ""
+              awaitStatus session "validated" 2
+              void (awaitReady session)
+              readFile (directory </> "started") >>= (@?= "started\nstarted\n")
+              doesFileExist (directory </> "overlaps") >>= assertEqual "two build tools at once" False
+            )
+            `finally` closeBuildSession session
+    , testCase "a session without a build context answers the startup build with its reason" $ do
+        session <- newBuildSession (pure ()) StartupBuild (pure "/unused") (Left "build context unavailable: XDG_STATE_HOME must be absolute")
+        ( do
+            ownerManaged session False
+            awaitStatus session "failed" 1
+            buildStatus session >>= assertBool "the reason reaches the status" . maybe False (\case String message -> "XDG_STATE_HOME must be absolute" `Text.isInfixOf` message; _ -> False) . field "error"
+          )
+          `finally` closeBuildSession session
+    , testCase "a startup build that reproduces a candidate that crashed is not handed over, and the marker stays" $
+        heldBack Crashed "crashed before it proved healthy"
+    , testCase "a startup build that reproduces a candidate whose second trial left no record is not handed over" $
+        heldBack SecondTrial "ended two starts before it proved healthy"
+    , testCase "a startup build that reproduces a candidate whose first trial left no record is ready for one more trial" $
+        fixture "exit 0" $ \context directory -> do
+          let unrecorded = directory </> "candidate-unrecorded"
+          readFile (directory </> "image") >>= writeFile unrecorded
+          writeFile (directory </> "other") "the default runtime has other bytes"
+          markUnproven directory (Unproven unrecorded FirstTrial)
+          session <- startupSession (pure ()) (directory </> "other") context
+          ( do
+              ownerManaged session False
+              target <- awaitReady session
+              readFile (validatedPath target) >>= \copy -> readFile unrecorded >>= (@?= copy)
+              readUnproven directory >>= (@?= Just (Unproven unrecorded FirstTrial))
+            )
+            `finally` closeBuildSession session
+    , testCase "a request under the default runtime tries the candidate that crashed again" $
+        fixture "exit 0" $ \context directory -> do
+          let dead = directory </> "candidate-dead"
+          readFile (directory </> "image") >>= writeFile dead
+          markUnproven directory (Unproven dead Crashed)
+          session <- requestedSession (pure ()) context
+          (requestBuild session >> void (awaitReady session)) `finally` closeBuildSession session
+    , testCase "an image stays on trial until its startup build ends and a manage sequence follows the one that ran its hook" $
+        fixture "exit 0" $ \context@(BuildContext resources _ _ _) directory -> do
+          let image = directory </> "image"
+          writeScript (environment resources) (buildTool directory ("while [ ! -f '" <> directory </> "release' ]; do sleep 0.02; done"))
+          markUnproven directory (Unproven image FirstTrial)
+          session <- startupSession (pure ()) image context
+          ( do
+              ownerManaged session True
+              ownerManaged session True
+              readUnproven directory >>= assertEqual "on trial while the startup build runs" (Just (Unproven image FirstTrial))
+              writeFile (directory </> "release") ""
+              awaitStatus session "unchanged" 1
+              ownerManaged session True
+              readUnproven directory >>= assertEqual "proved healthy" Nothing
+            )
+            `finally` closeBuildSession session
+    , testCase "an image that owes no build stays on trial until a manage sequence follows the one that ran its hook" $
+        fixture "exit 0" $ \context directory -> do
+          let image = directory </> "image"
+          markUnproven directory (Unproven image FirstTrial)
+          session <- newBuildSession (pure ()) NoStartupBuild (pure image) (Right context)
+          ( do
+              ownerManaged session False
+              ownerManaged session False
+              readUnproven directory >>= assertEqual "the hook has not run" (Just (Unproven image FirstTrial))
+              ownerManaged session True
+              readUnproven directory >>= assertEqual "the hook ran in this sequence" (Just (Unproven image FirstTrial))
+              ownerManaged session True
+              readUnproven directory >>= assertEqual "proved healthy" Nothing
+            )
+            `finally` closeBuildSession session
+    , testCase "a marker that names another image survives this image's proof" $
+        fixture "exit 0" $ \context directory -> do
+          let dead = directory </> "candidate-dead"
+          writeFile dead "died"
+          markUnproven directory (Unproven dead FirstTrial)
+          session <- newBuildSession (pure ()) NoStartupBuild (pure (directory </> "image")) (Right context)
+          (ownerManaged session True >> ownerManaged session True >> readUnproven directory >>= (@?= Just (Unproven dead FirstTrial))) `finally` closeBuildSession session
+    , testCase "a refused ready target becomes a failure with the refusal" $
+        fixture "exit 0" $ \context _ -> do
+          session <- requestedSession (pure ()) context
+          ( do
+              requestBuild session
+              void (awaitReady session)
+              refuseTarget session "XDG_RUNTIME_DIR is unset or not absolute"
+              awaitStatus session "failed" 1
+              readyTarget session >>= (@?= Nothing)
+              buildStatus session >>= (@?= Just (String "restart refused: XDG_RUNTIME_DIR is unset or not absolute")) . field "error"
+            )
+            `finally` closeBuildSession session
+    , testCase "an unchanged startup build never checks a restart target" $
+        fixture "exit 0" $ \context directory -> do
+          checks <- newIORef (0 :: Int)
+          policy <- startupPolicy checks (Right ()) (directory </> "image") context
+          ( do
+              manage policy
+              await ((== Just (Just (String "unchanged"))) . fmap (field "state") <$> policyBuildStatus policy)
+              manage policy >> manage policy
+              readIORef checks >>= assertEqual "restart checks" 0
+            )
+            `finally` closePolicy policy
+    , testCase "a startup build that differs checks its target at the next manage sequence" $
+        fixture "exit 0" $ \context directory -> do
+          checks <- newIORef (0 :: Int)
+          policy <- startupPolicy checks (Right ()) (directory </> "other") context
+          ( do
+              manage policy
+              await (isJust <$> policyValidatedTarget policy)
+              manage policy
+              readIORef checks >>= assertEqual "restart checks" 1
+            )
+            `finally` closePolicy policy
+    , testCase "a refused startup target is reported once and not checked again" $
+        fixture "exit 0" $ \context directory -> do
+          checks <- newIORef (0 :: Int)
+          policy <- startupPolicy checks (Left NoStateDirectory) (directory </> "other") context
+          ( do
+              manage policy
+              await (isJust <$> policyValidatedTarget policy)
+              manage policy >> manage policy >> manage policy
+              readIORef checks >>= assertEqual "restart checks" 1
+              policyBuildStatus policy >>= (@?= Just (Just (String "restart refused: XDG_RUNTIME_DIR is unset or not absolute"))) . fmap (field "error")
+            )
+            `finally` closePolicy policy
     , testCase "close cancels and reaps held compiler process group" $
         fixture "exit 0" $ \(BuildContext resources _ config state) directory -> do
           writeFile (environment resources) ("#!/bin/sh\necho started >> '" <> directory </> "started'\nwhile [ ! -f '" <> directory </> "release' ]; do sleep 0.02; done\ntouch '" <> directory </> "escaped'\n")
           wakes <- newIORef (0 :: Int)
-          session <- newBuildSession (modifyIORef' wakes (+ 1)) (BuildContext resources Nothing config state)
+          session <- requestedSession (modifyIORef' wakes (+ 1)) (BuildContext resources Nothing config state)
           ( do
               requestBuild session
               await (doesFileExist (directory </> "started"))
@@ -374,11 +581,32 @@ tests =
           readFile (directory </> "started") >>= assertEqual "closed session starts no compiler" "started\n"
     ]
 
+{- | The default runtime's startup build reproduces a candidate whose trial
+ended this way. It ends failed with this reason, keeps no copy, and leaves
+the marker.
+-}
+heldBack :: Trial -> Text.Text -> IO ()
+heldBack trial reason = fixture "exit 0" $ \context directory -> do
+  let dead = directory </> "candidate-dead"
+  readFile (directory </> "image") >>= writeFile dead
+  writeFile (directory </> "other") "the default runtime has other bytes"
+  markUnproven directory (Unproven dead trial)
+  session <- startupSession (pure ()) (directory </> "other") context
+  ( do
+      ownerManaged session False
+      awaitStatus session "failed" 1
+      buildStatus session >>= assertBool "the error names the candidate and what happened to it" . maybe False (\case String message -> Text.pack dead `Text.isInfixOf` message && reason `Text.isInfixOf` message; _ -> False) . field "error"
+      readyTarget session >>= (@?= Nothing)
+      candidates directory >>= assertEqual "only the held candidate remains" ["candidate-dead"]
+      readUnproven directory >>= (@?= Just (Unproven dead trial))
+    )
+    `finally` closeBuildSession session
+
 delivery :: Resources
 delivery = Resources "/store/source/seki-0.1.0.0.tar.gz" "/store/ghc/bin/ghc" "/store/cabal/bin/cabal" "/store/env/bin/seki-config-env" "/store/templates"
 
 fixture :: String -> (BuildContext -> FilePath -> IO ()) -> IO ()
-fixture check body = withSystemTempDirectory "seki-build-test" $ \directory -> do
+fixture check body = withSandbox [] $ \_ -> withSystemTempDirectory "seki-build-test" $ \directory -> do
   let wrapper = directory </> "environment"
       image = directory </> "image"
       templatesPath = directory </> "templates"
@@ -390,6 +618,30 @@ fixture check body = withSystemTempDirectory "seki-build-test" $ \directory -> d
   setFileMode wrapper 0o700
   body (BuildContext (Resources "/archive" "/compiler" "/cabal" wrapper templatesPath) Nothing directory directory) directory
 
+requestedSession :: IO () -> BuildContext -> IO BuildSession
+requestedSession wake = newBuildSession wake NoStartupBuild getExecutablePath . Right
+
+-- | A session that owes a startup build and runs the given image.
+startupSession :: IO () -> FilePath -> BuildContext -> IO BuildSession
+startupSession wake image = newBuildSession wake StartupBuild (pure image) . Right
+
+-- | A build tool that runs the shell text for its build step and resolves the fixture's image.
+buildTool :: FilePath -> String -> String
+buildTool directory step = "#!/bin/sh\nfor arg do\ncase \"$arg\" in\nbuild) " <> step <> "; exit 0;;\nlist-bin) printf '%s\\n' '" <> directory </> "image'; exit 0;;\nesac\ndone\nexit 2\n"
+
+candidates :: FilePath -> IO [FilePath]
+candidates directory = sort . filter ("candidate" `isPrefixOf`) <$> listDirectory directory
+
+-- | A policy that owes a startup build, runs the given image, and counts its restart checks.
+startupPolicy :: IORef Int -> Either RestartRefusal () -> FilePath -> BuildContext -> IO (Policy Int Layout.Full)
+startupPolicy checks answer image context = do
+  policy <- newPolicy (PolicyConfig [] [] Layout.Full [1 :: Int] [] defaultSceneStyle (\_ -> pure ()) idHook (pure ()) [] Nothing (\_ -> modifyIORef' checks (+ 1) >> pure answer) (\_ -> pure ())) >>= either (assertFailure . show) pure
+  configureBuildSession policy StartupBuild (pure image) (Right context)
+  pure policy
+
+manage :: Policy Int Layout.Full -> IO ()
+manage policy = void (prepareRiverManagePlan (policyRuntimeHandlers policy) (RiverRuntimeSnapshot emptyRiverInventory (InputUnavailable []) []))
+
 answering :: Resources -> String
 answering resources = "#!/bin/sh\n[ \"$1\" = --resources ] || exit 64\ncat <<'ANSWER'\n" <> renderResources resources <> "ANSWER\n"
 
@@ -398,9 +650,6 @@ writeScript path script = writeFile path script >> setFileMode path 0o700
 
 pointAt :: FilePath -> FilePath -> IO ()
 pointAt link target = createSymbolicLink target (link <> ".next") >> renameFile (link <> ".next") link
-
-withVariables :: [(String, String)] -> IO a -> IO a
-withVariables variables = bracket_ (mapM_ (uncurry setEnv) variables) (mapM_ (unsetEnv . fst) variables)
 
 awaitReady :: BuildSession -> IO ValidatedTarget
 awaitReady session = do

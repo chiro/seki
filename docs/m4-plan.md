@@ -145,19 +145,21 @@ Each live lane runs in its own worktree at the PR head. Drive through the skill 
 
 **Files.**
 
-- [ ] Edit `tools/seki/app/Main.hs` and `tools/seki-default/app/Main.hs`.
+- [ ] Edit `tools/seki/app/Main.hs`. `tools/seki-default/app/Main.hs` needs no change, because `seki def` already reads its arguments through `runConfig`.
 - [ ] Edit `src/Seki/Run/Config.hs`, `src/Seki/Run/ConfigBuild.hs`, `src/Seki/Run/BuildSession.hs`, and `src/Seki/Run/Policy.hs`.
-- [ ] Edit `test/Seki/Run/BuildSessionTest.hs`, `test/Seki/Run/ConfigTest.hs`, and `ci/check-product.py`.
-- [ ] Edit `docs/user-configuration.md` and close #90 from the PR body.
+- [ ] Edit `test/Seki/Run/BuildSessionTest.hs`, `test/Seki/Run/ConfigTest.hs`, `test/Seki/Run/SessionsTest.hs`, `integration/Seki/Integration/Restart.hs`, and `ci/check-product.py`.
+- [ ] Edit `docs/user-configuration.md`, `docs/ipc.md`, and `docs/spec.md` section 5.2. Close #90 from the PR body for the blank screen, and link a follow-up issue for the seat half of its open question.
 
 **Build.**
 
-- [ ] Run `skills/how/SKILL.md` on the launcher, `BuildSession.hs`, and the `--recompile` exec path before code. Then run `skills/architect/SKILL.md` and settle M4-D07.
+- [ ] Run `skills/how/SKILL.md` on the launcher, `BuildSession.hs`, and the `--recompile` exec path before code. Then run `skills/architect/SKILL.md` and settle M4-D07. The design round on 2026-11-22 did both, and an interrogate round with three models amended it. Build from that design and its verdict.
 - [ ] Stop building before the first exec. `seki` with no arguments execs the last validated profile at once. When no profile exists, it execs the shipped `seki-default`.
 - [ ] Make the started image run one build of the user configuration through the build session that `sekictl recompile` already uses. A validated candidate that differs from the running image becomes the profile, and seki execs it with the M2 restore handshake, as a recompile does today.
 - [ ] Keep `seki --check` synchronous, and keep `seki --restore FILE` unchanged.
 - [ ] Report the build in the IPC snapshot's existing `build` field while it runs and after it fails. A failed first build leaves the running image in place.
-- [ ] Answer #90's open question. If river disables the seat or removes every output during the build, the built profile still receives outputs and devices when they return, and its startup hook still runs.
+- [ ] Answer #90's open question for outputs. If river removes every output during the build, the built profile still receives outputs and devices when they return, and its startup hook still runs. A nested river cannot disable the seat, so file the seat half as a follow-up issue that names what stays inferred.
+- [ ] Never exec a profile again that crashed before it proved healthy. The launcher starts `seki-default` instead, which builds and hands over, so a fixed configuration can replace a profile that crashes at start. A profile whose start ended cleanly is not held back. One whose start left no record, as after a power loss, gets one more trial behind `seki-default`'s validated build.
+- [ ] Serialize builds. `seki --check` and the session's build take one exclusive lock in the state directory, because they share the Cabal project directory and the private store.
 
 **You see.**
 
@@ -171,14 +173,15 @@ Each live lane runs in its own worktree at the PR head. Drive through the skill 
 
 - [ ] Lane 1. Regression lane against trunk. Start seki with a fresh state directory and a configuration that needs a build, at the parent and at the head, and map two fixture windows at once. Save `first-start.png` one second after start. Pass when the parent's capture shows unmanaged output, the head's capture shows both windows tiled, and the head ends on the built profile.
 - [ ] Lane 2. Start with a configuration that fails to compile. Save `first-start-failed.png`. Pass when `seki-default` keeps managing windows and `sekictl snapshot` reports the failed build.
-- [ ] Lane 3. Start with a current profile. Save `current-profile.png`. Pass when the profile execs directly and the time to the first managed window is no longer than at the parent.
-- [ ] Lane 4. Open three windows during the first build. Save `handover-windows.png`. Pass when all three keep their workspaces after the exec into the built profile.
-- [ ] Lane 5. Configure two `spawnOnce` programs in the user startup hook. Save `handover-spawnonce.png`. Pass when each program starts exactly once across the handover.
+- [ ] Lane 3. Start with a current profile, then again after `touch` on a configuration source file. Save `current-profile.png`. Pass when the profile execs directly, the time to the first managed window is no longer than at the parent, and each start ends with `build.state` `unchanged`, the same pid and IPC session, and one run of the startup hook.
+- [ ] Lane 4. Open three windows during the first build, once with a configuration that keeps tags `1` to `9` and once with other tags. Save `handover-windows.png`. Pass when all three keep their workspaces after the exec in the first case, and in the second case every window is still managed and placed by the user's manage hook, as the documentation says.
+- [ ] Lane 5. Start from a current profile whose hook has two `spawnOnce` programs, edit the configuration while logged out, keep the same two `spawnOnce` programs in the new hook, then start. Save `handover-spawnonce.png`. Pass when the session hands over to the new build and each program starts exactly once.
 - [ ] Lane 6. Rebuild the stub delivery, as `m3-daily-delivery` does, then start fresh. Save `upgrade-start.png`. Pass when the screen is managed during the rebuild and the session ends on the rebuilt profile.
 - [ ] Lane 7. Remove the only output during the first build and add it back after the exec. Save `output-lost.png`. Pass when the built profile manages the returned output and its startup hook has run.
-- [ ] Lane 8. Send `sekictl recompile` during the first build. Save `recompile-coalesce.png`. Pass when one build runs and seki execs once.
+- [ ] Lane 8. Send `sekictl recompile` during the first build. Save `recompile-coalesce.png`. Pass when the first build's result is discarded, one more build runs after it with no two compilers at once, and seki execs once into the second build.
 - [ ] Lane 9. Run `seki --check` with a fresh state directory. Save `check-sync.png`. Pass when it builds, prints the validated path, and starts no window manager.
 - [ ] Lane 10. Run `m3-daily-build`, `m3-daily-delivery`, and the restart scenarios. Save `daily-handover.png`. Pass when all pass.
+- [ ] Lane 11. Build a profile whose startup hook throws, start it, then fix the configuration and let river's init loop start `seki` again. Save `crash-recovery.png`. Pass when the second start runs `seki-default`, the fixed configuration builds and takes over, and the broken profile is not exec'd again. Also kill a healthy profile before it proved healthy and let the init loop start `seki` again. Save `kill-recovery.png`. Pass when that start runs `seki-default`, hands over to the reproduced profile, and the start after it execs the profile directly.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 

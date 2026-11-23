@@ -30,23 +30,102 @@ process groups are killed after completion or refusal. Output goes directly to
 private log files; failure diagnostics read at most the last 8 KiB. Build logs
 are retained in `$XDG_STATE_HOME/seki` (default `~/.local/state/seki`). Failed
 builds and unused checked copies are retained for diagnosis; remove unused files
-only when no session or profile references them.
+only when no session, no profile, and no `unproven` file references them. The
+`unproven` file names the candidate that is on trial.
 
-Run `seki` for initial startup. Only a successfully built and checked generation
-can replace the stable `profile` symlink in the state directory. The launcher
-execs that link, preserving its path as runtime argv0 for M2 restart. Cabal cannot
-overwrite the copied generation. An immediate exec failure restores the previous
-profile. Initial configuration, compiler, or state failures print a diagnostic
-and attempt `seki-default`. `--check` fails without starting fallback. A recorded
-`seki --restore FILE` invocation executes the existing profile with exactly
-`--restore FILE` and does not generate, compile, or check anything.
+Run `seki` to start a session. The launcher does not build. It execs the
+image that the stable `profile` symlink in the state directory names, and
+keeps the link's path as runtime argv0 for M2 restart. It starts
+`seki-default` instead in four cases: no profile exists, the profile's
+candidate has no record of the delivery it was built from, the record names
+another delivery, or the `unproven` file names the candidate. The launcher
+prints the reason. The started image gets `--startup-build`. It manages
+windows at once and builds the configuration one time in the background, as
+a recompile does. Only a session's handover changes the `profile` link.
+Cabal cannot overwrite the copied generation. A launcher that cannot read
+its resources or its state directory prints the error and attempts
+`seki-default`. `--check` builds and never starts a session. A recorded `seki --restore FILE` invocation executes the
+existing profile with exactly `--restore FILE` and does not generate,
+compile, or check anything.
+
+When the startup build yields the bytes of the running image, nothing
+restarts, the copy is deleted, and the IPC build state is `unchanged`.
+Other bytes hand over as a recompile does, and windows keep their
+workspaces. A failed startup build leaves the started image in place.
+Nothing on screen reports it. Run `sekictl snapshot` and read `build.state`,
+`build.error`, and `build.log_path`.
+
+`seki-default` is `seki def`. It has workspaces `1` to `9`, Mod4, and the
+terminal `foot`. A window on a tag that your configuration lacks goes
+through your manage hook after the handover, and the default rules place it
+on the shown workspace. A workspace that was shown stays shown when your
+configuration has its tag. When your configuration lacks that tag, the output
+shows the first tag that both configurations have, or your first tag when
+they share none.
+
+The first start after you install another delivery shows `seki-default`
+during the rebuild, because the old profile runs the old seki library. This
+holds for store-path deliveries, where another delivery has other resource
+paths. A profile that a seki without this record built also starts
+`seki-default` once.
+
+Start programs from the startup hook with `spawnOnce`. If you edit the
+configuration while logged out, the old profile runs its hook, and the new
+image runs its hook after the handover. A `spawnOnce` command runs once. A
+plain `spawn` runs in both.
+
+Before the launcher execs a profile, it puts the candidate on trial: it
+writes `first` and the candidate's path to `unproven` in the state
+directory. A handover does the same for its new candidate. While the file
+names the profile's candidate, `seki` starts `seki-default`, so the launcher
+never starts a candidate twice on its own.
+
+The image on trial changes the file itself.
+
+- It removes the file once its startup build has ended and a manage sequence
+  follows the one that ran its startup hook. The image has then proved
+  healthy.
+- It removes the file when river ends the session, for example when you log
+  out. A clean end is not a failure.
+- It removes the file when river refuses it, as for a second `seki` in a
+  running session.
+- It writes `crashed` when its session fails: a startup hook or a layout
+  that throws, or a protocol error from river.
+
+An image that is killed, that loses power, or that the loader cannot start
+runs no code, so the file still says `first`. That does not say whether the
+image is at fault. The next `seki` starts `seki-default`, whose startup build
+decides.
+
+- A build that yields other bytes hands over to them, as always.
+- A build that yields the bytes of a candidate whose first trial left no
+  record hands over to them once more, and writes `second`. A profile that
+  was only interrupted is back within that one start.
+- A build that yields the bytes of a candidate that crashed, or whose second
+  trial also left no record, is not started. Its build state is `failed`,
+  and the error names the candidate. `seki-default` keeps managing. Change
+  the configuration, or use the restart binding to try the same image again.
+
+So a profile that throws at start runs once. A profile that dies without a
+record, such as one that a foreign library aborts, runs twice. In both
+cases `seki-default` builds the present configuration to its end, so a fixed
+configuration takes over at the next start. A startup hook that ends the
+session leaves no file, because that end is clean. Remove the `profile` link
+to start `seki-default` instead of such a profile.
+
+Each validated candidate has a `candidate*.resources` file that records the
+delivery it was built from. `seki --check` and a session's build take an
+exclusive lock on `build.lock` in the state directory, so they never run
+Cabal at the same time. The one that waits prints a notice.
 
 Run `seki --recompile`, `sekictl recompile`, or the configured restart action
 (default Mod-q) to rebuild a running installed session. The CLI sends a request
 to the existing IPC owner in its runtime directory. Focus and layout actions
 continue while the session builds and checks a private candidate. One build runs
 at a time, with one queued rebuild. Further requests coalesce and invalidate the
-earlier result. Failed builds leave the process and profile in place.
+earlier result, including the result of a startup build that still runs.
+A requested build restarts onto any checked image, also onto the same bytes.
+Failed builds leave the process and profile in place.
 
 IPC snapshots report build state, error, and log path. The command receipt means
 the owner applied the request, not that compilation or activation finished. A
@@ -105,9 +184,11 @@ The `Installed configuration smoke` CI job builds `.#config-delivery` and runs
 `ci/check-product.py` against it without a development shell. The script uses the
 installed `seki` from a fresh home and state directory. It builds the shipped
 skeleton offline, repeats the unchanged build, checks a valid and an invalid
-configuration, checks the compiler, state, and restore failure paths, and starts
-both the default runtime fallback and the built configuration against a sentinel
-Wayland socket. It also checks that the wrapper exports the path it was
+configuration, and checks the compiler, state, and restore failure paths. It
+then starts `seki` against a sentinel Wayland socket and reads which image
+connects: the default runtime with no profile, with a profile that has no
+record, with a profile from another delivery, and with a profile whose
+candidate is on trial, and the profile itself when its candidate is current. It also checks that the wrapper exports the path it was
 started through, and that `seki --resources` through that path names the
 archive of the delivery.
 

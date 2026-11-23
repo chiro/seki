@@ -24,11 +24,27 @@ module Seki.Run.ConfigBuild (
   Resolution (..),
   resolve,
   installedResources,
+  StartImage (..),
+  ProfileGap (..),
+  describeGap,
+  startImage,
+  startupArguments,
+  Unproven (..),
+  Trial (..),
+  describeUnproven,
+  markUnproven,
+  readUnproven,
+  clearUnproven,
+  recordCrash,
+  withTrial,
+  sameBytes,
+  discardCandidate,
 ) where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (IOException, bracket, catch, finally, onException, try)
 import Control.Monad (unless, when)
+import Data.Bits ((.|.))
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as B8
 import Data.Char (isDigit)
@@ -37,7 +53,11 @@ import Data.Maybe (maybeToList)
 import Data.Text qualified as Text
 import Data.Text.Encoding (encodeUtf8)
 import Data.Text.IO qualified as TextIO
+import Foreign.C.Error (eINTR, eWOULDBLOCK, getErrno, throwErrno)
+import Foreign.C.Types (CInt (..))
 import GHC.Clock (getMonotonicTimeNSec)
+import GHC.Foreign qualified as Foreign
+import GHC.IO.Encoding (getFileSystemEncoding)
 import GHC.IO.Handle (hDuplicate)
 import System.Directory hiding (isSymbolicLink)
 import System.Environment (getEnvironment, lookupEnv)
@@ -46,7 +66,7 @@ import System.FilePath (isAbsolute, takeDirectory, takeFileName, (</>))
 import System.IO
 import System.IO.Error (isAlreadyExistsError, isDoesNotExistError)
 import System.Posix.Files
-import System.Posix.IO (OpenMode (WriteOnly), closeFd, creat, defaultFileFlags, exclusive, fdToHandle, openFd)
+import System.Posix.IO (OpenMode (WriteOnly), cloexec, closeFd, creat, defaultFileFlags, exclusive, fdToHandle, openFd)
 import System.Posix.Signals (sigKILL, signalProcessGroup)
 import System.Process
 
@@ -196,11 +216,20 @@ replace needle value = go
   go text | take (length needle) text == needle = value <> go (drop (length needle) text)
   go (c : rest) = c : go rest
 
+{- | Create missing project files, point the project at these resources,
+build it, and validate a private copy of the result. The copy gets a record
+of the resources, which 'startImage' reads on a later start.
+-}
 build :: Resources -> FilePath -> FilePath -> IO ValidatedTarget
 build resources config state = buildWithLog (Resolution resources Nothing) config state (const (pure ()))
 
 buildWithLog :: Resolution -> FilePath -> FilePath -> (FilePath -> IO ()) -> IO ValidatedTarget
-buildWithLog (Resolution resources warning) config state reportLog = bracket (openBinaryTempFile state "build.log") (hClose . snd) $ \(logPath, logHandle) -> do
+buildWithLog resolution config state reportLog =
+  withBuildLock state (hPutStrLn stderr "seki: waiting for another seki build of this configuration") $
+    generate (resolvedResources resolution) config >> buildLocked resolution config state reportLog
+
+buildLocked :: Resolution -> FilePath -> FilePath -> (FilePath -> IO ()) -> IO ValidatedTarget
+buildLocked (Resolution resources warning) config state reportLog = bracket (openBinaryTempFile state "build.log") (hClose . snd) $ \(logPath, logHandle) -> do
   setFileMode logPath 0o600
   reportLog logPath
   hPutStrLn stderr ("seki: build log: " <> logPath)
@@ -223,7 +252,7 @@ buildWithLog (Resolution resources warning) config state reportLog = bracket (op
         runLogged binLog handle (Just (30, 65536)) ((command ("list-bin" : flags)){std_err = UseHandle logHandle})
         hFlush handle
         hSeek handle AbsoluteSeek 0
-        B8.unpack . B8.strip <$> BS.hGet handle 65536
+        BS.hGet handle 65536 >>= pathText . B8.strip
       unless (isAbsolute resolved && '\n' `notElem` resolved) (ioError (userError ("invalid Cabal list-bin result: " <> binLog)))
       (candidate, handle) <- openBinaryTempFile state "candidate"
       hClose handle
@@ -231,6 +260,7 @@ buildWithLog (Resolution resources warning) config state reportLog = bracket (op
       setFileMode candidate 0o500
       runLogged logPath logHandle (Just (10, 1048576)) (proc candidate ["--check"])
       hFlush logHandle
+      pathBytes (renderResources resources) >>= writeAtomic (recordPath candidate)
       pure (ValidatedTarget candidate logPath (state </> "profile") resources)
     )
     `catch` \(e :: IOException) -> do
@@ -287,6 +317,215 @@ runLogged path handle bound command = do
             Nothing -> ioError (userError "subprocess did not exit after SIGKILL")
             Just _ -> pure ()
     reap 100
+
+-- | The image a fresh start execs. Building is never part of the answer.
+data StartImage
+  = -- | The profile link, and the candidate it names.
+    ProfileImage FilePath FilePath
+  | DefaultImage ProfileGap
+  deriving (Eq, Show)
+
+-- | Why a fresh start does not exec the profile.
+data ProfileGap
+  = NoProfile
+  | -- | The candidate has no readable record of the resources it was built from.
+    NoBuildRecord FilePath
+  | -- | The candidate was built from this archive, not the installed one.
+    OtherDelivery FilePath
+  | -- | The candidate was started and has not proved healthy. The launcher never starts it again.
+    HeldBack Unproven
+  deriving (Eq, Show)
+
+describeGap :: ProfileGap -> String
+describeGap = \case
+  NoProfile -> "no profile yet"
+  NoBuildRecord candidate -> candidate <> " has no record of the delivery it was built from"
+  OtherDelivery built -> "the profile was built from " <> built <> ", not from the installed delivery"
+  HeldBack unproven -> describeUnproven unproven
+
+-- | What the launcher passes to the image it starts. The image then owes one build.
+startupArguments :: [String]
+startupArguments = ["--startup-build"]
+
+{- | Choose what a fresh start execs. It reads the profile link, the record
+next to its candidate, and the unproven marker. It never builds or writes.
+-}
+startImage :: Resources -> FilePath -> IO StartImage
+startImage installed state = do
+  let profile = state </> "profile"
+  link <- try @IOException (readSymbolicLink profile)
+  case link of
+    Left _ -> pure (DefaultImage NoProfile)
+    Right target -> do
+      let candidate = state </> target
+      record <- try @IOException (BS.readFile (recordPath candidate) >>= pathText)
+      unproven <- readUnproven state
+      pure $ case parseResources <$> record of
+        Right (Right built)
+          | built /= installed -> DefaultImage (OtherDelivery (archive built))
+          | Just held <- unproven, unprovenCandidate held == candidate -> DefaultImage (HeldBack held)
+          | otherwise -> ProfileImage profile candidate
+        _ -> DefaultImage (NoBuildRecord candidate)
+
+recordPath :: FilePath -> FilePath
+recordPath candidate = candidate <> ".resources"
+
+unprovenPath :: FilePath -> FilePath
+unprovenPath state = state </> "unproven"
+
+-- | The candidate that was exec'd and has not proved healthy, and what is known of its trial.
+data Unproven = Unproven {unprovenCandidate :: FilePath, unprovenTrial :: Trial}
+  deriving (Eq, Show)
+
+-- | What is known of a candidate's trial.
+data Trial
+  = -- | Exec'd once. It runs now, or it ended and left no record of why.
+    FirstTrial
+  | -- | Exec'd again, after a first trial of the same bytes ended with no record.
+    SecondTrial
+  | -- | Its own image recorded that its session failed.
+    Crashed
+  deriving (Eq, Show, Enum, Bounded)
+
+-- | What is known of a candidate that is held back, for a diagnostic.
+describeUnproven :: Unproven -> String
+describeUnproven (Unproven candidate trial) =
+  candidate <> case trial of
+    FirstTrial -> " ended its last start before it proved healthy, and left no record of why"
+    SecondTrial -> " ended two starts before it proved healthy, and left no record of why"
+    Crashed -> " crashed before it proved healthy"
+
+trialWord :: Trial -> BS.ByteString
+trialWord = \case
+  FirstTrial -> B8.pack "first"
+  SecondTrial -> B8.pack "second"
+  Crashed -> B8.pack "crashed"
+
+{- | Name the candidate that is about to be exec'd as on trial. Whoever execs
+a profile writes this first, so a candidate that dies leaves its name behind.
+The file holds the trial's word, a line feed, and the candidate's path.
+-}
+markUnproven :: FilePath -> Unproven -> IO ()
+markUnproven state (Unproven candidate trial) = do
+  path <- pathBytes candidate
+  writeAtomic (unprovenPath state) (trialWord trial <> B8.singleton '\n' <> path)
+
+-- | The candidate on trial. A missing file, or one that does not hold a trial's word and a path, names none.
+readUnproven :: FilePath -> IO (Maybe Unproven)
+readUnproven state =
+  try @IOException (BS.readFile (unprovenPath state)) >>= \case
+    Right content
+      | (word, rest) <- B8.break (== '\n') content
+      , Just trial <- List.find ((== word) . trialWord) [minBound ..]
+      , Just (_, path) <- B8.uncons rest
+      , not (BS.null path) ->
+          Just . (`Unproven` trial) <$> pathText path
+    _ -> pure Nothing
+
+-- | Replace a file in one step, so a reader sees its old bytes or its new ones.
+writeAtomic :: FilePath -> BS.ByteString -> IO ()
+writeAtomic path bytes = do
+  (temporary, handle) <- openBinaryTempFile (takeDirectory path) (takeFileName path <> "-next")
+  (BS.hPut handle bytes >> hClose handle >> renameFile temporary path) `onException` (hClose handle >> removeFile temporary)
+
+{- | The bytes the operating system knows a path by. The marker and the build
+record hold their paths as these bytes, so a path that is not ASCII reads
+back as the 'FilePath' it was written from.
+-}
+pathBytes :: String -> IO BS.ByteString
+pathBytes text = getFileSystemEncoding >>= \encoding -> Foreign.withCStringLen encoding text BS.packCStringLen
+
+pathText :: BS.ByteString -> IO String
+pathText bytes = getFileSystemEncoding >>= \encoding -> BS.useAsCStringLen bytes (Foreign.peekCStringLen encoding)
+
+{- | The marker, when it names this image. The two are compared by device
+and inode, because the running executable's path is resolved and the
+marker's is not.
+-}
+ownTrial :: FilePath -> FilePath -> IO (Maybe Unproven)
+ownTrial state image =
+  readUnproven state >>= \case
+    Nothing -> pure Nothing
+    Just unproven -> do
+      same <- try @IOException ((,) <$> getFileStatus (unprovenCandidate unproven) <*> getFileStatus image)
+      pure $ case same of
+        Right (a, b) | (deviceID a, fileID a) == (deviceID b, fileID b) -> Just unproven
+        _ -> Nothing
+
+{- | This image leaves its trial: it proved healthy, it never managed, or its
+session ended cleanly. A marker that names another image stays.
+-}
+clearUnproven :: FilePath -> FilePath -> IO ()
+clearUnproven state image = ownTrial state image >>= mapM_ (\_ -> removeFile (unprovenPath state) `catch` \(_ :: IOException) -> pure ())
+
+{- | This image says that its session failed. A marker that names it then
+holds 'Crashed', so neither the launcher nor a startup build runs these
+bytes again.
+-}
+recordCrash :: FilePath -> FilePath -> IO ()
+recordCrash state image = ownTrial state image >>= mapM_ (\unproven -> markUnproven state unproven{unprovenTrial = Crashed})
+
+{- | Run a handover's exec with its candidate on trial. A candidate with the
+bytes of the one that the marker already names is on its second trial, so
+the same bytes get at most one trial that nobody asked for after their first.
+The exec returns only when it failed. The profile link is back on the earlier
+candidate by then, so that candidate's trial comes back too.
+-}
+withTrial :: (String -> IO ()) -> ValidatedTarget -> IO a -> IO a
+withTrial report target exec = do
+  let state = takeDirectory (validatedProfile target)
+      candidate = validatedPath target
+      attempt action = try @IOException action >>= either (\e -> report ("cannot record the trial of " <> candidate <> " (" <> show e <> ")")) pure
+  earlier <- readUnproven state
+  again <- maybe (pure False) (\held -> sameBytes (unprovenCandidate held) candidate) earlier
+  attempt (markUnproven state (Unproven candidate (if again then SecondTrial else FirstTrial)))
+  result <- exec
+  attempt (maybe (clearUnproven state candidate) (markUnproven state) earlier)
+  pure result
+
+-- | Whether two files hold the same bytes. A file that cannot be read equals nothing.
+sameBytes :: FilePath -> FilePath -> IO Bool
+sameBytes first second =
+  either (\(_ :: IOException) -> False) id <$> try (withBinaryFile first ReadMode (withBinaryFile second ReadMode . compareHandles))
+ where
+  compareHandles a b = do
+    sizes <- (==) <$> hFileSize a <*> hFileSize b
+    if sizes then chunks a b else pure False
+  chunks a b = do
+    left <- BS.hGet a 65536
+    right <- BS.hGet b 65536
+    if left /= right then pure False else if BS.null left then pure True else chunks a b
+
+-- | Remove a candidate that nothing will run, with its record.
+discardCandidate :: ValidatedTarget -> IO ()
+discardCandidate target = mapM_ (\path -> removeFile path `catch` \(_ :: IOException) -> pure ()) [validatedPath target, recordPath (validatedPath target)]
+
+{- | One build at a time per state directory. The launcher's check and a
+session's build share the project directory and the private store. The lock
+is @flock@ on a raw descriptor: it excludes a second build in this process
+too, and GHC refuses a second write handle on one file. It is polled, because
+a blocking call would stop every Haskell thread of the non-threaded default
+runtime.
+-}
+withBuildLock :: FilePath -> IO () -> IO a -> IO a
+withBuildLock state waiting action =
+  bracket (openFd (state </> "build.lock") WriteOnly defaultFileFlags{creat = Just 0o600, cloexec = True}) closeFd $ \fd -> do
+    free <- tryLock fd
+    unless free (waiting >> poll fd)
+    action
+ where
+  poll fd = threadDelay 50000 >> tryLock fd >>= \free -> unless free (poll fd)
+  tryLock fd = do
+    result <- c_flock (fromIntegral fd) (lockExclusive .|. lockNonBlocking)
+    if result == 0
+      then pure True
+      else do
+        errno <- getErrno
+        if errno == eWOULDBLOCK || errno == eINTR then pure False else throwErrno "flock"
+  lockExclusive = 2
+  lockNonBlocking = 4
+
+foreign import ccall unsafe "flock" c_flock :: CInt -> CInt -> IO CInt
 
 atomicLink :: FilePath -> FilePath -> IO ()
 atomicLink target profile = do

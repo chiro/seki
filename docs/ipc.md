@@ -225,8 +225,18 @@ message while the session cannot read the installed delivery, or while that
 delivery ships other build resources than the session runs. A session that
 the installed wrapper started asks the launcher for those resources when the
 session starts and before each build, and `warning` reports the latest answer.
-States include idle, building, failed and validated. A validated image
-has passed its own `--check`; this does not acknowledge activation. A fresh
+States include idle, building, failed, validated and unchanged. A validated
+image has passed its own `--check`; this does not acknowledge activation.
+A session that the launcher started builds once without a request, after its
+first manage sequence. That startup build is generation 1 and reports like
+any other build. `unchanged` means that it reproduced the running image.
+Nothing restarts, and the copy is deleted. A request always restarts, also
+onto the same bytes. The state directory's `unproven` file names the
+candidate on trial. A startup build that reproduces a candidate that
+crashed, or that twice ended with no record, ends `failed`, and the error
+names that candidate. A startup build that reproduces a candidate whose
+first trial left no record hands over to it once. A validated target that the restart check refuses also
+becomes `failed`, with `restart refused:` and the reason. A fresh
 managed session and its new IPC session identity establish successful runtime
 initialization. Trusted user code and hooks are not sandboxed, and there is no
 supervisor promise for arbitrary user initialization crashes.

@@ -6,6 +6,7 @@ run sessions until one ends without a restart.
 module Seki.Run.Config (
   ConfigRunError (..),
   SekiArgs (..),
+  Entry (..),
   parseSekiArgs,
   policyConfigOf,
   prepareConfig,
@@ -14,8 +15,8 @@ module Seki.Run.Config (
 ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, finally, try)
-import Control.Monad (void)
+import Control.Exception (AsyncException (UserInterrupt), IOException, SomeException, finally, fromException, handle, throwIO, try)
+import Control.Monad (unless, void, when)
 import System.Directory (removeFile)
 
 import Seki.Internal.Config (BorderConfig (..), Button (..), Config (..), KeyBinding (..), Keysym (..), Mods (..), PointerAction (..), PointerBinding (..))
@@ -24,15 +25,17 @@ import Seki.Internal.Core.PointerOp (HEdge (..), OpKind (..), ResizeEdges (..), 
 import Seki.Internal.Core.Restore (RestoreState)
 import Seki.Internal.Core.Scene (SceneStyle (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
-import Seki.Run.ConfigBuild (installedContext, validatedProfile)
+import Seki.Run.BuildSession (StartupBuild (..))
+import Seki.Run.ConfigBuild (BuildContext (..), clearUnproven, installedContext, recordCrash, startupArguments, validatedProfile, withTrial)
 import Seki.Run.IPC (withIPC)
 import Seki.Run.Pointer (RiverPointerBinding (..))
-import Seki.Run.Policy (Policy, PolicyConfig (..), PolicyError, closePolicy, configureBuild, configureBuildFailure, launchDetached, newPolicy, policyRuntimeHandlers, policyValidatedTarget, readRestoreState, recordPolicyRecoveryFailure)
+import Seki.Run.Policy (Policy, PolicyConfig (..), PolicyError, closePolicy, configureBuildSession, launchDetached, newPolicy, policyRuntimeHandlers, policyValidatedTarget, readRestoreState, recordPolicyRecoveryFailure)
 import Seki.Run.Restart (Launch (..), RestartRefusal (..), checkRestartTarget, describeLoadError, discoverLaunch, execRestart, execValidatedRestart, loadRestoreFile, reapInheritedChildren, writeRestoreFile)
 import Seki.Run.Runtime (RiverExit (..), RiverRuntimeError (..), closeRiverSession, openRiverSessionAt, runRiverSession)
 import Seki.Run.Startup (WaylandStartupError (..))
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable (defaultObjectLimit)
+import System.Environment (getExecutablePath)
 import System.IO (hPutStrLn, stderr)
 
 data ConfigRunError
@@ -42,16 +45,24 @@ data ConfigRunError
     ConfigUsageError String
   deriving (Eq, Show)
 
-data SekiArgs = Run | Restore FilePath | Check
+data SekiArgs = Run StartupBuild | Restore FilePath | Check
   deriving (Eq, Show)
 
--- | Exactly one of fresh startup, restore, or candidate validation.
+{- | How this process begins its first session. A resumed process never
+builds at startup, so the two facts cannot be combined.
+-}
+data Entry = Fresh StartupBuild | Resumed (RestoreState String)
+
+{- | Exactly one of fresh startup, restore, or candidate validation. The
+launcher starts an image with 'startupArguments', and that start owes one build.
+-}
 parseSekiArgs :: [String] -> Either String SekiArgs
 parseSekiArgs = \case
-  [] -> Right Run
-  ["--restore", file] | file /= "--check" -> Right (Restore file)
+  [] -> Right (Run NoStartupBuild)
+  args | args == startupArguments -> Right (Run StartupBuild)
+  ["--restore", file] | take 2 file /= "--" -> Right (Restore file)
   ["--check"] -> Right Check
-  args -> Left ("usage: seki [--restore FILE | --check], got " <> show args)
+  args -> Left ("usage: seki [--startup-build | --restore FILE | --check], got " <> show args)
 
 prepareConfig :: Config l -> IO (Either (PolicyError String) (Policy String l))
 prepareConfig = newPolicy . policyConfigOf
@@ -101,13 +112,13 @@ runConfig args config = case parseSekiArgs args of
     reapInheritedChildren
     launch <- discoverLaunch
     let base = (policyConfigOf config){policyCheckRestart = checkRestartTarget launch}
-    restore <- case parsed of
+    entry <- case parsed of
       Restore file ->
         loadRestoreFile file >>= \case
-          Left e -> policyLog base ("restore: " <> describeLoadError e) >> pure Nothing
-          Right saved -> pure (Just saved)
-      _ -> pure Nothing
-    runSessions launch (const base) restore
+          Left e -> policyLog base ("restore: " <> describeLoadError e) >> pure (Fresh NoStartupBuild)
+          Right saved -> pure (Resumed saved)
+      Run startup -> pure (Fresh startup)
+    runSessions launch (const base) entry
 
 {- | Run sessions until one ends without a restart. Only a 'RestoreState'
 crosses passes: each pass builds a fresh policy and session, so no object
@@ -116,49 +127,68 @@ saved after @finished@ and execed; if the exec fails, the next pass restores
 the same state in this process on the socket path. River answers a manager
 that binds while another still holds window management with
 @unavailable@, which a crash restart can race, so that is retried briefly.
+
+An image that the launcher or a handover put on trial says here how its
+trial ended. A clean end and a refusal by river take it off trial. An error
+or an exception records a crash. The interrupt signal records nothing, as
+does any end that runs no code.
 -}
-runSessions :: (LayoutClass l) => Launch -> (Maybe (RestoreState String) -> PolicyConfig String l) -> Maybe (RestoreState String) -> IO (Either ConfigRunError ())
-runSessions launch configFor = pass (launchFirstTarget launch) unavailableRetries Nothing
+runSessions :: (LayoutClass l) => Launch -> (Maybe (RestoreState String) -> PolicyConfig String l) -> Entry -> IO (Either ConfigRunError ())
+runSessions launch configFor entry =
+  handle (\(e :: SomeException) -> unless (fromException e == Just UserInterrupt) crashed >> throwIO e) $ do
+    result <- pass (launchFirstTarget launch) unavailableRetries Nothing entry
+    either (const crashed) pure result
+    pure result
  where
   logLine message = void (try @IOException (policyLog (configFor Nothing) message))
-  pass target retries previousFailure restore = case target of
-    Left e -> pure (Left (ConfigRuntimeError (RiverRuntimeStartupError (WaylandConnectionDiscoveryError e))))
+  pass target retries previousFailure current = case target of
+    Left e -> neverManaged (RiverRuntimeStartupError (WaylandConnectionDiscoveryError e))
     Right connection ->
       newPolicy (configFor restore){policyRestore = restore} >>= \case
         Left e -> pure (Left (ConfigPolicyError e))
         Right policy -> do
           context <- try @IOException installedContext
           case context of
-            Right (Just buildContext) -> configureBuild policy buildContext
-            Left err -> configureBuildFailure policy ("build context unavailable: " <> show err)
-            _ -> pure ()
+            Right (Just buildContext) -> configureBuildSession policy owed getExecutablePath (Right buildContext)
+            Left err -> configureBuildSession policy owed getExecutablePath (Left ("build context unavailable: " <> show err))
+            Right Nothing -> when (owed == StartupBuild) (logLine "startup build skipped: no installed build resources")
           mapM_ (recordPolicyRecoveryFailure policy) previousFailure
           openRiverSessionAt connection defaultObjectLimit (policyRuntimeHandlers policy) >>= \case
-            Left e -> closePolicy policy >> pure (Left (ConfigRuntimeError e))
+            Left e -> closePolicy policy >> neverManaged e
             Right session ->
               (withIPC logLine policy (runRiverSession session) `finally` (closeRiverSession session >> closePolicy policy)) >>= \case
                 Left RiverRuntimeWindowManagerUnavailable
                   | retries > 0 -> do
                       logLine "window management unavailable, retrying"
                       threadDelay 100000
-                      pass (launchReconnectTarget launch) (retries - 1) previousFailure restore
+                      pass (launchReconnectTarget launch) (retries - 1) previousFailure current
+                Left RiverRuntimeWindowManagerUnavailable -> neverManaged RiverRuntimeWindowManagerUnavailable
                 Left e -> pure (Left (ConfigRuntimeError e))
-                Right RiverEnded -> pure (Right ())
+                Right RiverEnded -> leaveTrial >> pure (Right ())
                 Right RiverStopped -> do
                   saved <- readRestoreState policy
                   candidate <- policyValidatedTarget policy
                   failure <- handOver candidate saved
-                  pass (launchReconnectTarget launch) unavailableRetries failure (Just saved)
+                  pass (launchReconnectTarget launch) unavailableRetries failure (Resumed saved)
+   where
+    (restore, owed) = case current of
+      Fresh startup -> (Nothing, startup)
+      Resumed saved -> (Just saved, NoStartupBuild)
   handOver candidate saved = case launchStateDir launch of
     Left refusal -> reportFailure ("restart: no state directory (" <> show refusal <> "); restoring in this process")
     Right dir ->
       writeRestoreFile dir saved >>= \case
         Left e -> reportFailure ("restart: cannot write the state (" <> show e <> "); restoring in this process")
         Right file -> do
-          failure <- maybe (execRestart launch file) (\target -> execValidatedRestart launch target file) candidate
+          failure <- maybe (execRestart launch file) (\target -> withTrial (logLine . ("restart: " <>)) target (execValidatedRestart launch target file)) candidate
           _ <- try @IOException (removeFile file)
           reportFailure ("restart: exec of " <> maybe (either show id (launchTarget launch)) validatedProfile candidate <> " failed (" <> show failure <> "); restoring in this process")
   reportFailure message = logLine message >> pure (Just message)
+  -- River refused this image or could not be reached. The image did not die of its configuration, so it leaves its trial.
+  neverManaged e = leaveTrial >> pure (Left (ConfigRuntimeError e))
+  leaveTrial = onOwnTrial clearUnproven
+  crashed = onOwnTrial recordCrash
+  onOwnTrial record = void (try @IOException (installedContext >>= mapM_ (\context -> getExecutablePath >>= record (buildStateDirectory context))))
 
 unavailableRetries :: Int
 unavailableRetries = 10

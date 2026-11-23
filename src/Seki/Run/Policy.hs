@@ -28,7 +28,7 @@ module Seki.Run.Policy (
   ExternalInput (..),
   policyIngress,
   configureBuild,
-  configureBuildFailure,
+  configureBuildSession,
   recordPolicyRecoveryFailure,
   policyBuildStatus,
   policyValidatedTarget,
@@ -57,7 +57,7 @@ import Data.Foldable (find)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (sort)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (isJust, mapMaybe)
+import Data.Maybe (isJust, isNothing, mapMaybe)
 import Data.Word (Word32)
 import Seki.Internal.Core.Action (Action, Intent (..))
 import Seki.Internal.Core.Event (CoreEvent (..), drainCoreWithScratchpads)
@@ -87,6 +87,7 @@ import Seki.Run.Runtime (ManageOutcome (..), PointerBindingEvent (..), RenderOut
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import Seki.Wire.Connection.ObjectTable (Object, objectId)
 import Seki.Wire.Types (mkObjectId, objectIdValue)
+import System.Environment (getExecutablePath)
 import System.Exit (ExitCode)
 import System.IO (hPutStrLn, stderr)
 import System.Process (createProcess, getProcessExitCode, proc)
@@ -148,11 +149,15 @@ policyTagsOf = policyTags . policyConfig
 observePolicy :: Policy i l -> (Integer -> CoreState i l -> RiverRuntimeSnapshot -> IO ()) -> IO ()
 observePolicy policy = writeIORef (policyObserver policy)
 
+-- | A session that builds on request only, in the image this process runs.
 configureBuild :: Policy i l -> BuildContext -> IO ()
-configureBuild policy context = newBuildSession (signalExternal (policyIngress policy)) context >>= writeIORef (policyBuild policy) . Just
+configureBuild policy = configureBuildSession policy NoStartupBuild getExecutablePath . Right
 
-configureBuildFailure :: Policy i l -> String -> IO ()
-configureBuildFailure policy message = newUnavailableBuildSession (signalExternal (policyIngress policy)) message >>= writeIORef (policyBuild policy) . Just
+{- | Attach the build session. It takes what the start owes, the executable
+this session runs, and the build context or the reason there is none.
+-}
+configureBuildSession :: Policy i l -> StartupBuild -> IO FilePath -> Either String BuildContext -> IO ()
+configureBuildSession policy startup image context = newBuildSession (signalExternal (policyIngress policy)) startup image context >>= writeIORef (policyBuild policy) . Just
 
 recordPolicyRecoveryFailure :: Policy i l -> String -> IO ()
 recordPolicyRecoveryFailure policy message = readIORef (policyBuild policy) >>= mapM_ (\session -> recordRecoveryFailure session message)
@@ -314,8 +319,9 @@ prepareManagePlan policy snapshot = do
   outcome <- case stepFollowUp step of
     NoFollowUp -> pure KeepManaging
     EndRiverSession -> pure EndSession
-    CheckRecordedTarget -> checkRestart RecordedTarget
-    CheckReadyTarget -> policyValidatedTarget policy >>= maybe (pure KeepManaging) (checkRestart . CheckedTarget)
+    CheckRecordedTarget -> checkRestart (const (pure ())) RecordedTarget
+    CheckReadyTarget -> policyValidatedTarget policy >>= maybe (pure KeepManaging) (checkRestart (\refusal -> mapM_ (`refuseTarget` refusal) build) . CheckedTarget)
+  mapM_ (`ownerManaged` isNothing (statePendingStartup next)) build
   pure (outcome <$ stepPlan step)
  where
   config = policyConfig policy
@@ -323,9 +329,9 @@ prepareManagePlan policy snapshot = do
     LogLine line -> policyLog config line
     RequestBuild -> mapM_ requestBuild build
     LaunchCommand command -> policyLaunch config command
-  checkRestart target =
+  checkRestart refused target =
     policyCheckRestart config target >>= \case
-      Left refusal -> KeepManaging <$ policyLog config ("restart refused: " <> describeRefusal refusal)
+      Left refusal -> KeepManaging <$ (policyLog config ("restart refused: " <> describeRefusal refusal) >> refused (describeRefusal refusal))
       Right () -> bool KeepManaging StopManaging <$> seal target
   seal = \case
     CheckedTarget _ -> sealExternal (policyIngress policy)

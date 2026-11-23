@@ -73,7 +73,10 @@ def prove(command, root, env, archive, provisioned=False):
         assert "Up to date" in "".join(p.read_text() for p in state.glob("build*.log"))
         assert fingerprint(binary) == before
         assert all((project / name).read_bytes() == content for name, content in sources.items())
-        assert all(p.read_bytes() == binary.read_bytes() for p in state.glob("candidate*"))
+        candidates = [p for p in state.glob("candidate*") if p.suffix != ".resources"]
+        assert candidates and all(p.read_bytes() == binary.read_bytes() for p in candidates)
+        # Each candidate records the delivery it was built from, which a later start reads.
+        assert all(f"SEKI_CONFIG_ARCHIVE={archive}\n" in p.with_name(p.name + ".resources").read_text() for p in candidates)
         untouched()
         # A custom public candidate proves that the user's value is validated.
         main = project / "Main.hs"
@@ -137,32 +140,52 @@ def prove(command, root, env, archive, provisioned=False):
         blocked.write_text("file")
         run(["--check"], 1, {"XDG_STATE_HOME": str(blocked)})
         untouched()
-        # Real default boundary: failed initial build attempts the shipped runtime.
-        # The sentinel observes connection only; this is not a full default WM session.
-        with subprocess.Popen([str(command)], env=dict(env, SEKI_CONFIG_ENV="/missing/compiler"),
-                              cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
-            sentinel.settimeout(10)
-            connection, _ = sentinel.accept()
-            connection.close()
-            out, err = process.communicate(timeout=10)
-            print("DEFAULT-ATTEMPT", process.returncode, out.decode(), err.decode(), flush=True)
-            assert b"attempting shipped default WM" in err
-        # Valid startup copies before promotion and preserves profile argv0.
-        main.write_text('module Main (main) where\nimport Seki\nmain :: IO ()\nmain = seki def\n')
-        with subprocess.Popen([str(command)], env=env, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
-            try:
-                sentinel.settimeout(240)
-                connection, _ = sentinel.accept()
-                cmdline = Path(f"/proc/{process.pid}/cmdline").read_bytes().split(b"\0")
-                assert cmdline[0] == os.fsencode(profile) and cmdline[1] == b""
-                selected = profile.resolve()
-                assert selected.parent == state and selected.name.startswith("candidate")
-                assert selected.read_bytes() == binary.read_bytes()
-                assert not selected.stat().st_mode & 0o222
+        # A start never builds. The sentinel observes the first connection only;
+        # this is not a full session.
+        def start(expected, overrides=None, before_close=None):
+            with subprocess.Popen([str(command)], env=dict(env, **(overrides or {})), cwd=root,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+                try:
+                    sentinel.settimeout(10)
+                    connection, _ = sentinel.accept()
+                    cmdline = Path(f"/proc/{process.pid}/cmdline").read_bytes().split(b"\0")
+                    if before_close:
+                        before_close(cmdline)
+                finally:
+                    process.kill()
+                    out, err = process.communicate(timeout=10)
                 connection.close()
-            finally:
-                process.kill()
-                process.communicate(timeout=10)
+            print("START", cmdline, out.decode(), err.decode(), flush=True)
+            assert expected.encode() in err, err
+            return cmdline
+
+        def default_runtime(cmdline):
+            assert cmdline[0].endswith(b"/bin/seki-default") and cmdline[1:3] == [b"--startup-build", b""], cmdline
+
+        # The invalid Main.hs and the missing compiler would fail a build, and no start reads them.
+        default_runtime(start("has no record of the delivery it was built from", {"SEKI_CONFIG_ENV": "/missing/compiler"}))
+        profile.unlink()
+        default_runtime(start("no profile yet"))
+        default_runtime(start("attempting shipped default WM", {"XDG_STATE_HOME": str(blocked)}))
+        # A profile that names a candidate of this delivery execs directly and keeps the profile as argv0.
+        main.write_text('module Main (main) where\nimport Seki\nmain :: IO ()\nmain = seki def\n')
+        checked = Path(run(["--check"]).stderr.split("seki: candidate validated: ")[1].splitlines()[0])
+        assert checked.parent == state and checked.name.startswith("candidate")
+        assert checked.read_bytes() == binary.read_bytes() and not checked.stat().st_mode & 0o222
+        profile.symlink_to(checked)
+        unproven = state / "unproven"
+
+        def selected(cmdline):
+            assert cmdline[0] == os.fsencode(profile) and cmdline[1:3] == [b"--startup-build", b""], cmdline
+            assert unproven.read_text() == f"first\n{checked}"
+
+        start("", before_close=selected)
+        # The kill above left the candidate on trial with no record, so the launcher does not exec it again.
+        default_runtime(start("ended its last start before it proved healthy, and left no record of why"))
+        unproven.unlink()
+        record = checked.with_name(checked.name + ".resources")
+        record.write_text(record.read_text().replace(str(archive), "/nix/store/0-old-seki-config-source/seki-0.0.1.tar.gz"))
+        default_runtime(start("not from the installed delivery"))
 
 
 def prove_client(client):

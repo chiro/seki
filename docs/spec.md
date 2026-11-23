@@ -386,19 +386,25 @@ The generated executable uses the threaded RTS without a default `-N` setting.
 The installed launcher, shipped default runtime, and compiled user image are
 separate executables.
 
-At startup, the launcher builds the project, copies Cabal's resolved executable
-to a unique candidate, and runs that exact copy with `--check`. Only success
-selects the candidate through the stable user-state `profile` symlink. Initial
-build or validation failure attempts the shipped default runtime. `--restore`
-execs the selected profile directly, without rebuilding or invoking the launcher
-again.
+At startup, the launcher does not build. It execs the selected profile when
+that profile was built from the installed delivery and is not on trial, and
+the shipped default runtime otherwise. A profile is on trial from its exec
+until it proves healthy or its session ends cleanly. The started image
+manages windows and builds the project once through the build lifecycle
+below. Every build copies Cabal's resolved executable to a unique candidate
+and runs that exact copy with `--check`. Only success can select the
+candidate through the stable user-state `profile` symlink, and only a
+session's handover writes that link. `--restore` execs the selected profile
+directly, without rebuilding or invoking the launcher again.
 
 In an installed session, the configured restart action and `seki --recompile`
 request an asynchronous build. The CLI addresses the existing IPC owner in its
 runtime directory. One build runs at a time; requests during it collapse into
-one queued rebuild and invalidate its result. A byte-identical checked image
-does not restart. A direct runtime without installed build resources retains
-M2's recorded-target restart behavior.
+one queued rebuild and invalidate its result. A requested build restarts
+onto any checked image, also a byte-identical one. The startup build restarts
+only onto an image whose bytes differ from the running executable, and ends
+`unchanged` otherwise. A direct runtime without installed build resources
+retains M2's recorded-target restart behavior.
 
 A failed build or candidate check leaves the process, profile, and windows in
 place. IPC reports the failure and full disk log path, with bounded diagnostic
@@ -418,7 +424,22 @@ in-memory configuration. Immediate exec failure restores the previous profile
 link, or removes the new link when no previous profile existed, then reconnects
 with fresh policy, IPC, input adapters, and build ownership. User configuration
 and hooks are trusted code. Candidate checking does not sandbox their IO or
-provide a supervisor for arbitrary crashes after exec.
+provide a supervisor for arbitrary crashes after exec. One case is covered.
+The launcher and a handover mark a candidate as on its first trial before
+its exec. A handover onto the bytes of the marked candidate marks its second
+trial instead, and a failed exec puts the earlier mark back. Only the marked
+image changes its mark. It clears the mark when it proves healthy, which is
+when its startup build has ended and a manage sequence follows the one that
+ran its startup hook. It also clears the mark when its session ends cleanly
+or river refuses it. It records a crash when its session ends with a runtime
+error, or with an exception other than the interrupt signal. The launcher
+starts the default runtime instead of any marked profile. An end that runs no
+code, such as a kill, a power loss, or a loader failure, leaves the first
+trial in place. A startup build that reproduces the bytes of a candidate on
+its first trial therefore hands over to them once more. A startup build that
+reproduces the bytes of a candidate that crashed, or that is on its second
+trial, ends `failed` and does not hand over. A requested build ignores the
+mark.
 
 Surviving windows whose workspace tag disappeared use the new manage hook; the
 default rules place them on the current workspace. An unreadable saved layout
