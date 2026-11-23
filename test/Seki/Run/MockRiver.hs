@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | A scripted river compositor on a socket pair, for runtime tests.
+-- | A scripted river compositor on a socket pair, and a private environment, for runtime tests.
 module Seki.Run.MockRiver (
   FrameReader,
   newFrameReader,
@@ -38,15 +38,18 @@ module Seki.Run.MockRiver (
   event,
   requests,
   readUntil,
+  withSandbox,
+  withVariables,
 ) where
 
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
-import Control.Exception (SomeException, bracket, onException, try)
+import Control.Exception (SomeException, bracket, bracket_, onException, try)
 import Control.Monad (void)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
+import Data.List (isPrefixOf)
 import Data.Text (Text)
 import Data.Word (Word32)
 import Network.Socket (Family (AF_UNIX), Socket, SocketType (Stream), close, defaultProtocol, socketPair, withFdSocket)
@@ -76,6 +79,11 @@ import Seki.Wire.Transport (
   sendMessage,
  )
 import Seki.Wire.Types (FrameDecode (..), ObjectId, Opcode (..), RawFrame (..), mkObjectId)
+import System.Directory (createDirectory)
+import System.Environment (getEnvironment, lookupEnv, setEnv, unsetEnv)
+import System.FilePath ((</>))
+import System.IO.Temp (withSystemTempDirectory)
+import System.Posix.Files (setFileMode)
 import System.Posix.IO (closeFd, dup)
 import System.Posix.Types (Fd (..))
 import Test.Tasty.HUnit (Assertion, assertEqual, assertFailure)
@@ -388,3 +396,24 @@ readUntil reader peer manager opcode = do
   if rawFrameSender frame == manager && rawFrameOpcode frame == Opcode (fromIntegral opcode)
     then pure []
     else (frame :) <$> readUntil reader peer manager opcode
+
+{- | Run a test with its own home, XDG directories, and runtime directory
+under a new temporary root, which it receives. Every seki configuration
+variable and the Wayland display of the shell are unset, then the given
+variables are set. Afterwards each variable has its earlier value again.
+-}
+withSandbox :: [(String, String)] -> (FilePath -> IO a) -> IO a
+withSandbox variables body = withSystemTempDirectory "seki-sandbox" $ \root -> do
+  let directories = [(name, root </> leaf) | (name, leaf) <- [("HOME", "home"), ("XDG_CONFIG_HOME", "config"), ("XDG_STATE_HOME", "state"), ("XDG_CACHE_HOME", "cache"), ("XDG_DATA_HOME", "data"), ("XDG_RUNTIME_DIR", "runtime")]]
+  mapM_ (createDirectory . snd) directories
+  setFileMode (root </> "runtime") 0o700
+  seki <- filter ("SEKI_CONFIG_" `isPrefixOf`) . map fst <$> getEnvironment
+  withVariables ([(name, Nothing) | name <- "WAYLAND_DISPLAY" : "WAYLAND_SOCKET" : seki] <> [(name, Just value) | (name, value) <- directories <> variables]) (body root)
+
+-- | Set each variable, or unset it for 'Nothing', and give each its earlier value back afterwards.
+withVariables :: [(String, Maybe String)] -> IO a -> IO a
+withVariables variables body = do
+  earlier <- mapM (\(name, _) -> (name,) <$> lookupEnv name) variables
+  bracket_ (assign variables) (assign earlier) body
+ where
+  assign = mapM_ (\(name, value) -> maybe (unsetEnv name) (setEnv name) value)

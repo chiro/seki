@@ -17,10 +17,10 @@ import Seki.Run.External qualified as External
 import Seki.Run.IPC (withIPC, withIPCAt)
 import Seki.Run.Inventory (emptyRiverInventory)
 import Seki.Run.ManageWake
+import Seki.Run.MockRiver (withVariables)
 import Seki.Run.Policy (ExternalInput (..), Policy, newPolicy, policyIngress, policyRuntimeHandlers)
 import Seki.Run.Runtime (RiverInputSnapshot (..), RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
 import System.Directory (doesPathExist, getSymbolicLinkTarget, removeFile)
-import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.FilePath (takeDirectory, (</>))
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Directory qualified as Posix
@@ -96,7 +96,7 @@ tests =
         calls <- newIORef (0 :: Int)
         mapM_
           ( \runtime ->
-              withRuntime runtime $
+              withVariables [("XDG_RUNTIME_DIR", runtime)] $
                 withIPC (\message -> modifyIORef' logs (<> [message])) policy (modifyIORef' calls (+ 1))
           )
           [Just (takeDirectory (takeDirectory path)), Just "relative", Nothing]
@@ -107,7 +107,7 @@ tests =
         policy <- fresh
         calls <- newIORef (0 :: Int)
         result <-
-          withRuntime (Just (takeDirectory (takeDirectory path))) $
+          withVariables [("XDG_RUNTIME_DIR", Just (takeDirectory (takeDirectory path)))] $
             try @IOException (withIPC (const (pure ())) policy (modifyIORef' calls (+ 1) >> ioError (userError "WM body failed")))
         assertBool "body exception propagates" (either (const True) (const False) result)
         readIORef calls >>= assertEqual "body ran only once" 1
@@ -242,11 +242,6 @@ lineWithin micros client = do
   go bytes = do
     chunk <- recv client 1
     if BS.null chunk || chunk == "\n" then pure bytes else go (bytes <> chunk)
-
-withRuntime :: Maybe FilePath -> IO a -> IO a
-withRuntime value action = bracket (lookupEnv "XDG_RUNTIME_DIR") restore $ \_ -> restore value >> action
- where
-  restore = maybe (unsetEnv "XDG_RUNTIME_DIR") (setEnv "XDG_RUNTIME_DIR")
 
 wakeOf :: Policy String l -> IO (IO (), IO (Maybe ()))
 wakeOf policy = do

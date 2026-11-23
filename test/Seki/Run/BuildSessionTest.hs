@@ -5,7 +5,7 @@ module Seki.Run.BuildSessionTest (tests) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically, tryTakeTMVar)
-import Control.Exception (IOException, bracket, bracket_, finally, throwIO, try)
+import Control.Exception (IOException, bracket, finally, throwIO, try)
 import Control.Monad (void)
 import Data.Aeson (Value (..))
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -21,12 +21,13 @@ import Seki.Run.BuildSession
 import Seki.Run.ConfigBuild
 import Seki.Run.External
 import Seki.Run.Inventory (emptyRiverInventory)
+import Seki.Run.MockRiver (withSandbox, withVariables)
 import Seki.Run.Policy (ExternalInput (..), Policy, PolicyConfig (..), closePolicy, configureBuild, configureBuildSession, newPolicy, policyBuildStatus, policyIngress, policyRuntimeHandlers, policyValidatedTarget)
 import Seki.Run.Restart
 import Seki.Run.Runtime (RiverInputSnapshot (..), RiverRuntimeHandlers (..), RiverRuntimeSnapshot (..))
 import Seki.Wire.Transport (ConnectionDiscoveryError (..), ConnectionTarget (..))
 import System.Directory
-import System.Environment (getExecutablePath, setEnv, unsetEnv)
+import System.Environment (getExecutablePath)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Files (createSymbolicLink, readSymbolicLink, setFileMode)
@@ -166,7 +167,7 @@ tests =
             `finally` closeBuildSession session
     , testCase "a launcher setting that is not an absolute path leaves builds on the resources the session runs, with a warning" $
         fixture "exit 0" $ \(BuildContext started _ _ _) _ ->
-          withVariables (("SEKI_CONFIG_LAUNCHER", "bin/seki") : resourceVariables started) $ do
+          withVariables (map (fmap Just) (("SEKI_CONFIG_LAUNCHER", "bin/seki") : resourceVariables started)) $ do
             context <- installedContext >>= maybe (assertFailure "no build context") pure
             Resolution resources warning <- resolve context
             resources @?= started
@@ -185,7 +186,7 @@ tests =
           let launcher = directory </> "launcher"
           writeScript launcher "#!/bin/sh\nenv | grep '^SEKI_CONFIG_'\n"
           session <- requestedSession (pure ()) (BuildContext started (Just (Right launcher)) config state)
-          withVariables (resourceVariables started{archive = "/store/echo/seki-0.1.0.0.tar.gz"}) $
+          withVariables (map (fmap Just) (resourceVariables started{archive = "/store/echo/seki-0.1.0.0.tar.gz"})) $
             ( do
                 requestBuild session
                 target <- awaitReady session
@@ -313,7 +314,7 @@ tests =
                   , launchStateDir = Right directory
                   , launchExec = \_ _ env -> writeIORef handed env >> throwIO (userError "injected exec failure")
                   }
-          _ <- withVariables (("SEKI_CONFIG_LAUNCHER", "/installed/bin/seki") : resourceVariables started) (execValidatedRestart launch target (directory </> "saved"))
+          _ <- withVariables (map (fmap Just) (("SEKI_CONFIG_LAUNCHER", "/installed/bin/seki") : resourceVariables started)) (execValidatedRestart launch target (directory </> "saved"))
           env <- readIORef handed
           sort [variable | variable@(name, _) <- env, "SEKI_CONFIG_" `isPrefixOf` name]
             @?= sort (("SEKI_CONFIG_LAUNCHER", "/installed/bin/seki") : resourceVariables installed)
@@ -605,7 +606,7 @@ delivery :: Resources
 delivery = Resources "/store/source/seki-0.1.0.0.tar.gz" "/store/ghc/bin/ghc" "/store/cabal/bin/cabal" "/store/env/bin/seki-config-env" "/store/templates"
 
 fixture :: String -> (BuildContext -> FilePath -> IO ()) -> IO ()
-fixture check body = withSystemTempDirectory "seki-build-test" $ \directory -> do
+fixture check body = withSandbox [] $ \_ -> withSystemTempDirectory "seki-build-test" $ \directory -> do
   let wrapper = directory </> "environment"
       image = directory </> "image"
       templatesPath = directory </> "templates"
@@ -649,9 +650,6 @@ writeScript path script = writeFile path script >> setFileMode path 0o700
 
 pointAt :: FilePath -> FilePath -> IO ()
 pointAt link target = createSymbolicLink target (link <> ".next") >> renameFile (link <> ".next") link
-
-withVariables :: [(String, String)] -> IO a -> IO a
-withVariables variables = bracket_ (mapM_ (uncurry setEnv) variables) (mapM_ (unsetEnv . fst) variables)
 
 awaitReady :: BuildSession -> IO ValidatedTarget
 awaitReady session = do

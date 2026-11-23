@@ -3,8 +3,8 @@
 
 module Seki.Run.SessionsTest (tests) where
 
-import Control.Exception (AsyncException (UserInterrupt), ErrorCall, bracket, onException, throw, throwIO, try)
-import Control.Monad (when)
+import Control.Exception (AsyncException (UserInterrupt), ErrorCall, onException, throw, throwIO, try)
+import Control.Monad (when, (>=>))
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.List (isPrefixOf)
 import Data.Text (Text)
@@ -17,16 +17,17 @@ import Seki.Run.BuildSession (StartupBuild (..))
 import Seki.Run.Config (Entry (..), SekiArgs (..), parseSekiArgs, runConfig, runSessions)
 import Seki.Run.ConfigBuild (Trial (..), Unproven (..), markUnproven, readUnproven, startupArguments)
 import Seki.Run.IPC (withIPCAt)
-import Seki.Run.MockRiver (FrameReader, encodedPayload, event, expectMockSuccess, handshake, newFrameReader, openRuntimePair, readUntil, receiveFrame, receiveLayerShellOutputRequest, receiveNewIdRequest, requests, requireObjectId, runMock, sendFrames)
+import Seki.Run.MockRiver (FrameReader, encodedPayload, event, expectMockSuccess, handshake, newFrameReader, openRuntimePair, readUntil, receiveFrame, receiveLayerShellOutputRequest, receiveNewIdRequest, requests, requireObjectId, runMock, sendFrames, withSandbox, withVariables)
 import Seki.Run.Policy (PolicyConfig (..), newPolicy)
 import Seki.Run.Restart (Launch (..), RestartRefusal (..))
 import Seki.Wire.Arguments (putInt, putNewId, putObject, putString, putUint)
 import Seki.Wire.Transport (ConnectionDiscoveryError (..), ConnectionTarget (..), ReceivedChunk (..), Transport, closeTransport, receiveChunk)
 import Seki.Wire.Types (ObjectId, Opcode (..), RawFrame (..))
-import System.Directory (createDirectoryIfMissing, listDirectory)
-import System.Environment (getExecutablePath, lookupEnv, setEnv, unsetEnv)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, listDirectory)
+import System.Environment (getEnv, getExecutablePath, lookupEnv, setEnv)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
+import System.Posix.Files (fileMode, getFileStatus, intersectFileModes)
 import System.Posix.Types (Fd (..))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertBool, assertFailure, testCase, (@?=))
@@ -49,6 +50,7 @@ tests =
     , testCase "an image that dies in its startup hook records that it crashed" testDiesOnTrial
     , testCase "an image that river stops for a protocol error records that it crashed" testProtocolErrorOnTrial
     , testCase "an interrupt records nothing, so the image is still on its first trial" testInterruptedOnTrial
+    , testCase "a sandbox owns the home, the XDG directories, and the seki variables, and gives each its earlier value back" testSandbox
     ]
 
 -- | A window with this identifier on an output named 56, then manage_start; returns the requests of that manage sequence.
@@ -83,7 +85,7 @@ testFallback :: Assertion
 testFallback = fallbackSession False
 
 fallbackSession :: Bool -> Assertion
-fallbackSession brokenLog = withSystemTempDirectory "seki-sessions" $ \dir -> do
+fallbackSession brokenLog = withSandbox [] $ \dir -> do
   (first, firstPeer) <- openRuntimePair
   (second, secondPeer) <- openRuntimePair
   logged <- newIORef []
@@ -135,7 +137,7 @@ fallbackSession brokenLog = withSystemTempDirectory "seki-sessions" $ \dir -> do
   assertBool ("the restored session refuses its own restart: " <> show lines') ("restart refused: no executable path was recorded at startup" `elem` lines')
 
 testUnavailableRetry :: Assertion
-testUnavailableRetry = withSystemTempDirectory "seki-retry-ipc" $ \dir -> do
+testUnavailableRetry = withSandbox [] $ \_ -> do
   (first, firstPeer) <- openRuntimePair
   (second, secondPeer) <- openRuntimePair
   logged <- newIORef []
@@ -151,10 +153,10 @@ testUnavailableRetry = withSystemTempDirectory "seki-retry-ipc" $ \dir -> do
     closeTransport secondPeer
   let launch = Launch (Right first) (Right second) (Right "/opt/seki") (Left NoStateDirectory) (\_ _ _ -> throwIO (userError "unused"))
   owner <- newPolicy (sessionConfig logged (Just ())) >>= either (assertFailure . show) pure
+  runtime <- getEnv "XDG_RUNTIME_DIR"
   result <-
-    withEnv "XDG_RUNTIME_DIR" dir $
-      withIPCAt (dir </> "seki" </> "ipc.sock") owner $
-        runSessions launch (const (sessionConfig logged (Just ())){policyStartupHook = pure ()}) (Fresh NoStartupBuild)
+    withIPCAt (runtime </> "seki" </> "ipc.sock") owner $
+      runSessions launch (const (sessionConfig logged (Just ())){policyStartupHook = pure ()}) (Fresh NoStartupBuild)
   expectMockSuccess firstDone
   expectMockSuccess secondDone
   result @?= Right ()
@@ -163,7 +165,7 @@ testUnavailableRetry = withSystemTempDirectory "seki-retry-ipc" $ \dir -> do
     assertBool "occupied IPC endpoint is diagnosed" (any ((== "IPC unavailable") . take 15) lines')
 
 testUnknownVersion :: Assertion
-testUnknownVersion = withSystemTempDirectory "seki-sessions" $ \dir -> do
+testUnknownVersion = withSandbox [] $ \_ -> withSystemTempDirectory "seki-sessions" $ \dir -> do
   (target, peer) <- openRuntimePair
   let file = dir </> "restore.state"
       fd = case target of
@@ -177,23 +179,21 @@ testUnknownVersion = withSystemTempDirectory "seki-sessions" $ \dir -> do
     window <- requireObjectId 0xff000040
     requests window 3 frames @?= []
     closeTransport peer
-  result <- withEnv "WAYLAND_SOCKET" fd (runConfig ["--restore", file] def{workspaces = ["1", "2"], manageHook = doShift "2"})
+  setEnv "WAYLAND_SOCKET" fd
+  result <- runConfig ["--restore", file] def{workspaces = ["1", "2"], manageHook = doShift "2"}
   expectMockSuccess done
   either (assertFailure . show) pure result
   listDirectory dir >>= (@?= [])
 
 {- | An installed session whose state directory holds a marker that names
-this test executable, as if the launcher had just exec'd it. The
-configuration directory is the test's own, because a session that manages
-builds there.
+this test executable, as if the launcher had just exec'd it.
 -}
 onTrial :: (FilePath -> IO a) -> IO a
-onTrial body = withSystemTempDirectory "seki-trial" $ \dir -> do
-  let state = dir </> "state" </> "seki"
-      installed = ("XDG_STATE_HOME", dir </> "state") : ("XDG_CONFIG_HOME", dir </> "config") : [("SEKI_CONFIG_" <> name, "/store" </> name) | name <- ["ARCHIVE", "GHC", "CABAL", "ENV", "TEMPLATES"]]
+onTrial body = withSandbox [("SEKI_CONFIG_" <> name, "/store" </> name) | name <- ["ARCHIVE", "GHC", "CABAL", "ENV", "TEMPLATES"]] $ \_ -> do
+  state <- (</> "seki") <$> getEnv "XDG_STATE_HOME"
   createDirectoryIfMissing True state
   getExecutablePath >>= markUnproven state . (`Unproven` FirstTrial)
-  foldr (uncurry withEnv) (body state) installed
+  body state
 
 testNeverManaged :: Assertion
 testNeverManaged = onTrial $ \state -> do
@@ -269,6 +269,21 @@ testProtocolErrorOnTrial = onTrial $ \state -> do
   either (const (pure ())) (const (assertFailure "expected the protocol error to end the session")) result
   readUnproven state >>= (@?= Just (Unproven image Crashed))
 
+testSandbox :: Assertion
+testSandbox = do
+  let owned = ["HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR"]
+      ambient = zip owned [Just "/ambient/home", Nothing, Just "/ambient/state", Nothing, Nothing, Just "/ambient/run"] <> [("SEKI_CONFIG_ARCHIVE", Just "/ambient/archive"), ("SEKI_CONFIG_LAUNCHER", Just "/ambient/bin/seki"), ("SEKI_CONFIG_GHC", Nothing), ("WAYLAND_DISPLAY", Just "wayland-1"), ("WAYLAND_SOCKET", Nothing)]
+  withVariables ambient $ do
+    withSandbox [("SEKI_CONFIG_GHC", "/store/ghc")] $ \root -> do
+      inside <- mapM lookupEnv owned
+      assertBool ("every owned directory is under the sandbox: " <> show inside) (all (maybe False (isPrefixOf root)) inside)
+      mapM_ (maybe (assertFailure "an owned directory is unset") (doesDirectoryExist >=> assertBool "an owned directory exists")) inside
+      runtime <- getEnv "XDG_RUNTIME_DIR"
+      getFileStatus runtime >>= (@?= 0o700) . (`intersectFileModes` 0o777) . fileMode
+      mapM lookupEnv ["SEKI_CONFIG_ARCHIVE", "SEKI_CONFIG_LAUNCHER", "SEKI_CONFIG_GHC", "WAYLAND_DISPLAY"] >>= (@?= [Nothing, Nothing, Just "/store/ghc", Nothing])
+      setEnv "WAYLAND_SOCKET" "7"
+    mapM (lookupEnv . fst) ambient >>= (@?= map snd ambient)
+
 -- | Read whatever the runtime still sends until it closes the connection.
 expectClosedAfterRequests :: Transport -> Assertion
 expectClosedAfterRequests peer =
@@ -276,6 +291,3 @@ expectClosedAfterRequests peer =
     Right Nothing -> pure ()
     Right (Just _) -> expectClosedAfterRequests peer
     Left e -> assertFailure ("expected the runtime to close the connection, got " <> show e)
-
-withEnv :: String -> String -> IO a -> IO a
-withEnv name value action = bracket (lookupEnv name) (maybe (unsetEnv name) (setEnv name)) (\_ -> setEnv name value >> action)

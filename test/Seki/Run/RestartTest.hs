@@ -10,10 +10,10 @@ import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Seki.Internal.Core.Restore (RestoreError (..), RestoreState (..), SavedFloat (..), SavedWorkspace (..), WindowKey (..))
 import Seki.Internal.Core.StackSet (Stack (..))
+import Seki.Run.MockRiver (withVariables)
 import Seki.Run.Restart
 import Seki.Wire.Transport (ConnectionDiscoveryError (..), ConnectionTarget (..))
 import System.Directory (createDirectory, doesFileExist, listDirectory)
-import System.Environment (setEnv, unsetEnv)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Files (createSymbolicLink, fileMode, getFileStatus, setFileMode)
@@ -128,10 +128,8 @@ testUnknownVersionFile = withSystemTempDirectory "seki-restart" $ \dir -> do
 testExecRestart :: Assertion
 testExecRestart = withSystemTempDirectory "seki-restart" $ \dir -> do
   calls <- newIORef Nothing
-  setEnv "WAYLAND_SOCKET" "7"
   let launch = (launchAt dir "/opt/seki"){launchExec = \p a e -> writeIORef calls (Just (p, a, lookup "WAYLAND_SOCKET" e)) >> throwIO (userError "no such file")}
-  failure <- execRestart launch (dir </> "restore.state")
-  unsetEnv "WAYLAND_SOCKET"
+  failure <- withVariables [("WAYLAND_SOCKET", Just "7")] (execRestart launch (dir </> "restore.state"))
   show failure @?= show (userError "no such file")
   readIORef calls >>= (@?= Just ("/opt/seki", ["--restore", dir </> "restore.state"], Nothing))
 

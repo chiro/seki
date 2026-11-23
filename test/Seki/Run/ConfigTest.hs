@@ -4,7 +4,6 @@ module Seki.Run.ConfigTest (tests) where
 
 import Control.Concurrent (forkFinally)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
-import Control.Exception (bracket)
 import Data.Bits ((.|.))
 import Data.ByteString qualified as BS
 import Data.Map.Strict qualified as Map
@@ -25,12 +24,12 @@ import Seki.Internal.Layout.Tall (Tall (..))
 import Seki.Protocol.RiverWindowManagementV1 qualified as River
 import Seki.Run.Config (ConfigRunError (..), policyConfigOf, prepareConfig, runConfig)
 import Seki.Run.ConfigBuild
+import Seki.Run.MockRiver (withSandbox)
 import Seki.Run.Pointer (RiverPointerBinding (..))
 import Seki.Run.Policy (PolicyConfig (..), PolicyError (..), policyRuntimeHandlers)
 import Seki.Run.Runtime (RiverRuntimeHandlers (..))
 import Seki.Run.Xkb (RiverKeyBinding (..))
 import System.Directory (createDirectory, doesFileExist, doesPathExist, listDirectory)
-import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.FilePath ((</>))
 import System.IO.Temp (withSystemTempDirectory)
 import System.Posix.Files (createSymbolicLink, setFileMode)
@@ -150,19 +149,17 @@ tests =
         assertEqual "the rest remain" (length (keys def def) - 1) (length (keys config config))
         assertEqual "removed and re-added" [Action.Spawn "x"] (intents (pressExactly (additionalKeys config [(KeyBinding (Mod4 .|. Shift) (Keysym 0x63), Action.spawn "x")]) (KeyBinding (Mod4 .|. Shift) (Keysym 0x63)) initial))
     , testCase "a binding with no modifier passes validation and lowers with no modifier" $
-        bracket (lookupEnv "WAYLAND_DISPLAY") restore $ \_ -> do
+        withSandbox [("WAYLAND_DISPLAY", "/this-wayland-display-does-not-exist")] $ \_ -> do
           let config = additionalKeys def [(KeyBinding (Mods 0) (Keysym 0x1008ff13), Action.spawn "louder")]
           policy <- prepareConfig config >>= either (assertFailure . show) pure
           assertBool
             "lowered with modifiers 0"
             (RiverKeyBinding 0x1008ff13 (River.RiverSeatV1ModifiersFlags 0) (Just 0) `elem` riverKeyBindings (policyRuntimeHandlers policy))
-          setEnv "WAYLAND_DISPLAY" "/this-wayland-display-does-not-exist"
           runConfig [] config >>= \case
             Left ConfigRuntimeError{} -> pure ()
             other -> assertFailure ("expected validation to pass and the connection to fail, got " ++ show other)
     , testCase "invalid configuration fails before connecting" $
-        bracket (lookupEnv "WAYLAND_DISPLAY") restore $ \_ -> do
-          setEnv "WAYLAND_DISPLAY" "/this-wayland-display-does-not-exist"
+        withSandbox [("WAYLAND_DISPLAY", "/this-wayland-display-does-not-exist")] $ \_ -> do
           mapM_
             invalid
             [ def{modMask = Mods 16}
@@ -306,7 +303,6 @@ tests =
         ]
     ]
  where
-  restore = maybe (unsetEnv "WAYLAND_DISPLAY") (setEnv "WAYLAND_DISPLAY")
   invalid config =
     runConfig [] config >>= \result -> case result of
       Left ConfigPolicyError{} -> pure ()
@@ -323,7 +319,7 @@ withState :: (FilePath -> IO a) -> IO a
 withState = withStateAt (pure "state")
 
 withStateAt :: IO FilePath -> (FilePath -> IO a) -> IO a
-withStateAt name body = withSystemTempDirectory "seki-start-test" $ \directory -> do
+withStateAt name body = withSandbox [] $ \_ -> withSystemTempDirectory "seki-start-test" $ \directory -> do
   stateDir <- (directory </>) <$> name
   createDirectory stateDir
   body stateDir
